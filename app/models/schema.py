@@ -1,1 +1,76 @@
-"""Table definitions and migrations."""
+"""Foundation SQLite schema: DDL and ``migrate()``.
+
+Tables (per design spec §5):
+
+* ``agents``         — swarm member definitions
+* ``sessions``       — conversation sessions (coordinator + owner)
+* ``session_agents`` — many-to-many session ↔ agent membership (ordered)
+* ``messages``       — session history entries (ChatEntry replay format)
+* ``settings``       — key/value platform settings (JSON-encoded values)
+
+Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
+JSON-encoded into ``params_json``. Foreign keys are enforced by
+``app.models.db.get_connection`` (``PRAGMA foreign_keys = ON``).
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agents (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    model_id      TEXT NOT NULL DEFAULT '',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    is_super      INTEGER NOT NULL DEFAULT 0,
+    tool_count    INTEGER NOT NULL DEFAULT 0,
+    channel_count INTEGER NOT NULL DEFAULT 0,
+    skill_count   INTEGER NOT NULL DEFAULT 0,
+    created_at    REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id             TEXT PRIMARY KEY,
+    coordinator_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    user_id        TEXT NOT NULL DEFAULT 'web',
+    title          TEXT NOT NULL DEFAULT '',
+    message_count  INTEGER NOT NULL DEFAULT 0,
+    created_at     REAL NOT NULL DEFAULT 0,
+    updated_at     REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS session_agents (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    agent_id   TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    position   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    type        TEXT NOT NULL,
+    content     TEXT NOT NULL DEFAULT '',
+    agent_id    TEXT,
+    function    TEXT,
+    params_json TEXT,
+    error       INTEGER NOT NULL DEFAULT 0,
+    ts          REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+);
+"""
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Create foundation tables if missing, then commit.
+
+    Idempotent: safe to call on an already-migrated database.
+    """
+    conn.executescript(_SCHEMA)
+    conn.commit()
