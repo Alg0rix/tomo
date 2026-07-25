@@ -23,3 +23,11 @@ app/data/*.json
 
 # Local scratch / reference trees (not shipped)
 tmp/
+
+# Runtime state (created at install / first run)
+var/
+shared/
+logs/
+artifacts/
+agents/
+state/

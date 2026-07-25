@@ -1,0 +1,20 @@
+{
+  "id": "calculator",
+  "name": "Calculator",
+  "description": "Evaluate basic arithmetic expressions.",
+  "backend": "app.runtime.tools.builtin.calculator",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "calculator",
+      "description": "Evaluate a math expression.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": { "type": "string", "description": "Expression to evaluate" }
+        },
+        "required": ["expression"]
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+"""Memory read/write adapters."""

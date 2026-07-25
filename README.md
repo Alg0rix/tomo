@@ -340,25 +340,61 @@ See the `tools/` directory for the full catalog.
 
 ## Project structure
 
+Tomo separates **HTTP surfaces**, **runtime execution**, **persistence**, and **installable extensions**. Stub modules exist today; the UI and JSON store are wired, runtime packages are scaffolded for implementation.
+
 ```
 tomo/
-├── .vscode/
-│   └── tasks.json      # VS Code: Run Task → Tomo: dev server
-├── app/
-│   ├── main.py         # FastAPI entry + app factory
-│   ├── core/           # config, auth, templates
-│   ├── schemas/        # Pydantic request/response models
-│   ├── services/       # store + chat engine (stub)
-│   ├── api/            # REST + SSE + platform APIs
-│   ├── web/            # HTML pages + login
-│   ├── static/         # CSS + JS
-│   ├── templates/      # Jinja2 pages + partials/
-│   │   └── partials/   # toggle, settings (incl. HMADS/users/channels), sessions, agent studio, evaluate, modals
-│   └── data/           # local JSON persistence
-├── tools/              # Declarative tool definitions (JSON)
-├── LICENSE
-└── README.md
+├── app/                          # FastAPI application
+│   ├── main.py                   # App factory + uvicorn entry
+│   ├── core/                     # Config, auth, Jinja globals
+│   ├── api/                      # JSON REST + SSE (/api/…)
+│   ├── web/                      # HTML pages + login
+│   ├── schemas/                  # Pydantic request/response models
+│   ├── models/                   # DB layer (schema, mixins) — stub
+│   ├── runtime/                  # Agent execution core — stub
+│   │   ├── coordinator/          # Swarm routing and delegation
+│   │   ├── agent/                # LLM turn loop, context
+│   │   ├── memory/               # Recall and knowledge adapters
+│   │   ├── events/               # Internal event bus
+│   │   └── tools/                # Built-in Python tool backends
+│   ├── channels/                 # Web, Telegram, WhatsApp adapters — stub
+│   ├── workplaces/               # Local / SSH / tunnel backends — stub
+│   ├── extensions/               # Skill + plugin loaders — stub
+│   ├── services/                 # JSON store + chat stub (current MVP)
+│   ├── static/                   # CSS + JS (Darkroom UI)
+│   ├── templates/                # Jinja pages + partials/
+│   └── data/                     # Local JSON persistence (dev)
+│
+├── cli/                          # `tomo` command (start, agent, workplace, …) — stub
+├── tools/                        # Declarative tool JSON (schema + backend ref)
+├── skills/                       # Installable skill packages
+├── plugins/                      # Event-driven platform extensions
+├── skillsets/                    # Preset agent profiles (JSON)
+├── defaults/                     # Shipped prompts and KB seeds
+├── evaluator/                    # LLM evaluation engine — stub
+├── connector/                    # Remote workplace agent (tunnel) — planned
+├── tests/                        # unit/ + integration/
+├── scripts/                      # Dev and release helpers
+├── docs/                         # Architecture notes
+├── seed/                         # Dev database seeds
+└── var/                          # Runtime state (gitignored)
 ```
+
+### Layer guide
+
+| Layer | Path | Role |
+|-------|------|------|
+| **Surface** | `app/api/`, `app/web/` | HTTP APIs and server-rendered UI |
+| **Contracts** | `app/schemas/` | API validation and serialization |
+| **Persistence** | `app/models/` | SQLite (or other) via mixins — replaces JSON store long-term |
+| **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, built-in tools |
+| **Integrations** | `app/channels/`, `app/workplaces/` | Messaging and execution environments |
+| **Extensions** | `skills/`, `plugins/`, `app/extensions/` | Drop-in packages + loaders |
+| **Ops** | `cli/`, `scripts/`, `var/` | Lifecycle, tooling, local runtime dirs |
+
+**Today:** `app/services/store.py` backs the UI with seeded JSON. New packages under `runtime/`, `models/`, and `channels/` are empty scaffolds ready for the coordinator and channel work on the roadmap.
+
+See `tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`.
 
 ---
 

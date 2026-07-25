@@ -1,0 +1,1 @@
+"""Workplace and connector state."""

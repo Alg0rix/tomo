@@ -1,0 +1,7 @@
+{
+  "id": "general",
+  "name": "General assistant",
+  "description": "Default coordinator-friendly profile.",
+  "skills": [],
+  "tools": ["calculator", "read_file", "write_file"]
+}
