@@ -1,0 +1,34 @@
+{% from 'partials/page_head.html' import section_head %}
+{% from 'partials/toggle.html' import toggle %}
+
+<section id="sec-hmads" class="sys-section" style="display:none">
+  {{ section_head('Safety rules (HMADS)', 'Heuristic rules evaluated alongside built-in system checks.') }}
+  <div class="pane-toolbar">
+    <select class="input input-sm" id="hmadsScopeFilter" disabled>
+      <option value="">All rules</option>
+      <option value="global">Global only</option>
+      <option value="specific">Agent-specific</option>
+    </select>
+    <button class="btn primary sm" type="button" disabled title="Stub">Add rule</button>
+  </div>
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr><th>Name</th><th>Pattern</th><th>Weight</th><th>Category</th><th>Scope</th><th>On</th></tr>
+      </thead>
+      <tbody>
+        {% for r in safety_rules %}
+        <tr>
+          <td><strong>{{ r.name }}</strong></td>
+          <td class="mono faint" style="font-size:11px">{{ r.pattern }}</td>
+          <td class="mono">{{ r.weight }}</td>
+          <td><span class="badge muted sm">{{ r.category }}</span></td>
+          <td class="faint">{{ r.scope }}{% if r.agent_id %} · {{ r.agent_id }}{% endif %}</td>
+          <td>{{ toggle(checked=r.enabled, disabled=true) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="pane-hint faint">Weights: 0–3 safe · 4–7 warn · 8–14 approval · 15+ block</p>
+</section>

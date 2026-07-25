@@ -1,0 +1,5 @@
+<div class="agent-studio-panel hidden" id="panel-channels">
+  {% for c in channels %}
+  {% with channel=c %}{% include 'partials/channel_row.html' %}{% endwith %}
+  {% endfor %}
+</div>

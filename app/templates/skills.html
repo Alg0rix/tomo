@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from 'partials/empty.html' import empty_state %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Skills</h1>
+      <p class="page-sub">Reusable workflows agents can load for specialized tasks.</p>
+    </div>
+    <button class="btn ghost" type="button" disabled>Upload skill</button>
+  </div>
+
+  <div class="tile-grid">
+    {% for s in skills %}
+    {% with skill=s %}{% include 'partials/skill_tile.html' %}{% endwith %}
+    {% else %}
+    {{ empty_state('No skills in library yet.') }}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

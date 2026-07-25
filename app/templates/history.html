@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <h1 class="page-title" style="font-size:22px">Run history</h1>
+      <p class="page-sub">Past evaluation runs.</p>
+    </div>
+  </div>
+  <div class="card">
+    <table class="data-table">
+      <thead><tr><th>Run</th><th>Model</th><th>Status</th><th>Score</th><th>Started</th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td><a href="/history/{{ r.id }}" class="mono"><strong>{{ r.id }}</strong></a></td>
+          <td>{{ r.model }}</td>
+          <td>
+            {% if r.status == 'complete' %}<span class="badge ok sm">complete</span>
+            {% else %}<span class="badge amber sm">{{ r.status }}</span>{% endif %}
+          </td>
+          <td>{{ r.passed }}/{{ r.total }} <span class="faint">({{ r.failed }} fail)</span></td>
+          <td class="faint mono">{{ ts(r.started_at) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include 'partials/modals/test_modal.html' %}
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/modals.js') }}"></script>{% endblock %}

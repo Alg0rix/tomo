@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <a class="faint back-link" href="/history">← History</a>
+      <h1 class="page-title" style="font-size:22px;margin-top:6px">{{ run.id }}</h1>
+      <p class="page-sub">{{ run.model }} · {{ ts(run.started_at) }}</p>
+    </div>
+    <span class="badge {{ 'ok' if run.status == 'complete' else 'amber' }}">{{ run.status }}</span>
+  </div>
+
+  <div class="stat-grid" style="margin-bottom:20px">
+    <div class="stat jade"><div class="k">Passed</div><div class="v">{{ run.passed }}</div></div>
+    <div class="stat rose"><div class="k">Failed</div><div class="v">{{ run.failed }}</div></div>
+    <div class="stat"><div class="k">Total</div><div class="v">{{ run.total }}</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>Domain matrix</h3>
+      <button class="btn ghost sm" type="button" id="openTestModal" data-run="{{ run.id }}">View tests</button>
+    </div>
+    <div class="card-body card-body-pad">
+      {% if run.domains %}
+      <table class="data-table">
+        <thead><tr><th>Domain</th><th>Levels</th></tr></thead>
+        <tbody>
+          {% for domain, levels in run.domains.items() %}
+          <tr>
+            <td>{{ domain }}</td>
+            <td>{% for lvl, st in levels.items() %}<span class="badge {{ 'ok' if st == 'pass' else 'amber' }} sm">{{ lvl }}: {{ st }}</span> {% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">Run incomplete — matrix not available.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% include 'partials/modals/test_modal.html' %}
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/modals.js') }}"></script>{% endblock %}

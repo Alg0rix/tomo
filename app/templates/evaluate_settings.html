@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from 'partials/toggle.html' import toggle %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <h1 class="page-title" style="font-size:22px">Eval settings</h1>
+      <p class="page-sub">Runner parallelism and scoring options.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body card-body-pad">
+      <div class="config-row"><div class="lbl">Parallel workers</div><input class="input" type="number" value="{{ settings.eval_parallel_workers }}" style="max-width:80px" disabled></div>
+      <div class="config-row"><div class="lbl">Two-pass scoring</div>{{ toggle(checked=settings.eval_two_pass, disabled=true) }}</div>
+      <div class="config-row"><div class="lbl">Public history</div>{{ toggle(checked=settings.public_history, disabled=true) }}</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

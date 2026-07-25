@@ -1,0 +1,8 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-tools" class="sys-section" style="display:none">
+  {{ section_head('Tool registry', 'Global tools available to agents.') }}
+  {% for t in tools %}
+  {% with tool=t %}{% include 'partials/tool_row.html' %}{% endwith %}
+  {% endfor %}
+</section>

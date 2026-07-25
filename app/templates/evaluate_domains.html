@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <h1 class="page-title" style="font-size:22px">Domains</h1>
+      <p class="page-sub">Test domains and difficulty levels.</p>
+    </div>
+    <button class="btn ghost sm" type="button" disabled>Add domain</button>
+  </div>
+  <div class="tile-grid">
+    {% for d in domains %}
+    <div class="tile">
+      <div class="tile-head"><div class="tile-title">{{ d.name }}</div><span class="badge muted sm">{{ d.levels }} levels</span></div>
+      <div class="tile-desc">{{ d.test_count }} tests in suite</div>
+      <div class="tile-foot"><button class="btn ghost sm" type="button" disabled>Manage tests</button></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

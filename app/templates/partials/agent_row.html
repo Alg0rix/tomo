@@ -1,0 +1,12 @@
+{% from 'partials/avatar.html' import avatar %}
+{% from 'partials/agent_badge.html' import agent_status %}
+
+<a class="row" href="/agents/{{ agent.id }}" style="text-decoration:none">
+  {{ avatar(agent.id, agent.name) }}
+  <div class="meta">
+    <div class="title">{{ agent.name }}{% if agent.is_super %} <span class="badge accent sm">coordinator</span>{% endif %}</div>
+    <div class="desc">{{ agent.description or 'No description' }}</div>
+  </div>
+  {{ agent_status(agent) }}
+  <span class="mono faint" style="font-size:11px">{{ agent.tool_count }} tools</span>
+</a>

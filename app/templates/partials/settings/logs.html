@@ -1,0 +1,13 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-logs" class="sys-section" style="display:none">
+  {{ section_head('Logs', 'Runtime log viewer — stubbed until coordinator connects.') }}
+  <div class="card">
+    <div class="card-body" style="padding:16px">
+      <pre class="mono log-viewer">[info] Tomo web UI started
+[info] Agent backend: stub mode
+[info] 4 agents loaded from store.json
+[warn] Coordinator runtime not connected — chat replies are simulated</pre>
+    </div>
+  </div>
+</section>

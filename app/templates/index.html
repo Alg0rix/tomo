@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">The <span class="accent">swarm</span> is awake</h1>
+      <p class="page-sub">Agents, workplaces, and sessions — live overview.</p>
+    </div>
+    <a class="btn primary" href="/agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New agent</a>
+  </div>
+
+  {% include 'partials/dashboard/quick_links.html' %}
+
+  <div class="stat-grid" id="stats">
+    <div class="stat amber"><div class="glow"></div><div class="k">Agents</div><div class="v" id="s-agents"><span class="skeleton">···</span></div></div>
+    <div class="stat jade"><div class="glow"></div><div class="k">Sessions</div><div class="v" id="s-sessions"><span class="skeleton">···</span></div></div>
+    <div class="stat sky"><div class="glow"></div><div class="k">Tools</div><div class="v" id="s-tools"><span class="skeleton">···</span></div></div>
+    <div class="stat"><div class="k">Skills</div><div class="v" id="s-skills"><span class="skeleton">···</span></div></div>
+    <div class="stat rose"><div class="glow"></div><div class="k">Workplaces</div><div class="v" id="s-workplaces"><span class="skeleton">···</span></div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-head"><h3>Recent agents</h3><a class="btn ghost sm" href="/agents">All</a></div>
+      <div class="card-body" id="recentAgents"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Recent sessions</h3><a class="btn ghost sm" href="/sessions">All</a></div>
+      <div class="card-body" id="recentSessions"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/dashboard.js') }}"></script>{% endblock %}

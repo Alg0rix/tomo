@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from 'partials/avatar.html' import avatar %}
+{% from 'partials/agent_badge.html' import workplace_status %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <a class="faint back-link" href="/workplaces">← Workplaces</a>
+      <h1 class="page-title">{{ workplace.name }}</h1>
+      <p class="page-sub"><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span> · {{ workplace.host }}</p>
+    </div>
+    {{ workplace_status(workplace.status) }}
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-head"><h3>Connection</h3></div>
+      <div class="card-body card-body-pad">
+        <div class="config-row"><div class="lbl">Host</div><div class="mono">{{ workplace.host }}</div></div>
+        <div class="config-row"><div class="lbl">Type</div><div>{{ workplace.kind }}</div></div>
+        <div class="config-row"><div class="lbl">Agents</div><div>{{ workplace.agent_count }} assigned</div></div>
+        {% if workplace.kind == 'tunnel' %}
+        <div class="config-row"><div class="lbl">Pairing</div><div><span class="badge muted">stub — connector pending</span></div></div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Assigned agents</h3></div>
+      <div class="card-body">
+        {% for a in agents[:workplace.agent_count] %}
+        <a class="row" href="/agents/{{ a.id }}" style="text-decoration:none">
+          {{ avatar(a.id, a.name, 'sm') }}
+          <div class="meta"><div class="title">{{ a.name }}</div></div>
+        </a>
+        {% else %}
+        {% from 'partials/empty.html' import empty_state %}
+        {{ empty_state('No agents assigned') }}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% from 'partials/toggle.html' import toggle %}
+
+<div class="tool-row">
+  <div class="meta"><div class="name">{{ tool.name }}</div><div class="desc">{{ tool.description }}</div></div>
+  <span class="mono faint" style="font-size:11px">{{ tool.backend }}</span>
+  {% if tool.agent_count is defined %}<span class="faint">{{ tool.agent_count }} agents</span>{% endif %}
+  {{ toggle(checked=tool.enabled, disabled=true) }}
+</div>

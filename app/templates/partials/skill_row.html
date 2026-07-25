@@ -1,0 +1,8 @@
+<div class="skill-row">
+  <div class="meta"><div class="name">{{ skill.name }}</div><div class="desc">{{ skill.description }}</div></div>
+  {% if skill.assigned is defined %}
+  <span class="badge {{ 'ok' if skill.assigned else 'muted' }}">{{ 'assigned' if skill.assigned else 'available' }}</span>
+  {% else %}
+  <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'on' if skill.enabled else 'off' }}</span>
+  {% endif %}
+</div>

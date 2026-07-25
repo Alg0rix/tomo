@@ -1,0 +1,45 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-shared_channel" class="sys-section" style="display:none">
+  {{ section_head('Shared channels', 'WhatsApp / Telegram numbers shared across agents with routing rules.') }}
+  {% for ch in shared_channels %}
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-head">
+      <h3>{{ ch.name }}</h3>
+      <span class="badge {{ 'ok' if ch.status == 'connected' else 'muted' }}">{{ ch.status }}</span>
+    </div>
+    <div class="card-body card-body-pad">
+      <div class="config-row"><div class="lbl">Type</div><div>{{ ch.type }}</div></div>
+      {% if ch.inbox %}
+      <div class="setting-group-label">Unassigned senders</div>
+      {% for item in ch.inbox %}
+      <div class="row workplace-kind-row">
+        <div class="meta"><div class="title">{{ item.contact }}</div><div class="desc mono">{{ item.identifier }}</div></div>
+        <button class="btn ghost sm" type="button" disabled>Assign</button>
+      </div>
+      {% endfor %}
+      {% endif %}
+      {% if ch.routes %}
+      <div class="setting-group-label" style="margin-top:14px">Routes</div>
+      <table class="data-table">
+        <thead><tr><th>Contact</th><th>Identifier</th><th>Agent</th></tr></thead>
+        <tbody>
+          {% for r in ch.routes %}
+          <tr>
+            <td>{{ r.contact }}</td>
+            <td class="mono faint">{{ r.identifier }}</td>
+            <td><a href="/agents/{{ r.agent_id }}">{{ r.agent_name }}</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if ch.status == 'planned' %}
+      <p class="faint" style="margin-top:12px;font-size:12px">🔜 Channel adapter not connected yet.</p>
+      {% elif ch.status == 'disconnected' %}
+      <button class="btn primary sm" type="button" disabled style="margin-top:12px">Connect QR</button>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>

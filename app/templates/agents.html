@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from 'partials/empty.html' import empty_state %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Agents</h1>
+      <p class="page-sub">Workers in your swarm — each with tools, skills, and channels.</p>
+    </div>
+    <button class="btn primary" id="newAgentBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New agent</button>
+  </div>
+
+  <div class="pill-tabs" id="agentTabs">
+    <button class="pill-tab active" type="button" data-tab="agents">Agents</button>
+    <button class="pill-tab" type="button" data-tab="workplaces">Workplaces</button>
+  </div>
+
+  <div id="tabAgents">
+    <div class="card">
+      <div class="card-body">
+        {% if agents %}
+        {% for a in agents %}
+        {% with agent=a %}{% include 'partials/agent_row.html' %}{% endwith %}
+        {% endfor %}
+        {% else %}
+        {{ empty_state('No agents yet.') }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div id="tabWorkplaces" style="display:none">
+    <div class="tile-grid">
+      {% for w in workplaces %}
+      {% with workplace=w %}{% include 'partials/workplace_tile.html' %}{% endwith %}
+      {% endfor %}
+      <a class="tile tile-link tile-add" href="/workplaces"><span class="faint">+ Add workplace</span></a>
+    </div>
+  </div>
+</div>
+
+{% include 'partials/agents/new_dialog.html' %}
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/agents.js') }}"></script>{% endblock %}

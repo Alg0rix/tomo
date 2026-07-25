@@ -1,0 +1,18 @@
+{% macro page_head(title, subtitle='', accent='') %}
+<div class="page-head">
+  <div>
+  {% if accent %}
+    <h1 class="page-title">{{ title | safe }} <span class="accent">{{ accent }}</span></h1>
+  {% else %}
+    <h1 class="page-title">{{ title }}</h1>
+  {% endif %}
+  {% if subtitle %}<p class="page-sub">{{ subtitle }}</p>{% endif %}
+  </div>
+  {{ caller() if caller is defined else '' }}
+</div>
+{% endmacro %}
+
+{% macro section_head(title, subtitle='') %}
+<h1 class="page-title" style="font-size:22px;margin-bottom:6px">{{ title }}</h1>
+{% if subtitle %}<p class="page-sub" style="margin-bottom:22px">{{ subtitle }}</p>{% endif %}
+{% endmacro %}

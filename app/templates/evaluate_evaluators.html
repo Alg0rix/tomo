@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from 'partials/toggle.html' import toggle %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <h1 class="page-title" style="font-size:22px">Evaluators</h1>
+      <p class="page-sub">How responses are scored.</p>
+    </div>
+  </div>
+  {% for e in evaluators %}
+  <div class="tool-row">
+    <div class="meta"><div class="name">{{ e.name }}</div><div class="desc">{{ e.description }}</div></div>
+    {{ toggle(checked=e.enabled, disabled=true) }}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% from 'partials/page_head.html' import section_head %}
+{% from 'partials/toggle.html' import toggle %}
+
+<section id="sec-general" class="sys-section">
+  {{ section_head('General', 'Platform defaults and runtime behavior.') }}
+  <div class="card">
+    <div class="card-body" style="padding:16px 18px">
+      <div class="config-row"><div class="lbl">Version</div><div class="mono">0.1.0</div></div>
+      <div class="config-row"><div class="lbl">Runtime</div><div><span class="badge muted">stubbed</span> coordinator pending</div></div>
+      <div class="config-row"><div class="lbl">Default model</div>
+        <select class="input" id="setDefaultModel" style="max-width:240px">
+          {% for m in models %}<option value="{{ m.id }}" {% if m.is_default %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="config-row"><div class="lbl">Max tool iterations</div>
+        <input class="input" type="number" id="setMaxIter" value="{{ settings.max_tool_iterations }}" style="max-width:100px">
+      </div>
+      <div class="config-row"><div class="lbl">Learning loop</div>
+        {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
+      </div>
+      <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveGeneral">Save changes</button></div>
+    </div>
+  </div>
+</section>

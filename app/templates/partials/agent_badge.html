@@ -1,0 +1,15 @@
+{% macro agent_status(agent) %}
+{% if agent.busy %}
+<span class="badge amber"><span class="pulse"></span>busy</span>
+{% elif agent.enabled %}
+<span class="badge ok"><span class="pulse"></span>online</span>
+{% else %}
+<span class="badge muted">off</span>
+{% endif %}
+{% endmacro %}
+
+{% macro workplace_status(status) %}
+<span class="badge {{ 'ok' if status == 'connected' else 'muted' }}">
+  <span class="status-dot {{ 'on' if status == 'connected' else 'off' }}"></span>{{ status }}
+</span>
+{% endmacro %}

@@ -1,0 +1,12 @@
+{% from 'partials/toggle.html' import toggle %}
+
+<div class="channel-row">
+  <div class="meta"><div class="name">{{ channel.name }}</div><div class="desc">{{ channel.type }}</div></div>
+  {% if channel.status == 'planned' %}
+  <span class="badge muted">🔜 planned</span>
+  {% elif channel.enabled %}
+  <span class="badge ok">active</span>
+  {% else %}
+  <span class="badge muted">off</span>
+  {% endif %}
+</div>

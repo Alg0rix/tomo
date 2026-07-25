@@ -1,0 +1,11 @@
+<a class="tile tile-link" href="/skills/{{ skill.id }}">
+  <div class="tile-head">
+    <div class="tile-title">{{ skill.name }}</div>
+    <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'on' if skill.enabled else 'off' }}</span>
+  </div>
+  <div class="tile-desc">{{ skill.description }}</div>
+  <div class="tile-foot">
+    <span class="mono faint">v{{ skill.version }}</span>
+    <span class="faint">{{ skill.tool_count }} tools · {{ skill.agent_count }} agents</span>
+  </div>
+</a>

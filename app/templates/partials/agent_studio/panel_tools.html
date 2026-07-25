@@ -1,0 +1,5 @@
+<div class="agent-studio-panel hidden" id="panel-tools">
+  {% for t in tools %}
+  {% with tool=t %}{% include 'partials/tool_row.html' %}{% endwith %}
+  {% endfor %}
+</div>

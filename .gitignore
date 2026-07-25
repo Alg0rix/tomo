@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# uv / build
+dist/
+build/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Tomo runtime data (stub)
+app/data/*.db
+app/data/*.json
+!app/data/seed.json
+
+# Local scratch / reference trees (not shipped)
+tmp/

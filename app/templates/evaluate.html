@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  {% include 'partials/evaluate/subnav.html' %}
+  <div class="page-head" style="margin-bottom:18px">
+    <div>
+      <h1 class="page-title" style="font-size:22px">Evaluation runner</h1>
+      <p class="page-sub">Run domain × level matrix against a model. <span class="badge muted">stub</span></p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary sm" type="button" disabled>Start run</button>
+      <button class="btn ghost sm" type="button" id="openTrainingModal">Training data</button>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-head"><h3>Configuration</h3></div>
+      <div class="card-body card-body-pad">
+        <div class="field"><label>Model</label>
+          <select class="input" disabled>
+            {% for m in models %}<option>{{ m.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Domains</label>
+          <div class="agent-pick-list">
+            {% for d in domains %}
+            <label class="agent-pick"><input type="checkbox" checked disabled> <span class="name">{{ d.name }}</span> <span class="faint">({{ d.test_count }} tests)</span></label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Matrix preview</h3></div>
+      <div class="card-body card-body-pad">
+        <table class="data-table">
+          <thead><tr><th>Domain</th><th>L1</th><th>L2</th><th>L3</th></tr></thead>
+          <tbody>
+            {% for d in domains %}
+            <tr>
+              <td>{{ d.name }}</td>
+              <td class="faint">—</td>
+              <td class="faint">{% if d.levels > 1 %}—{% else %}n/a{% endif %}</td>
+              <td class="faint">{% if d.levels > 2 %}—{% else %}n/a{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% include 'partials/modals/training_modal.html' %}
+{% include 'partials/modals/test_modal.html' %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='js/evaluate.js') }}"></script>
+<script src="{{ url_for('static', path='js/modals.js') }}"></script>
+{% endblock %}

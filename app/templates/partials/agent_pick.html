@@ -1,0 +1,12 @@
+{% from 'partials/avatar.html' import avatar %}
+
+<label class="agent-pick{% if not agent.enabled %} disabled{% endif %}">
+  <input type="checkbox" name="agent" value="{{ agent.id }}"
+    {% if checked is defined and checked %}checked{% elif agent.is_super %}checked{% elif agent.enabled %}checked{% endif %}
+    {% if not agent.enabled %}disabled{% endif %}>
+  {{ avatar(agent.id, agent.name, 'sm') }}
+  <span class="agent-pick-meta">
+    <span class="name">{{ agent.name }}{% if agent.is_super %} <span class="badge accent sm">coordinator</span>{% endif %}</span>
+    <span class="desc faint">{{ agent.description[:72] }}{% if agent.description|length > 72 %}…{% endif %}</span>
+  </span>
+</label>

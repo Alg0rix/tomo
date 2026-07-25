@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="agent-studio">
+  {% include 'partials/agent_studio/head.html' %}
+  <div class="agent-studio-tabs-wrap">{% include 'partials/agent_studio/tabs.html' %}</div>
+  <div class="agent-studio-body">
+    {% include 'partials/agent_studio/panel_chat.html' %}
+    {% include 'partials/agent_studio/panel_config.html' %}
+    {% include 'partials/agent_studio/panel_tools.html' %}
+    {% include 'partials/agent_studio/panel_skills.html' %}
+    {% include 'partials/agent_studio/panel_channels.html' %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+{% include 'partials/chat_assets.html' %}
+<script src="{{ url_for('static', path='js/chat.js') }}"></script>
+<script src="{{ url_for('static', path='js/agent_detail.js') }}"></script>
+{% endblock %}

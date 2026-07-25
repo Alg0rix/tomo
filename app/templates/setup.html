@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ brand }} · Setup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}">
+  <script src="{{ url_for('static', path='js/tomo.js') }}"></script>
+</head>
+<body>
+<div class="setup-page">
+  <div class="setup-card card">
+    <div class="setup-steps">
+      <div class="setup-step active" data-step="1"></div>
+      <div class="setup-step" data-step="2"></div>
+      <div class="setup-step" data-step="3"></div>
+    </div>
+
+    <div id="step1">
+      <h1>Welcome to Tomo</h1>
+      <p class="setup-lead">友達 — your agent swarm platform. Let's get the basics configured.</p>
+      <div class="field"><label>Admin password</label><input class="input" type="password" id="setupPassword" placeholder="Choose a password" value="tomo"></div>
+      <button class="btn primary" type="button" id="setupNext1" style="width:100%;justify-content:center;margin-top:8px">Continue</button>
+    </div>
+
+    <div id="step2" style="display:none">
+      <h1>Default model</h1>
+      <p class="setup-lead">Pick the model your coordinator will use by default.</p>
+      <div class="field"><label>Model</label>
+        <select class="input" id="setupModel">
+          <option value="gpt-4o-mini">GPT-4o Mini</option>
+          <option value="gpt-4o">GPT-4o</option>
+          <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn ghost" type="button" id="setupBack2">Back</button>
+        <button class="btn primary" type="button" id="setupNext2" style="flex:1;justify-content:center">Continue</button>
+      </div>
+    </div>
+
+    <div id="step3" style="display:none">
+      <h1>Ready to swarm</h1>
+      <p class="setup-lead">Tomo will seed a coordinator agent and sample workers. You can customize everything later.</p>
+      <ul style="color:var(--text-dim);font-size:13px;margin:0 0 20px 18px;line-height:1.7">
+        <li>Tomo (coordinator) + Ops + Research agents</li>
+        <li>Swarm chat with multi-agent sessions</li>
+        <li>Workplaces, skills, and scheduler stubs</li>
+      </ul>
+      <div style="display:flex;gap:10px">
+        <button class="btn ghost" type="button" id="setupBack3">Back</button>
+        <button class="btn primary" type="button" id="setupFinish" style="flex:1;justify-content:center">Launch Tomo</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', path='js/setup.js') }}"></script>
+</body>
+</html>

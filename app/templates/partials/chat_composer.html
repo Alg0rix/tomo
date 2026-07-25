@@ -1,0 +1,11 @@
+{% macro chat_composer(placeholder='Message…', hint='') %}
+<div class="composer">
+  <div class="composer-inner">
+    <textarea class="chat-input" placeholder="{{ placeholder }}" rows="1"></textarea>
+    <button class="send btn primary chat-send" type="button" disabled aria-label="Send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+  {% if hint %}<div class="chat-hint">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}

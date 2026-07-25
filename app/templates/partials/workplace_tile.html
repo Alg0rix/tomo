@@ -1,0 +1,12 @@
+{% from 'partials/agent_badge.html' import workplace_status %}
+
+<a class="tile tile-link" href="/workplaces/{{ workplace.id }}">
+  <div class="tile-head">
+    <div class="tile-title">{{ workplace.name }}</div>
+    <span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span>
+  </div>
+  <div class="tile-desc">{{ workplace.host }}{% if show_agent_count | default(true) %} · {{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}{% endif %}</div>
+  <div class="tile-foot">
+    {{ workplace_status(workplace.status) }}
+  </div>
+</a>

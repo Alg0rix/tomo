@@ -1,0 +1,6 @@
+{% macro empty_state(message, hint='') %}
+<div class="empty">
+  {{ message }}
+  {% if hint %}<div class="faint" style="margin-top:6px;font-size:12px">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}

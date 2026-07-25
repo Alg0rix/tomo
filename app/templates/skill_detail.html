@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <a class="faint back-link" href="/skills">← Skills</a>
+      <h1 class="page-title">{{ skill.name }}</h1>
+      <p class="page-sub">v{{ skill.version }} · {{ skill.tool_count }} tools</p>
+    </div>
+    <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'enabled' if skill.enabled else 'disabled' }}</span>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>Overview</h3></div>
+    <div class="card-body card-body-pad">
+      <p class="skill-overview">{{ skill.description }}</p>
+      <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ skill.id }}</div></div>
+      <div class="config-row"><div class="lbl">Agents using</div><div>{{ skill.agent_count }}</div></div>
+      <div class="config-row"><div class="lbl">System prompt</div><div class="faint">Configured when coordinator runtime is connected</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-plugins" class="sys-section" style="display:none">
+  {{ section_head('Plugins', 'Installed extensions. <a href="/plugins">View plugin gallery →</a>') }}
+  <div class="tile-grid">
+    {% for p in plugins %}
+    {% with plugin=p %}{% include 'partials/plugin_tile.html' %}{% endwith %}
+    {% endfor %}
+  </div>
+</section>

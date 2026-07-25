@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Scheduler</h1>
+      <p class="page-sub">Cron jobs that wake agents on a schedule.</p>
+    </div>
+    <button class="btn primary" type="button" disabled>New schedule</button>
+  </div>
+
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr><th>Name</th><th>Agent</th><th>Schedule</th><th>Status</th><th>Next run</th></tr>
+      </thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td><strong>{{ s.name }}</strong></td>
+          <td>
+            {% set ag = agents | selectattr('id', 'equalto', s.agent_id) | first %}
+            <a href="/agents/{{ s.agent_id }}" class="dim">{{ ag.name if ag else s.agent_id }}</a>
+          </td>
+          <td class="mono faint">{{ s.cron }}</td>
+          <td>{% if s.enabled %}<span class="badge ok">on</span>{% else %}<span class="badge muted">off</span>{% endif %}</td>
+          <td class="faint mono" style="font-size:12px">{% if s.next_run %}{{ ts(s.next_run) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

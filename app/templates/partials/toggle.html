@@ -1,0 +1,21 @@
+{#
+  Tomo toggle switch — use toggle() for standalone, toggle_widget() inside a <label>.
+
+  from 'partials/toggle.html' import toggle, toggle_widget
+#}
+
+{% macro toggle(id='', checked=false, disabled=false, onchange='', extra_class='', title='') %}
+<label class="toggle{{ ' ' + extra_class if extra_class else '' }}"{% if title %} title="{{ title }}"{% endif %}>
+  <input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}{% if onchange %} onchange="{{ onchange }}"{% endif %}>
+  <span class="track"></span>
+</label>
+{% endmacro %}
+
+{% macro toggle_widget(id='', checked=false, disabled=false, onchange='') %}
+<span class="toggle-wrap">
+  <label class="toggle">
+    <input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}{% if onchange %} onchange="{{ onchange }}"{% endif %}>
+    <span class="track"></span>
+  </label>
+</span>
+{% endmacro %}

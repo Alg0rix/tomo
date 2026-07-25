@@ -1,0 +1,17 @@
+<div id="trainingModal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-close-training="1"></div>
+  <div class="modal-card modal-wide modal-training">
+    <div class="modal-head modal-head-accent">
+      <h3>Training data</h3>
+      <button class="btn ghost sm modal-close-btn" type="button" data-close-training="1" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-lead">Edit below (pretty-printed). Copy outputs single-line JSONL.</p>
+      <textarea id="trainingTextarea" class="input modal-textarea mono" rows="16" readonly></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" type="button" id="copyTrainingBtn">Copy JSONL</button>
+      <button class="btn primary" type="button" data-close-training="1">Close</button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,13 @@
+{% from 'partials/toggle.html' import toggle %}
+
+<div class="tile">
+  <div class="tile-head">
+    <div class="tile-title">{{ plugin.name }}</div>
+    {{ toggle(checked=plugin.enabled, disabled=true) }}
+  </div>
+  <div class="tile-desc">{{ plugin.description }}</div>
+  <div class="tile-foot">
+    <span class="mono faint">v{{ plugin.version }}</span>
+    {% if plugin.has_ui and plugin.ui_path %}<a class="btn ghost sm" href="{{ plugin.ui_path }}">Open UI</a>{% endif %}
+  </div>
+</div>

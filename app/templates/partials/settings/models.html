@@ -1,0 +1,33 @@
+{% from 'partials/page_head.html' import section_head %}
+{% from 'partials/toggle.html' import toggle %}
+
+<section id="sec-models" class="sys-section" style="display:none">
+  {{ section_head('Models & providers', 'LLM providers and model catalog.') }}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>Providers</h3></div>
+    <div class="card-body">
+      {% for p in providers %}
+      <div class="row">
+        <div class="meta"><div class="title">{{ p.name }}</div><div class="desc">{{ p.model_count }} models</div></div>
+        {{ toggle(checked=p.enabled, disabled=true) }}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Models</h3></div>
+    <table class="data-table">
+      <thead><tr><th>Model</th><th>Provider</th><th>Context</th><th>Default</th></tr></thead>
+      <tbody>
+        {% for m in models %}
+        <tr>
+          <td class="mono">{{ m.id }}</td>
+          <td>{{ m.provider_id }}</td>
+          <td class="faint">{{ (m.context / 1000)|int }}k</td>
+          <td>{% if m.is_default %}<span class="badge accent sm">default</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

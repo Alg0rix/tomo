@@ -1,0 +1,32 @@
+<div id="newChatModal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-card modal-wide">
+    <div class="modal-head"><h3>New swarm chat</h3></div>
+    <div class="modal-body">
+      <p class="modal-lead">Pick one or more agents. The coordinator routes work across the swarm.</p>
+      <div class="agent-pick-list" id="newChatAgents">
+        {% for a in agents_list %}
+        {% with agent=a %}{% include 'partials/agent_pick.html' %}{% endwith %}
+        {% endfor %}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" type="button" data-close="1">Cancel</button>
+      <button class="btn primary" type="button" id="newChatConfirm">Start swarm</button>
+    </div>
+  </div>
+</div>
+
+<div id="editSwarmModal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-close="2"></div>
+  <div class="modal-card modal-wide">
+    <div class="modal-head"><h3>Session agents</h3></div>
+    <div class="modal-body">
+      <div class="agent-pick-list" id="editSwarmAgents"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" type="button" data-close="2">Cancel</button>
+      <button class="btn primary" type="button" id="editSwarmConfirm">Save</button>
+    </div>
+  </div>
+</div>

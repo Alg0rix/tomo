@@ -1,0 +1,35 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-users" class="sys-section" style="display:none">
+  {{ section_head('Users', 'Registered channel users — block, approve, and audit.') }}
+  <div class="pane-toolbar">
+    <select class="input input-sm" id="usersStatusFilter" disabled>
+      <option value="all">All users</option>
+      <option value="approved">Approved</option>
+      <option value="blocked">Blocked</option>
+      <option value="pending">Pending</option>
+    </select>
+  </div>
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr><th>User</th><th>Channel</th><th>Status</th><th>Last active</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td><strong>{{ u.name }}</strong><div class="faint mono" style="font-size:11px">{{ u.id }}</div></td>
+          <td><span class="badge muted sm">{{ u.channel }}</span></td>
+          <td>
+            {% if u.status == 'approved' %}<span class="badge ok sm">approved</span>
+            {% elif u.status == 'blocked' %}<span class="badge rose sm">blocked</span>
+            {% else %}<span class="badge amber sm">pending</span>{% endif %}
+          </td>
+          <td class="faint mono" style="font-size:12px">{{ ts(u.last_active) }}</td>
+          <td><button class="btn ghost sm" type="button" disabled>Audit</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

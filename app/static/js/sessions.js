@@ -1,0 +1,283 @@
+/* sessions.js — swarm chat UI (session sidebar + multi-agent chat room). */
+(function () {
+  "use strict";
+
+  const listEl = document.getElementById('sessionList');
+  const emptyEl = document.getElementById('sessionEmpty');
+  const chatWrap = document.getElementById('sessionChat');
+  const searchEl = document.getElementById('sessionSearch');
+  const modal = document.getElementById('newChatModal');
+  const editModal = document.getElementById('editSwarmModal');
+  const newBtn = document.getElementById('newChatBtn');
+  const newConfirm = document.getElementById('newChatConfirm');
+  const editBtn = document.getElementById('editSwarmBtn');
+  const editConfirm = document.getElementById('editSwarmConfirm');
+
+  if (!listEl || !chatWrap) return;
+
+  let sessions = [];
+  let agents = {};
+  let activeId = null;
+  let chatHandle = null;
+
+  function esc(s) { return Tomo.escapeHtml(s); }
+
+  function agentColor(id) {
+    return (window.Tomo && Tomo.avatarColor) ? Tomo.avatarColor(id) : 'var(--accent)';
+  }
+
+  function agentName(id) {
+    return (agents[id] && agents[id].name) || id;
+  }
+
+  function sessionLabel(s) {
+    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+    const names = ids.map(agentName);
+    if (names.length > 2) return names.slice(0, 2).join(', ') + ' +' + (names.length - 2);
+    return names.join(' · ') || s.agent_id || 'Swarm';
+  }
+
+  function params() {
+    return new URLSearchParams(location.search);
+  }
+
+  function setUrl(sessionId) {
+    const p = new URLSearchParams(location.search);
+    if (sessionId) p.set('s', sessionId); else p.delete('s');
+    p.delete('agent');
+    const q = p.toString();
+    history.replaceState(null, '', q ? ('?' + q) : location.pathname);
+  }
+
+  function renderAvatars(ids) {
+    const el = document.getElementById('chatAvatars');
+    if (!el) return;
+    const shown = (ids || []).slice(0, 4);
+    el.innerHTML = shown.map(function (id, i) {
+      const name = agentName(id);
+      return '<div class="avatar swarm-av" style="background:' + agentColor(id) + ';z-index:' + (10 - i) + '" title="' + esc(name) + '">' + esc(name.slice(0, 1).toUpperCase()) + '</div>';
+    }).join('') + (ids.length > 4 ? '<span class="swarm-more">+' + (ids.length - 4) + '</span>' : '');
+  }
+
+  function renderList(filter) {
+    const q = (filter || '').trim().toLowerCase();
+    const rows = sessions.filter(function (s) {
+      if (!q) return true;
+      const label = sessionLabel(s);
+      return (s.title || '').toLowerCase().includes(q) ||
+        label.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q);
+    });
+
+    if (!rows.length) {
+      listEl.innerHTML = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet') + '</div>';
+      return;
+    }
+
+    listEl.innerHTML = rows.map(function (s) {
+      const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+      const label = sessionLabel(s);
+      const sel = s.id === activeId ? ' selected' : '';
+      const primary = ids[0] || s.agent_id;
+      const swarm = ids.length > 1;
+      const avatars = ids.slice(0, 3).map(function (id, i) {
+        const n = agentName(id);
+        return '<span class="avatar xs" style="background:' + agentColor(id) + ';margin-left:' + (i ? '-6px' : '0') + '">' + esc(n.slice(0, 1).toUpperCase()) + '</span>';
+      }).join('');
+      return '<button type="button" class="session-item' + sel + '" data-id="' + esc(s.id) + '">' +
+        '<div class="session-avatars">' + avatars + '</div>' +
+        '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') +
+        (swarm ? ' <span class="badge accent sm">swarm</span>' : '') + '</div>' +
+        '<div class="desc">' + esc(label) + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
+        '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></button>';
+    }).join('');
+
+    listEl.querySelectorAll('.session-item').forEach(function (btn) {
+      btn.addEventListener('click', function () { selectSession(btn.dataset.id); });
+    });
+  }
+
+  function renderHistory(entries) {
+    const scroll = chatWrap.querySelector('.chat-scroll');
+    scroll.innerHTML = '';
+    if (!entries.length) {
+      scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes to agents. Use @name to mention one.</div></div>';
+      return;
+    }
+    entries.forEach(function (e) {
+      if (e.type === 'delegate') {
+        const row = document.createElement('div');
+        row.className = 'delegate-line';
+        row.textContent = e.content || ('Handing off to ' + agentName(e.agent_id));
+        scroll.appendChild(row);
+        return;
+      }
+      if (e.type !== 'user' && e.type !== 'final') return;
+      const role = e.type === 'user' ? 'user' : 'assistant';
+      const who = role === 'user' ? 'You' : agentName(e.agent_id);
+      const row = document.createElement('div');
+      row.className = 'msg ' + role;
+      const avStyle = role === 'assistant' && e.agent_id ? ' style="background:' + agentColor(e.agent_id) + '"' : '';
+      row.innerHTML = '<div class="av"' + avStyle + '>' + esc(role === 'user' ? 'You' : who.slice(0, 1).toUpperCase()) + '</div>' +
+        '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose">' + esc(e.content || '') + '</div></div>';
+      scroll.appendChild(row);
+    });
+    scroll.querySelectorAll('.prose').forEach(function (el) {
+      if (window.TomoChat && TomoChat.renderMarkdown) TomoChat.renderMarkdown(el);
+    });
+  }
+
+  async function selectSession(sessionId) {
+    const s = sessions.find(function (x) { return x.id === sessionId; });
+    if (!s) return;
+    activeId = sessionId;
+    setUrl(sessionId);
+    renderList(searchEl ? searchEl.value : '');
+
+    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+    const label = sessionLabel(s);
+
+    emptyEl.style.display = 'none';
+    chatWrap.style.display = 'flex';
+
+    chatWrap.dataset.sessionId = sessionId;
+    chatWrap.dataset.userId = s.user_id || 'web';
+    chatWrap.dataset.agentIds = ids.join(',');
+    chatWrap.dataset.agentName = label;
+    chatWrap.dataset.chatInit = '0';
+    delete chatWrap.dataset.agentId;
+
+    document.getElementById('chatAgentName').textContent = label;
+    document.getElementById('chatSessionMeta').textContent = sessionId + ' · ' + ids.length + ' agent' + (ids.length === 1 ? '' : 's');
+    renderAvatars(ids);
+
+    if (chatHandle && chatHandle.destroy) chatHandle.destroy();
+    chatHandle = null;
+
+    try {
+      const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
+      renderHistory(hist.entries || []);
+      chatHandle = TomoChat.init(chatWrap);
+      chatWrap.addEventListener('tomo:chat-done', refreshSessions, { once: true });
+      chatWrap.addEventListener('tomo:chat-cleared', function () {
+        renderHistory([]);
+        refreshSessions();
+      }, { once: true });
+    } catch (e) {
+      Tomo.toast('Could not load session', 'err');
+    }
+  }
+
+  async function refreshSessions() {
+    try {
+      const data = await Tomo.api('/api/sessions');
+      if (!data) return;
+      sessions = data.sessions || [];
+      agents = {};
+      (data.agents || []).forEach(function (a) { agents[a.id] = a; });
+      renderList(searchEl ? searchEl.value : '');
+      if (activeId && !sessions.find(function (s) { return s.id === activeId; })) {
+        activeId = null;
+        chatWrap.style.display = 'none';
+        emptyEl.style.display = 'flex';
+      }
+    } catch (e) {
+      listEl.innerHTML = '<div class="empty">Could not load sessions</div>';
+    }
+  }
+
+  function pickedAgentIds(container) {
+    return Array.from(container.querySelectorAll('input[name="agent"]:checked')).map(function (el) { return el.value; });
+  }
+
+  async function startNewChat(agentIds) {
+    if (!agentIds.length) {
+      Tomo.toast('Pick at least one agent', 'err');
+      return;
+    }
+    try {
+      const data = await Tomo.api('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_ids: agentIds, user_id: 'web' }),
+      });
+      await refreshSessions();
+      if (data && data.session_id) selectSession(data.session_id);
+    } catch (e) {
+      Tomo.toast('Could not start chat', 'err');
+    }
+  }
+
+  function buildEditList(ids) {
+    const container = document.getElementById('editSwarmAgents');
+    if (!container) return;
+    const selected = new Set(ids || []);
+    container.innerHTML = Object.keys(agents).map(function (id) {
+      const a = agents[id];
+      const checked = selected.has(id) ? ' checked' : '';
+      const dis = a.enabled ? '' : ' disabled';
+      return '<label class="agent-pick' + (a.enabled ? '' : ' disabled') + '">' +
+        '<input type="checkbox" name="agent" value="' + esc(id) + '"' + checked + dis + '>' +
+        '<span class="avatar sm" style="background:' + agentColor(id) + '">' + esc(a.name.slice(0, 1)) + '</span>' +
+        '<span class="agent-pick-meta"><span class="name">' + esc(a.name) + '</span></span></label>';
+    }).join('');
+  }
+
+  if (searchEl) searchEl.addEventListener('input', function () { renderList(searchEl.value); });
+
+  function bindModal(m, closeAttr) {
+    if (!m) return;
+    m.querySelectorAll('[data-close="' + closeAttr + '"]').forEach(function (el) {
+      el.addEventListener('click', function () { m.classList.add('hidden'); m.setAttribute('aria-hidden', 'true'); });
+    });
+  }
+  bindModal(modal, '1');
+  bindModal(editModal, '2');
+
+  if (newBtn && modal) {
+    newBtn.addEventListener('click', function () { modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false'); });
+  }
+  if (newConfirm) {
+    newConfirm.addEventListener('click', function () {
+      const ids = pickedAgentIds(document.getElementById('newChatAgents'));
+      modal.classList.add('hidden');
+      startNewChat(ids);
+    });
+  }
+
+  if (editBtn && editModal) {
+    editBtn.addEventListener('click', function () {
+      const s = sessions.find(function (x) { return x.id === activeId; });
+      if (!s) return;
+      buildEditList(s.agent_ids || [s.agent_id]);
+      editModal.classList.remove('hidden');
+      editModal.setAttribute('aria-hidden', 'false');
+    });
+  }
+  if (editConfirm) {
+    editConfirm.addEventListener('click', async function () {
+      const ids = pickedAgentIds(document.getElementById('editSwarmAgents'));
+      if (!ids.length) { Tomo.toast('Pick at least one agent', 'err'); return; }
+      try {
+        await Tomo.api('/api/sessions/' + encodeURIComponent(activeId) + '/agents', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent_ids: ids, user_id: 'web' }),
+        });
+        editModal.classList.add('hidden');
+        await refreshSessions();
+        if (activeId) selectSession(activeId);
+      } catch (e) {
+        Tomo.toast('Could not update agents', 'err');
+      }
+    });
+  }
+
+  refreshSessions().then(function () {
+    const wanted = params().get('s');
+    const agent = params().get('agent');
+    if (wanted) selectSession(wanted);
+    else if (agent) startNewChat([agent]);
+    else if (sessions.length) selectSession(sessions[0].id);
+  });
+})();

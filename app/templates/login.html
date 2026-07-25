@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ brand }} · Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}">
+  <script>(function(){var t=localStorage.getItem('tomo-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+</head>
+<body>
+<div class="login-card card">
+  <div class="lock"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+  <h1>{{ brand }}</h1>
+  <div class="sub">友達 · sign in to your swarm</div>
+  {% if error %}<div class="login-err">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
+    <div class="field"><label>Password</label><input class="input" type="password" name="password" autofocus placeholder="Enter admin password"></div>
+    <button class="btn primary" type="submit" style="width:100%;justify-content:center">Sign in</button>
+  </form>
+  <div class="login-hint">dev password: tomo</div>
+</div>
+</body>
+</html>

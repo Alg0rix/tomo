@@ -1,0 +1,15 @@
+<div class="agent-studio-panel hidden" id="panel-config">
+  <div class="card">
+    <div class="card-head"><h3>Configuration</h3><span class="badge muted">read-only stub</span></div>
+    <div class="card-body" style="padding:16px 18px">
+      <div class="config-grid">
+        <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ agent.id }}</div></div>
+        <div class="config-row"><div class="lbl">Model</div><div class="mono">{{ agent.model_id or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Description</div><div>{{ agent.description or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Status</div>
+          <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
