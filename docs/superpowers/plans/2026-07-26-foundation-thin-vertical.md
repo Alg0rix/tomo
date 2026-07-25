@@ -69,69 +69,12 @@
 **Interfaces:**
 - Produces: `DB_PATH`, `get_connection()`, `migrate(conn)`, env LLM/DB settings
 
-- [ ] **Step 1: Add dependencies**
-
-Add to `pyproject.toml` dependencies: `httpx>=0.27`. Add optional or dev dependency `pytest>=8`. Prefer:
-
-```toml
-dependencies = [
-    # ...existing...
-    "httpx>=0.27",
-]
-[dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
-```
-
-Run: `uv sync --group dev`
-
-- [ ] **Step 2: Extend config**
-
-In `app/core/config.py` add:
-
-```python
-REPO_ROOT = APP_DIR.parent
-VAR_DIR = Path(os.environ.get("TOMO_VAR_DIR", str(REPO_ROOT / "var")))
-DB_PATH = Path(os.environ.get("TOMO_DB_PATH", str(VAR_DIR / "tomo.db")))
-
-LLM_PROVIDER = os.environ.get("TOMO_LLM_PROVIDER", "mock")  # mock | openai_compat
-LLM_BASE_URL = os.environ.get("TOMO_LLM_BASE_URL", "https://api.openai.com/v1")
-LLM_API_KEY = os.environ.get("TOMO_LLM_API_KEY", "")
-LLM_MODEL = os.environ.get("TOMO_LLM_MODEL", "gpt-4o-mini")
-LLM_MAX_TOOL_ITERATIONS = int(os.environ.get("TOMO_LLM_MAX_TOOL_ITERATIONS", "6"))
-```
-
-- [ ] **Step 3: Write failing schema test**
-
-```python
-# tests/unit/models/test_schema.py
-import sqlite3
-from app.models.schema import migrate
-
-def test_migrate_creates_tables(tmp_path):
-    db = tmp_path / "t.db"
-    conn = sqlite3.connect(db)
-    migrate(conn)
-    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"agents", "sessions", "session_agents", "messages", "settings"} <= names
-```
-
-Run: `uv run pytest tests/unit/models/test_schema.py -v`  
-Expected: FAIL (import/migrate missing)
-
-- [ ] **Step 4: Implement `db.py` + `schema.py`**
-
-`db.py`: ensure parent dir exists; `get_connection()` returns `sqlite3` connection with `row_factory=sqlite3.Row`, `PRAGMA foreign_keys=ON`.
-
-`schema.py`: `CREATE TABLE IF NOT EXISTS` for agents, sessions, session_agents, messages, settings as in the spec. Call from `migrate(conn)` then `conn.commit()`.
-
-- [ ] **Step 5: Re-run test — PASS**
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add pyproject.toml uv.lock app/core/config.py app/models/db.py app/models/schema.py tests/unit/models/test_schema.py
-git commit -m "feat: add SQLite schema and LLM/DB config"
-```
+- [x] **Step 1: Add dependencies**
+- [x] **Step 2: Extend config**
+- [x] **Step 3: Write failing schema test**
+- [x] **Step 4: Implement `db.py` + `schema.py`**
+- [x] **Step 5: Re-run test — PASS**
+- [x] **Step 6: Commit** (`17cc4ea`)
 
 ---
 

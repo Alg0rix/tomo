@@ -28,7 +28,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
 | Plan (`docs/superpowers/plans/…`) | **written** |
-| Cline execution loop | **ready — start Task 1** |
+| Cline execution loop | **Task 1 done (pass)** · next Task 2 |
 
 ---
 
@@ -54,6 +54,12 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 2026-07-26 | Build = **Approach 1** layer-by-layer (SQLite → LLM → tools → loop → web wire) |
 | 2026-07-26 | Constraint: **modular files** — no god-files; split by responsibility |
 
+## Task reviews
+
+| Task | Commit | Verdict |
+|------|--------|---------|
+| 1 Config + schema | `17cc4ea` | **PASS** |
+
 ---
 
 ## Session notes
@@ -70,3 +76,5 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: §3 approved. Presenting §4 (testing / success criteria).
 - 2026-07-26: §4 approved. Spec written to `docs/superpowers/specs/2026-07-26-foundation-thin-vertical-design.md`. Awaiting user review before plan.
 - 2026-07-26: Spec approved. Plan written to `docs/superpowers/plans/2026-07-26-foundation-thin-vertical.md` (review caveats included). Ready for Cline Task 1.
+- 2026-07-26: Dispatched Cline for **Task 1** (schema + config). Brief: `docs/superpowers/handoffs/task-01-cline-brief.md`.
+- 2026-07-26: **Task 1 REVIEW PASS** — commit `17cc4ea`. Tests 2 passed. Files modular (db 28 / schema 76 lines). Minor note: FK on `sessions.coordinator_id` is fine; messages.id INTEGER AUTOINCREMENT OK. Proceed to Task 2 when ready.
