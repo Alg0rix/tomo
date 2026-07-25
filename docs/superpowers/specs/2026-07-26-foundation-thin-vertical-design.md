@@ -1,7 +1,7 @@
 # Tomo Foundation — Thin Vertical Design
 
 **Date:** 2026-07-26  
-**Status:** Approved in brainstorming; awaiting final user review of this document  
+**Status:** Approved 2026-07-26 (user + Cursor review caveats folded into plan)  
 **Roles:** Cursor plans/reviews · Cline implements  
 
 ---

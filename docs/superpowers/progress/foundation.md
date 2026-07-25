@@ -26,9 +26,9 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Clarifying questions | **done** (D/B/B/B/B) |
 | Approaches | **done** — Approach 1 (layer-by-layer) |
 | Design sections | **done** (§1–§4 approved) |
-| Spec (`docs/superpowers/specs/…`) | **written — awaiting user review** |
-| Plan (`docs/superpowers/plans/…`) | pending |
-| Cline execution loop | pending |
+| Spec (`docs/superpowers/specs/…`) | **approved** |
+| Plan (`docs/superpowers/plans/…`) | **written** |
+| Cline execution loop | **ready — start Task 1** |
 
 ---
 
@@ -69,3 +69,4 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: §2 approved + modular-files constraint. Presenting §3 (flow / errors / modularity).
 - 2026-07-26: §3 approved. Presenting §4 (testing / success criteria).
 - 2026-07-26: §4 approved. Spec written to `docs/superpowers/specs/2026-07-26-foundation-thin-vertical-design.md`. Awaiting user review before plan.
+- 2026-07-26: Spec approved. Plan written to `docs/superpowers/plans/2026-07-26-foundation-thin-vertical.md` (review caveats included). Ready for Cline Task 1.
