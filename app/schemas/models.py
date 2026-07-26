@@ -51,6 +51,13 @@ class SessionCreate(BaseModel):
     coordinator_id: str | None = None
 
 
+class HomeSessionIn(BaseModel):
+    """Dashboard chat-home start — no agent picker; coordinator only."""
+
+    message: str = ""
+    user_id: str = "web"
+
+
 class SessionChatIn(BaseModel):
     message: str
     user_id: str = "web"

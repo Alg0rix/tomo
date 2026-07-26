@@ -36,6 +36,26 @@ def list_agents(conn: sqlite3.Connection, busy_ids: set[str]) -> list[dict[str, 
     return [_row_to_agent(r, busy_ids) for r in rows]
 
 
+def get_coordinator(
+    conn: sqlite3.Connection, busy_ids: set[str] | None = None
+) -> dict[str, Any] | None:
+    """Return the swarm coordinator agent.
+
+    Prefers an enabled ``is_super`` agent; falls back to the first enabled
+    agent. Returns ``None`` when no enabled agents exist.
+    """
+    busy = busy_ids if busy_ids is not None else set()
+    row = conn.execute(
+        "SELECT * FROM agents WHERE enabled=1 AND is_super=1 "
+        "ORDER BY created_at ASC LIMIT 1"
+    ).fetchone()
+    if not row:
+        row = conn.execute(
+            "SELECT * FROM agents WHERE enabled=1 ORDER BY is_super DESC, created_at ASC LIMIT 1"
+        ).fetchone()
+    return _row_to_agent(row, busy) if row else None
+
+
 def get_agent(
     conn: sqlite3.Connection, agent_id: str, busy_ids: set[str]
 ) -> dict[str, Any] | None:

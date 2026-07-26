@@ -219,9 +219,9 @@
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
     }
 
-    function doSend() {
-      const text = input.value.trim();
-      if (!text || sending) return;
+    function send(text) {
+      const value = (text != null ? String(text) : input.value).trim();
+      if (!value || sending) return;
       sending = true;
       sendBtn.disabled = true;
       input.value = '';
@@ -230,10 +230,10 @@
       if (empty) empty.remove();
       const u = document.createElement('div');
       u.innerHTML = bubbleHtml('user', defaultAgentName);
-      u.querySelector('.bubble-body').textContent = text;
+      u.querySelector('.bubble-body').textContent = value;
       scroll.appendChild(u.firstElementChild);
       atBottom();
-      streamTurn(text);
+      streamTurn(value);
     }
 
     input.addEventListener('input', function () {
@@ -241,9 +241,9 @@
       resize();
     });
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
-    sendBtn.addEventListener('click', doSend);
+    sendBtn.addEventListener('click', function () { send(); });
     resize();
 
     if (clearBtn) {
@@ -270,7 +270,7 @@
       });
     });
 
-    return { destroy: closeStream };
+    return { destroy: closeStream, send: send };
   }
 
   window.TomoChat = { init: initChat, renderMarkdown: renderMarkdown };

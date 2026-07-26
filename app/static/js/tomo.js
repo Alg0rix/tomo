@@ -4,22 +4,39 @@
   window.Tomo = window.Tomo || {};
 
   // ---- theme ----
+  // tomo.js may load in <head> before #themeBtn exists; bind on DOM ready.
   function applyTheme(t) {
     document.documentElement.setAttribute('data-theme', t);
     localStorage.setItem('tomo-theme', t);
     const moon = document.getElementById('iconMoon'), sun = document.getElementById('iconSun');
-    if (moon && sun) { moon.style.display = t === 'dark' ? '' : 'none'; sun.style.display = t === 'dark' ? 'none' : ''; }
+    if (moon && sun) {
+      moon.style.display = t === 'dark' ? '' : 'none';
+      sun.style.display = t === 'dark' ? 'none' : '';
+    }
   }
-  applyTheme(localStorage.getItem('tomo-theme') || 'dark');
-  const themeBtn = document.getElementById('themeBtn');
-  if (themeBtn) themeBtn.addEventListener('click', function () {
-    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
-    applyTheme(cur === 'dark' ? 'light' : 'dark');
-  });
+  Tomo.applyTheme = applyTheme;
 
-  // ---- nav (mobile) ----
-  const navToggle = document.getElementById('navToggle'), nav = document.getElementById('nav');
-  if (navToggle && nav) navToggle.addEventListener('click', function () { nav.classList.toggle('open'); });
+  function bindChrome() {
+    applyTheme(localStorage.getItem('tomo-theme') || 'dark');
+    const themeBtn = document.getElementById('themeBtn');
+    if (themeBtn && !themeBtn.dataset.tomoBound) {
+      themeBtn.dataset.tomoBound = '1';
+      themeBtn.addEventListener('click', function () {
+        const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+        applyTheme(cur === 'dark' ? 'light' : 'dark');
+      });
+    }
+    const navToggle = document.getElementById('navToggle'), nav = document.getElementById('nav');
+    if (navToggle && nav && !navToggle.dataset.tomoBound) {
+      navToggle.dataset.tomoBound = '1';
+      navToggle.addEventListener('click', function () { nav.classList.toggle('open'); });
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindChrome);
+  } else {
+    bindChrome();
+  }
 
   // ---- toast ----
   const ICONS = {

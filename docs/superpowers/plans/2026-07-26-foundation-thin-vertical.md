@@ -1,5 +1,7 @@
 # Foundation Thin Vertical Implementation Plan
 
+> **Status: DONE** (2026-07-26) — Tasks 1–7 complete (+ adversarial fix passes). Progress: `docs/superpowers/progress/foundation.md`.
+
 > **For agentic workers:** REQUIRED process: Cursor writes a Cline brief per task → Cline implements → Cursor reviews → update `docs/superpowers/progress/foundation.md`. Do not collapse modular files. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Web chat → SQLite store adapter → coordinator-only agent loop → OpenAI-compatible/mock LLM → `calculator` tool → SSE + persisted history.
@@ -54,10 +56,25 @@
 | Create: `tests/unit/models/…` | CRUD tests |
 | Create: `tests/unit/runtime/…` | LLM/tools/loop tests |
 | Create: `tests/integration/test_store_sqlite.py` | Store facade round-trip |
+| Create: `tests/integration/test_chat_mock.py` | Chat SSE + mock LLM |
 
 ---
 
-### Task 1: Config, deps, SQLite connection + schema
+## Task status summary
+
+| Task | Feat commit | Fix commits | Status |
+|------|-------------|-------------|--------|
+| 1 Config + schema | `17cc4ea` | — | **done** |
+| 2 Hybrid store facade | `f7b5297` | `48e9afc` | **done** |
+| 3 LLM mock + openai_compat | `e636884` | `057c2cf` (w/ 4) | **done** |
+| 4 Calculator + registry | `788acce` | `057c2cf` (w/ 3) | **done** |
+| 5 Agent turn loop | `6f3b39b` | `9b620b1` | **done** |
+| 6 Web + chat SSE | `a2542ac` | `cb4b804` | **done** |
+| 7 Docs closeout | `bd71df2` | `d5ae967` | **done** |
+
+---
+
+### Task 1: Config, deps, SQLite connection + schema — DONE
 
 **Files:**
 - Modify: `pyproject.toml`
@@ -78,7 +95,7 @@
 
 ---
 
-### Task 2: Model mixins + seed + thin store facade (hybrid)
+### Task 2: Model mixins + seed + thin store facade (hybrid) — DONE
 
 **Files:**
 - Create: `app/models/seed.py`
@@ -93,93 +110,36 @@
 - Consumes: `get_connection()`, `migrate()`
 - Produces: store methods for agents/sessions/history/settings backed by SQLite; platform_* still from `platform_data`
 
-- [ ] **Step 1: Failing tests for agent create/list and session history append**
-
-```python
-def test_create_and_get_agent(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOMO_DB_PATH", str(tmp_path / "t.db"))
-    # re-import or call migrate + mixin
-    ...
-    assert get_agent("main")["name"] == "Tomo"
-```
-
-- [ ] **Step 2: Implement mixins**
-
-Keep each mixin focused. `messages.append_entry(session_id, entry: dict)`. Sessions store `coordinator_id`; `session_agents` holds membership order. On create swarm session, insert session + rows.
-
-Busy: module-level `set[str]` with `set_busy` / `is_busy` / clear on errors.
-
-- [ ] **Step 3: Seed**
-
-`seed_if_empty(conn)` inserts the four demo agents + sample sessions from current `_seed_agents` / `_seed_sessions` logic (move seed data into `seed.py`, not leave in store).
-
-- [ ] **Step 4: Rewrite `store.py` as facade**
-
-- Call `migrate` + `seed_if_empty` on init  
-- Agents/sessions/history/settings → mixins  
-- `list_tools`, plugins, eval, … → existing `platform_data` seed functions (in-memory lists OK)  
-- **Do not** read/write `store.json` for agents/sessions/messages  
-- Keep public method names used by API/UI  
-
-- [ ] **Step 5: Integration test** — create session, append user+final, list history, list agents from store.
-
-- [ ] **Step 6: Manual smoke** — `uv run python -m app.main`, open `/agents`, confirm agents load.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git commit -m "feat: SQLite-backed store facade for agents and sessions"
-```
+- [x] **Step 1: Failing tests for agent create/list and session history append**
+- [x] **Step 2: Implement mixins**
+- [x] **Step 3: Seed** (`seed_if_empty`)
+- [x] **Step 4: Rewrite `store.py` as facade**
+- [x] **Step 5: Integration test**
+- [x] **Step 6: Manual smoke**
+- [x] **Step 7: Commit** (`f7b5297`); adversarial fix `48e9afc`
 
 ---
 
-### Task 3: LLM client (mock + openai_compat)
+### Task 3: LLM client (mock + openai_compat) — DONE
 
 **Files:**
 - Create: `app/runtime/llm/base.py`, `mock.py`, `openai_compat.py`, `__init__.py`
-- Test: `tests/unit/runtime/llm/test_mock.py`, `test_factory.py`
+- Test: `tests/unit/runtime/llm/test_mock.py`, `test_factory.py`, `test_openai_compat.py`
 
 **Interfaces:**
-- Produces:
+- Produces: `ToolCall`, `LLMResponse`, `LLMClient`, `get_llm()`
 
-```python
-@dataclass
-class ToolCall:
-    id: str
-    name: str
-    arguments: dict[str, Any]
-
-@dataclass
-class LLMResponse:
-    content: str | None
-    tool_calls: list[ToolCall]
-
-class LLMClient(Protocol):
-    async def complete(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse: ...
-
-def get_llm() -> LLMClient: ...
-```
-
-- [ ] **Step 1: Failing tests** — mock returns fixed content; when user message contains `calculate` or `=`, mock returns a `calculator` tool_call then (on second call with tool result) a final content string.
-
-- [ ] **Step 2: Implement mock + openai_compat**
-
-`openai_compat`: `POST {base}/chat/completions` via httpx.AsyncClient; map tool_calls from OpenAI format. Raise clear error if API key missing when provider is `openai_compat`.
-
-- [ ] **Step 3: Factory `get_llm()`** reads `LLM_PROVIDER`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git commit -m "feat: add mock and OpenAI-compatible LLM clients"
-```
+- [x] **Step 1: Failing tests** — mock calc two-step + factory
+- [x] **Step 2: Implement mock + openai_compat**
+- [x] **Step 3: Factory `get_llm()`**
+- [x] **Step 4: Commit** (`e636884`); shared adversarial fix with Task 4: `057c2cf`
 
 ---
 
-### Task 4: Tool registry + calculator
+### Task 4: Tool registry + calculator — DONE
 
 **Files:**
-- Modify: `tools/calculator.json` (ensure schema matches)
+- Modify: `tools/calculator.json`
 - Create: `app/runtime/tools/calculator.py`
 - Modify: `app/runtime/tools/registry.py`
 - Test: `tests/unit/runtime/tools/test_calculator.py`, `test_registry.py`
@@ -187,125 +147,76 @@ git commit -m "feat: add mock and OpenAI-compatible LLM clients"
 **Interfaces:**
 - Produces: `get_openai_tools() -> list[dict]`, `execute(name: str, arguments: dict) -> str`
 
-- [ ] **Step 1: Failing tests** — `2+2` → `"4"`; invalid expr → error string (not exception to caller); unknown tool → error string.
-
-- [ ] **Step 2: Implement calculator** with `ast` literal/eval whitelist (no `eval` of arbitrary code).
-
-- [ ] **Step 3: Registry loads `tools/*.json`, maps backend module path or hardcodes calculator for foundation.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git commit -m "feat: calculator tool and registry dispatch"
-```
+- [x] **Step 1: Failing tests**
+- [x] **Step 2: Implement calculator** (safe `ast` whitelist)
+- [x] **Step 3: Registry loads `tools/*.json` + calculator backend**
+- [x] **Step 4: Commit** (`788acce`); adversarial fix `057c2cf`
 
 ---
 
-### Task 5: Agent context + loop (coordinator turn)
+### Task 5: Agent context + loop (coordinator turn) — DONE
 
 **Files:**
 - Modify: `app/runtime/agent/context.py`
 - Modify: `app/runtime/agent/loop.py`
-- Test: `tests/unit/runtime/agent/test_loop.py`
+- Test: `tests/unit/runtime/agent/test_loop.py`, `test_context.py`
 
 **Interfaces:**
-- Produces: async generator or callback of internal events:
+- Produces: async generator events (`thinking` / `tool` / `tool_result` / `final` / `error`)
 
-```python
-# event kinds for chat.py to map to SSE
-# {"kind": "thinking", "content": str}
-# {"kind": "tool", "tool": str, "args": dict}
-# {"kind": "tool_result", "tool": str, "result": str, "error": bool}
-# {"kind": "final", "content": str}
-# {"kind": "error", "message": str}
-```
-
-- Consumes: `get_llm()`, registry, store history for session
-
-- [ ] **Step 1: Failing tests with mock LLM** — text-only path yields final; tool path yields tool → tool_result → final; max iterations stops.
-
-- [ ] **Step 2: `context.py`** builds OpenAI-style messages from session history (user/final/tool_*). System prompt from `defaults/coordinator_system.md` or short constant.
-
-- [ ] **Step 3: `loop.py`** orchestration only — no HTTP, no SSE formatting.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git commit -m "feat: agent turn loop with tool iterations"
-```
+- [x] **Step 1: Failing tests with mock LLM**
+- [x] **Step 2: `context.py`** — history → OpenAI messages + system prompt
+- [x] **Step 3: `loop.py`** — orchestration only
+- [x] **Step 4: Commit** (`6f3b39b`); adversarial fix `9b620b1`
 
 ---
 
-### Task 6: Web channel + chat SSE wiring (coordinator-only)
+### Task 6: Web channel + chat SSE wiring (coordinator-only) — DONE
 
 **Files:**
 - Modify: `app/channels/web.py`
-- Rewrite: `app/services/chat.py` (keep `_fmt_sse`; remove stub delegation logic for execution — may keep `delegate` event unused or omit)
-- Test: `tests/integration/test_chat_mock.py` (async)
+- Rewrite: `app/services/chat.py`
+- Test: `tests/integration/test_chat_mock.py`
 
 **Interfaces:**
 - Consumes: loop events
 - Produces: SSE stream compatible with existing UI JS
 
-- [ ] **Step 1: Document mapping in code comments**
-
-| Loop kind | SSE event |
-|-----------|-----------|
-| thinking | `thinking` |
-| tool | `tool` |
-| tool_result | `tool_result` |
-| final | `delta` (optional chunks) then `done` |
-| error | `error` |
-
-Always emit `state` busy true/false and `turn.start`.
-
-- [ ] **Step 2: Coordinator-only** — ignore `_pick_responders` multi-agent execution; always run `coordinator_id` only. Still persist `agent_ids` unchanged.
-
-- [ ] **Step 3: Persist** user message before loop; each tool/final/error via `append_session_history` with DB types (`tool_call` / `tool_output` / `final`).
-
-- [ ] **Step 4: Integration test** with mock LLM + temp DB: stream collects a `done` event; history has user+final.
-
-- [ ] **Step 5: Manual** — chat in UI with mock; then optional real key.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git commit -m "feat: wire web chat to real agent loop over SSE"
-```
+- [x] **Step 1: Document mapping in code comments** (loop kind → SSE)
+- [x] **Step 2: Coordinator-only**
+- [x] **Step 3: Persist** user before loop; tool/final/error via `append_session_history`
+- [x] **Step 4: Integration test** with mock LLM + temp DB
+- [x] **Step 5: Manual** — UI chat with mock
+- [x] **Step 6: Commit** (`a2542ac`); adversarial fix `cb4b804`
 
 ---
 
-### Task 7: Docs + progress closeout
+### Task 7: Docs + progress closeout — DONE
 
 **Files:**
 - Modify: `docs/superpowers/progress/foundation.md`
-- Modify: `README.md` (Getting started: env vars for LLM/DB; note foundation status)
-- Modify: `docs/architecture.md` (point to thin vertical)
+- Modify: `README.md`
+- Modify: `docs/architecture.md`
 
-- [ ] **Step 1: Update progress** — mark all layers done; list commits.
-
-- [ ] **Step 2: README** — how to run with mock vs openai_compat.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git commit -m "docs: mark foundation thin vertical complete"
-```
+- [x] **Step 1: Update progress** — all layers done; commits listed
+- [x] **Step 2: README** — mock vs openai_compat + `TOMO_DB_PATH`
+- [x] **Step 3: Commit** (`bd71df2`); finalize `d5ae967`
 
 ---
 
 ## Self-review vs spec
 
-| Spec requirement | Task |
-|------------------|------|
-| SQLite adapter | 1–2 |
-| OpenAI-compat + mock | 3 |
-| calculator only | 4 |
-| Agent loop | 5 |
-| Web + SSE | 6 |
-| Modular files | Global + file map |
-| Hybrid platform_data | Task 2 |
-| SSE contract / no JSON migrate / busy / httpx / full completion | Global Constraints |
+| Spec requirement | Task | Done |
+|------------------|------|------|
+| SQLite adapter | 1–2 | yes |
+| OpenAI-compat + mock | 3 | yes |
+| calculator only | 4 | yes |
+| Agent loop | 5 | yes |
+| Web + SSE | 6 | yes |
+| Modular files | Global + file map | yes |
+| Hybrid platform_data | Task 2 | yes |
+| SSE contract / no JSON migrate / busy / httpx / full completion | Global Constraints | yes |
+| Docs closeout | 7 | yes |
 
 No TBD placeholders. Types consistent across tasks (`LLMResponse`, SSE mapping table).
 
@@ -313,8 +224,6 @@ No TBD placeholders. Types consistent across tasks (`LLMResponse`, SSE mapping t
 
 ## Execution handoff
 
-**Plan complete.** Execution for this project:
+**Plan executed and closed.** Live path: SQLite → mock/openai LLM → calculator → coordinator loop → web SSE.
 
-**Cline loop (required by human):** For each Task 1→7, Cursor posts a brief → Cline implements → Cursor reviews → checkbox + progress log → next task.
-
-Do not start Task 2 until Task 1 review passes.
+**Process used:** For each Task 1→7, Cursor posted a Cline brief → Cline implemented → Cursor reviewed → adversarial review → fix pass when needed → progress log → next task (autonomous after human enabled Review→Adversarial→Fix→Next).

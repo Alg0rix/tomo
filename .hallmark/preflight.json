@@ -1,0 +1,7 @@
+{
+  "scanned": "2026-07-26",
+  "fonts": ["Space Grotesk", "JetBrains Mono"],
+  "palette": "Darkroom (tomo.css)",
+  "motion": "none",
+  "framework": "FastAPI + Jinja"
+}

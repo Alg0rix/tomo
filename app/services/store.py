@@ -94,6 +94,30 @@ class Store:
         with self._lock:
             return agents_store.get_agent(self._conn, agent_id, self._busy.ids())
 
+    def get_coordinator(self) -> dict[str, Any] | None:
+        """Enabled super agent, else first enabled agent (home-chat default)."""
+        with self._lock:
+            return agents_store.get_coordinator(self._conn, self._busy.ids())
+
+    def create_home_session(self, user_id: str = "web") -> dict[str, Any]:
+        """Create a coordinator-only session for the dashboard chat home.
+
+        Returns ``session_id``, ``coordinator_id``, and ``coordinator_name``.
+        Raises ``ValueError`` when no enabled coordinator/agent exists.
+        """
+        with self._lock:
+            coord = agents_store.get_coordinator(self._conn, self._busy.ids())
+            if not coord:
+                raise ValueError("No enabled coordinator agent available")
+            session_id = sessions_store.create_swarm_session(
+                self._conn, [coord["id"]], user_id, coord["id"]
+            )
+            return {
+                "session_id": session_id,
+                "coordinator_id": coord["id"],
+                "coordinator_name": coord["name"],
+            }
+
     def create_agent(self, data: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             return agents_store.create_agent(self._conn, data)

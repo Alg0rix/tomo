@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.deps import AuthDep
-from app.schemas import AgentCreate, AgentUpdate, ChatMessageIn, SessionChatIn, SessionCreate
+from app.schemas import (
+    AgentCreate,
+    AgentUpdate,
+    ChatMessageIn,
+    HomeSessionIn,
+    SessionChatIn,
+    SessionCreate,
+)
 from app.services import store
 
 router = APIRouter(prefix="/api")
@@ -13,7 +20,12 @@ router = APIRouter(prefix="/api")
 
 @router.get("/dashboard/data")
 async def dashboard_data(_: AuthDep):
-    return store.dashboard_data()
+    data = store.dashboard_data()
+    coord = store.get_coordinator()
+    data["coordinator"] = (
+        {"id": coord["id"], "name": coord["name"]} if coord else None
+    )
+    return data
 
 
 @router.get("/dashboard/sidebar")
@@ -98,6 +110,21 @@ async def create_session(body: SessionCreate, _: AuthDep):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"session_id": session_id}
+
+
+@router.post("/sessions/home")
+async def create_home_session(body: HomeSessionIn, _: AuthDep):
+    """Start a coordinator-only chat from the dashboard home composer.
+
+    No agent picker — always routes to the swarm coordinator (``is_super``).
+    Optional ``message`` is returned so the client can deep-link
+    ``/sessions?s=<id>&q=...`` and auto-send once.
+    """
+    try:
+        created = store.create_home_session(body.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**created, "message": (body.message or "").strip()}
 
 
 @router.put("/sessions/{session_id}/agents")

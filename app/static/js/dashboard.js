@@ -1,12 +1,91 @@
-/* dashboard.js — loads /api/dashboard/data and populates the dashboard. */
+/* dashboard.js — chat-home composer + overview stats. */
 (function () {
   "use strict";
   function esc(s) { return Tomo.escapeHtml(s); }
+
+  const form = document.getElementById('homeChatForm');
+  const input = document.getElementById('homeChatInput');
+  const sendBtn = document.getElementById('homeChatSend');
+  const coordNameEl = document.getElementById('homeCoordName');
+  const recentHome = document.getElementById('homeRecentChats');
+
+  function resizeHomeInput() {
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  }
+
+  function syncSend() {
+    // Empty message still starts a blank coordinator-only chat (no q deep-link).
+    if (!sendBtn) return;
+    sendBtn.disabled = sendBtn.dataset.busy === '1';
+  }
+
+  async function startHomeChat(message) {
+    if (!sendBtn) return;
+    sendBtn.dataset.busy = '1';
+    syncSend();
+    try {
+      const data = await Tomo.api('/api/sessions/home', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: message || '', user_id: 'web' }),
+      });
+      if (!data || !data.session_id) throw new Error('No session');
+      const p = new URLSearchParams();
+      p.set('s', data.session_id);
+      if (message) p.set('q', message);
+      window.location.href = '/sessions?' + p.toString();
+    } catch (e) {
+      Tomo.toast((e && e.message) || 'Could not start chat', 'err');
+      sendBtn.dataset.busy = '0';
+      syncSend();
+    }
+  }
+
+  if (form && input && sendBtn) {
+    input.addEventListener('input', function () {
+      resizeHomeInput();
+      syncSend();
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (!sendBtn.disabled) form.requestSubmit();
+      }
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      const text = input.value.trim();
+      startHomeChat(text);
+    });
+    resizeHomeInput();
+    syncSend();
+  }
+
+  function renderHomeRecent(sessions) {
+    if (!recentHome) return;
+    if (!sessions.length) {
+      recentHome.innerHTML = '<div class="empty">No chats yet — send from the left</div>';
+      return;
+    }
+    recentHome.innerHTML = sessions.slice(0, 6).map(function (s) {
+      return '<a class="chat-home-recent-row" href="/sessions?s=' + encodeURIComponent(s.id) + '">' +
+        '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') + '</div>' +
+        '<div class="desc">' + esc(s.agent_id || '') + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
+        '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></a>';
+    }).join('');
+  }
 
   async function load() {
     let d;
     try { d = await Tomo.api('/api/dashboard/data'); } catch (e) { return; }
     if (!d) return;
+    if (d.coordinator && coordNameEl) {
+      coordNameEl.textContent = d.coordinator.name || d.coordinator.id;
+      if (input) input.placeholder = 'Message ' + (d.coordinator.name || 'Tomo') + '…';
+    }
+    renderHomeRecent(d.recent_sessions || []);
     const s = d.stats || {};
     set('s-agents', s.enabled_agent_count, s.agent_count, 'agents');
     set('s-sessions', s.session_count, null, 'sessions');

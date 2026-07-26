@@ -45,6 +45,15 @@
     const p = new URLSearchParams(location.search);
     if (sessionId) p.set('s', sessionId); else p.delete('s');
     p.delete('agent');
+    p.delete('q');
+    const q = p.toString();
+    history.replaceState(null, '', q ? ('?' + q) : location.pathname);
+  }
+
+  function stripQueryParam(name) {
+    const p = new URLSearchParams(location.search);
+    if (!p.has(name)) return;
+    p.delete(name);
     const q = p.toString();
     history.replaceState(null, '', q ? ('?' + q) : location.pathname);
   }
@@ -127,7 +136,7 @@
     });
   }
 
-  async function selectSession(sessionId) {
+  async function selectSession(sessionId, opts) {
     const s = sessions.find(function (x) { return x.id === sessionId; });
     if (!s) return;
     activeId = sessionId;
@@ -136,6 +145,7 @@
 
     const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
     const label = sessionLabel(s);
+    const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
 
     emptyEl.style.display = 'none';
     chatWrap.style.display = 'flex';
@@ -163,6 +173,7 @@
         renderHistory([]);
         refreshSessions();
       }, { once: true });
+      if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
       Tomo.toast('Could not load session', 'err');
     }
@@ -276,7 +287,10 @@
   refreshSessions().then(function () {
     const wanted = params().get('s');
     const agent = params().get('agent');
-    if (wanted) selectSession(wanted);
+    const firstMessage = params().get('q') || '';
+    // Strip q before auto-send so refresh cannot resend the home composer message.
+    if (params().has('q')) stripQueryParam('q');
+    if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
     else if (agent) startNewChat([agent]);
     else if (sessions.length) selectSession(sessions[0].id);
   });

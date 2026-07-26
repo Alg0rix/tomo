@@ -29,7 +29,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Approaches | **done** — Approach 1 (layer-by-layer) |
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
-| Plan (`docs/superpowers/plans/…`) | **written** |
+| Plan (`docs/superpowers/plans/…`) | **done** (Tasks 1–7 checked off) |
 | Cline execution loop | **Task 1–7 done** (+ adversarial fix passes) · **foundation vertical complete** |
 
 ---
@@ -112,3 +112,4 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: **Task 6 REVIEW PASS** — commit `a2542ac`. Web chat runs the real agent loop over SSE (coordinator-only): `chat.py` maps loop kinds → SSE events (`thinking`/`tool`/`tool_result`/`delta`+`done`/`error`), emits `state` busy + `turn.start`, and persists `user`/`tool_call`/`tool_output`/`final` via `append_session_history`. `agent_ids` preserved. Integration test collects a `done` event with mock LLM + temp DB.
 - 2026-07-26: **Task 6 adversarial fix PASS** — commit `cb4b804`. P1: `stream_turn_sse` `try/finally` only clears busy (no `yield` in `finally`); the trailing busy-false `state` is yielded after normal completion; `chat.py` and `app/api/stream.py` wrap turn/heartbeat generators in `contextlib.aclosing` so a client disconnect cascades to the synchronous busy clear instead of suspending until GC. P1: `chat.js` `error` listener splits named SSE `error` events (rendered as an agent error bubble) from transport failures ("Stream interrupted"). P2: `turn_id` restored on `done`; user/tool rows persisted before yielding. Re-verified runtime green.
 - 2026-07-26: **Foundation thin vertical COMPLETE.** The autonomous Review → Adversarial → Fix → Next loop (no human gate between tasks) carried Tasks 1–6 through every fix pass. Live path: SQLite store (`app/models/`) → mock/openai_compat LLM (`app/runtime/llm/`) → `calculator` tool (`app/runtime/tools/`) → coordinator-only agent turn loop (`app/runtime/agent/`) → web chat over SSE (`app/channels/web.py` + `app/services/chat.py`). Task 7 = docs closeout (this log + `README.md` + `docs/architecture.md`).
+- 2026-07-26: Plan checkboxes marked **done** in `docs/superpowers/plans/2026-07-26-foundation-thin-vertical.md` (Tasks 1–7 + commit table).
