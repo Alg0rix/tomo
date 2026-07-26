@@ -1,12 +1,13 @@
-"""Agent work-dir sandbox for file/bash tools (Alpha Slice C).
+"""Agent work-dir sandbox for file/bash tools (Alpha Slice C + D).
 
-Default cwd is ``$TOMO_HOME/agents/<id>/work`` (created on demand). When no
-agent is bound, tools use ``$TOMO_HOME/agents/_default/work``. Path arguments
-must stay under that root — absolute paths and ``..`` escapes are rejected as
-error strings (never raise to the caller).
+Default cwd is ``$TOMO_HOME/agents/<id>/work`` (created on demand). When the
+agent has a **local** workplace with an existing ``root_path``, that path is
+used instead (Slice D). SSH/tunnel workplaces do not redirect cwd in Alpha —
+bash/file stay on the local ``work/`` fallback. When no agent is bound, tools
+use ``$TOMO_HOME/agents/_default/work``.
 
-Workplace-backed cwd (local/SSH) lands in Slice D; until then this local
-``work/`` tree is the documented sandbox.
+Path arguments must stay under that root — absolute paths and ``..`` escapes
+are rejected as error strings (never raise to the caller).
 """
 
 from __future__ import annotations
@@ -48,13 +49,36 @@ def _safe_agent_id(agent_id: str | None) -> str:
     return text
 
 
+def _workplace_local_root(agent_id: str) -> Path | None:
+    """Resolve a local workplace root for ``agent_id``, or ``None`` to fall back."""
+    try:
+        from app.services import store
+
+        raw = store.resolve_agent_workplace_root(agent_id)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    try:
+        if path.is_dir():
+            return path.resolve()
+    except OSError:
+        return None
+    return None
+
+
 def resolve_work_root(agent_id: str | None = None) -> Path:
     """Return the absolute sandbox root for ``agent_id`` (creates if missing).
 
-    Uses the bound ContextVar when ``agent_id`` is omitted. Always creates the
-    directory so bash/file tools have a real cwd.
+    Uses the bound ContextVar when ``agent_id`` is omitted. Prefers a local
+    workplace root when assigned and the path exists; otherwise creates the
+    agent ``work/`` directory so bash/file tools have a real cwd.
     """
     aid = _safe_agent_id(agent_id if agent_id is not None else current_agent_id())
+    wp_root = _workplace_local_root(aid)
+    if wp_root is not None:
+        return wp_root
     root = home.agent_work_dir(aid).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root

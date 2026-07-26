@@ -1,7 +1,7 @@
-"""Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools and
-``platform_data`` for the remaining platform lists (skills, plugins,
-workplaces, schedules, models, providers, safety rules, users, shared
-channels, eval_*). Tool catalog is sourced from the JSON tool registry.
+"""Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
+workplaces and ``platform_data`` for the remaining platform lists (skills,
+plugins, schedules, models, providers, safety rules, users, shared channels,
+eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
 is unchanged. Busy state is process-local in-memory
@@ -22,6 +22,7 @@ from app.models.mixins import sessions as sessions_store
 from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import settings as settings_store
 from app.models.mixins import tools as tools_store
+from app.models.mixins import workplaces as workplaces_store
 from app.models.mixins.busy import BusyState
 from app.models.schema import migrate
 from app.models.seed import seed_if_empty
@@ -38,8 +39,8 @@ from app.services.platform_data import (
     seed_shared_channels,
     seed_skills,
     seed_users,
-    seed_workplaces,
 )
+from app.workplaces.manager import connect as workplace_connect
 
 
 class Store:
@@ -74,7 +75,6 @@ class Store:
         return {
             "skills": seed_skills(),
             "plugins": seed_plugins(),
-            "workplaces": seed_workplaces(),
             "schedules": seed_schedules(),
             "providers": seed_providers(),
             "models": seed_models(),
@@ -125,6 +125,11 @@ class Store:
 
     def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         with self._lock:
+            if "workplace_id" in data and data["workplace_id"]:
+                wid = str(data["workplace_id"]).strip()
+                if wid and not workplaces_store.get_workplace(self._conn, wid):
+                    raise ValueError(f"Workplace not found: {wid}")
+                data = {**data, "workplace_id": wid}
             return agents_store.update_agent(self._conn, agent_id, data, self._busy.ids())
 
     def delete_agent(self, agent_id: str) -> bool:
@@ -190,9 +195,6 @@ class Store:
             return messages_store.get_session_history(self._conn, sid)
 
     def clear_session(self, agent_id: str, user_id: str) -> None:
-        # Look up — do not create — the single-agent session. If none exists,
-        # there is nothing to clear, so this is a no-op rather than inventing an
-        # empty session.
         with self._lock:
             sid = sessions_store.find_session(self._conn, agent_id, user_id)
             if sid is None:
@@ -201,7 +203,10 @@ class Store:
 
     # -- stats / dashboard -----------------------------------------------
     def _stats_from(
-        self, agents: list[dict[str, Any]], sessions: list[dict[str, Any]]
+        self,
+        agents: list[dict[str, Any]],
+        sessions: list[dict[str, Any]],
+        workplace_count: int,
     ) -> dict[str, Any]:
         """Compute the stats dict from already-locked snapshots (no DB/lock access)."""
         enabled = [a for a in agents if a["enabled"]]
@@ -213,33 +218,28 @@ class Store:
             "channel_count": sum(a["channel_count"] for a in agents),
             "active_channel_count": sum(a["channel_count"] for a in enabled),
             "skill_count": len(self._platform["skills"]) or sum(a["skill_count"] for a in agents),
-            "workplace_count": len(self._platform["workplaces"]),
+            "workplace_count": workplace_count,
         }
 
     def stats(self) -> dict[str, Any]:
-        # Hold the lock for the whole snapshot so agents + sessions are read in
-        # one consistent view (no torn snapshot under concurrent writers).
         with self._lock:
             agents = agents_store.list_agents(self._conn, self._busy.ids())
             sessions = sessions_store.list_sessions(self._conn)
-            return self._stats_from(agents, sessions)
+            wps = workplaces_store.list_workplaces(self._conn)
+            return self._stats_from(agents, sessions, len(wps))
 
     def dashboard_data(self) -> dict[str, Any]:
-        # Single lock acquisition for the entire snapshot; mixin helpers do not
-        # take the lock, so there is no nested-lock deadlock.
         with self._lock:
             agents = agents_store.list_agents(self._conn, self._busy.ids())
             sessions = sessions_store.list_sessions(self._conn)
-            # "Recent" agents = newest created first. list_agents() keeps the
-            # is_super DESC / created_at ASC order for the agents list API, so
-            # re-sort here for the dashboard panel only.
+            workplaces = workplaces_store.list_workplaces(self._conn)
             recent_agents = sorted(agents, key=lambda a: a["created_at"], reverse=True)[:5]
             return {
-                "stats": self._stats_from(agents, sessions),
+                "stats": self._stats_from(agents, sessions, len(workplaces)),
                 "recent_agents": recent_agents,
                 "recent_sessions": sessions[:6],
                 "busy_agents": [a["id"] for a in agents if a["busy"]],
-                "workplaces": [dict(w) for w in self._platform["workplaces"][:3]],
+                "workplaces": workplaces[:3],
                 "schedules": [dict(s) for s in self._platform["schedules"][:3]],
             }
 
@@ -315,6 +315,48 @@ class Store:
     def is_setup_complete(self) -> bool:
         return bool(self.get_settings().get("setup_complete", True))
 
+    # -- workplaces (SQLite) ---------------------------------------------
+    def list_workplaces(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return workplaces_store.list_workplaces(self._conn)
+
+    def get_workplace(self, workplace_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return workplaces_store.get_workplace(self._conn, workplace_id)
+
+    def create_workplace(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return workplaces_store.create_workplace(self._conn, data)
+
+    def update_workplace(self, workplace_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return workplaces_store.update_workplace(self._conn, workplace_id, data)
+
+    def delete_workplace(self, workplace_id: str) -> bool:
+        with self._lock:
+            return workplaces_store.delete_workplace(self._conn, workplace_id)
+
+    def connect_workplace(self, workplace_id: str) -> dict[str, Any] | None:
+        """Run Connect/test; persist status. Returns result dict or ``None`` if missing."""
+        with self._lock:
+            secrets = workplaces_store.get_workplace_secrets(self._conn, workplace_id)
+            if not secrets:
+                return None
+            result = workplace_connect(secrets)
+            workplaces_store.set_status(self._conn, workplace_id, result["status"])
+            wp = workplaces_store.get_workplace(self._conn, workplace_id)
+            return {
+                "ok": result["ok"],
+                "status": result["status"],
+                "message": result["message"],
+                "workplace": wp,
+            }
+
+    def resolve_agent_workplace_root(self, agent_id: str) -> str | None:
+        """Local workplace ``root_path`` for ``agent_id``, or ``None`` (use work/)."""
+        with self._lock:
+            return workplaces_store.resolve_local_root(self._conn, agent_id)
+
     # -- platform lists (registry + platform_data) -----------------------
     def _plat(self, key: str) -> list[dict[str, Any]]:
         return [dict(x) for x in self._platform[key]]
@@ -328,9 +370,6 @@ class Store:
 
     def list_plugins(self) -> list[dict[str, Any]]:
         return self._plat("plugins")
-
-    def list_workplaces(self) -> list[dict[str, Any]]:
-        return self._plat("workplaces")
 
     def list_schedules(self) -> list[dict[str, Any]]:
         return self._plat("schedules")
@@ -364,9 +403,6 @@ class Store:
 
     def get_plugin(self, plugin_id: str) -> dict[str, Any] | None:
         return next((dict(p) for p in self._platform["plugins"] if p["id"] == plugin_id), None)
-
-    def get_workplace(self, workplace_id: str) -> dict[str, Any] | None:
-        return next((dict(w) for w in self._platform["workplaces"] if w["id"] == workplace_id), None)
 
     def get_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         return next((dict(s) for s in self._platform["schedules"] if s["id"] == schedule_id), None)

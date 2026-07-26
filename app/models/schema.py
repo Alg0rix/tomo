@@ -8,6 +8,7 @@ Tables (per design spec §5):
 * ``messages``       — session history entries (ChatEntry replay format)
 * ``settings``       — key/value platform settings (JSON-encoded values)
 * ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
+* ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -83,6 +84,22 @@ CREATE TABLE IF NOT EXISTS agent_tools (
     enabled  INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (agent_id, tool_id)
 );
+
+CREATE TABLE IF NOT EXISTS workplaces (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'offline',
+    host         TEXT NOT NULL DEFAULT '',
+    root_path    TEXT NOT NULL DEFAULT '',
+    ssh_host     TEXT NOT NULL DEFAULT '',
+    ssh_port     INTEGER NOT NULL DEFAULT 22,
+    ssh_user     TEXT NOT NULL DEFAULT '',
+    ssh_password TEXT NOT NULL DEFAULT '',
+    ssh_key      TEXT NOT NULL DEFAULT '',
+    created_at   REAL NOT NULL DEFAULT 0,
+    updated_at   REAL NOT NULL DEFAULT 0
+);
 """
 
 
@@ -91,10 +108,15 @@ def migrate(conn: sqlite3.Connection) -> None:
 
     Idempotent: safe to call on an already-migrated database. ``CREATE TABLE
     IF NOT EXISTS`` will not alter an existing ``agents`` table, so a pre-Slice-A
-    database gets the ``role`` column added via an explicit ``ALTER TABLE``.
+    database gets the ``role`` / ``workplace_id`` columns via explicit
+    ``ALTER TABLE``.
     """
     conn.executescript(_SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)")}
     if "role" not in cols:
         conn.execute("ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''")
+    if "workplace_id" not in cols:
+        conn.execute(
+            "ALTER TABLE agents ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"
+        )
     conn.commit()

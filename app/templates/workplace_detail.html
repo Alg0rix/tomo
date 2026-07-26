@@ -9,7 +9,79 @@
       <h1 class="page-title">{{ workplace.name }}</h1>
       <p class="page-sub"><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span> · {{ workplace.host }}</p>
     </div>
-    {{ workplace_status(workplace.status) }}
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      {{ workplace_status(workplace.status) }}
+      {% if workplace.kind != 'tunnel' %}
+      <button class="btn primary sm" type="button" id="wpConnectBtn" data-id="{{ workplace.id }}">Connect</button>
+      {% else %}
+      <span class="badge muted">connector later</span>
+      {% endif %}
+      <button class="btn ghost sm" type="button" id="wpEditBtn" data-id="{{ workplace.id }}">Edit</button>
+    </div>
+  </div>
+
+  <p class="faint" id="wpConnectMsg" style="margin:-4px 0 16px;min-height:1.2em"></p>
+
+  <div class="card hidden" id="workplaceFormCard" style="margin-bottom:16px"
+       data-id="{{ workplace.id }}"
+       data-name="{{ workplace.name }}"
+       data-kind="{{ workplace.kind }}"
+       data-root="{{ workplace.root_path }}"
+       data-ssh-host="{{ workplace.ssh_host }}"
+       data-ssh-port="{{ workplace.ssh_port }}"
+       data-ssh-user="{{ workplace.ssh_user }}"
+       data-password-set="{{ '1' if workplace.password_set else '0' }}"
+       data-key-set="{{ '1' if workplace.key_set else '0' }}">
+    <div class="card-head"><h3>Edit workplace</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="workplaceForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="wpFormMode" value="edit">
+        <div class="config-row"><div class="lbl">ID</div><div class="mono" id="wpIdLabel">{{ workplace.id }}</div>
+          <input type="hidden" id="wpId" value="{{ workplace.id }}">
+        </div>
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input" id="wpName" value="{{ workplace.name }}" style="max-width:220px">
+        </div>
+        <div class="config-row"><div class="lbl">Type</div>
+          <select class="input" id="wpKind" style="max-width:220px">
+            <option value="local" {% if workplace.kind == 'local' %}selected{% endif %}>local</option>
+            <option value="ssh" {% if workplace.kind == 'ssh' %}selected{% endif %}>ssh</option>
+            <option value="tunnel" {% if workplace.kind == 'tunnel' %}selected{% endif %}>tunnel (connector later)</option>
+          </select>
+        </div>
+        <div class="config-row wp-local-only"><div class="lbl">Root path</div>
+          <input class="input" id="wpRootPath" value="{{ workplace.root_path }}" style="max-width:420px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH host</div>
+          <input class="input" id="wpSshHost" value="{{ workplace.ssh_host }}" style="max-width:280px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH port</div>
+          <input class="input" type="number" id="wpSshPort" value="{{ workplace.ssh_port }}" style="max-width:120px">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH user</div>
+          <input class="input" id="wpSshUser" value="{{ workplace.ssh_user }}" style="max-width:220px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Password</div>
+          <div style="flex:1;max-width:420px">
+            <input class="input" type="password" id="wpSshPassword" placeholder="Leave blank to keep existing" style="width:100%" autocomplete="new-password">
+            <p class="faint" id="wpPwdStatus" style="margin:6px 0 0;font-size:12px">{% if workplace.password_set %}Password set{% else %}No password{% endif %}</p>
+          </div>
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Private key</div>
+          <div style="flex:1;max-width:420px">
+            <textarea class="input" id="wpSshKey" rows="3" placeholder="Leave blank to keep existing" style="width:100%;font-family:var(--font-mono);font-size:12px" spellcheck="false"></textarea>
+            <p class="faint" id="wpKeyStatus" style="margin:6px 0 0;font-size:12px">{% if workplace.key_set %}Key set{% else %}No key{% endif %}</p>
+          </div>
+        </div>
+        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Note</div>
+          <div class="faint">Tunnel type is reserved for Tomo Connector — Connect reports “connector later”.</div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="wpCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="wpSave">Save</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <div class="grid-2">
@@ -18,26 +90,35 @@
       <div class="card-body card-body-pad">
         <div class="config-row"><div class="lbl">Host</div><div class="mono">{{ workplace.host }}</div></div>
         <div class="config-row"><div class="lbl">Type</div><div>{{ workplace.kind }}</div></div>
+        {% if workplace.kind == 'local' %}
+        <div class="config-row"><div class="lbl">Root path</div><div class="mono">{{ workplace.root_path or '—' }}</div></div>
+        {% endif %}
+        {% if workplace.kind == 'ssh' %}
+        <div class="config-row"><div class="lbl">SSH</div><div class="mono">{{ workplace.ssh_user }}@{{ workplace.ssh_host }}:{{ workplace.ssh_port }}</div></div>
+        <div class="config-row"><div class="lbl">Auth</div><div>{% if workplace.password_set %}password{% endif %}{% if workplace.password_set and workplace.key_set %} · {% endif %}{% if workplace.key_set %}key{% endif %}{% if not workplace.password_set and not workplace.key_set %}<span class="faint">none set</span>{% endif %}</div></div>
+        {% endif %}
         <div class="config-row"><div class="lbl">Agents</div><div>{{ workplace.agent_count }} assigned</div></div>
         {% if workplace.kind == 'tunnel' %}
-        <div class="config-row"><div class="lbl">Pairing</div><div><span class="badge muted">stub — connector pending</span></div></div>
+        <div class="config-row"><div class="lbl">Pairing</div><div><span class="badge muted">connector later</span></div></div>
         {% endif %}
       </div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Assigned agents</h3></div>
       <div class="card-body">
-        {% for a in agents[:workplace.agent_count] %}
+        {% set assigned = agents | selectattr('workplace_id', 'equalto', workplace.id) | list %}
+        {% for a in assigned %}
         <a class="row" href="/agents/{{ a.id }}" style="text-decoration:none">
           {{ avatar(a.id, a.name, 'sm') }}
           <div class="meta"><div class="title">{{ a.name }}</div></div>
         </a>
         {% else %}
         {% from 'partials/empty.html' import empty_state %}
-        {{ empty_state('No agents assigned') }}
+        {{ empty_state('No agents assigned — set Workplace in agent Configuration') }}
         {% endfor %}
       </div>
     </div>
   </div>
 </div>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}"></script>{% endblock %}

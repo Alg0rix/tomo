@@ -24,6 +24,7 @@
         name: document.getElementById('cfgName').value.trim(),
         role: document.getElementById('cfgRole').value.trim(),
         model_id: document.getElementById('cfgModel').value,
+        workplace_id: (document.getElementById('cfgWorkplace') || { value: '' }).value,
         description: document.getElementById('cfgDesc').value.trim(),
       };
       try {

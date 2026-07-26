@@ -12,6 +12,8 @@ from .models import (
     SessionChatIn,
     SessionCreate,
     Stats,
+    WorkplaceCreate,
+    WorkplaceUpdate,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "SessionChatIn",
     "SessionCreate",
     "Stats",
+    "WorkplaceCreate",
+    "WorkplaceUpdate",
 ]

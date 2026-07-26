@@ -17,6 +17,7 @@ class Agent(BaseModel):
     description: str = ""
     model_id: str | None = None
     role: str = ""
+    workplace_id: str = ""
     enabled: bool = True
     is_super: bool = False
     tool_count: int = 0
@@ -32,6 +33,7 @@ class AgentCreate(BaseModel):
     description: str = ""
     model_id: str | None = None
     role: str = ""
+    workplace_id: str = ""
 
 
 class AgentUpdate(BaseModel):
@@ -39,6 +41,7 @@ class AgentUpdate(BaseModel):
     description: str | None = None
     model_id: str | None = None
     role: str | None = None
+    workplace_id: str | None = None
     enabled: bool | None = None
 
 
@@ -107,3 +110,32 @@ class LLMProfileUpdate(BaseModel):
     api_key: str | None = None
     model: str | None = None
     enabled: bool | None = None
+
+
+class WorkplaceCreate(BaseModel):
+    """Create a workplace (local / ssh / tunnel)."""
+
+    id: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    name: str = Field(min_length=1, max_length=80)
+    kind: Literal["local", "ssh", "tunnel"] = "local"
+    host: str = ""
+    root_path: str = ""
+    ssh_host: str = ""
+    ssh_port: int = 22
+    ssh_user: str = ""
+    ssh_password: str = ""
+    ssh_key: str = ""
+
+
+class WorkplaceUpdate(BaseModel):
+    """Update a workplace. Blank password/key keeps existing ciphertext."""
+
+    name: str | None = Field(default=None, max_length=80)
+    kind: Literal["local", "ssh", "tunnel"] | None = None
+    host: str | None = None
+    root_path: str | None = None
+    ssh_host: str | None = None
+    ssh_port: int | None = None
+    ssh_user: str | None = None
+    ssh_password: str | None = None
+    ssh_key: str | None = None

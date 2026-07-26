@@ -56,7 +56,10 @@ async def create_agent(body: AgentCreate, _: AuthDep):
 
 @router.put("/agents/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate, _: AuthDep):
-    agent = store.update_agent(agent_id, body.model_dump(exclude_unset=True))
+    try:
+        agent = store.update_agent(agent_id, body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent

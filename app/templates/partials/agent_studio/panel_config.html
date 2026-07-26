@@ -19,6 +19,14 @@
               {% endfor %}
             </select>
           </div>
+          <div class="config-row"><div class="lbl">Workplace</div>
+            <select class="input" id="cfgWorkplace" style="max-width:240px">
+              <option value="" {% if not agent.workplace_id %}selected{% endif %}>Default sandbox (work/)</option>
+              {% for w in workplaces %}
+              <option value="{{ w.id }}" {% if agent.workplace_id == w.id %}selected{% endif %}>{{ w.name }} ({{ w.kind }})</option>
+              {% endfor %}
+            </select>
+          </div>
           <div class="config-row"><div class="lbl">Description</div>
             <input class="input" id="cfgDesc" value="{{ agent.description }}" style="max-width:420px">
           </div>

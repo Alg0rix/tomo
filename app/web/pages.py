@@ -52,6 +52,7 @@ async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
         skills=store.get_agent_skills(agent_id),
         channels=store.get_agent_channels(agent_id),
         llm_profiles=store.list_llm_profiles(),
+        workplaces=store.list_workplaces(),
     ))
 
 

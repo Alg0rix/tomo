@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "messages",
     "settings",
     "agent_tools",
+    "workplaces",
 }
 
 

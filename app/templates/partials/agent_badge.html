@@ -9,7 +9,11 @@
 {% endmacro %}
 
 {% macro workplace_status(status) %}
-<span class="badge {{ 'ok' if status == 'connected' else 'muted' }}">
-  <span class="status-dot {{ 'on' if status == 'connected' else 'off' }}"></span>{{ status }}
-</span>
+{% if status == 'connected' %}
+<span class="badge ok"><span class="status-dot on"></span>connected</span>
+{% elif status == 'later' %}
+<span class="badge muted"><span class="status-dot off"></span>connector later</span>
+{% else %}
+<span class="badge muted"><span class="status-dot off"></span>{{ status or 'offline' }}</span>
+{% endif %}
 {% endmacro %}

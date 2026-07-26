@@ -4,12 +4,65 @@
   <div class="page-head">
     <div>
       <h1 class="page-title">Workplaces</h1>
-      <p class="page-sub">Machines your agents run on — local, tunnel, or SSH.</p>
+      <p class="page-sub">Machines your agents run on — local, SSH, or tunnel (connector later).</p>
     </div>
-    <button class="btn primary" type="button" disabled title="Coming soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Connect</button>
+    <button class="btn primary" type="button" id="newWorkplaceBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New workplace</button>
   </div>
 
-  <div class="tile-grid">
+  <div class="card hidden" id="workplaceFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3 id="workplaceFormTitle">New workplace</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="workplaceForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="wpFormMode" value="add">
+        <div class="config-row"><div class="lbl">ID <span class="faint">(slug)</span></div>
+          <input class="input" id="wpId" required pattern="[a-z0-9_]+" placeholder="wp_local" style="max-width:220px" spellcheck="false">
+        </div>
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input" id="wpName" required placeholder="Local Dev" style="max-width:220px">
+        </div>
+        <div class="config-row"><div class="lbl">Type</div>
+          <select class="input" id="wpKind" style="max-width:220px">
+            <option value="local">local</option>
+            <option value="ssh">ssh</option>
+            <option value="tunnel">tunnel (connector later)</option>
+          </select>
+        </div>
+        <div class="config-row wp-local-only"><div class="lbl">Root path</div>
+          <input class="input" id="wpRootPath" placeholder="/path/to/workdir" style="max-width:420px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH host</div>
+          <input class="input" id="wpSshHost" placeholder="host.example.com" style="max-width:280px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH port</div>
+          <input class="input" type="number" id="wpSshPort" value="22" style="max-width:120px">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">SSH user</div>
+          <input class="input" id="wpSshUser" placeholder="deploy" style="max-width:220px" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Password</div>
+          <div style="flex:1;max-width:420px">
+            <input class="input" type="password" id="wpSshPassword" placeholder="Encrypted at rest — leave blank on edit to keep" style="width:100%" autocomplete="new-password">
+            <p class="faint" id="wpPwdStatus" style="margin:6px 0 0;font-size:12px"></p>
+          </div>
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Private key</div>
+          <div style="flex:1;max-width:420px">
+            <textarea class="input" id="wpSshKey" rows="3" placeholder="PEM key — encrypted at rest; blank keeps existing" style="width:100%;font-family:var(--font-mono);font-size:12px" spellcheck="false"></textarea>
+            <p class="faint" id="wpKeyStatus" style="margin:6px 0 0;font-size:12px"></p>
+          </div>
+        </div>
+        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Note</div>
+          <div class="faint">Tunnel type is reserved for Tomo Connector — Connect will report “connector later”, not fake-connected.</div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="wpCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="wpSave">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="tile-grid" id="workplaceTiles">
     {% for w in workplaces %}
     {% with workplace=w %}{% include 'partials/workplace_tile.html' %}{% endwith %}
     {% endfor %}
@@ -18,3 +71,4 @@
   {% include 'partials/workplaces/kinds.html' %}
 </div>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}"></script>{% endblock %}

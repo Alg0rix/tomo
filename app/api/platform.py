@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep
-from app.schemas import LLMProfileCreate, LLMProfileUpdate
+from app.schemas import LLMProfileCreate, LLMProfileUpdate, WorkplaceCreate, WorkplaceUpdate
 from app.services import store
 
 router = APIRouter(prefix="/api")
@@ -88,12 +88,47 @@ async def list_workplaces(_: AuthDep):
     return {"workplaces": store.list_workplaces()}
 
 
+@router.post("/workplaces")
+async def create_workplace(body: WorkplaceCreate, _: AuthDep):
+    try:
+        return store.create_workplace(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/workplaces/{workplace_id}")
 async def get_workplace(workplace_id: str, _: AuthDep):
     wp = store.get_workplace(workplace_id)
     if not wp:
         raise HTTPException(status_code=404, detail="Workplace not found")
     return wp
+
+
+@router.put("/workplaces/{workplace_id}")
+async def update_workplace(workplace_id: str, body: WorkplaceUpdate, _: AuthDep):
+    try:
+        wp = store.update_workplace(workplace_id, body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not wp:
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return wp
+
+
+@router.delete("/workplaces/{workplace_id}")
+async def delete_workplace(workplace_id: str, _: AuthDep):
+    if not store.delete_workplace(workplace_id):
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return {"success": True}
+
+
+@router.post("/workplaces/{workplace_id}/connect")
+async def connect_workplace(workplace_id: str, _: AuthDep):
+    """Test connection; persist status (tunnel stays ``later``, never fake-connected)."""
+    result = store.connect_workplace(workplace_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return result
 
 
 @router.get("/schedules")
