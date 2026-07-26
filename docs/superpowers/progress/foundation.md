@@ -28,7 +28,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
 | Plan (`docs/superpowers/plans/…`) | **written** |
-| Cline execution loop | **Task 1 done (pass)** · next Task 2 |
+| Cline execution loop | **Task 1–2 done (pass)** · next Task 3 |
 
 ---
 
@@ -36,7 +36,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 
 - Repo: `Alg0rix/tomo` — FastAPI UI shell + JSON store stubs
 - Scaffold exists: `app/runtime/`, `models/`, `channels/`, `cli/`, `tools/`, etc. (empty stubs)
-- Live path today: `app/services/store.py` + `chat.py` + full Jinja UI
+- Live path today: hybrid SQLite store (`app/services/store.py`) + `chat.py` + full Jinja UI
 - Roadmap: coordinator, learning loop, memory, connector, channels, skills, observability
 - Constraint from prior discussion: keep core small — **swarm + workplaces + few channels**; not feature-parity with reference platforms
 
@@ -59,6 +59,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Task | Commit | Verdict |
 |------|--------|---------|
 | 1 Config + schema | `17cc4ea` | **PASS** |
+| 2 Hybrid store facade | `f7b5297` | **PASS** |
 
 ---
 
@@ -78,3 +79,5 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: Spec approved. Plan written to `docs/superpowers/plans/2026-07-26-foundation-thin-vertical.md` (review caveats included). Ready for Cline Task 1.
 - 2026-07-26: Dispatched Cline for **Task 1** (schema + config). Brief: `docs/superpowers/handoffs/task-01-cline-brief.md`.
 - 2026-07-26: **Task 1 REVIEW PASS** — commit `17cc4ea`. Tests 2 passed. Files modular (db 28 / schema 76 lines). Minor note: FK on `sessions.coordinator_id` is fine; messages.id INTEGER AUTOINCREMENT OK. Proceed to Task 2 when ready.
+- 2026-07-26: Dispatched Cline for **Task 2** (hybrid store). Brief: `docs/superpowers/handoffs/task-02-cline-brief.md`.
+- 2026-07-26: **Task 2 REVIEW PASS** — commit `f7b5297`. Re-verified: 24 tests passed. Hybrid SQLite + `platform_data`; no `store.json` for core entities; busy in-memory; `rebind` + conftest `TOMO_DB_PATH`. Notes: `store.py` 283 lines (soft ~250, under 400 smell); seeded `message_count` without message rows (stub parity); UI fake log still mentions `store.json`. Proceed to Task 3 when ready.
