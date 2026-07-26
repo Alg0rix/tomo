@@ -38,7 +38,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 
 - Repo: `Alg0rix/tomo` — FastAPI UI shell + JSON store stubs
 - Scaffold exists: `app/runtime/`, `models/`, `channels/`, `cli/`, `tools/`, etc. (empty stubs)
-- Live path today: hybrid SQLite store (`app/services/store.py`) + `chat.py` + full Jinja UI
+- Live path today: hybrid SQLite store → mock/openai LLM → calculator → agent loop → web SSE
 - Roadmap: coordinator, learning loop, memory, connector, channels, skills, observability
 - Constraint from prior discussion: keep core small — **swarm + workplaces + few channels**; not feature-parity with reference platforms
 
@@ -70,6 +70,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 5b Adversarial fix | `9b620b1` | **PASS** |
 | 6 Web + chat SSE wiring | `a2542ac` | **PASS** |
 | 6b Adversarial fix | `cb4b804` | **PASS** |
+| 7 Docs closeout | `bd71df2` | **PASS** |
 
 ---
 
