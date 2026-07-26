@@ -2,7 +2,7 @@
   "id": "calculator",
   "name": "Calculator",
   "description": "Evaluate basic arithmetic expressions.",
-  "backend": "app.runtime.tools.builtin.calculator",
+  "backend": "app.runtime.tools.calculator",
   "schema": {
     "type": "function",
     "function": {
@@ -11,7 +11,10 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "expression": { "type": "string", "description": "Expression to evaluate" }
+          "expression": {
+            "type": "string",
+            "description": "Arithmetic expression to evaluate (numbers and + - * / // % ** with parentheses)."
+          }
         },
         "required": ["expression"]
       }
