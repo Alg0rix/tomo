@@ -1,0 +1,27 @@
+{
+  "id": "write_file",
+  "name": "Write File",
+  "description": "Write a text file in the agent work-dir sandbox.",
+  "backend": "app.runtime.tools.write_file",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Create or overwrite a UTF-8 text file relative to the agent's work directory. Absolute paths and .. escapes are rejected.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path under the sandbox cwd."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file contents to write."
+          }
+        },
+        "required": ["path", "content"]
+      }
+    }
+  }
+}

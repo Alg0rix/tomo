@@ -4,7 +4,14 @@ import sqlite3
 
 from app.models.schema import migrate
 
-EXPECTED_TABLES = {"agents", "sessions", "session_agents", "messages", "settings"}
+EXPECTED_TABLES = {
+    "agents",
+    "sessions",
+    "session_agents",
+    "messages",
+    "settings",
+    "agent_tools",
+}
 
 
 def test_migrate_creates_tables(tmp_path):

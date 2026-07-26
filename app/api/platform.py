@@ -22,6 +22,41 @@ async def list_tools(_: AuthDep):
     return {"tools": store.list_tools()}
 
 
+@router.get("/agents/{agent_id}/tools")
+async def agent_tools(agent_id: str, _: AuthDep):
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"tools": store.get_agent_tools(agent_id)}
+
+
+@router.put("/agents/{agent_id}/tools")
+async def update_agent_tools(agent_id: str, body: dict, _: AuthDep):
+    """Persist per-agent tool enablement.
+
+    Body: ``{"enabled": {"bash": true, "calculator": false, ...}}`` or
+    ``{"tools": [{"id": "bash", "enabled": true}, ...]}``.
+    """
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    enabled: dict[str, bool] = {}
+    raw_map = body.get("enabled")
+    if isinstance(raw_map, dict):
+        for key, val in raw_map.items():
+            if isinstance(key, str):
+                enabled[key] = bool(val)
+    elif isinstance(body.get("tools"), list):
+        for row in body["tools"]:
+            if isinstance(row, dict) and isinstance(row.get("id"), str):
+                enabled[row["id"]] = bool(row.get("enabled", False))
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Body must include 'enabled' map or 'tools' list",
+        )
+    tools = store.set_agent_tools(agent_id, enabled)
+    return {"tools": tools}
+
+
 @router.get("/skills")
 async def list_skills(_: AuthDep):
     return {"skills": store.list_skills()}
@@ -158,13 +193,6 @@ async def complete_setup(body: dict):
             name=(body.get("name") or "Default"),
         )
     return store.update_settings({"setup_complete": True})
-
-
-@router.get("/agents/{agent_id}/tools")
-async def agent_tools(agent_id: str, _: AuthDep):
-    if not store.get_agent(agent_id):
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return {"tools": store.get_agent_tools(agent_id)}
 
 
 @router.get("/agents/{agent_id}/skills")

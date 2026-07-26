@@ -1,0 +1,23 @@
+{
+  "id": "read_file",
+  "name": "Read File",
+  "description": "Read a text file from the agent work-dir sandbox.",
+  "backend": "app.runtime.tools.read_file",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file relative to the agent's work directory. Absolute paths and .. escapes are rejected.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path under the sandbox cwd."
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  }
+}

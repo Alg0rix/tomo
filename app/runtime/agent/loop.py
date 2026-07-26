@@ -31,6 +31,7 @@ from typing import Any, AsyncIterator
 from app.runtime.agent.context import build_messages, build_system_prompt
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
+from app.runtime.tools import sandbox
 from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute, get_openai_tools
 
@@ -97,94 +98,105 @@ async def run_turn(
     out to the consumer. The function is an async generator — iterate with
     ``async for``.
     """
+    sandbox_token = sandbox.bind_agent(agent_id)
     try:
-        client = llm if llm is not None else get_llm(agent_id)
-        tool_schemas = tools if tools is not None else get_openai_tools()
-        limit = (
-            max_iterations
-            if max_iterations is not None
-            else _max_tool_iterations()
-        )
-        prompt = system_prompt
-        if prompt is None:
-            prompt = build_system_prompt(agent_id)
-        messages = build_messages(history, user_message, system_prompt=prompt)
-    except Exception as exc:
-        yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
-        return
-
-    id_counter = itertools.count()
-
-    iteration = 0
-    while iteration < limit:
-        iteration += 1
-        resp: LLMResponse | None = None
-        streamed = False
         try:
-            async for piece in _llm_round(client, messages, tool_schemas):
-                if piece["kind"] == "delta":
-                    streamed = True
-                    yield piece
-                elif piece["kind"] == "_response":
-                    resp = piece["response"]
+            client = llm if llm is not None else get_llm(agent_id)
+            if tools is not None:
+                tool_schemas = tools
+            elif agent_id:
+                from app.services import store
+
+                tool_schemas = store.get_agent_openai_tools(agent_id)
+            else:
+                tool_schemas = get_openai_tools()
+            limit = (
+                max_iterations
+                if max_iterations is not None
+                else _max_tool_iterations()
+            )
+            prompt = system_prompt
+            if prompt is None:
+                prompt = build_system_prompt(agent_id)
+            messages = build_messages(history, user_message, system_prompt=prompt)
         except Exception as exc:
-            yield {"kind": "error", "message": f"LLM request failed: {exc}"}
+            yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
             return
 
-        if resp is None:
-            yield {"kind": "error", "message": "LLM stream ended without a response"}
-            return
+        id_counter = itertools.count()
 
-        if resp.has_tool_calls and resp.content:
-            yield {"kind": "thinking", "content": resp.content}
-
-        if resp.has_tool_calls:
-            paired = _with_ids(resp.tool_calls, id_counter)
-            messages.append(_assistant_tool_calls_message(resp, paired))
-            handoff: dict[str, Any] | None = None
-            for cid, call in paired:
-                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
-                result = execute(call.name, call.arguments)
-                error = str(result).startswith("Error:")
-                yield {
-                    "kind": "tool_result",
-                    "tool": call.name,
-                    "result": result,
-                    "error": error,
-                }
-                messages.append(
-                    {"role": "tool", "tool_call_id": cid, "content": result}
-                )
-                if call.name == "delegate" and not error and handoff is None:
-                    target = parse_delegated_id(str(result))
-                    if target:
-                        reason = call.arguments.get("reason")
-                        if not isinstance(reason, str) or not reason.strip():
-                            reason = "delegate"
-                        handoff = {
-                            "kind": "delegate",
-                            "from": agent_id or "",
-                            "to": target,
-                            "reason": reason.strip(),
-                        }
-            if handoff is not None:
-                yield handoff
+        iteration = 0
+        while iteration < limit:
+            iteration += 1
+            resp: LLMResponse | None = None
+            streamed = False
+            try:
+                async for piece in _llm_round(client, messages, tool_schemas):
+                    if piece["kind"] == "delta":
+                        streamed = True
+                        yield piece
+                    elif piece["kind"] == "_response":
+                        resp = piece["response"]
+            except Exception as exc:
+                yield {"kind": "error", "message": f"LLM request failed: {exc}"}
                 return
-            continue
+
+            if resp is None:
+                yield {"kind": "error", "message": "LLM stream ended without a response"}
+                return
+
+            if resp.has_tool_calls and resp.content:
+                yield {"kind": "thinking", "content": resp.content}
+
+            if resp.has_tool_calls:
+                paired = _with_ids(resp.tool_calls, id_counter)
+                messages.append(_assistant_tool_calls_message(resp, paired))
+                handoff: dict[str, Any] | None = None
+                for cid, call in paired:
+                    yield {"kind": "tool", "tool": call.name, "args": call.arguments}
+                    result = execute(call.name, call.arguments)
+                    error = str(result).startswith("Error:")
+                    yield {
+                        "kind": "tool_result",
+                        "tool": call.name,
+                        "result": result,
+                        "error": error,
+                    }
+                    messages.append(
+                        {"role": "tool", "tool_call_id": cid, "content": result}
+                    )
+                    if call.name == "delegate" and not error and handoff is None:
+                        target = parse_delegated_id(str(result))
+                        if target:
+                            reason = call.arguments.get("reason")
+                            if not isinstance(reason, str) or not reason.strip():
+                                reason = "delegate"
+                            handoff = {
+                                "kind": "delegate",
+                                "from": agent_id or "",
+                                "to": target,
+                                "reason": reason.strip(),
+                            }
+                if handoff is not None:
+                    yield handoff
+                    return
+                continue
+
+            yield {
+                "kind": "final",
+                "content": resp.content or "",
+                "already_streamed": streamed,
+            }
+            return
 
         yield {
-            "kind": "final",
-            "content": resp.content or "",
-            "already_streamed": streamed,
+            "kind": "error",
+            "message": (
+                f"Reached max tool iterations ({limit}) without a final answer."
+            ),
         }
-        return
-
-    yield {
-        "kind": "error",
-        "message": (
-            f"Reached max tool iterations ({limit}) without a final answer."
-        ),
-    }
+    finally:
+        sandbox.reset_agent(sandbox_token)
 
 
 def _with_ids(

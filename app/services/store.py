@@ -1,7 +1,7 @@
-"""Thin store facade: SQLite for agents/sessions/messages/settings and
-``platform_data`` for the remaining platform lists (tools, skills, plugins,
+"""Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools and
+``platform_data`` for the remaining platform lists (skills, plugins,
 workplaces, schedules, models, providers, safety rules, users, shared
-channels, eval_*).
+channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
 is unchanged. Busy state is process-local in-memory
@@ -21,9 +21,11 @@ from app.models.mixins import messages as messages_store
 from app.models.mixins import sessions as sessions_store
 from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import settings as settings_store
+from app.models.mixins import tools as tools_store
 from app.models.mixins.busy import BusyState
 from app.models.schema import migrate
 from app.models.seed import seed_if_empty
+from app.runtime.tools.registry import get_openai_tools, get_registry
 from app.services.platform_data import (
     seed_eval_domains,
     seed_eval_runs,
@@ -35,7 +37,6 @@ from app.services.platform_data import (
     seed_safety_rules,
     seed_shared_channels,
     seed_skills,
-    seed_tools,
     seed_users,
     seed_workplaces,
 )
@@ -71,7 +72,6 @@ class Store:
 
     def _seed_platform(self) -> dict[str, list[dict[str, Any]]]:
         return {
-            "tools": seed_tools(),
             "skills": seed_skills(),
             "plugins": seed_plugins(),
             "workplaces": seed_workplaces(),
@@ -209,7 +209,7 @@ class Store:
             "agent_count": len(agents),
             "enabled_agent_count": len(enabled),
             "session_count": len(sessions),
-            "tool_count": len(self._platform["tools"]) or sum(a["tool_count"] for a in agents),
+            "tool_count": len(get_registry().names()) or sum(a["tool_count"] for a in agents),
             "channel_count": sum(a["channel_count"] for a in agents),
             "active_channel_count": sum(a["channel_count"] for a in enabled),
             "skill_count": len(self._platform["skills"]) or sum(a["skill_count"] for a in agents),
@@ -315,12 +315,13 @@ class Store:
     def is_setup_complete(self) -> bool:
         return bool(self.get_settings().get("setup_complete", True))
 
-    # -- platform lists (platform_data) ----------------------------------
+    # -- platform lists (registry + platform_data) -----------------------
     def _plat(self, key: str) -> list[dict[str, Any]]:
         return [dict(x) for x in self._platform[key]]
 
     def list_tools(self) -> list[dict[str, Any]]:
-        return self._plat("tools")
+        """Global tool catalog from the JSON registry (not platform_data seed)."""
+        return get_registry().list_catalog()
 
     def list_skills(self) -> list[dict[str, Any]]:
         return self._plat("skills")
@@ -375,8 +376,31 @@ class Store:
 
     # -- agent-derived platform views ------------------------------------
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
-        count = (self.get_agent(agent_id) or {}).get("tool_count", 0)
-        return [dict(t, enabled=i < count) for i, t in enumerate(self.list_tools())]
+        """Registry tools with per-agent enablement from ``agent_tools``."""
+        catalog = self.list_tools()
+        with self._lock:
+            return tools_store.list_for_agent(self._conn, agent_id, catalog)
+
+    def set_agent_tools(
+        self, agent_id: str, enabled: dict[str, bool]
+    ) -> list[dict[str, Any]] | None:
+        """Persist enable/disable map; returns updated tool list or None if agent missing."""
+        if not self.get_agent(agent_id):
+            return None
+        known = [t["id"] for t in self.list_tools()]
+        with self._lock:
+            tools_store.set_for_agent(self._conn, agent_id, enabled, known)
+            return tools_store.list_for_agent(self._conn, agent_id, self.list_tools())
+
+    def get_enabled_tool_ids(self, agent_id: str) -> set[str]:
+        """Tool names advertised to the LLM for ``agent_id``."""
+        known = get_registry().names()
+        with self._lock:
+            return tools_store.enabled_ids(self._conn, agent_id, known)
+
+    def get_agent_openai_tools(self, agent_id: str) -> list[dict[str, Any]]:
+        """OpenAI schemas filtered to tools enabled for ``agent_id``."""
+        return get_openai_tools(self.get_enabled_tool_ids(agent_id))
 
     def get_agent_skills(self, agent_id: str) -> list[dict[str, Any]]:
         assigned = {"main": {"onboarding", "deploy"}, "ops": {"deploy"}, "research": {"research_brief"}}.get(agent_id, set())

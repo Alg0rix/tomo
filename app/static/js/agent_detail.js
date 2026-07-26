@@ -1,4 +1,4 @@
-/* agent_detail.js — studio tab switching */
+/* agent_detail.js — studio tab switching + config/tools save */
 (function () {
   "use strict";
   document.querySelectorAll('.agent-studio-tabs .pill-tab[data-panel]').forEach(function (tab) {
@@ -32,6 +32,26 @@
         });
         Tomo.toast('Configuration saved', 'ok');
       } catch (e) { Tomo.toast((e && e.message) || 'Could not save', 'err'); }
+    });
+  }
+  var toolsSave = document.getElementById('toolsSave');
+  if (toolsSave) {
+    toolsSave.addEventListener('click', async function () {
+      var panel = document.getElementById('panel-tools');
+      var agentId = panel ? panel.dataset.agentId : '';
+      var enabled = {};
+      panel.querySelectorAll('.tool-row[data-tool-id]').forEach(function (row) {
+        var id = row.dataset.toolId;
+        var input = row.querySelector('input[type="checkbox"]');
+        enabled[id] = !!(input && input.checked);
+      });
+      try {
+        await Tomo.api('/api/agents/' + encodeURIComponent(agentId) + '/tools', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled }),
+        });
+        Tomo.toast('Tools saved', 'ok');
+      } catch (e) { Tomo.toast((e && e.message) || 'Could not save tools', 'err'); }
     });
   }
   var wrap = document.querySelector('.chat-wrap');

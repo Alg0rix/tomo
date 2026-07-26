@@ -4,22 +4,26 @@ Loads every ``app/tools/*.json`` definition, exposes the OpenAI-compatible
 function-tool schemas (for ``LLMClient.complete(..., tools=...)``), and
 dispatches ``execute(name, arguments)`` to the matching Python backend.
 
-Wired backends include ``calculator`` and ``delegate``. Adding a tool is a
-matter of dropping an ``app/tools/<name>.json`` file and registering its
-backend in :data:`_BACKENDS` below — dynamic ``backend``-path import is a
-later task. ``execute`` always returns a string: unknown tools and missing
-backends produce ``"Error: ..."`` strings rather than raising.
+Wired backends: ``calculator``, ``delegate``, ``bash``, ``read_file``,
+``write_file``. Adding a tool is a matter of dropping an
+``app/tools/<name>.json`` file and registering its backend in
+:data:`_BACKENDS` below — dynamic ``backend``-path import is a later task.
+``execute`` always returns a string: unknown tools and missing backends
+produce ``"Error: ..."`` strings rather than raising.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from app.core import config
+from app.runtime.tools import bash as _bash_backend
 from app.runtime.tools import calculator as _calculator_backend
 from app.runtime.tools import delegate as _delegate_backend
+from app.runtime.tools import read_file as _read_file_backend
+from app.runtime.tools import write_file as _write_file_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
@@ -29,6 +33,9 @@ ToolRunner = Callable[[dict[str, Any]], str]
 _BACKENDS: dict[str, ToolRunner] = {
     "calculator": _calculator_backend.run,
     "delegate": _delegate_backend.run,
+    "bash": _bash_backend.run,
+    "read_file": _read_file_backend.run,
+    "write_file": _write_file_backend.run,
 }
 
 
@@ -73,10 +80,43 @@ class ToolRegistry:
         """Sorted list of registered tool names."""
         return sorted(self._definitions)
 
-    def get_openai_tools(self) -> list[dict[str, Any]]:
-        """Return OpenAI function-tool schemas, ready for ``complete(tools=...)``."""
+    def get_definition(self, name: str) -> dict[str, Any] | None:
+        """Return the raw JSON definition for ``name``, or ``None``."""
+        data = self._definitions.get(name)
+        return dict(data) if isinstance(data, dict) else None
+
+    def list_catalog(self) -> list[dict[str, Any]]:
+        """UI/API catalog rows sourced from registry JSON (not platform seed)."""
+        rows: list[dict[str, Any]] = []
+        for name in sorted(self._definitions):
+            data = self._definitions[name]
+            schema = data.get("schema") or {}
+            fn = schema.get("function") or {}
+            rows.append(
+                {
+                    "id": name,
+                    "name": data.get("name") or name,
+                    "description": data.get("description")
+                    or fn.get("description")
+                    or "",
+                    "backend": data.get("backend") or "builtin",
+                    "enabled": True,
+                }
+            )
+        return rows
+
+    def get_openai_tools(
+        self, enabled: Iterable[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return OpenAI function-tool schemas, ready for ``complete(tools=...)``.
+
+        When ``enabled`` is provided, only those tool names are included.
+        """
+        allow = set(enabled) if enabled is not None else None
         tools: list[dict[str, Any]] = []
         for name in sorted(self._definitions):
+            if allow is not None and name not in allow:
+                continue
             schema = self._definitions[name].get("schema")
             if isinstance(schema, dict) and schema.get("type") == "function":
                 tools.append(schema)
@@ -110,9 +150,9 @@ def get_registry() -> ToolRegistry:
     return _default_registry
 
 
-def get_openai_tools() -> list[dict[str, Any]]:
+def get_openai_tools(enabled: Iterable[str] | None = None) -> list[dict[str, Any]]:
     """OpenAI function-tool schemas from the default registry."""
-    return get_registry().get_openai_tools()
+    return get_registry().get_openai_tools(enabled)
 
 
 def execute(name: str, arguments: dict[str, Any]) -> str:

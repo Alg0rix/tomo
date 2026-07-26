@@ -7,6 +7,7 @@ Tables (per design spec §5):
 * ``session_agents`` — many-to-many session ↔ agent membership (ordered)
 * ``messages``       — session history entries (ChatEntry replay format)
 * ``settings``       — key/value platform settings (JSON-encoded values)
+* ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -74,6 +75,13 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_tools (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    tool_id  TEXT NOT NULL,
+    enabled  INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (agent_id, tool_id)
 );
 """
 

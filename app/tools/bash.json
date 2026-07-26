@@ -1,0 +1,27 @@
+{
+  "id": "bash",
+  "name": "Bash",
+  "description": "Run a shell command in the agent work-dir sandbox.",
+  "backend": "app.runtime.tools.bash",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "bash",
+      "description": "Run a bash command with cwd jailed to the agent's work directory. Returns stdout/stderr text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to run (bash -lc)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Optional timeout in seconds (default 30, max 120)."
+          }
+        },
+        "required": ["command"]
+      }
+    }
+  }
+}
