@@ -118,6 +118,86 @@ async def _emit_delegate(
     yield fmt_sse({"event": "delegate", "data": data, "seq": seq}), seq
 
 
+def _last_user_content(history: list[dict[str, Any]] | None) -> str:
+    if not history:
+        return ""
+    for entry in reversed(history):
+        if entry.get("type") == "user":
+            return str(entry.get("content") or "")
+    return ""
+
+
+def _history_before_last_user(
+    history: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Prior complete turns only (drop last user + any trailing tool trail)."""
+    if not history:
+        return []
+    last_user_i = None
+    for i, entry in enumerate(history):
+        if entry.get("type") == "user":
+            last_user_i = i
+    if last_user_i is None:
+        return list(history)
+    return list(history[:last_user_i])
+
+
+def _handoff_member_prompt(*, from_id: str, reason: str, user_request: str) -> str:
+    """Clear task brief so the member *does the work* instead of re-delegating."""
+    from_name = _agent_label(from_id)
+    reason_s = (reason or "").strip() or "Handle the user's request."
+    user_s = (user_request or "").strip()
+    parts = [
+        f"You received a handoff from {from_name}.",
+        f"Task: {reason_s}",
+        "Do the work yourself now (run tools as needed). Do not delegate again "
+        "unless you truly cannot complete it.",
+    ]
+    if user_s:
+        parts.append(f"User request:\n{user_s}")
+    return "\n\n".join(parts)
+
+
+async def _emit_member_turn_start(
+    *,
+    to_id: str,
+    turn_id: str,
+    seq: int,
+) -> AsyncIterator[tuple[str, int]]:
+    """Announce the nested member agent so the UI switches avatar/name."""
+    seq += 1
+    yield (
+        fmt_sse(
+            {
+                "event": "state",
+                "data": {
+                    "agent_id": to_id,
+                    "agent": _agent_label(to_id),
+                    "busy": True,
+                },
+                "seq": seq,
+            }
+        ),
+        seq,
+    )
+    seq += 1
+    yield (
+        fmt_sse(
+            {
+                "event": "turn.start",
+                "data": {
+                    "turn_id": turn_id,
+                    "agent": _agent_label(to_id),
+                    "agent_id": to_id,
+                    "delegate": True,
+                },
+                "seq": seq,
+            }
+        ),
+        seq,
+    )
+
+
 async def _drain_agent_turn(
     session_id: str,
     agent_id: str,
@@ -159,11 +239,29 @@ async def _drain_agent_turn(
             ):
                 yield chunk, seq
             store.set_busy(agent_id, False)
+            # Nested member: clean context + turn.start so UI/LLM both switch.
+            full_hist = store.get_session_history(session_id)
+            user_req = _last_user_content(full_hist)
+            member_hist = _history_before_last_user(full_hist)
+            member_prompt = _handoff_member_prompt(
+                from_id=from_id, reason=reason, user_request=user_req
+            )
+            async for chunk, seq in _emit_member_turn_start(
+                to_id=to_id, turn_id=turn_id, seq=seq
+            ):
+                yield chunk, seq
+            logger.info(
+                "tool handoff session_id=%s from=%s to=%s reason=%r",
+                session_id,
+                from_id,
+                to_id,
+                reason,
+            )
             async for chunk, seq in _drain_agent_turn(
                 session_id,
                 to_id,
-                user_message=None,
-                history=store.get_session_history(session_id),
+                user_message=member_prompt,
+                history=member_hist,
                 seq=seq,
                 turn_id=turn_id,
                 busy_ids=busy_ids,
@@ -244,10 +342,37 @@ async def stream_turn_sse(
 
     Supports coordinator turns, ``@mention`` force-handoff to session members,
     and mid-turn ``delegate`` tool handoffs with nested member ``run_turn``.
+
+    Only one turn may run per session at a time; concurrent streams get an
+    immediate error so the client can re-queue the message.
     """
     seq = start_seq
     busy_ids: set[str] = set()
     ctx_token = None
+    wp_tokens = None
+    turn_locked = store.try_begin_session_turn(session_id)
+    if not turn_locked:
+        logger.warning(
+            "turn rejected session_id=%s reason=session busy concurrent turn",
+            session_id,
+        )
+        seq += 1
+        yield fmt_sse(
+            {
+                "event": "error",
+                "data": {
+                    "message": (
+                        "Session is busy with another turn. "
+                        "Your message was not accepted — try again when idle."
+                    ),
+                    "code": "session_busy",
+                    "agent_id": coordinator_id,
+                },
+                "seq": seq,
+            }
+        )
+        return
+
     logger.info(
         "turn begin session_id=%s coordinator_id=%s start_seq=%s message=%r",
         session_id,
@@ -427,6 +552,8 @@ async def stream_turn_sse(
         for aid in list(busy_ids):
             store.set_busy(aid, False)
         store.set_busy(coordinator_id, False)
+        if turn_locked:
+            store.end_session_turn(session_id)
 
     seq += 1
     yield fmt_sse(

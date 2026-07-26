@@ -586,6 +586,20 @@ img { max-width: 100%; display: block; }
 .composer .send:disabled { opacity: .45; cursor: not-allowed; }
 .chat-hint { max-width: 820px; margin: 6px auto 0; font-size: 11px; color: var(--text-faint); text-align: center; }
 .composer-inner.mention-host { position: relative; }
+.msg.msg-queued { opacity: 0.72; }
+.msg .queue-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-accent);
+  vertical-align: middle;
+}
 .mention-menu {
   position: absolute; left: 0; right: 54px; bottom: calc(100% + 6px);
   max-height: 220px; overflow: auto; z-index: 40;

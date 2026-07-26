@@ -183,12 +183,32 @@
     if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
 
     let sending = false, es = null;
+    /** @type {{text: string, el: Element|null}[]} */
+    let messageQueue = [];
+    const MAX_QUEUE = 20;
 
     function atBottom() { scroll.scrollTop = scroll.scrollHeight; }
     function setStatus(badge, label) {
       if (!statusEl) return;
       statusEl.className = 'badge ' + badge;
       statusEl.innerHTML = '<span class="pulse"></span>' + esc(label);
+    }
+
+    function refreshSendBtn() {
+      // While a turn is running, send is still allowed so messages enqueue.
+      sendBtn.disabled = !input.value.trim();
+    }
+
+    function busyStatusLabel() {
+      if (messageQueue.length) {
+        return 'busy · ' + messageQueue.length + ' queued';
+      }
+      return 'busy';
+    }
+
+    function syncBusyStatus() {
+      if (sending) setStatus('amber', busyStatusLabel());
+      else if (!messageQueue.length) setStatus('ok', 'online');
     }
 
     scroll.querySelectorAll('.prose').forEach(renderMarkdown);
@@ -199,11 +219,66 @@
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     }
 
+    function appendUserBubble(value, queued) {
+      const empty = scroll.querySelector('.chat-empty');
+      if (empty) empty.remove();
+      const u = document.createElement('div');
+      u.innerHTML = bubbleHtml('user', defaultAgentName);
+      const bubble = u.firstElementChild;
+      bubble.querySelector('.bubble-body').innerHTML = highlightMentions(value);
+      if (queued) {
+        bubble.classList.add('msg-queued');
+        const who = bubble.querySelector('.who');
+        if (who) {
+          who.innerHTML = 'You <span class="queue-chip">queued</span>';
+        }
+      }
+      scroll.appendChild(bubble);
+      atBottom();
+      return bubble;
+    }
+
+    function markBubbleDequeued(el) {
+      if (!el) return;
+      el.classList.remove('msg-queued');
+      const chip = el.querySelector('.queue-chip');
+      if (chip) chip.remove();
+    }
+
     function closeStream() {
       if (es) { es.close(); es = null; }
+      // Do not clear sending here — finishTurn owns the queue drain.
+    }
+
+    function finishTurn() {
+      if (es) { es.close(); es = null; }
       sending = false;
-      sendBtn.disabled = !input.value.trim();
+      Tomo.renderRail && Tomo.renderRail();
+      wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+      if (messageQueue.length) {
+        const next = messageQueue.shift();
+        markBubbleDequeued(next.el);
+        syncBusyStatus();
+        // Fire-and-forget next turn (async).
+        // Bubble was already shown when enqueued (or on the failed concurrent try).
+        startTurn(next.text, { alreadyBubbled: true });
+        return;
+      }
+      setStatus('ok', 'online');
+      refreshSendBtn();
       input.focus();
+    }
+
+    /** Retry queued messages after a concurrent-session rejection (other tab). */
+    function scheduleQueueDrain(delayMs) {
+      setTimeout(function () {
+        if (sending) return;
+        if (!messageQueue.length) {
+          setStatus('ok', 'online');
+          return;
+        }
+        finishTurn();
+      }, delayMs || 500);
     }
 
     function streamUrl(text) {
@@ -324,33 +399,56 @@
         if (closed) return;
         clearPending();
         dropEmptyAssistant();
-        close();
-        Tomo.renderRail && Tomo.renderRail();
-        wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+        closed = true;
+        closeStream();
+        finishTurn();
       }
 
       es.addEventListener('state', function (e) {
         const d = JSON.parse(e.data || '{}');
-        setStatus(d.busy ? 'amber' : 'ok', d.busy ? 'busy' : 'online');
+        if (d.busy) {
+          setStatus('amber', busyStatusLabel());
+        }
         // Close only after a turn started and busy clears — keeps the stream
         // open past `done` so the LLM session-title event is received.
+        // Do not flip to "online" here if more messages are queued.
         if (!d.busy && turnActive) endTurn();
+        else if (!d.busy && !sending) setStatus('ok', 'online');
       });
+      function adoptAgent(id, name) {
+        var nextId = id || turnAgentId;
+        var nextName = name || turnAgentName;
+        var switched = (nextId && nextId !== turnAgentId) ||
+          (nextName && nextName !== turnAgentName);
+        if (nextId) turnAgentId = nextId;
+        if (nextName) turnAgentName = nextName;
+        if (switched) {
+          // New agent after handoff — do not keep coordinator's empty bubble.
+          clearPending();
+          dropEmptyAssistant();
+          asstEl = null;
+          asstBody = null;
+          raw = '';
+        }
+      }
+
       es.addEventListener('delegate', function (e) {
         const d = JSON.parse(e.data || '{}');
         clearPending();
         dropEmptyAssistant();
         const row = document.createElement('div');
         row.className = 'delegate-line';
-        row.textContent = d.content || ('Handing off to ' + (d.agent || d.agent_id));
+        row.textContent = d.content || ('Handing off to ' + (d.agent || d.to || d.agent_id));
         turn.appendChild(row);
+        // Switch stream identity to the target so following deltas show Ops, not Tomo.
+        adoptAgent(d.to || d.agent_id, d.agent);
+        setStatus('amber', 'busy · ' + (d.agent || d.to || 'agent'));
         atBottom();
       });
       es.addEventListener('turn.start', function (e) {
         const d = JSON.parse(e.data || '{}');
         turnActive = true;
-        turnAgentName = d.agent || turnAgentName;
-        turnAgentId = d.agent_id || turnAgentId;
+        adoptAgent(d.agent_id, d.agent);
         // Compact pending chip only — never an empty purple message slab.
         // Real bubbles appear on the first text delta / non-empty done.
         if (!asstEl) showPending();
@@ -365,8 +463,7 @@
       });
       es.addEventListener('thinking', function (e) {
         const d = JSON.parse(e.data || '{}');
-        if (d.agent) turnAgentName = d.agent;
-        if (d.agent_id) turnAgentId = d.agent_id;
+        adoptAgent(d.agent_id, d.agent);
         clearPending();
         if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; turn.appendChild(thinkEl); }
         thinkEl.textContent += d.content || '';
@@ -374,6 +471,7 @@
       });
       es.addEventListener('tool', function (e) {
         const d = JSON.parse(e.data || '{}');
+        adoptAgent(d.agent_id, d.agent);
         clearPending();
         dropEmptyAssistant();
         const card = document.createElement('div');
@@ -395,8 +493,7 @@
       });
       es.addEventListener('delta', function (e) {
         const d = JSON.parse(e.data || '{}');
-        if (d.agent) turnAgentName = d.agent;
-        if (d.agent_id) turnAgentId = d.agent_id;
+        adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
         ensureAssistantBubble();
         asstEl.classList.add('streaming');
@@ -406,8 +503,7 @@
       });
       es.addEventListener('done', function (e) {
         const d = JSON.parse(e.data || '{}');
-        if (d.agent) turnAgentName = d.agent;
-        if (d.agent_id) turnAgentId = d.agent_id;
+        adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
         const content = (d.content != null ? String(d.content) : '').trim();
         if (content) {
@@ -420,7 +516,8 @@
           dropEmptyAssistant();
         }
         atBottom();
-        setStatus('ok', 'online');
+        // Stay "busy" until trailing state busy=false (title upgrade may still run).
+        setStatus('amber', busyStatusLabel());
         // Do not close here — wait for trailing state busy=false so the LLM
         // session-title event (emitted after done) is still received.
       });
@@ -437,47 +534,97 @@
         if (closed) return;
         if (e && e.data) {
           let msg = 'Agent error';
-          try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
+          let code = '';
+          try {
+            const payload = JSON.parse(e.data);
+            msg = payload.message || msg;
+            code = payload.code || '';
+          } catch (_) {}
+          closed = true;
+          closeStream();
+          // Rare concurrent turn (another tab). Re-queue and retry shortly —
+          // do not finishTurn immediately or we thrash the session lock.
+          if (code === 'session_busy' && text) {
+            messageQueue.unshift({ text: text, el: null });
+            sending = false;
+            setStatus('amber', busyStatusLabel());
+            if (window.Tomo && Tomo.toast) {
+              Tomo.toast('Session busy — message queued, retrying…', 'ok');
+            }
+            scheduleQueueDrain(700);
+            return;
+          }
           errorBubble('<span style="color:var(--danger)">' + esc(msg) + '</span>');
-          setStatus('ok', 'online');
-          close();
+          finishTurn();
           return;
         }
         errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
-        setStatus('ok', 'online');
-        close();
+        closed = true;
+        closeStream();
+        finishTurn();
       });
       es.addEventListener('heartbeat', function () {});
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
     }
 
-    async function send(text) {
-      const value = (text != null ? String(text) : input.value).trim();
-      if (!value || sending) return;
+    /**
+     * @param {string} value
+     * @param {{alreadyBubbled?: boolean}} [opts]
+     */
+    async function startTurn(value, opts) {
+      opts = opts || {};
+      if (!value) return;
+      if (sending) {
+        // Nested call should not happen; guard for safety.
+        enqueueMessage(value);
+        return;
+      }
       sending = true;
-      sendBtn.disabled = true;
-      input.value = '';
-      resize();
+      refreshSendBtn();
+      setStatus('amber', busyStatusLabel());
       try {
         await ensureSession();
       } catch (e) {
         sending = false;
-        sendBtn.disabled = !input.value.trim();
+        refreshSendBtn();
+        setStatus('ok', 'online');
         Tomo.toast((e && e.message) || 'Could not start chat', 'err');
+        // If ensure failed for a dequeued item, keep remaining queue usable.
+        if (messageQueue.length) finishTurn();
         return;
       }
-      const empty = scroll.querySelector('.chat-empty');
-      if (empty) empty.remove();
-      const u = document.createElement('div');
-      u.innerHTML = bubbleHtml('user', defaultAgentName);
-      u.querySelector('.bubble-body').innerHTML = highlightMentions(value);
-      scroll.appendChild(u.firstElementChild);
-      atBottom();
+      if (!opts.alreadyBubbled) {
+        appendUserBubble(value, false);
+      }
       streamTurn(value);
     }
 
+    function enqueueMessage(value) {
+      if (messageQueue.length >= MAX_QUEUE) {
+        Tomo.toast('Queue full (max ' + MAX_QUEUE + ' messages). Wait for the current turn.', 'err');
+        return false;
+      }
+      const el = appendUserBubble(value, true);
+      messageQueue.push({ text: value, el: el });
+      setStatus('amber', busyStatusLabel());
+      return true;
+    }
+
+    async function send(text) {
+      const value = (text != null ? String(text) : input.value).trim();
+      if (!value) return;
+      input.value = '';
+      resize();
+      refreshSendBtn();
+      if (sending) {
+        enqueueMessage(value);
+        return;
+      }
+      await startTurn(value, {});
+    }
+
     input.addEventListener('input', function () {
-      sendBtn.disabled = !input.value.trim() || sending;
+      refreshSendBtn();
       resize();
       updateMentions();
     });
@@ -518,6 +665,9 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', async function () {
         if (!confirm('Clear this conversation?')) return;
+        messageQueue = [];
+        if (es) { es.close(); es = null; }
+        sending = false;
         if (!currentSessionId() && !agentId) {
           wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
           return;
@@ -543,7 +693,14 @@
       });
     });
 
-    return { destroy: closeStream, send: send };
+    return {
+      destroy: function () {
+        messageQueue = [];
+        if (es) { es.close(); es = null; }
+        sending = false;
+      },
+      send: send,
+    };
   }
 
   window.TomoChat = { init: initChat, renderMarkdown: renderMarkdown, setMarkdown: setMarkdown };

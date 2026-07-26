@@ -7,13 +7,13 @@
     "type": "function",
     "function": {
       "name": "delegate",
-      "description": "Delegate the current turn to another session member agent by id or name.",
+      "description": "Hand off the current turn to another session member. Call this tool instead of only saying you will delegate — after a successful call the target agent runs immediately and answers the user.",
       "parameters": {
         "type": "object",
         "properties": {
           "agent_id": {
             "type": "string",
-            "description": "Target agent id (preferred)."
+            "description": "Target agent id (preferred), e.g. ops."
           },
           "name": {
             "type": "string",
@@ -21,10 +21,10 @@
           },
           "reason": {
             "type": "string",
-            "description": "Short reason for the handoff (optional)."
+            "description": "What the target should do (include enough detail for them to act without more context)."
           }
         },
-        "required": []
+        "required": ["reason"]
       }
     }
   }

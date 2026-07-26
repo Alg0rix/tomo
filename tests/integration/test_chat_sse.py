@@ -284,8 +284,11 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     assert handoff["to"] == "ops"
     assert handoff.get("reason") in ("ops work", "delegate", "tool")
 
+    starts = _data(events, "turn.start")
+    assert any(s.get("agent_id") == "ops" for s in starts)
     dones = _data(events, "done")
     assert dones and dones[-1]["agent_id"] == "ops"
+    assert not any(d.get("agent_id") == "main" for d in dones)
     assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
         dones[-1].get("content") or ""
     )

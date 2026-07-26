@@ -105,7 +105,11 @@ def map_loop_event(
             fmt_sse(
                 {
                     "event": "thinking",
-                    "data": {"content": ev["content"], "agent_id": agent_id},
+                    "data": {
+                        "content": ev["content"],
+                        "agent_id": agent_id,
+                        "agent": agent_name,
+                    },
                     "seq": seq,
                 }
             )
@@ -124,7 +128,11 @@ def map_loop_event(
             fmt_sse(
                 {
                     "event": "delta",
-                    "data": {"content": ev.get("content") or "", "agent_id": agent_id},
+                    "data": {
+                        "content": ev.get("content") or "",
+                        "agent_id": agent_id,
+                        "agent": agent_name,
+                    },
                     "seq": seq,
                 }
             )
@@ -139,6 +147,7 @@ def map_loop_event(
                         "tool": ev["tool"],
                         "args": ev["args"],
                         "agent_id": agent_id,
+                        "agent": agent_name,
                     },
                     "seq": seq,
                 }
@@ -164,6 +173,7 @@ def map_loop_event(
                         "result": ev["result"],
                         "error": ev["error"],
                         "agent_id": agent_id,
+                        "agent": agent_name,
                     },
                     "seq": seq,
                 }
@@ -187,7 +197,11 @@ def map_loop_event(
                 fmt_sse(
                     {
                         "event": "delta",
-                        "data": {"content": content, "agent_id": agent_id},
+                        "data": {
+                            "content": content,
+                            "agent_id": agent_id,
+                            "agent": agent_name,
+                        },
                         "seq": seq,
                     }
                 )
@@ -222,7 +236,11 @@ def map_loop_event(
             fmt_sse(
                 {
                     "event": "error",
-                    "data": {"message": msg, "agent_id": agent_id},
+                    "data": {
+                        "message": msg,
+                        "agent_id": agent_id,
+                        "agent": agent_name,
+                    },
                     "seq": seq,
                 }
             )

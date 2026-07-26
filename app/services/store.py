@@ -156,6 +156,19 @@ class Store:
         with self._lock:
             self._busy.set_busy(agent_id, busy)
 
+    def try_begin_session_turn(self, session_id: str) -> bool:
+        """Exclusive session turn lock (prevents concurrent SSE turns)."""
+        with self._lock:
+            return self._busy.try_begin_session_turn(session_id)
+
+    def end_session_turn(self, session_id: str) -> None:
+        with self._lock:
+            self._busy.end_session_turn(session_id)
+
+    def is_session_turn_active(self, session_id: str) -> bool:
+        with self._lock:
+            return self._busy.is_session_turn_active(session_id)
+
     # -- sessions (SQLite) -----------------------------------------------
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._lock:

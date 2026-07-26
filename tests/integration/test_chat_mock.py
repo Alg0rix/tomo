@@ -59,6 +59,23 @@ def _data(events: list[tuple[str, dict]], name: str) -> list[dict]:
     return [d for n, d in events if n == name]
 
 
+async def test_concurrent_session_turn_rejected(tmp_path) -> None:
+    """Second in-flight turn on the same session is rejected with session_busy."""
+    store.rebind(tmp_path / "chat_busy_lock.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    assert store.try_begin_session_turn(sid) is True
+    try:
+        events = await _collect(sid, "should fail")
+    finally:
+        store.end_session_turn(sid)
+    assert "error" in _names(events)
+    err = _data(events, "error")[0]
+    assert err.get("code") == "session_busy"
+    # Rejected before user message is persisted.
+    hist = store.get_session_history(sid)
+    assert not any(h.get("type") == "user" and "should fail" in (h.get("content") or "") for h in hist)
+
+
 async def test_plain_turn_emits_done_and_persists_user_final(tmp_path) -> None:
     store.rebind(tmp_path / "chat_plain.db")
     sid = store.create_swarm_session(["main"], user_id="web")
@@ -274,11 +291,19 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     assert handoff["to"] == "ops"
     assert handoff.get("reason") in ("ops work", "delegate", "tool")
 
+    # Nested member must get its own turn.start so the UI switches to Ops.
+    starts = _data(events, "turn.start")
+    assert any(s.get("agent_id") == "ops" for s in starts)
+
     dones = _data(events, "done")
     assert dones and dones[-1]["agent_id"] == "ops"
     assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
         dones[-1].get("content") or ""
     )
+    # Coordinator must not emit a final after a successful tool handoff.
+    assert not any(
+        d.get("agent_id") == "main" for d in dones
+    ), "coordinator final after handoff steals the UI from Ops"
 
     history = store.get_session_history(sid)
     types = [h["type"] for h in history]
