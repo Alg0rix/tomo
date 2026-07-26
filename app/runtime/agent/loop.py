@@ -129,7 +129,12 @@ async def run_turn(
             prompt = system_prompt
             if prompt is None:
                 prompt = build_system_prompt(agent_id)
-            messages = build_messages(history, user_message, system_prompt=prompt)
+            messages = build_messages(
+                history,
+                user_message,
+                system_prompt=prompt,
+                for_agent_id=agent_id,
+            )
         except Exception as exc:
             yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
             return
@@ -170,7 +175,7 @@ async def run_turn(
                     result = await asyncio.to_thread(
                         execute, call.name, call.arguments
                     )
-                    error = str(result).startswith("Error:")
+                    error = _tool_result_is_error(result)
                     yield {
                         "kind": "tool_result",
                         "tool": call.name,
@@ -212,6 +217,20 @@ async def run_turn(
         }
     finally:
         sandbox.reset_agent(sandbox_token)
+
+
+def _tool_result_is_error(result: Any) -> bool:
+    """True when a tool string is a hard failure or non-zero bash exit."""
+    text = str(result or "")
+    if text.startswith("Error:"):
+        return True
+    # bash / remote exec format: "...\nexit code: 127"
+    import re
+
+    m = re.search(r"(?m)^exit code:\s*(\d+)\s*$", text)
+    if m and int(m.group(1)) != 0:
+        return True
+    return False
 
 
 def _with_ids(

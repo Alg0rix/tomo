@@ -5,27 +5,37 @@
   "use strict";
 
   function esc(s) { return Tomo.escapeHtml(s); }
-  function md(text) {
-    if (typeof marked === "undefined") return esc(text).replace(/\n/g, '<br>');
-    try { return marked.parse(text, { breaks: true, gfm: true }); } catch (e) { return esc(text); }
-  }
-  function renderCode(root) {
-    if (!window.hljs) return;
-    root.querySelectorAll('pre code').forEach(function (b) { try { hljs.highlightElement(b); } catch (e) {} });
-  }
+
   function renderMarkdown(el) {
-    // Idempotent: textContent of already-parsed HTML drops markdown markers,
-    // so a second pass (e.g. history render then TomoChat.init) would flatten
-    // formatting to plain text on refresh.
+    // Idempotent: already-parsed HTML must not be re-read via textContent
+    // (that flattens markdown on history + re-init).
     if (!el || el.dataset.md === '1') return;
-    el.innerHTML = md(el.textContent);
-    renderCode(el);
+    var text = el.textContent;
+    if (window.TomoMarkdown && TomoMarkdown.renderInto) {
+      TomoMarkdown.renderInto(el, text);
+      return;
+    }
+    // Fallback if markdown.js not loaded.
+    if (typeof marked !== 'undefined') {
+      try {
+        el.innerHTML = marked.parse(text, { breaks: true, gfm: true });
+      } catch (e) {
+        el.innerHTML = esc(text).replace(/\n/g, '<br>');
+      }
+    } else {
+      el.innerHTML = esc(text).replace(/\n/g, '<br>');
+    }
+    el.classList.add('chat-prose');
     el.dataset.md = '1';
   }
 
   function setMarkdown(el, text) {
     if (!el) return;
     el.dataset.md = '0';
+    if (window.TomoMarkdown && TomoMarkdown.renderInto) {
+      TomoMarkdown.renderInto(el, text == null ? '' : String(text));
+      return;
+    }
     el.textContent = text == null ? '' : String(text);
     renderMarkdown(el);
   }
@@ -38,7 +48,7 @@
     const av = role === 'user' ? 'You' : esc((agentName || 'A').slice(0, 1).toUpperCase());
     const who = role === 'user' ? 'You' : esc(agentName || 'Agent');
     const style = role === 'assistant' && agentId ? ' style="background:' + agentColor(agentId) + '"' : '';
-    return '<div class="msg ' + role + '"><div class="av"' + style + '>' + av + '</div><div class="bubble"><div class="who">' + who + '</div><div class="bubble-body prose"></div></div></div>';
+    return '<div class="msg ' + role + '"><div class="av"' + style + '>' + av + '</div><div class="bubble"><div class="who">' + who + '</div><div class="bubble-body prose chat-prose"></div></div></div>';
   }
 
   function highlightMentions(text) {
@@ -325,13 +335,49 @@
       let turnAgentName = defaultAgentName;
       let turnAgentId = agentId || '';
       let turnActive = false;
+      let sawDone = false;
+      let idleTimer = null;
+      let hardTimer = null;
+      // Mid-turn stall (LLM hang after tool_result). Post-done wait for title.
+      const IDLE_MS = 180000;
+      const POST_DONE_MS = 20000;
+      const HARD_MS = 720000;
 
       es = new EventSource(streamUrl(text));
+
+      function clearWatchdogs() {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
+      }
+
+      function armIdle(ms) {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(function () {
+          if (closed) return;
+          console.warn('[tomo] turn idle timeout', sawDone ? 'post-done' : 'mid-turn');
+          if (!sawDone && !(asstBody && (asstBody.textContent || '').trim())) {
+            errorBubble('<span style="color:var(--danger)">Turn stalled (no response). You can send again.</span>');
+          }
+          endTurn();
+        }, ms || IDLE_MS);
+      }
+
+      function bumpActivity() {
+        armIdle(sawDone ? POST_DONE_MS : IDLE_MS);
+      }
+
+      hardTimer = setTimeout(function () {
+        if (closed) return;
+        console.warn('[tomo] turn hard timeout');
+        errorBubble('<span style="color:var(--danger)">Turn timed out. You can send again.</span>');
+        endTurn();
+      }, HARD_MS);
+      armIdle(IDLE_MS);
 
       // Log every wire event (browser console) for debugging streams / titles.
       [
         'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
-        'delta', 'done', 'delegate', 'error', 'heartbeat', 'auth_expired',
+        'delta', 'done', 'delegate', 'error', 'heartbeat', 'turn.end', 'auth_expired',
       ].forEach(function (name) {
         es.addEventListener(name, function (e) {
           var payload = e && e.data;
@@ -339,12 +385,6 @@
           console.log('[tomo sse]', name, payload);
         });
       });
-
-      function close() {
-        if (closed) return;
-        closed = true;
-        closeStream();
-      }
 
       function clearPending() {
         if (pendingEl) { pendingEl.remove(); pendingEl = null; }
@@ -383,7 +423,6 @@
         raw = '';
       }
 
-      // Render an assistant bubble whose body is raw HTML (used for error text).
       function errorBubble(bodyHtml) {
         clearPending();
         dropEmptyAssistant();
@@ -397,6 +436,7 @@
 
       function endTurn() {
         if (closed) return;
+        clearWatchdogs();
         clearPending();
         dropEmptyAssistant();
         closed = true;
@@ -404,17 +444,6 @@
         finishTurn();
       }
 
-      es.addEventListener('state', function (e) {
-        const d = JSON.parse(e.data || '{}');
-        if (d.busy) {
-          setStatus('amber', busyStatusLabel());
-        }
-        // Close only after a turn started and busy clears — keeps the stream
-        // open past `done` so the LLM session-title event is received.
-        // Do not flip to "online" here if more messages are queued.
-        if (!d.busy && turnActive) endTurn();
-        else if (!d.busy && !sending) setStatus('ok', 'online');
-      });
       function adoptAgent(id, name) {
         var nextId = id || turnAgentId;
         var nextName = name || turnAgentName;
@@ -423,7 +452,6 @@
         if (nextId) turnAgentId = nextId;
         if (nextName) turnAgentName = nextName;
         if (switched) {
-          // New agent after handoff — do not keep coordinator's empty bubble.
           clearPending();
           dropEmptyAssistant();
           asstEl = null;
@@ -432,7 +460,18 @@
         }
       }
 
+      es.addEventListener('state', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        if (d.busy) {
+          setStatus('amber', busyStatusLabel());
+        }
+        // Prefer busy=false to end; turn.end is the hard close from the server.
+        if (!d.busy && turnActive) endTurn();
+        else if (!d.busy && !sending) setStatus('ok', 'online');
+      });
       es.addEventListener('delegate', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         clearPending();
         dropEmptyAssistant();
@@ -440,21 +479,20 @@
         row.className = 'delegate-line';
         row.textContent = d.content || ('Handing off to ' + (d.agent || d.to || d.agent_id));
         turn.appendChild(row);
-        // Switch stream identity to the target so following deltas show Ops, not Tomo.
         adoptAgent(d.to || d.agent_id, d.agent);
         setStatus('amber', 'busy · ' + (d.agent || d.to || 'agent'));
         atBottom();
       });
       es.addEventListener('turn.start', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         turnActive = true;
         adoptAgent(d.agent_id, d.agent);
-        // Compact pending chip only — never an empty purple message slab.
-        // Real bubbles appear on the first text delta / non-empty done.
         if (!asstEl) showPending();
         atBottom();
       });
       es.addEventListener('session', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         if (!d.title) return;
         wrap.dispatchEvent(new CustomEvent('tomo:session-title', {
@@ -462,6 +500,7 @@
         }));
       });
       es.addEventListener('thinking', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
         clearPending();
@@ -470,6 +509,7 @@
         atBottom();
       });
       es.addEventListener('tool', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
         clearPending();
@@ -482,6 +522,7 @@
         atBottom();
       });
       es.addEventListener('tool_result', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const cards = turn.querySelectorAll('.tool');
         const last = cards[cards.length - 1];
@@ -489,9 +530,12 @@
           last._res.style.display = '';
           last._res.textContent = (d.error ? '✗ ' : '→ ') + (typeof d.result === 'string' ? d.result : JSON.stringify(d.result));
         }
+        // Keep typing indicator after tool so UI does not look frozen mid-turn.
+        if (!asstEl && !pendingEl) showPending();
         atBottom();
       });
       es.addEventListener('delta', function (e) {
+        bumpActivity();
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
@@ -502,6 +546,9 @@
         atBottom();
       });
       es.addEventListener('done', function (e) {
+        bumpActivity();
+        sawDone = true;
+        armIdle(POST_DONE_MS);
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
@@ -516,20 +563,13 @@
           dropEmptyAssistant();
         }
         atBottom();
-        // Stay "busy" until trailing state busy=false (title upgrade may still run).
         setStatus('amber', busyStatusLabel());
-        // Do not close here — wait for trailing state busy=false so the LLM
-        // session-title event (emitted after done) is still received.
       });
-      // The 'error' listener fires for TWO distinct cases:
-      //  (1) a named SSE event `event: error\ndata: {"message": ...}` — a server
-      //      agent/loop error surfaced as a MessageEvent with `e.data` set. Show
-      //      the server `message` as an agent error bubble and close cleanly; the
-      //      server has already cleared busy and emits a trailing busy=false state.
-      //  (2) a transport failure (network drop / es.close()) — an Event with NO
-      //      `e.data` (es.readyState === CLOSED). Only this is "Stream interrupted".
-      // Conflating (1) with (2) mislabels agent errors as broken connections and
-      // can leave the busy badge stuck (the trailing busy=false state is dropped).
+      es.addEventListener('turn.end', function () {
+        // Server closed the turn cleanly (no forever-heartbeat after message).
+        endTurn();
+      });
+      // Named SSE error vs transport close.
       es.addEventListener('error', function (e) {
         if (closed) return;
         if (e && e.data) {
@@ -540,11 +580,10 @@
             msg = payload.message || msg;
             code = payload.code || '';
           } catch (_) {}
-          closed = true;
-          closeStream();
-          // Rare concurrent turn (another tab). Re-queue and retry shortly —
-          // do not finishTurn immediately or we thrash the session lock.
           if (code === 'session_busy' && text) {
+            clearWatchdogs();
+            closed = true;
+            closeStream();
             messageQueue.unshift({ text: text, el: null });
             sending = false;
             setStatus('amber', busyStatusLabel());
@@ -555,15 +594,22 @@
             return;
           }
           errorBubble('<span style="color:var(--danger)">' + esc(msg) + '</span>');
-          finishTurn();
+          endTurn();
+          return;
+        }
+        // Transport close: after a normal turn.end/busy=false we already closed.
+        // If the stream ends after activity, finish quietly — do not flash "interrupted".
+        if (turnActive || sawDone) {
+          endTurn();
           return;
         }
         errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
-        closed = true;
-        closeStream();
-        finishTurn();
+        endTurn();
       });
-      es.addEventListener('heartbeat', function () {});
+      es.addEventListener('heartbeat', function () {
+        // Legacy: heartbeat after a message turn meant the turn generator finished.
+        if (turnActive) endTurn();
+      });
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
     }
 

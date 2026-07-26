@@ -30,20 +30,27 @@
     return (agents[id] && agents[id].name) || id;
   }
 
-  function sessionLabel(s) {
+  function isSwarmSession(s) {
+    if (!s) return false;
+    if (s.is_swarm === true) return true;
+    if (s.is_swarm === false) return false;
     const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
-    const names = ids.map(agentName);
-    if (names.length > 2) return names.slice(0, 2).join(', ') + ' +' + (names.length - 2);
-    return names.join(' · ') || s.agent_id || 'Swarm';
+    return ids.length !== 1;
+  }
+
+  function sessionLabel(s) {
+    // Never show agent totals ("Ops +1", "3 agents") — swarm is open-ended.
+    if (isSwarmSession(s)) return 'swarm';
+    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+    return agentName(ids[0] || s.agent_id) || 'Chat';
   }
 
   function applyChatHeader(s) {
-    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
     const label = sessionLabel(s);
     const title = (s.title || '').trim() || label;
     document.getElementById('chatAgentName').textContent = title;
     document.getElementById('chatSessionMeta').textContent =
-      label + ' · ' + ids.length + ' agent' + (ids.length === 1 ? '' : 's');
+      isSwarmSession(s) ? 'swarm · live agents' : (label + ' · solo');
     chatWrap.dataset.agentName = label;
   }
 
@@ -85,11 +92,12 @@
   function renderAvatars(ids) {
     const el = document.getElementById('chatAvatars');
     if (!el) return;
+    // Show a few faces only — no "+N" total (swarm membership is live/open).
     const shown = (ids || []).slice(0, 4);
     el.innerHTML = shown.map(function (id, i) {
       const name = agentName(id);
       return '<div class="avatar swarm-av" style="background:' + agentColor(id) + ';z-index:' + (10 - i) + '" title="' + esc(name) + '">' + esc(name.slice(0, 1).toUpperCase()) + '</div>';
-    }).join('') + (ids.length > 4 ? '<span class="swarm-more">+' + (ids.length - 4) + '</span>' : '');
+    }).join('');
   }
 
   function renderList(filter) {
@@ -111,8 +119,7 @@
       const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
       const label = sessionLabel(s);
       const sel = s.id === activeId ? ' selected' : '';
-      const primary = ids[0] || s.agent_id;
-      const swarm = ids.length > 1;
+      const swarm = isSwarmSession(s);
       const avatars = ids.slice(0, 3).map(function (id, i) {
         const n = agentName(id);
         return '<span class="avatar xs" style="background:' + agentColor(id) + ';margin-left:' + (i ? '-6px' : '0') + '">' + esc(n.slice(0, 1).toUpperCase()) + '</span>';
@@ -152,7 +159,7 @@
       const row = document.createElement('div');
       row.className = 'msg ' + role;
       const avStyle = role === 'assistant' && e.agent_id ? ' style="background:' + agentColor(e.agent_id) + '"' : '';
-      const proseClass = role === 'assistant' ? 'bubble-body prose' : 'bubble-body';
+      const proseClass = role === 'assistant' ? 'bubble-body prose chat-prose' : 'bubble-body';
       row.innerHTML = '<div class="av"' + avStyle + '>' + esc(role === 'user' ? 'You' : who.slice(0, 1).toUpperCase()) + '</div>' +
         '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="' + proseClass + '"></div></div>';
       const body = row.querySelector('.bubble-body');
@@ -175,7 +182,10 @@
     setUrl(sessionId);
     renderList(searchEl ? searchEl.value : '');
 
-    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+    // Live enabled agents for swarm @mentions (not a frozen snapshot).
+    const ids = isSwarmSession(s)
+      ? allEnabledAgentIds()
+      : (s.agent_ids || (s.agent_id ? [s.agent_id] : []));
     const label = sessionLabel(s);
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
 

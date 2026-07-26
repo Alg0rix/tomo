@@ -193,8 +193,8 @@ async def test_bash_turn_emits_tool_events_and_persists_entries(tmp_path, monkey
     assert out["error"] is False
 
 
-async def test_coordinator_only_keeps_agent_ids_unchanged(tmp_path, monkeypatch) -> None:
-    """A bash turn stays on the coordinator; membership is not mutated."""
+async def test_coordinator_turn_live_swarm_membership(tmp_path, monkeypatch) -> None:
+    """A bash turn stays on the coordinator; swarm membership is live-enabled."""
     store.rebind(tmp_path / "chat_swarm.db")
     sid = store.create_swarm_session(["main", "research"], user_id="web")
     _patch_llm(monkeypatch, tool_then_text(bash_call("echo 7"), _BASH_FINAL))
@@ -203,7 +203,8 @@ async def test_coordinator_only_keeps_agent_ids_unchanged(tmp_path, monkeypatch)
 
     session = store.get_session(sid)
     assert session is not None
-    assert session["agent_ids"] == ["main", "research"]
+    assert session.get("is_swarm") is True
+    assert set(session["agent_ids"]) == set(store.list_enabled_agent_ids())
     assert session["coordinator_id"] == "main"
     # no handoff — only the coordinator produced a final entry
     finals = [h for h in store.get_session_history(sid) if h["type"] == "final"]

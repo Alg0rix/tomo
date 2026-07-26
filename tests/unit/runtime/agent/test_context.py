@@ -125,10 +125,75 @@ def test_internal_entry_types_are_skipped(tmp_path: Path) -> None:
         {"type": "final", "content": "yo"},
         {"type": "error", "content": "boom"},
     )
+    # Without for_agent_id, delegate stays internal (legacy single-agent).
     assert history_to_messages(history) == [
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "yo"},
     ]
+
+
+def test_foreign_agent_final_attributed_for_coordinator(tmp_path: Path) -> None:
+    history = _hist(
+        tmp_path,
+        {"type": "user", "content": "ping google"},
+        {
+            "type": "delegate",
+            "content": "Handing off to Ops",
+            "agent_id": "ops",
+            "to": "ops",
+        },
+        {
+            "type": "final",
+            "content": "Avg RTT 15ms from aio-serv.",
+            "agent_id": "ops",
+        },
+        db_name="ctx_swarm.db",
+    )
+    msgs = history_to_messages(history, for_agent_id="main")
+    assert msgs[0] == {"role": "user", "content": "ping google"}
+    assert msgs[1]["role"] == "assistant"
+    assert "[Swarm]" in msgs[1]["content"]
+    assert msgs[2]["role"] == "assistant"
+    assert "[From Ops" in msgs[2]["content"]
+    assert "15ms" in msgs[2]["content"]
+    # Must not look like an unattributed Tomo answer.
+    assert msgs[2]["content"] != "Avg RTT 15ms from aio-serv."
+
+
+def test_foreign_tools_folded_not_as_self_tool_calls(tmp_path: Path) -> None:
+    history = _hist(
+        tmp_path,
+        {"type": "user", "content": "compare latency"},
+        {
+            "type": "tool_call",
+            "function": "bash",
+            "params": {"command": "ping -c 1 google.com"},
+            "agent_id": "ops",
+        },
+        {
+            "type": "tool_output",
+            "content": "rtt avg 15.5 ms",
+            "agent_id": "ops",
+        },
+        {
+            "type": "final",
+            "content": "local_dev is faster",
+            "agent_id": "ops",
+        },
+        db_name="ctx_fold.db",
+    )
+    msgs = history_to_messages(history, for_agent_id="main")
+    # No OpenAI tool_calls for Ops tools — coordinator must not think it ran them.
+    assert not any(m.get("tool_calls") for m in msgs)
+    fold = next(m for m in msgs if m["role"] == "assistant" and "tool run" in (m.get("content") or ""))
+    assert "ping" in fold["content"]
+    assert "15.5" in fold["content"]
+    final = next(
+        m
+        for m in msgs
+        if m["role"] == "assistant" and "local_dev is faster" in (m.get("content") or "")
+    )
+    assert "[From Ops" in final["content"]
 
 
 def test_unknown_entry_type_is_skipped_safely(tmp_path: Path) -> None:

@@ -1,0 +1,76 @@
+/* hljs-chat.css — token colors for highlight.js inside chat code blocks.
+ * No background on .hljs so .chat-prose pre keeps Tomo surfaces.
+ * Dark tokens default (Tomo default theme); light overrides via data-theme.
+ */
+
+.chat-prose .hljs                 { color: #abb2bf; background: transparent; }
+.chat-prose .hljs-comment,
+.chat-prose .hljs-quote           { color: #7f848e; font-style: italic; }
+.chat-prose .hljs-keyword,
+.chat-prose .hljs-selector-tag,
+.chat-prose .hljs-doctag,
+.chat-prose .hljs-formula         { color: #c678dd; }
+.chat-prose .hljs-built_in,
+.chat-prose .hljs-class .hljs-title,
+.chat-prose .hljs-type            { color: #e5c07b; }
+.chat-prose .hljs-string,
+.chat-prose .hljs-regexp,
+.chat-prose .hljs-addition,
+.chat-prose .hljs-meta .hljs-string { color: #98c379; }
+.chat-prose .hljs-number,
+.chat-prose .hljs-literal,
+.chat-prose .hljs-symbol,
+.chat-prose .hljs-bullet,
+.chat-prose .hljs-link            { color: #d19a66; }
+.chat-prose .hljs-title,
+.chat-prose .hljs-title.function_,
+.chat-prose .hljs-section,
+.chat-prose .hljs-name,
+.chat-prose .hljs-selector-id,
+.chat-prose .hljs-selector-class  { color: #61afef; }
+.chat-prose .hljs-attr,
+.chat-prose .hljs-attribute,
+.chat-prose .hljs-variable,
+.chat-prose .hljs-template-variable,
+.chat-prose .hljs-params,
+.chat-prose .hljs-deletion        { color: #e06c75; }
+.chat-prose .hljs-meta,
+.chat-prose .hljs-meta .hljs-keyword,
+.chat-prose .hljs-tag             { color: #56b6c2; }
+.chat-prose .hljs-emphasis        { font-style: italic; }
+.chat-prose .hljs-strong          { font-weight: bold; }
+
+[data-theme="light"] .chat-prose .hljs                 { color: #383a42; }
+[data-theme="light"] .chat-prose .hljs-comment,
+[data-theme="light"] .chat-prose .hljs-quote           { color: #a0a1a7; }
+[data-theme="light"] .chat-prose .hljs-keyword,
+[data-theme="light"] .chat-prose .hljs-selector-tag,
+[data-theme="light"] .chat-prose .hljs-doctag,
+[data-theme="light"] .chat-prose .hljs-formula         { color: #a626a4; }
+[data-theme="light"] .chat-prose .hljs-built_in,
+[data-theme="light"] .chat-prose .hljs-class .hljs-title,
+[data-theme="light"] .chat-prose .hljs-type            { color: #c18401; }
+[data-theme="light"] .chat-prose .hljs-string,
+[data-theme="light"] .chat-prose .hljs-regexp,
+[data-theme="light"] .chat-prose .hljs-addition,
+[data-theme="light"] .chat-prose .hljs-meta .hljs-string { color: #50a14f; }
+[data-theme="light"] .chat-prose .hljs-number,
+[data-theme="light"] .chat-prose .hljs-literal,
+[data-theme="light"] .chat-prose .hljs-symbol,
+[data-theme="light"] .chat-prose .hljs-bullet,
+[data-theme="light"] .chat-prose .hljs-link            { color: #986801; }
+[data-theme="light"] .chat-prose .hljs-title,
+[data-theme="light"] .chat-prose .hljs-title.function_,
+[data-theme="light"] .chat-prose .hljs-section,
+[data-theme="light"] .chat-prose .hljs-name,
+[data-theme="light"] .chat-prose .hljs-selector-id,
+[data-theme="light"] .chat-prose .hljs-selector-class  { color: #4078f2; }
+[data-theme="light"] .chat-prose .hljs-attr,
+[data-theme="light"] .chat-prose .hljs-attribute,
+[data-theme="light"] .chat-prose .hljs-variable,
+[data-theme="light"] .chat-prose .hljs-template-variable,
+[data-theme="light"] .chat-prose .hljs-params,
+[data-theme="light"] .chat-prose .hljs-deletion        { color: #e45649; }
+[data-theme="light"] .chat-prose .hljs-meta,
+[data-theme="light"] .chat-prose .hljs-meta .hljs-keyword,
+[data-theme="light"] .chat-prose .hljs-tag             { color: #0184bc; }

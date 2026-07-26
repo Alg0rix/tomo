@@ -235,6 +235,12 @@ def update_agent(
         conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE id=?", params)
         conn.commit()
         row = conn.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
+    # Re-enabled agents rejoin every multi-member (swarm) session.
+    if data.get("enabled"):
+        try:
+            _add_agent_to_swarm_sessions(conn, agent_id)
+        except Exception:
+            pass
     return _row_to_agent(row, busy_ids)
 
 

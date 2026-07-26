@@ -26,6 +26,8 @@ async def session_chat_stream(
     message = (message or "").strip()
 
     async def event_source():
+        from app.channels.sse_map import fmt_sse
+
         yield "retry: 4000\n\n"
         if message:
             # aclosing guarantees the turn generator is closed on disconnect —
@@ -39,6 +41,17 @@ async def session_chat_stream(
                     if await request.is_disconnected():
                         return
                     yield chunk
+            # End the stream after the turn. Leaving a forever heartbeat left
+            # the browser EventSource open; if busy=false was missed the UI
+            # stayed stuck on "busy" with no further agent text.
+            yield fmt_sse(
+                {
+                    "event": "turn.end",
+                    "data": {"session_id": session_id, "ok": True},
+                    "seq": 9999,
+                }
+            )
+            return
         async with contextlib.aclosing(
             session_heartbeat_stream(session_id, start_seq=1000)
         ) as agen:
@@ -71,6 +84,8 @@ async def chat_stream(
     message = (message or "").strip()
 
     async def event_source():
+        from app.channels.sse_map import fmt_sse
+
         yield "retry: 4000\n\n"
         if message:
             async with contextlib.aclosing(
@@ -80,6 +95,14 @@ async def chat_stream(
                     if await request.is_disconnected():
                         return
                     yield chunk
+            yield fmt_sse(
+                {
+                    "event": "turn.end",
+                    "data": {"agent_id": agent_id, "ok": True},
+                    "seq": 9999,
+                }
+            )
+            return
         async with contextlib.aclosing(
             heartbeat_stream(agent_id, start_seq=1000)
         ) as agen:

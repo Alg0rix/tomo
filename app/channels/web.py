@@ -37,33 +37,41 @@ _fmt_sse = fmt_sse
 def _session_agents(session: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
     """Agents available for routing (delegate / @mention).
 
-    Swarm product default: **all enabled agents** can receive handoffs, even if
-    they were added after the session was created. Session ``agent_ids`` still
-    describe the chat header membership; routing is not locked to that list
-    unless the session is intentional solo (exactly one member and only one
-    enabled agent overall — rare). In practice every multi-agent product path
-    uses the full enabled swarm.
+    Swarm sessions use every **currently enabled** agent (live). A newly
+    created or re-enabled agent is routable on the next message without
+    editing the session. Solo sessions stay fixed to their one member.
     """
+    sid = (session.get("id") or "").strip()
+    if sid:
+        try:
+            # Persist live membership so API/UI stay in sync with routing.
+            from app.models.mixins import sessions as sessions_store
+
+            # store facade holds the connection; prefer public resolve.
+            live = store.get_session(sid)
+            if live:
+                session = live
+        except Exception:
+            pass
+
     session_ids = [aid for aid in (session.get("agent_ids") or []) if isinstance(aid, str)]
+    is_swarm = bool(session.get("is_swarm")) or len(session_ids) != 1
     try:
         enabled_ids = store.list_enabled_agent_ids()
     except Exception:
         enabled_ids = []
-    # Full swarm for routing when any multi-agent session or home swarm.
-    if len(session_ids) != 1 or len(enabled_ids) > 1:
-        ids = list(enabled_ids) if enabled_ids else list(session_ids)
+
+    if is_swarm and enabled_ids:
+        ids = list(enabled_ids)
+        # Coordinator first when known.
+        coord = (session.get("coordinator_id") or session.get("agent_id") or "").strip()
+        if coord and coord in ids:
+            ids = [coord] + [a for a in ids if a != coord]
     else:
         ids = list(session_ids)
-    # Preserve session order first, then any extra enabled agents.
-    ordered: list[str] = []
-    for aid in session_ids + ids:
-        if aid not in ordered and aid in ids:
-            ordered.append(aid)
-    for aid in ids:
-        if aid not in ordered:
-            ordered.append(aid)
+
     agents: list[dict[str, Any]] = []
-    for aid in ordered:
+    for aid in ids:
         agent = store.get_agent(aid)
         if agent and agent.get("enabled", True):
             agents.append(agent)

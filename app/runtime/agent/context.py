@@ -3,14 +3,20 @@
 Converts persisted session history entries (the ``ChatEntry`` replay shape
 stored by the SQLite ``messages`` table) into the OpenAI-style chat message
 list the LLM clients expect, and assembles the full prompt — system +
-history + new user message — for a single coordinator turn.
+history + new user message — for a single agent turn.
 
 History entry ``type`` values (see the foundation design spec):
 ``user``, ``final``, ``thinking``, ``tool_call``, ``tool_output``,
-``intermediate``, ``error``, ``delegate``. Only the conversational and tool
-entries map onto OpenAI roles; ``thinking`` / ``intermediate`` / ``error``
-/ ``delegate`` are internal bookkeeping and are skipped so they never leak
-into the model context.
+``intermediate``, ``error``, ``delegate``.
+
+Multi-agent swarm: when ``for_agent_id`` is set, only **this** agent's tool
+trails are replayed as OpenAI ``tool_calls`` / ``tool`` messages. Other
+agents' finals, tools, and handoffs become attributed assistant notes
+(``[From Ops]…``) so the coordinator sees specialist results without
+mistaking them for its own tool runs.
+
+``thinking`` / ``intermediate`` / ``error`` stay internal (skipped).
+``delegate`` is surfaced when ``for_agent_id`` is set.
 
 This module is pure transformation — no HTTP, no SSE, no persistence. The
 ``messages`` schema stores no ``tool_call_id``, so consecutive ``tool_call``
@@ -28,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from app.core import config, home
+
+_TOOL_RESULT_PREVIEW = 1200
 
 _SYSTEM_PROMPT_PATH = config.REPO_ROOT / "defaults" / "coordinator_system.md"
 _FALLBACK_PROMPT = (
@@ -160,16 +168,78 @@ def _workplace_prompt_section(agent_id: str) -> str:
         return ""
 
 
-def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _history_agent_label(agent_id: str | None) -> str:
+    aid = (agent_id or "").strip()
+    if not aid:
+        return "agent"
+    try:
+        from app.services import store
+
+        agent = store.get_agent(aid)
+        if agent:
+            return str(agent.get("name") or aid)
+    except Exception:
+        pass
+    return aid
+
+
+def _is_self_entry(entry: dict[str, Any], for_agent_id: str | None) -> bool:
+    """Whether this history row belongs to the agent currently running."""
+    if not for_agent_id:
+        return True
+    aid = (entry.get("agent_id") or "").strip()
+    if not aid:
+        return True
+    return aid == for_agent_id
+
+
+def _preview_tool_result(text: str, limit: int = _TOOL_RESULT_PREVIEW) -> str:
+    raw = text if isinstance(text, str) else str(text or "")
+    raw = raw.strip()
+    if len(raw) <= limit:
+        return raw or "(no output)"
+    return raw[:limit] + f"\n…[truncated, {len(raw)} chars]"
+
+
+def _fold_foreign_tools(
+    agent_id: str | None,
+    call_entries: list[dict[str, Any]],
+    out_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Collapse another agent's tool trail into an attributed assistant note."""
+    label = _history_agent_label(agent_id)
+    lines = [f"[From {label} — tool run]"]
+    for idx, call in enumerate(call_entries):
+        name = call.get("function") or "tool"
+        args = call.get("params")
+        try:
+            args_s = json.dumps(args, ensure_ascii=False) if args is not None else "{}"
+        except (TypeError, ValueError):
+            args_s = str(args)
+        if len(args_s) > 400:
+            args_s = args_s[:400] + "…"
+        lines.append(f"- {name}({args_s})")
+        if idx < len(out_entries):
+            out = out_entries[idx]
+            body = _preview_tool_result(str(out.get("content") or ""))
+            err = " ✗" if out.get("error") else ""
+            lines.append(f"  →{err} {body}")
+        else:
+            lines.append("  → (missing tool result)")
+    return {"role": "assistant", "content": "\n".join(lines)}
+
+
+def history_to_messages(
+    history: list[dict[str, Any]] | None,
+    *,
+    for_agent_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Map session history entries to OpenAI-style chat messages.
 
-    ``user`` -> ``{"role": "user", ...}``; ``final`` -> assistant text; a run
-    of consecutive ``tool_call`` entries -> one assistant message carrying
-    ``tool_calls``; the following run of ``tool_output`` entries -> ``tool``
-    role messages paired by position. Calls without a matching output receive
-    a synthetic ``"Error: missing tool result"`` tool message; surplus
-    outputs beyond the number of calls are dropped. Unknown / internal types
-    are skipped.
+    ``user`` -> user; ``final`` -> assistant (attributed when another agent);
+    self ``tool_call``/``tool_output`` -> OpenAI tool pairing; other agents'
+    tools -> ``[From Name — tool run]`` notes; ``delegate`` -> swarm note when
+    ``for_agent_id`` is set.
     """
     messages: list[dict[str, Any]] = []
     if not history:
@@ -188,58 +258,110 @@ def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, 
             continue
 
         if etype == "final":
-            messages.append({"role": "assistant", "content": entry.get("content") or ""})
+            content = entry.get("content") or ""
+            if _is_self_entry(entry, for_agent_id):
+                messages.append({"role": "assistant", "content": content})
+            else:
+                label = _history_agent_label(entry.get("agent_id"))
+                aid = (entry.get("agent_id") or "").strip()
+                header = f"[From {label}" + (f" id={aid}" if aid else "") + "]"
+                body = content.strip()
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": f"{header}\n{body}" if body else header,
+                    }
+                )
+            i += 1
+            continue
+
+        if etype == "delegate":
+            # Surface handoffs so the coordinator remembers who did what.
+            if for_agent_id:
+                note = (entry.get("content") or "").strip() or "Handed off to specialist"
+                to_id = (entry.get("to") or entry.get("agent_id") or "").strip()
+                if to_id and to_id not in note:
+                    note = f"{note} → {to_id}"
+                messages.append({"role": "assistant", "content": f"[Swarm] {note}"})
             i += 1
             continue
 
         if etype == "tool_call":
-            calls: list[dict[str, Any]] = []
-            while i < n and history[i].get("type") == "tool_call":
-                e = history[i]
-                cid = f"hist_call_{call_counter}"
-                call_counter += 1
-                calls.append(
-                    {
-                        "id": cid,
-                        "type": "function",
-                        "function": {
-                            "name": e.get("function") or "",
-                            "arguments": _dumps_args(e.get("params")),
-                        },
-                    }
-                )
+            owner = (entry.get("agent_id") or "").strip() or None
+            call_entries: list[dict[str, Any]] = []
+            while (
+                i < n
+                and history[i].get("type") == "tool_call"
+                and ((history[i].get("agent_id") or "").strip() or None) == owner
+            ):
+                call_entries.append(history[i])
                 i += 1
-            messages.append({"role": "assistant", "content": None, "tool_calls": calls})
-            # Pair the following consecutive tool_output entries by position.
-            # Surplus outputs beyond the number of calls are dropped (never
-            # mapped onto the last call's id); calls with no matching output
-            # get a synthetic tool result so the assistant tool_calls message
-            # is never left dangling.
-            out_idx = 0
-            while i < n and history[i].get("type") == "tool_output":
-                e = history[i]
-                if out_idx < len(calls):
+            out_entries: list[dict[str, Any]] = []
+            while (
+                i < n
+                and history[i].get("type") == "tool_output"
+                and ((history[i].get("agent_id") or "").strip() or None) == owner
+            ):
+                out_entries.append(history[i])
+                i += 1
+            # Also accept unattributed tool_outputs right after (legacy rows).
+            while (
+                i < n
+                and history[i].get("type") == "tool_output"
+                and not (history[i].get("agent_id") or "").strip()
+                and len(out_entries) < len(call_entries)
+            ):
+                out_entries.append(history[i])
+                i += 1
+
+            self_tools = _is_self_entry(
+                {"agent_id": owner or for_agent_id}, for_agent_id
+            )
+            if self_tools or not for_agent_id:
+                calls: list[dict[str, Any]] = []
+                for e in call_entries:
+                    cid = f"hist_call_{call_counter}"
+                    call_counter += 1
+                    calls.append(
+                        {
+                            "id": cid,
+                            "type": "function",
+                            "function": {
+                                "name": e.get("function") or "",
+                                "arguments": _dumps_args(e.get("params")),
+                            },
+                        }
+                    )
+                messages.append(
+                    {"role": "assistant", "content": None, "tool_calls": calls}
+                )
+                out_idx = 0
+                for e in out_entries:
+                    if out_idx < len(calls):
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": calls[out_idx]["id"],
+                                "content": e.get("content") or "",
+                            }
+                        )
+                    out_idx += 1
+                while out_idx < len(calls):
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": calls[out_idx]["id"],
-                            "content": e.get("content") or "",
+                            "content": "Error: missing tool result",
                         }
                     )
-                out_idx += 1
-                i += 1
-            while out_idx < len(calls):
+                    out_idx += 1
+            else:
                 messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": calls[out_idx]["id"],
-                        "content": "Error: missing tool result",
-                    }
+                    _fold_foreign_tools(owner, call_entries, out_entries)
                 )
-                out_idx += 1
             continue
 
-        # thinking / intermediate / error / delegate / unknown -> skip.
+        # thinking / intermediate / error / unknown -> skip.
         i += 1
 
     return messages
@@ -249,16 +371,23 @@ def build_messages(
     history: list[dict[str, Any]] | None,
     user_message: str | None = None,
     system_prompt: str | None = None,
+    *,
+    for_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Assemble the full message list for one coordinator turn.
+    """Assemble the full message list for one agent turn.
 
     Layout: ``[system] + history_to_messages(history) + [user]``. The new
     ``user_message`` is appended only when provided — callers that persist
     the user entry into history first may pass ``user_message=None``.
+
+    Pass ``for_agent_id`` so multi-agent history attributes specialist work
+    (required for the coordinator to see Ops results correctly).
     """
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
-    messages.extend(history_to_messages(history))
+    messages.extend(
+        history_to_messages(history, for_agent_id=for_agent_id)
+    )
     if user_message:
         messages.append({"role": "user", "content": user_message})
     return messages

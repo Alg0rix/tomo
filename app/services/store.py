@@ -172,10 +172,22 @@ class Store:
     # -- sessions (SQLite) -----------------------------------------------
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._lock:
+            # Keep swarm membership current with enabled agents.
+            try:
+                sessions_store.sync_swarm_membership(self._conn, session_id)
+            except Exception:
+                pass
             return sessions_store.get_session(self._conn, session_id)
 
     def list_sessions(self) -> list[dict[str, Any]]:
         with self._lock:
+            rows = sessions_store.list_sessions(self._conn)
+            # Soft-sync swarm membership so new agents appear without a full turn.
+            for s in rows:
+                try:
+                    sessions_store.sync_swarm_membership(self._conn, s["id"])
+                except Exception:
+                    pass
             return sessions_store.list_sessions(self._conn)
 
     def create_swarm_session(

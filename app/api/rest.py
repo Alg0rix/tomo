@@ -84,8 +84,10 @@ async def list_sessions_api(_: AuthDep):
         row["coordinator_id"] = row.get("coordinator_id") or row.get("agent_id")
         names = [agent_map[a]["name"] for a in ids if a in agent_map]
         row["agent_names"] = names
-        row["agent_name"] = " · ".join(names) if names else row.get("agent_id", "")
-        row["is_swarm"] = len(ids) > 1
+        # Do not expose a countable roster in labels — swarm is open-ended.
+        is_swarm = bool(row.get("is_swarm")) or len(ids) > 1
+        row["is_swarm"] = is_swarm
+        row["agent_name"] = "swarm" if is_swarm else (names[0] if names else row.get("agent_id", ""))
         sessions.append(row)
     return {"sessions": sessions, "agents": agents}
 
@@ -98,11 +100,12 @@ async def get_session_api(session_id: str, _: AuthDep):
     agents = store.list_agents()
     agent_map = {a["id"]: a for a in agents}
     ids = session.get("agent_ids") or ([session["agent_id"]] if session.get("agent_id") else [])
+    is_swarm = bool(session.get("is_swarm")) or len(ids) > 1
     return {
         **session,
         "agent_ids": ids,
         "agents": [agent_map[a] for a in ids if a in agent_map],
-        "is_swarm": len(ids) > 1,
+        "is_swarm": is_swarm,
     }
 
 

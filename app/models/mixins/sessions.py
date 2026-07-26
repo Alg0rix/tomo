@@ -23,6 +23,7 @@ def _new_sid() -> str:
 
 
 def session_agent_ids(conn: sqlite3.Connection, session_id: str) -> list[str]:
+    """Stored membership only (may lag behind live enabled agents for swarms)."""
     rows = conn.execute(
         "SELECT agent_id FROM session_agents WHERE session_id=? ORDER BY position",
         (session_id,),
@@ -30,14 +31,99 @@ def session_agent_ids(conn: sqlite3.Connection, session_id: str) -> list[str]:
     return [r["agent_id"] for r in rows]
 
 
+def _stored_is_swarm(stored_ids: list[str]) -> bool:
+    """Multi-member rows mean swarm mode; solo (1 id) is intentional single-agent."""
+    return len(stored_ids) != 1
+
+
+def resolve_live_agent_ids(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    coordinator_id: str | None = None,
+) -> tuple[list[str], bool]:
+    """Return ``(agent_ids, is_swarm)`` with live enabled agents for swarm chats.
+
+    Swarm sessions always see every currently enabled agent so a newly created
+    or re-enabled agent is available on the next turn without editing the
+    session. Solo sessions (exactly one stored member) stay fixed.
+    """
+    from app.models.mixins.agents import list_enabled_agent_ids
+
+    stored = session_agent_ids(conn, session_id)
+    if not _stored_is_swarm(stored):
+        return list(stored), False
+
+    enabled = list_enabled_agent_ids(conn)
+    if not enabled:
+        return list(stored), True
+
+    coord = (coordinator_id or "").strip()
+    if not coord or coord not in enabled:
+        # Prefer stored coordinator if still enabled; else first enabled.
+        row = conn.execute(
+            "SELECT coordinator_id FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        stored_coord = (row["coordinator_id"] if row else None) or ""
+        if stored_coord in enabled:
+            coord = stored_coord
+        elif stored and stored[0] in enabled:
+            coord = stored[0]
+        else:
+            coord = enabled[0]
+
+    ordered: list[str] = [coord]
+    for aid in enabled:
+        if aid not in ordered:
+            ordered.append(aid)
+    return ordered, True
+
+
+def sync_swarm_membership(conn: sqlite3.Connection, session_id: str) -> list[str]:
+    """Rewrite ``session_agents`` to the live swarm when the session is multi-member.
+
+    Returns the resolved agent id list. No-op for solo sessions.
+    """
+    row = conn.execute(
+        "SELECT coordinator_id FROM sessions WHERE id=?", (session_id,)
+    ).fetchone()
+    if not row:
+        return []
+    live, is_swarm = resolve_live_agent_ids(
+        conn, session_id, coordinator_id=row["coordinator_id"]
+    )
+    if not is_swarm:
+        return live
+    stored = session_agent_ids(conn, session_id)
+    if stored == live:
+        return live
+    conn.execute("DELETE FROM session_agents WHERE session_id=?", (session_id,))
+    conn.executemany(
+        "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",
+        [(session_id, aid, pos) for pos, aid in enumerate(live)],
+    )
+    # Keep coordinator pointer valid.
+    coord = live[0] if live else row["coordinator_id"]
+    if coord and coord != row["coordinator_id"]:
+        conn.execute(
+            "UPDATE sessions SET coordinator_id=? WHERE id=?",
+            (coord, session_id),
+        )
+    conn.commit()
+    return live
+
+
 def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
-    ids = session_agent_ids(conn, row["id"])
+    ids, is_swarm = resolve_live_agent_ids(
+        conn, row["id"], coordinator_id=row["coordinator_id"]
+    )
     coord = row["coordinator_id"] or (ids[0] if ids else None)
     return {
         "id": row["id"],
         "agent_id": coord,
         "agent_ids": ids,
         "coordinator_id": coord,
+        "is_swarm": is_swarm,
         "user_id": row["user_id"],
         "title": row["title"],
         "message_count": row["message_count"],
