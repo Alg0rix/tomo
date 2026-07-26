@@ -191,21 +191,25 @@ def map_loop_event(
         )
     elif kind == "final":
         content = ev["content"] or ""
+        # Models sometimes echo internal swarm notes; never show/persist those.
+        if content.lstrip().startswith("[Swarm]"):
+            content = ""
         if not ev.get("already_streamed"):
-            seq += 1
-            chunks.append(
-                fmt_sse(
-                    {
-                        "event": "delta",
-                        "data": {
-                            "content": content,
-                            "agent_id": agent_id,
-                            "agent": agent_name,
-                        },
-                        "seq": seq,
-                    }
+            if content:
+                seq += 1
+                chunks.append(
+                    fmt_sse(
+                        {
+                            "event": "delta",
+                            "data": {
+                                "content": content,
+                                "agent_id": agent_id,
+                                "agent": agent_name,
+                            },
+                            "seq": seq,
+                        }
+                    )
                 )
-            )
         seq += 1
         chunks.append(
             fmt_sse(
@@ -221,14 +225,15 @@ def map_loop_event(
                 }
             )
         )
-        entries.append(
-            {
-                "type": "final",
-                "content": content,
-                "agent_id": agent_id,
-                "ts": now(),
-            }
-        )
+        if content.strip():
+            entries.append(
+                {
+                    "type": "final",
+                    "content": content,
+                    "agent_id": agent_id,
+                    "ts": now(),
+                }
+            )
     elif kind == "error":
         msg = ev["message"]
         seq += 1

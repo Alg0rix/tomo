@@ -13,10 +13,13 @@ Multi-agent swarm: when ``for_agent_id`` is set, only **this** agent's tool
 trails are replayed as OpenAI ``tool_calls`` / ``tool`` messages. Other
 agents' finals, tools, and handoffs become attributed assistant notes
 (``[From Ops]…``) so the coordinator sees specialist results without
-mistaking them for its own tool runs.
+mistaking them for its own tool runs. Handoff ``[Swarm]…`` notes are
+shown to non-target agents only — the specialist being handed *to* must
+not see them (models echo them as a fake answer).
 
 ``thinking`` / ``intermediate`` / ``error`` stay internal (skipped).
-``delegate`` is surfaced when ``for_agent_id`` is set.
+``delegate`` is surfaced when ``for_agent_id`` is set (except for the
+handoff target).
 
 This module is pure transformation — no HTTP, no SSE, no persistence. The
 ``messages`` schema stores no ``tool_call_id``, so consecutive ``tool_call``
@@ -277,9 +280,14 @@ def history_to_messages(
 
         if etype == "delegate":
             # Surface handoffs so the coordinator remembers who did what.
+            # Never inject into the *target* agent — that looks like their own
+            # prior assistant turn and models echo ``[Swarm] Handing off…``.
             if for_agent_id:
-                note = (entry.get("content") or "").strip() or "Handed off to specialist"
                 to_id = (entry.get("to") or entry.get("agent_id") or "").strip()
+                if to_id and to_id == for_agent_id:
+                    i += 1
+                    continue
+                note = (entry.get("content") or "").strip() or "Handed off to specialist"
                 if to_id and to_id not in note:
                     note = f"{note} → {to_id}"
                 messages.append({"role": "assistant", "content": f"[Swarm] {note}"})

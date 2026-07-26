@@ -160,6 +160,24 @@ def test_foreign_agent_final_attributed_for_coordinator(tmp_path: Path) -> None:
     assert msgs[2]["content"] != "Avg RTT 15ms from aio-serv."
 
 
+def test_delegate_note_skipped_for_target_agent(tmp_path: Path) -> None:
+    """Ops must not see ``[Swarm] Handing off to Ops`` as its own prior turn."""
+    history = _hist(
+        tmp_path,
+        {"type": "user", "content": "@ops check hostname"},
+        {
+            "type": "delegate",
+            "content": "Handing off to Ops",
+            "agent_id": "ops",
+            "from": "main",
+            "to": "ops",
+        },
+        db_name="ctx_swarm_target.db",
+    )
+    msgs = history_to_messages(history, for_agent_id="ops")
+    assert msgs == [{"role": "user", "content": "@ops check hostname"}]
+    assert not any("[Swarm]" in (m.get("content") or "") for m in msgs)
+
 def test_foreign_tools_folded_not_as_self_tool_calls(tmp_path: Path) -> None:
     history = _hist(
         tmp_path,

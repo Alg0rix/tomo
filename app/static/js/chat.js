@@ -538,10 +538,18 @@
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
+        const piece = d.content || '';
+        // Drop internal swarm bookkeeping if a model echoes it mid-stream.
+        if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
         ensureAssistantBubble();
         asstEl.classList.add('streaming');
-        raw += d.content || '';
+        raw += piece;
+        if (/^\s*\[Swarm\]/.test(raw)) {
+          dropEmptyAssistant();
+          raw = '';
+          return;
+        }
         setMarkdown(asstBody, raw);
         atBottom();
       });
@@ -552,10 +560,11 @@
         const d = JSON.parse(e.data || '{}');
         adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        const content = (d.content != null ? String(d.content) : '').trim();
+        let content = (d.content != null ? String(d.content) : '').trim();
+        if (content.indexOf('[Swarm]') === 0) content = '';
         if (content) {
           ensureAssistantBubble();
-          raw = d.content;
+          raw = content;
           setMarkdown(asstBody, raw);
           asstEl.classList.remove('streaming');
         } else {

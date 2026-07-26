@@ -517,12 +517,14 @@ async def stream_turn_sse(
                     yield chunk
                 store.set_busy(coordinator_id, False)
                 # Persist full ``@ops …`` user row; feed the member the stripped
-                # prompt without duplicating the user message in LLM context.
+                # prompt without the user row or the just-written handoff row.
                 hist = store.get_session_history(session_id)
-                hist_for_member = (
-                    hist[:-1] if hist and hist[-1].get("type") == "user" else hist
-                )
+                hist_for_member = _history_before_last_user(hist)
                 member_prompt = mention_rest.strip() or message
+                async for chunk, seq in _emit_member_turn_start(
+                    to_id=force_target, turn_id=turn_id, seq=seq
+                ):
+                    yield chunk
                 async for chunk, seq in _drain_agent_turn(
                     session_id,
                     force_target,

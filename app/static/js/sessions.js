@@ -153,7 +153,10 @@
         return;
       }
       if (e.type !== 'user' && e.type !== 'final') return;
-      if (e.type === 'final' && !(e.content || '').trim()) return;
+      if (e.type === 'final') {
+        const text = (e.content || '').trim();
+        if (!text || text.indexOf('[Swarm]') === 0) return;
+      }
       const role = e.type === 'user' ? 'user' : 'assistant';
       const who = role === 'user' ? 'You' : agentName(e.agent_id);
       const row = document.createElement('div');
