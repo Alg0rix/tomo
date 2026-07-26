@@ -8,7 +8,7 @@ from pathlib import Path
 from app.runtime.tools.registry import ToolRegistry, execute, get_openai_tools
 
 
-# --- schema discovery (real tools/ dir) ---------------------------------
+# --- schema discovery (real app/tools/ dir) ------------------------------
 
 
 def test_registry_loads_calculator_schema() -> None:

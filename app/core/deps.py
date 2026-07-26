@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Form, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
 
-from .config import ADMIN_PASSWORD, TEMPLATE_DIR
+from .config import ADMIN_PASSWORD, EVAL_UI_ENABLED, TEMPLATE_DIR
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -51,6 +51,7 @@ def ts(value: float | int | str) -> str:
 
 templates.env.globals["avatar_color"] = avatar_color
 templates.env.globals["ts"] = ts
+templates.env.globals["eval_ui_enabled"] = EVAL_UI_ENABLED
 
 
 def _is_authenticated(request: Request) -> bool:

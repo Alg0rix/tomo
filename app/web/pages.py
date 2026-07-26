@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.config import BRAND
+from app.core.config import BRAND, EVAL_UI_ENABLED
 from app.core.deps import AuthDep, templates
 from app.services import store
 
@@ -14,6 +14,12 @@ router = APIRouter()
 
 def _ctx(request: Request, page: str, **extra):
     return {"page": page, "brand": BRAND, **extra}
+
+
+def _eval_disabled_redirect() -> RedirectResponse | None:
+    if EVAL_UI_ENABLED:
+        return None
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -131,6 +137,8 @@ async def system_page(request: Request, _: AuthDep):
 
 @router.get("/evaluate", response_class=HTMLResponse)
 async def evaluate_page(request: Request, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     return templates.TemplateResponse(request, "evaluate.html", _ctx(
         request, "evaluate", eval_page="runner",
         domains=store.list_eval_domains(), models=store.list_models(),
@@ -139,6 +147,8 @@ async def evaluate_page(request: Request, _: AuthDep):
 
 @router.get("/evaluate/domains", response_class=HTMLResponse)
 async def evaluate_domains_page(request: Request, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     return templates.TemplateResponse(request, "evaluate_domains.html", _ctx(
         request, "evaluate", eval_page="domains", domains=store.list_eval_domains(),
     ))
@@ -146,6 +156,8 @@ async def evaluate_domains_page(request: Request, _: AuthDep):
 
 @router.get("/evaluate/evaluators", response_class=HTMLResponse)
 async def evaluate_evaluators_page(request: Request, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     return templates.TemplateResponse(request, "evaluate_evaluators.html", _ctx(
         request, "evaluate", eval_page="evaluators", evaluators=store.list_evaluators(),
     ))
@@ -153,6 +165,8 @@ async def evaluate_evaluators_page(request: Request, _: AuthDep):
 
 @router.get("/evaluate/settings", response_class=HTMLResponse)
 async def evaluate_settings_page(request: Request, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     return templates.TemplateResponse(request, "evaluate_settings.html", _ctx(
         request, "evaluate", eval_page="settings", settings=store.get_settings(),
     ))
@@ -160,6 +174,8 @@ async def evaluate_settings_page(request: Request, _: AuthDep):
 
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(request: Request, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     return templates.TemplateResponse(request, "history.html", _ctx(
         request, "evaluate", eval_page="history", runs=store.list_eval_runs(),
     ))
@@ -167,6 +183,8 @@ async def history_page(request: Request, _: AuthDep):
 
 @router.get("/history/{run_id}", response_class=HTMLResponse)
 async def history_detail_page(request: Request, run_id: str, _: AuthDep):
+    if (redir := _eval_disabled_redirect()) is not None:
+        return redir
     run = store.get_eval_run(run_id)
     if not run:
         return templates.TemplateResponse(request, "error.html", _ctx(

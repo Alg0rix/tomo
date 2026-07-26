@@ -1,13 +1,12 @@
 """Tool discovery, JSON schema loading, and dispatch.
 
-Loads every ``tools/*.json`` definition at the repo root, exposes the
-OpenAI-compatible function-tool schemas (for ``LLMClient.complete(...,
-tools=...)``), and dispatches ``execute(name, arguments)`` to the matching
-Python backend.
+Loads every ``app/tools/*.json`` definition, exposes the OpenAI-compatible
+function-tool schemas (for ``LLMClient.complete(..., tools=...)``), and
+dispatches ``execute(name, arguments)`` to the matching Python backend.
 
 For the foundation thin vertical only the ``calculator`` tool is wired; its
 backend is :func:`app.runtime.tools.calculator.run`. Adding a future tool is
-a matter of dropping a ``tools/<name>.json`` file and registering its
+a matter of dropping an ``app/tools/<name>.json`` file and registering its
 backend in :data:`_BACKENDS` below — dynamic ``backend``-path import is a
 later task. ``execute`` always returns a string: unknown tools and missing
 backends produce ``"Error: ..."`` strings rather than raising.
@@ -33,7 +32,7 @@ _BACKENDS: dict[str, ToolRunner] = {
 
 
 def _default_tools_dir() -> Path:
-    return config.REPO_ROOT / "tools"
+    return config.APP_DIR / "tools"
 
 
 class ToolRegistry:

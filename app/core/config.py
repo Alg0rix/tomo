@@ -41,3 +41,7 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 # --- Brand ---
 BRAND = "Tomo"
 BRAND_SUBTITLE = "友達 · agent swarm"
+
+# --- Feature flags ---
+# Eval / evaluator UI + API are deferred (roadmap); keep seed/code, hide surface.
+EVAL_UI_ENABLED = _env_bool("TOMO_EVAL_UI", default=False)

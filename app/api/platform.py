@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep
 from app.services import store
 
 router = APIRouter(prefix="/api")
+
+
+def _require_eval_ui() -> None:
+    if not EVAL_UI_ENABLED:
+        raise HTTPException(status_code=404, detail="Evaluation UI is disabled")
 
 
 @router.get("/tools")
@@ -120,21 +126,25 @@ async def agent_channels(agent_id: str, _: AuthDep):
 
 @router.get("/eval/domains")
 async def eval_domains(_: AuthDep):
+    _require_eval_ui()
     return {"domains": store.list_eval_domains()}
 
 
 @router.get("/eval/evaluators")
 async def eval_evaluators(_: AuthDep):
+    _require_eval_ui()
     return {"evaluators": store.list_evaluators()}
 
 
 @router.get("/eval/runs")
 async def eval_runs(_: AuthDep):
+    _require_eval_ui()
     return {"runs": store.list_eval_runs()}
 
 
 @router.get("/eval/runs/{run_id}")
 async def eval_run_detail(run_id: str, _: AuthDep):
+    _require_eval_ui()
     run = store.get_eval_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")

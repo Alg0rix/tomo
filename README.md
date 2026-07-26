@@ -284,7 +284,7 @@ Adding a new capability is intentionally boring (in a good way).
 
 ### 1. Define a tool
 
-Create a JSON file in `tools/`:
+Create a JSON file in `app/tools/`:
 
 ```json
 {
@@ -334,7 +334,7 @@ General-purpose primitives — enable per agent based on your use case:
 | `describe_image` / `transcribe_audio` | Vision and voice input |
 | `get_weather` / `calculator` / `get_current_date` | Utility tools (examples of easy extensions) |
 
-See the `tools/` directory for the full catalog.
+See the `app/tools/` directory for the full catalog.
 
 ---
 
@@ -357,6 +357,7 @@ tomo/
 │   │   ├── memory/               # Recall and knowledge adapters
 │   │   ├── events/               # Internal event bus
 │   │   └── tools/                # Built-in Python tool backends
+│   ├── tools/                    # Declarative tool JSON (schema + backend ref)
 │   ├── channels/                 # Web, Telegram, WhatsApp adapters — stub
 │   ├── workplaces/               # Local / SSH / tunnel backends — stub
 │   ├── extensions/               # Skill + plugin loaders — stub
@@ -366,17 +367,17 @@ tomo/
 │   └── data/                     # Local JSON persistence (dev)
 │
 ├── cli/                          # `tomo` command (start, agent, workplace, …) — stub
-├── tools/                        # Declarative tool JSON (schema + backend ref)
 ├── skills/                       # Installable skill packages
 ├── plugins/                      # Event-driven platform extensions
 ├── skillsets/                    # Preset agent profiles (JSON)
 ├── defaults/                     # Shipped prompts and KB seeds
-├── evaluator/                    # LLM evaluation engine — stub
+├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
 ├── connector/                    # Remote workplace agent (tunnel) — planned
 ├── tests/                        # unit/ + integration/
 ├── scripts/                      # Dev and release helpers
 ├── docs/                         # Architecture notes
 ├── seed/                         # Dev database seeds
+├── tmp/                          # Local scratch (gitignored); e.g. hermes-agent clone
 └── var/                          # Runtime state (gitignored)
 ```
 
@@ -394,7 +395,7 @@ tomo/
 
 **Today:** `app/services/store.py` backs the UI with seeded JSON. New packages under `runtime/`, `models/`, and `channels/` are empty scaffolds ready for the coordinator and channel work on the roadmap.
 
-See `tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`.
+See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`. Local reference clone: `tmp/hermes-agent/` (NousResearch/hermes-agent).
 
 ---
 
