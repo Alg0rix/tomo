@@ -16,6 +16,7 @@ provider (``TOMO_LLM_PROVIDER=mock``) so turns work with no API keys.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any, AsyncIterator
 
 from app.channels.web import _fmt_sse, stream_turn_sse
@@ -58,8 +59,15 @@ async def run_session_turn(
             {"event": "error", "data": {"message": "Session has no coordinator"}, "seq": seq}
         )
         return
-    async for chunk in stream_turn_sse(session_id, coordinator_id, message, start_seq):
-        yield chunk
+    # aclosing ensures that closing this generator (on disconnect — see the
+    # route-level aclosing in app/api/stream.py) cascades into stream_turn_sse's
+    # `finally`, which clears the coordinator's busy flag synchronously instead
+    # of leaving the inner generator suspended until garbage collection.
+    async with contextlib.aclosing(
+        stream_turn_sse(session_id, coordinator_id, message, start_seq)
+    ) as agen:
+        async for chunk in agen:
+            yield chunk
 
 
 async def run_turn(
@@ -82,8 +90,11 @@ async def run_turn(
         )
         return
     session_id = store.get_or_create_session(agent_id, user_id)
-    async for chunk in stream_turn_sse(session_id, agent_id, message, start_seq):
-        yield chunk
+    async with contextlib.aclosing(
+        stream_turn_sse(session_id, agent_id, message, start_seq)
+    ) as agen:
+        async for chunk in agen:
+            yield chunk
 
 
 def record_session_user_message(session_id: str, message: str) -> None:

@@ -99,6 +99,16 @@
         closeStream();
       }
 
+      // Render an assistant bubble whose body is raw HTML (used for error text).
+      function errorBubble(bodyHtml) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
+        const b = tmp.firstElementChild;
+        turn.appendChild(b);
+        b.querySelector('.bubble-body').innerHTML = bodyHtml;
+        atBottom();
+      }
+
       es.addEventListener('state', function (e) {
         const d = JSON.parse(e.data || '{}');
         setStatus(d.busy ? 'amber' : 'ok', d.busy ? 'busy' : 'online');
@@ -182,14 +192,27 @@
         Tomo.renderRail && Tomo.renderRail();
         wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
       });
-      es.addEventListener('error', function () {
+      // The 'error' listener fires for TWO distinct cases:
+      //  (1) a named SSE event `event: error\ndata: {"message": ...}` — a server
+      //      agent/loop error surfaced as a MessageEvent with `e.data` set. Show
+      //      the server `message` as an agent error bubble and close cleanly; the
+      //      server has already cleared busy and emits a trailing busy=false state.
+      //  (2) a transport failure (network drop / es.close()) — an Event with NO
+      //      `e.data` (es.readyState === CLOSED). Only this is "Stream interrupted".
+      // Conflating (1) with (2) mislabels agent errors as broken connections and
+      // can leave the busy badge stuck (the trailing busy=false state is dropped).
+      es.addEventListener('error', function (e) {
         if (closed) return;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-        const b = tmp.firstElementChild;
-        turn.appendChild(b);
-        b.querySelector('.bubble-body').innerHTML = '<span style="color:var(--danger)">Stream interrupted</span>';
-        atBottom();
+        if (e && e.data) {
+          let msg = 'Agent error';
+          try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
+          errorBubble('<span style="color:var(--danger)">' + esc(msg) + '</span>');
+          setStatus('ok', 'online');
+          close();
+          return;
+        }
+        errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
+        setStatus('ok', 'online');
         close();
       });
       es.addEventListener('heartbeat', function () {});

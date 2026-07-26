@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -26,14 +28,24 @@ async def session_chat_stream(
     async def event_source():
         yield "retry: 4000\n\n"
         if message:
-            async for chunk in run_session_turn(session_id, message, user_id, start_seq=0):
+            # aclosing guarantees the turn generator is closed on disconnect —
+            # either the early `return` below or Starlette closing this
+            # event_source — which cascades into stream_turn_sse's busy-clearing
+            # `finally` (via the aclosing in app/services/chat.py).
+            async with contextlib.aclosing(
+                run_session_turn(session_id, message, user_id, start_seq=0)
+            ) as agen:
+                async for chunk in agen:
+                    if await request.is_disconnected():
+                        return
+                    yield chunk
+        async with contextlib.aclosing(
+            session_heartbeat_stream(session_id, start_seq=1000)
+        ) as agen:
+            async for chunk in agen:
                 if await request.is_disconnected():
                     return
                 yield chunk
-        async for chunk in session_heartbeat_stream(session_id, start_seq=1000):
-            if await request.is_disconnected():
-                return
-            yield chunk
 
     return StreamingResponse(
         event_source(),
@@ -61,14 +73,20 @@ async def chat_stream(
     async def event_source():
         yield "retry: 4000\n\n"
         if message:
-            async for chunk in run_turn(agent_id, message, user_id, start_seq=0):
+            async with contextlib.aclosing(
+                run_turn(agent_id, message, user_id, start_seq=0)
+            ) as agen:
+                async for chunk in agen:
+                    if await request.is_disconnected():
+                        return
+                    yield chunk
+        async with contextlib.aclosing(
+            heartbeat_stream(agent_id, start_seq=1000)
+        ) as agen:
+            async for chunk in agen:
                 if await request.is_disconnected():
                     return
                 yield chunk
-        async for chunk in heartbeat_stream(agent_id, start_seq=1000):
-            if await request.is_disconnected():
-                return
-            yield chunk
 
     return StreamingResponse(
         event_source(),
