@@ -246,7 +246,7 @@
       const turn = document.createElement('div');
       turn.className = 'turn';
       scroll.appendChild(turn);
-      let thinkEl = null, asstEl = null, asstBody = null, raw = '', closed = false;
+      let thinkEl = null, asstEl = null, asstBody = null, pendingEl = null, raw = '', closed = false;
       let turnAgentName = defaultAgentName;
       let turnAgentId = agentId || '';
       let turnActive = false;
@@ -271,8 +271,47 @@
         closeStream();
       }
 
+      function clearPending() {
+        if (pendingEl) { pendingEl.remove(); pendingEl = null; }
+      }
+
+      function showPending() {
+        clearPending();
+        pendingEl = document.createElement('div');
+        pendingEl.className = 'turn-pending';
+        const style = turnAgentId ? ' style="background:' + agentColor(turnAgentId) + '"' : '';
+        pendingEl.innerHTML =
+          '<div class="av"' + style + '>' + esc((turnAgentName || 'A').slice(0, 1).toUpperCase()) + '</div>' +
+          '<div class="meta"><span class="name">' + esc(turnAgentName || 'Agent') + '</span>' +
+          '<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span></div>';
+        turn.appendChild(pendingEl);
+      }
+
+      function ensureAssistantBubble() {
+        clearPending();
+        if (asstEl) return asstEl;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
+        asstEl = tmp.firstElementChild;
+        turn.appendChild(asstEl);
+        asstBody = asstEl.querySelector('.bubble-body');
+        return asstEl;
+      }
+
+      function dropEmptyAssistant() {
+        if (!asstEl) return;
+        const body = (asstBody && asstBody.textContent || '').trim();
+        if (body) return;
+        asstEl.remove();
+        asstEl = null;
+        asstBody = null;
+        raw = '';
+      }
+
       // Render an assistant bubble whose body is raw HTML (used for error text).
       function errorBubble(bodyHtml) {
+        clearPending();
+        dropEmptyAssistant();
         const tmp = document.createElement('div');
         tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
         const b = tmp.firstElementChild;
@@ -283,6 +322,8 @@
 
       function endTurn() {
         if (closed) return;
+        clearPending();
+        dropEmptyAssistant();
         close();
         Tomo.renderRail && Tomo.renderRail();
         wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
@@ -297,6 +338,8 @@
       });
       es.addEventListener('delegate', function (e) {
         const d = JSON.parse(e.data || '{}');
+        clearPending();
+        dropEmptyAssistant();
         const row = document.createElement('div');
         row.className = 'delegate-line';
         row.textContent = d.content || ('Handing off to ' + (d.agent || d.agent_id));
@@ -308,17 +351,9 @@
         turnActive = true;
         turnAgentName = d.agent || turnAgentName;
         turnAgentId = d.agent_id || turnAgentId;
-        // Pending assistant bubble with streaming cursor —
-        // never an empty purple thinking slab.
-        if (!asstEl) {
-          const tmp = document.createElement('div');
-          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-          asstEl = tmp.firstElementChild;
-          asstEl.classList.add('streaming');
-          turn.appendChild(asstEl);
-          asstBody = asstEl.querySelector('.bubble-body');
-          asstBody.innerHTML = '';
-        }
+        // Compact pending chip only — never an empty purple message slab.
+        // Real bubbles appear on the first text delta / non-empty done.
+        if (!asstEl) showPending();
         atBottom();
       });
       es.addEventListener('session', function (e) {
@@ -332,13 +367,15 @@
         const d = JSON.parse(e.data || '{}');
         if (d.agent) turnAgentName = d.agent;
         if (d.agent_id) turnAgentId = d.agent_id;
+        clearPending();
         if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; turn.appendChild(thinkEl); }
         thinkEl.textContent += d.content || '';
         atBottom();
       });
       es.addEventListener('tool', function (e) {
         const d = JSON.parse(e.data || '{}');
-        if (asstEl) asstEl.classList.remove('streaming');
+        clearPending();
+        dropEmptyAssistant();
         const card = document.createElement('div');
         card.className = 'tool';
         card.innerHTML = '<div><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tres" style="display:none"></div>';
@@ -361,13 +398,7 @@
         if (d.agent) turnAgentName = d.agent;
         if (d.agent_id) turnAgentId = d.agent_id;
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        if (!asstEl) {
-          const tmp = document.createElement('div');
-          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-          asstEl = tmp.firstElementChild;
-          turn.appendChild(asstEl);
-          asstBody = asstEl.querySelector('.bubble-body');
-        }
+        ensureAssistantBubble();
         asstEl.classList.add('streaming');
         raw += d.content || '';
         setMarkdown(asstBody, raw);
@@ -378,16 +409,16 @@
         if (d.agent) turnAgentName = d.agent;
         if (d.agent_id) turnAgentId = d.agent_id;
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        if (d.content && asstBody) { raw = d.content; setMarkdown(asstBody, raw); }
-        if (!asstEl) {
-          const tmp = document.createElement('div');
-          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-          asstEl = tmp.firstElementChild;
-          turn.appendChild(asstEl);
-          asstBody = asstEl.querySelector('.bubble-body');
-          setMarkdown(asstBody, d.content || '');
+        const content = (d.content != null ? String(d.content) : '').trim();
+        if (content) {
+          ensureAssistantBubble();
+          raw = d.content;
+          setMarkdown(asstBody, raw);
+          asstEl.classList.remove('streaming');
+        } else {
+          clearPending();
+          dropEmptyAssistant();
         }
-        if (asstEl) asstEl.classList.remove('streaming');
         atBottom();
         setStatus('ok', 'online');
         // Do not close here — wait for trailing state busy=false so the LLM
