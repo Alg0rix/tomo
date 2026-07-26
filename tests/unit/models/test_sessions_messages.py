@@ -13,12 +13,9 @@ def _rebind(tmp_path) -> None:
     store.rebind(tmp_path / "sm.db")
 
 
-def test_seeded_sessions_present(tmp_path) -> None:
+def test_no_seeded_sessions(tmp_path) -> None:
     _rebind(tmp_path)
-    sessions = {s["id"]: s for s in store.list_sessions()}
-    assert "ses_001" in sessions
-    assert sessions["ses_001"]["agent_ids"] == ["main", "ops", "research"]
-    assert sessions["ses_001"]["coordinator_id"] == "main"
+    assert store.list_sessions() == []
 
 
 def test_create_swarm_session_picks_super_coordinator(tmp_path) -> None:
@@ -199,4 +196,36 @@ def test_clear_session_clears_existing_session(tmp_path) -> None:
     sessions = [s for s in store.list_sessions() if s["coordinator_id"] == "ops"]
     assert len(sessions) == 1
     assert sessions[0]["message_count"] == 0
+
+
+def test_delete_session_removes_row(tmp_path) -> None:
+    _rebind(tmp_path)
+    sid = store.create_swarm_session(["main"])
+    assert store.delete_session(sid) is True
+    assert store.get_session(sid) is None
+    assert store.delete_session(sid) is False
+
+
+def test_prune_empty_draft_sessions_keeps_messaged_and_cleared(tmp_path) -> None:
+    _rebind(tmp_path)
+    draft = store.create_swarm_session(["main"])
+    kept_open = store.create_swarm_session(["ops"])
+    messaged = store.create_swarm_session(["research"])
+    store.append_session_history(
+        messaged, {"type": "user", "content": "hello there", "ts": time.time()}
+    )
+    # Cleared chat keeps custom title + message_count 0 — must not prune.
+    cleared = store.create_swarm_session(["main"])
+    store.append_session_history(
+        cleared, {"type": "user", "content": "later cleared", "ts": time.time()}
+    )
+    store.clear_session_by_id(cleared)
+
+    deleted = store.prune_empty_draft_sessions(keep_id=kept_open)
+    assert draft in deleted
+    assert kept_open not in deleted
+    assert store.get_session(kept_open) is not None
+    assert store.get_session(messaged) is not None
+    assert store.get_session(cleared) is not None
+    assert store.get_session(draft) is None
 

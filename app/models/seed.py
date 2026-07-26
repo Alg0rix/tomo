@@ -1,9 +1,12 @@
-"""Seed demo agents, sessions, settings, and platform entities into an empty DB.
+"""Seed demo agents, settings, and platform entities into an empty DB.
 
 Called by the store facade on init via :func:`seed_if_empty`. Seeding is
 idempotent: each section only runs when its table is empty, so an already
 populated DB is left untouched. There is no migrate-from-JSON path — an empty
 DB is seeded fresh.
+
+Sessions are not seeded: the sidebar starts empty and chats are created on
+first message.
 """
 
 from __future__ import annotations
@@ -13,11 +16,6 @@ import sqlite3
 import time
 
 from app.models.mixins.schedules import interval_from_cron
-
-# Demo sessions reference these agent ids as coordinators/members. Sessions are
-# only seeded when all of them already exist, so an empty ``sessions`` table
-# never FK-fails against a non-demo (custom-only) ``agents`` table.
-_REQUIRED_SESSION_AGENTS = ("main", "ops", "research")
 
 
 def _now() -> float:
@@ -46,25 +44,6 @@ def _seed_agents(conn: sqlite3.Connection) -> None:
         "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         rows,
     )
-
-
-def _seed_sessions(conn: sqlite3.Connection) -> None:
-    base = _now()
-    sessions = [
-        ("ses_001", "main", "web", "Onboarding Q3 vendors", 8, base - 7200, base - 3600, ["main", "ops", "research"]),
-        ("ses_002", "ops", "web", "Deploy staging cluster", 23, base - 9000, base - 7200, ["ops"]),
-        ("ses_003", "research", "web", "Summarize competitor pricing", 11, base - 22000, base - 18000, ["research"]),
-    ]
-    for sid, coord, uid, title, count, created, updated, agent_ids in sessions:
-        conn.execute(
-            "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
-            "created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-            (sid, coord, uid, title, count, created, updated),
-        )
-        conn.executemany(
-            "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",
-            [(sid, aid, pos) for pos, aid in enumerate(agent_ids)],
-        )
 
 
 def _seed_settings(conn: sqlite3.Connection) -> None:
@@ -217,16 +196,14 @@ def _seed_schedules(conn: sqlite3.Connection) -> None:
 def seed_if_empty(conn: sqlite3.Connection) -> None:
     """Seed core + platform tables only when the corresponding table is empty.
 
-    Demo sessions/schedules are only seeded when required agents already exist —
+    Demo schedules are only seeded when their agent ids already exist —
     otherwise inserts would FK-fail (e.g. a DB reopened with only custom agents).
-    A failed seed is rolled back so the connection/transaction is never left dirty.
+    Sessions are never seeded. A failed seed is rolled back so the
+    connection/transaction is never left dirty.
     """
     try:
         if _count(conn, "agents") == 0:
             _seed_agents(conn)
-        if _count(conn, "sessions") == 0:
-            if all(_has_agent(conn, aid) for aid in _REQUIRED_SESSION_AGENTS):
-                _seed_sessions(conn)
         if _count(conn, "settings") == 0:
             _seed_settings(conn)
         if _count(conn, "knowledge_entries") == 0:

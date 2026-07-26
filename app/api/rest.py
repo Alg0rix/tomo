@@ -115,6 +115,20 @@ async def create_session(body: SessionCreate, _: AuthDep):
     return {"session_id": session_id}
 
 
+@router.delete("/sessions/{session_id}")
+async def delete_session_api(session_id: str, _: AuthDep):
+    if not store.delete_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"success": True}
+
+
+@router.post("/sessions/prune-drafts")
+async def prune_draft_sessions(_: AuthDep, keep_id: str | None = None):
+    """Delete never-messaged draft sessions (default title + zero messages)."""
+    deleted = store.prune_empty_draft_sessions(keep_id=keep_id or None)
+    return {"deleted": deleted}
+
+
 @router.post("/sessions/home")
 async def create_home_session(body: HomeSessionIn, _: AuthDep):
     """Start a coordinator-only chat from the dashboard home composer.

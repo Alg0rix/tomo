@@ -205,6 +205,10 @@
 
   async function refreshSessions() {
     try {
+      // Drop leftover never-messaged drafts from older clients / abandoned creates.
+      const keep = activeId || '';
+      const pruneUrl = '/api/sessions/prune-drafts' + (keep ? ('?keep_id=' + encodeURIComponent(keep)) : '');
+      await Tomo.api(pruneUrl, { method: 'POST' }).catch(function () { /* older servers */ });
       const data = await Tomo.api('/api/sessions');
       if (!data) return;
       sessions = data.sessions || [];
@@ -225,22 +229,47 @@
     return Array.from(container.querySelectorAll('input[name="agent"]:checked')).map(function (el) { return el.value; });
   }
 
-  async function startNewChat(agentIds) {
+  function openDraft(agentIds, opts) {
+    const ids = agentIds.slice();
+    const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
+    activeId = null;
+    setUrl(null);
+    renderList(searchEl ? searchEl.value : '');
+
+    emptyEl.style.display = 'none';
+    chatWrap.style.display = 'flex';
+
+    delete chatWrap.dataset.sessionId;
+    delete chatWrap.dataset.agentId;
+    chatWrap.dataset.pendingAgents = ids.join(',');
+    chatWrap.dataset.userId = 'web';
+    chatWrap.dataset.agentIds = ids.join(',');
+    chatWrap.dataset.chatInit = '0';
+
+    const draft = {
+      id: '',
+      title: ids.length > 1 ? 'New swarm chat' : 'New conversation',
+      agent_ids: ids,
+      agent_id: ids[0],
+      user_id: 'web',
+      message_count: 0,
+    };
+    applyChatHeader(draft);
+    renderAvatars(ids);
+    renderHistory([]);
+
+    if (chatHandle && chatHandle.destroy) chatHandle.destroy();
+    chatHandle = TomoChat.init(chatWrap);
+    if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
+  }
+
+  function startNewChat(agentIds, opts) {
     if (!agentIds.length) {
       Tomo.toast('Pick at least one agent', 'err');
       return;
     }
-    try {
-      const data = await Tomo.api('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_ids: agentIds, user_id: 'web' }),
-      });
-      await refreshSessions();
-      if (data && data.session_id) selectSession(data.session_id);
-    } catch (e) {
-      Tomo.toast('Could not start chat', 'err');
-    }
+    // Persist only on first message (chat.js ensureSession).
+    openDraft(agentIds, opts);
   }
 
   function buildEditList(ids) {
@@ -263,6 +292,16 @@
   chatWrap.addEventListener('tomo:session-title', function (ev) {
     const d = ev.detail || {};
     if (d.title) applySessionTitle(d.session_id || activeId, d.title);
+  });
+  chatWrap.addEventListener('tomo:session-created', function (ev) {
+    const d = ev.detail || {};
+    if (!d.session_id) return;
+    activeId = d.session_id;
+    setUrl(d.session_id);
+    refreshSessions().then(function () {
+      const cur = sessions.find(function (x) { return x.id === activeId; });
+      if (cur) applyChatHeader(cur);
+    });
   });
   chatWrap.addEventListener('tomo:chat-done', function () {
     refreshSessions().then(function () {
@@ -330,7 +369,7 @@
     // Strip q before auto-send so refresh cannot resend the home composer message.
     if (params().has('q')) stripQueryParam('q');
     if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
-    else if (agent) startNewChat([agent]);
+    else if (agent) startNewChat([agent], { pendingMessage: firstMessage });
     else if (sessions.length) selectSession(sessions[0].id);
   });
 })();

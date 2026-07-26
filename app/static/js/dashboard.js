@@ -8,6 +8,7 @@
   const sendBtn = document.getElementById('homeChatSend');
   const coordNameEl = document.getElementById('homeCoordName');
   const recentHome = document.getElementById('homeRecentChats');
+  let coordinatorId = null;
 
   function resizeHomeInput() {
     if (!input) return;
@@ -16,31 +17,21 @@
   }
 
   function syncSend() {
-    // Empty message still starts a blank coordinator-only chat (no q deep-link).
+    // Require a message — empty composer must not create a persisted session.
     if (!sendBtn) return;
-    sendBtn.disabled = sendBtn.dataset.busy === '1';
+    sendBtn.disabled = !input || !input.value.trim() || sendBtn.dataset.busy === '1';
   }
 
-  async function startHomeChat(message) {
-    if (!sendBtn) return;
+  function startHomeChat(message) {
+    const text = (message || '').trim();
+    if (!text || !sendBtn) return;
     sendBtn.dataset.busy = '1';
     syncSend();
-    try {
-      const data = await Tomo.api('/api/sessions/home', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message || '', user_id: 'web' }),
-      });
-      if (!data || !data.session_id) throw new Error('No session');
-      const p = new URLSearchParams();
-      p.set('s', data.session_id);
-      if (message) p.set('q', message);
-      window.location.href = '/sessions?' + p.toString();
-    } catch (e) {
-      Tomo.toast((e && e.message) || 'Could not start chat', 'err');
-      sendBtn.dataset.busy = '0';
-      syncSend();
-    }
+    // Lazy create: deep-link to sessions draft; chat persists on first send.
+    const p = new URLSearchParams();
+    p.set('agent', coordinatorId || 'main');
+    p.set('q', text);
+    window.location.href = '/sessions?' + p.toString();
   }
 
   if (form && input && sendBtn) {
@@ -82,6 +73,7 @@
     try { d = await Tomo.api('/api/dashboard/data'); } catch (e) { return; }
     if (!d) return;
     if (d.coordinator && coordNameEl) {
+      coordinatorId = d.coordinator.id || null;
       coordNameEl.textContent = d.coordinator.name || d.coordinator.id;
       if (input) input.placeholder = 'Message ' + (d.coordinator.name || 'Tomo') + '…';
     }

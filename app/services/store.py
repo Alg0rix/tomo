@@ -169,6 +169,14 @@ class Store:
         with self._lock:
             return sessions_store.get_or_create_session(self._conn, agent_id, user_id)
 
+    def delete_session(self, session_id: str) -> bool:
+        with self._lock:
+            return sessions_store.delete_session(self._conn, session_id)
+
+    def prune_empty_draft_sessions(self, *, keep_id: str | None = None) -> list[str]:
+        with self._lock:
+            return sessions_store.prune_empty_draft_sessions(self._conn, keep_id=keep_id)
+
     # -- messages / history (SQLite) -------------------------------------
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -332,6 +340,11 @@ class Store:
     def get_workplace(self, workplace_id: str) -> dict[str, Any] | None:
         with self._lock:
             return workplaces_store.get_workplace(self._conn, workplace_id)
+
+    def get_workplace_secrets(self, workplace_id: str) -> dict[str, Any] | None:
+        """Runtime view with decrypted SSH secrets (never expose via public API)."""
+        with self._lock:
+            return workplaces_store.get_workplace_secrets(self._conn, workplace_id)
 
     def create_workplace(self, data: dict[str, Any]) -> dict[str, Any]:
         with self._lock:

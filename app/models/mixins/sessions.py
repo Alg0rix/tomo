@@ -178,3 +178,42 @@ def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str)
     conn.commit()
     return sid
 
+
+# Default titles used for never-messaged drafts. Cleared chats keep a custom
+# title, so pruning by these titles + message_count=0 only removes unused drafts.
+_DRAFT_TITLES = frozenset({"New conversation", "New swarm chat"})
+
+
+def delete_session(conn: sqlite3.Connection, session_id: str) -> bool:
+    """Delete a session (messages + membership cascade). Returns True if removed."""
+    row = conn.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+    conn.commit()
+    return True
+
+
+def prune_empty_draft_sessions(
+    conn: sqlite3.Connection, *, keep_id: str | None = None
+) -> list[str]:
+    """Delete never-messaged draft sessions (default title + message_count=0).
+
+    Skips ``keep_id`` so an open draft is not removed mid-compose. Returns
+    deleted session ids.
+    """
+    rows = conn.execute(
+        "SELECT id FROM sessions WHERE message_count=0 AND title IN (?,?)",
+        tuple(_DRAFT_TITLES),
+    ).fetchall()
+    deleted: list[str] = []
+    for row in rows:
+        sid = row["id"]
+        if keep_id and sid == keep_id:
+            continue
+        conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
+        deleted.append(sid)
+    if deleted:
+        conn.commit()
+    return deleted
+

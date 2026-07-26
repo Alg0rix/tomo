@@ -45,7 +45,6 @@
     if (!wrap || wrap.dataset.chatInit === '1') return;
     wrap.dataset.chatInit = '1';
 
-    const sessionId = wrap.dataset.sessionId;
     const agentId = wrap.dataset.agentId;
     const userId = wrap.dataset.userId || 'web';
     const scroll = wrap.querySelector('.chat-scroll');
@@ -55,7 +54,13 @@
     const statusEl = wrap.querySelector('.chat-status');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
 
-    if (!scroll || !input || !sendBtn || (!agentId && !sessionId)) return;
+    function currentSessionId() { return wrap.dataset.sessionId || ''; }
+    function pendingAgentIds() {
+      return (wrap.dataset.pendingAgents || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    // Session chat may be a client-side draft (pendingAgents, no sessionId yet).
+    if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
 
     let sending = false, es = null;
 
@@ -82,17 +87,39 @@
     }
 
     function streamUrl(text) {
-      if (sessionId) {
-        return '/api/sessions/' + encodeURIComponent(sessionId) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
+      const sid = currentSessionId();
+      if (sid) {
+        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
       }
       return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
     }
 
     function clearUrl() {
-      if (sessionId) {
-        return '/api/sessions/' + encodeURIComponent(sessionId) + '/chat/clear';
+      const sid = currentSessionId();
+      if (sid) {
+        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/clear';
       }
       return '/api/agents/' + encodeURIComponent(agentId) + '/chat/clear?user_id=' + encodeURIComponent(userId);
+    }
+
+    async function ensureSession() {
+      const existing = currentSessionId();
+      if (existing) return existing;
+      if (agentId) return '';
+      const agents = pendingAgentIds();
+      if (!agents.length) throw new Error('No agents');
+      const data = await Tomo.api('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_ids: agents, user_id: userId }),
+      });
+      if (!data || !data.session_id) throw new Error('No session');
+      wrap.dataset.sessionId = data.session_id;
+      delete wrap.dataset.pendingAgents;
+      wrap.dispatchEvent(new CustomEvent('tomo:session-created', {
+        detail: { session_id: data.session_id, agent_ids: agents },
+      }));
+      return data.session_id;
     }
 
     function streamTurn(text) {
@@ -161,7 +188,7 @@
         turnActive = true;
         turnAgentName = d.agent || turnAgentName;
         turnAgentId = d.agent_id || turnAgentId;
-        // Pending assistant bubble with streaming cursor (Evonic-style) —
+        // Pending assistant bubble with streaming cursor —
         // never an empty purple thinking slab.
         if (!asstEl) {
           const tmp = document.createElement('div');
@@ -178,7 +205,7 @@
         const d = JSON.parse(e.data || '{}');
         if (!d.title) return;
         wrap.dispatchEvent(new CustomEvent('tomo:session-title', {
-          detail: { session_id: d.session_id || sessionId, title: d.title },
+          detail: { session_id: d.session_id || currentSessionId(), title: d.title },
         }));
       });
       es.addEventListener('thinking', function (e) {
@@ -273,13 +300,21 @@
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
     }
 
-    function send(text) {
+    async function send(text) {
       const value = (text != null ? String(text) : input.value).trim();
       if (!value || sending) return;
       sending = true;
       sendBtn.disabled = true;
       input.value = '';
       resize();
+      try {
+        await ensureSession();
+      } catch (e) {
+        sending = false;
+        sendBtn.disabled = !input.value.trim();
+        Tomo.toast((e && e.message) || 'Could not start chat', 'err');
+        return;
+      }
       const empty = scroll.querySelector('.chat-empty');
       if (empty) empty.remove();
       const u = document.createElement('div');
@@ -303,6 +338,10 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', async function () {
         if (!confirm('Clear this conversation?')) return;
+        if (!currentSessionId() && !agentId) {
+          wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
+          return;
+        }
         try {
           await Tomo.api(clearUrl(), { method: 'POST' });
           wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
