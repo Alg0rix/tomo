@@ -1,10 +1,10 @@
-"""Agent work-dir sandbox for file/bash tools (Alpha Slice C + D).
+"""Agent work-dir sandbox for file/bash tools.
 
 Default cwd is ``$TOMO_HOME/agents/<id>/work`` (created on demand). When the
 agent has a **local** workplace with an existing ``root_path``, that path is
-used instead (Slice D). SSH/tunnel workplaces do not redirect cwd in Alpha —
-bash/file stay on the local ``work/`` fallback. When no agent is bound, tools
-use ``$TOMO_HOME/agents/_default/work``.
+used instead. **Tunnel** workplaces route bash/file tools over the connector
+hub (see :mod:`app.runtime.tools.tunnel_rpc`) — local cwd is not used.
+SSH workplaces still use the local ``work/`` fallback for bash/file.
 
 Path arguments must stay under that root — absolute paths and ``..`` escapes
 are rejected as error strings (never raise to the caller).

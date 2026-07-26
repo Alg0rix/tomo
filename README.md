@@ -18,7 +18,7 @@ What ships in Alpha (slices 0→H):
 | **Models** | Multi-profile catalog, default + per-agent model |
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
 | **Tools** | `calculator`, `bash`, `read_file`, `write_file`, `recall`, `remember`, `delegate` |
-| **Workplaces** | Local + SSH (tunnel labeled connector-later) |
+| **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) |
 | **Memory / KB** | SQLite knowledge entries + recall/remember tools |
 | **Channels** | Web UI + Telegram long-poll bot |
 | **Scheduler** | Interval schedules fire agent turns in-process |
@@ -191,15 +191,17 @@ SSH requires inbound access, key management, and often manual setup per host. A 
 - **Persistent channel** — coordinator always knows which devices are online (green/red status)
 
 ```bash
-# On the coordinator: create a tunnel workplace, get a pairing code
-tomo workplace create --name "raspberry-pi" --type tunnel
+# On the coordinator: create a tunnel workplace in the UI (Workplaces → New → tunnel)
+# and copy the pairing code (or POST /api/workplaces/{id}/pairing-code).
 
-# On the target device: install connector, pair, run
-tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
-tomo-connector run    # auto-reconnect
+# On the target device: build the Go connector, pair, run
+cd connector && go build -o tomo-connector .
+./tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
+# stays connected; later / after reboot:
+./tomo-connector run    # auto-reconnect with saved token (~/.tomo-connector)
 ```
 
-Once paired, agents assigned to that workplace run commands on the device as if they were local.
+Once paired, agents assigned to that workplace run `bash` / file tools on the device as if they were local. Status is green only while the WebSocket is live.
 
 ### SSH as a fallback
 
@@ -380,7 +382,7 @@ tomo/
 │   │   └── tools/                # Built-in Python tool backends
 │   ├── tools/                    # Declarative tool JSON (schema + backend ref)
 │   ├── channels/                 # Web + Telegram (WhatsApp later)
-│   ├── workplaces/               # Local / SSH / tunnel (tunnel stub)
+│   ├── workplaces/               # Local / SSH / tunnel hub + pairing
 │   ├── extensions/               # Skill + plugin loaders
 │   ├── services/                 # Store facade + chat/SSE
 │   ├── static/                   # CSS + JS (Darkroom UI)
@@ -393,7 +395,7 @@ tomo/
 ├── skillsets/                    # Preset agent profiles (JSON)
 ├── defaults/                     # Shipped prompts and KB seeds
 ├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
-├── connector/                    # Remote workplace agent (tunnel) — planned
+├── connector/                    # Go tomo-connector (WebSocket tunnel agent)
 ├── tests/                        # unit/ + integration/
 ├── scripts/                      # Dev and release helpers
 ├── docs/                         # Architecture notes
@@ -492,7 +494,7 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 uv run pytest
 ```
 
-> **Note:** Alpha kitchen-sink (slices 0→H) is complete. Next: deeper learning loop, connector tunnel product, more channels — see Roadmap.
+> **Note:** Alpha kitchen-sink (slices 0→H) is complete. **Tomo Connector** (Go tunnel agent) is implemented — see `connector/README.md`. Next: deeper learning loop, more channels — see Roadmap.
 
 ---
 
@@ -501,7 +503,7 @@ uv run pytest
 - [x] Alpha kitchen-sink — home, models, swarm handoff, tools, workplaces, KB, Telegram, scheduler
 - [ ] Learning loop — observe → distill → reuse → refine; autonomous skill creation
 - [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
-- [ ] Tomo Connector — WebSocket tunnel agent for remote workplaces
+- [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
 - [ ] Channel adapters — WhatsApp; Discord, Slack, CLI
 - [ ] Skill registry — install and share community skills
 - [ ] Observability — traces, artifact browser, cost tracking per agent

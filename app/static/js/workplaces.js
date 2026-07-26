@@ -124,4 +124,45 @@
       }
     });
   }
+
+  var genPair = document.getElementById("wpGenPairing");
+  if (genPair) {
+    genPair.addEventListener("click", async function () {
+      var wid = genPair.dataset.id;
+      genPair.disabled = true;
+      try {
+        var result = await Tomo.api(
+          "/api/workplaces/" + encodeURIComponent(wid) + "/pairing-code",
+          { method: "POST" }
+        );
+        Tomo.toast("Pairing code ready", "ok");
+        setTimeout(function () { location.reload(); }, 400);
+      } catch (e) {
+        Tomo.toast((e && e.message) || "Could not generate code", "err");
+        genPair.disabled = false;
+      }
+    });
+  }
+
+  var copyBtn = document.getElementById("wpCopyCode");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", async function () {
+      var code = copyBtn.dataset.code || "";
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = code;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        Tomo.toast("Code copied", "ok");
+      } catch (e) {
+        Tomo.toast("Copy failed", "err");
+      }
+    });
+  }
 })();

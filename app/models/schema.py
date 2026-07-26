@@ -90,19 +90,25 @@ CREATE TABLE IF NOT EXISTS agent_tools (
 );
 
 CREATE TABLE IF NOT EXISTS workplaces (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    kind         TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'offline',
-    host         TEXT NOT NULL DEFAULT '',
-    root_path    TEXT NOT NULL DEFAULT '',
-    ssh_host     TEXT NOT NULL DEFAULT '',
-    ssh_port     INTEGER NOT NULL DEFAULT 22,
-    ssh_user     TEXT NOT NULL DEFAULT '',
-    ssh_password TEXT NOT NULL DEFAULT '',
-    ssh_key      TEXT NOT NULL DEFAULT '',
-    created_at   REAL NOT NULL DEFAULT 0,
-    updated_at   REAL NOT NULL DEFAULT 0
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    kind                   TEXT NOT NULL,
+    status                 TEXT NOT NULL DEFAULT 'offline',
+    host                   TEXT NOT NULL DEFAULT '',
+    root_path              TEXT NOT NULL DEFAULT '',
+    ssh_host               TEXT NOT NULL DEFAULT '',
+    ssh_port               INTEGER NOT NULL DEFAULT 22,
+    ssh_user               TEXT NOT NULL DEFAULT '',
+    ssh_password           TEXT NOT NULL DEFAULT '',
+    ssh_key                TEXT NOT NULL DEFAULT '',
+    pairing_code           TEXT NOT NULL DEFAULT '',
+    pairing_expires_at     REAL NOT NULL DEFAULT 0,
+    connector_token        TEXT NOT NULL DEFAULT '',
+    connector_last_seen_at REAL NOT NULL DEFAULT 0,
+    connector_version      TEXT NOT NULL DEFAULT '',
+    connector_hostname     TEXT NOT NULL DEFAULT '',
+    created_at             REAL NOT NULL DEFAULT 0,
+    updated_at             REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_entries (
@@ -182,4 +188,17 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE agents ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"
         )
+    # Connector tunnel columns (idempotent ALTER for pre-connector DBs).
+    wp_cols = {r[1] for r in conn.execute("PRAGMA table_info(workplaces)")}
+    _wp_alters = {
+        "pairing_code": "ALTER TABLE workplaces ADD COLUMN pairing_code TEXT NOT NULL DEFAULT ''",
+        "pairing_expires_at": "ALTER TABLE workplaces ADD COLUMN pairing_expires_at REAL NOT NULL DEFAULT 0",
+        "connector_token": "ALTER TABLE workplaces ADD COLUMN connector_token TEXT NOT NULL DEFAULT ''",
+        "connector_last_seen_at": "ALTER TABLE workplaces ADD COLUMN connector_last_seen_at REAL NOT NULL DEFAULT 0",
+        "connector_version": "ALTER TABLE workplaces ADD COLUMN connector_version TEXT NOT NULL DEFAULT ''",
+        "connector_hostname": "ALTER TABLE workplaces ADD COLUMN connector_hostname TEXT NOT NULL DEFAULT ''",
+    }
+    for col, ddl in _wp_alters.items():
+        if col not in wp_cols:
+            conn.execute(ddl)
     conn.commit()

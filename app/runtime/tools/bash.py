@@ -3,6 +3,9 @@
 Commands start with ``cwd`` set to ``$TOMO_HOME/agents/<id>/work`` (see
 :mod:`app.runtime.tools.sandbox`). A wall-clock timeout caps runaway
 processes. Failures and timeouts return ``Error: ...`` strings — never raise.
+
+When ``background`` is true, the command is started without waiting and
+registered in :mod:`app.runtime.tools.process_registry`.
 """
 
 from __future__ import annotations
@@ -10,7 +13,9 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
-from app.runtime.tools.sandbox import resolve_work_root
+from app.runtime.tools import process_registry
+from app.runtime.tools.sandbox import current_agent_id, resolve_work_root
+from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
 _DEFAULT_TIMEOUT = 30.0
 _MAX_TIMEOUT = 120.0
@@ -35,6 +40,16 @@ def _clip(text: str) -> str:
     return text[:_MAX_OUTPUT] + f"\n...[truncated, {len(text)} chars total]"
 
 
+def _truthy(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw != 0
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
 def run(arguments: dict[str, Any]) -> str:
     """Execute ``command`` in the sandbox cwd; always returns a string."""
     if not isinstance(arguments, dict):
@@ -42,6 +57,33 @@ def run(arguments: dict[str, Any]) -> str:
     command = arguments.get("command")
     if not isinstance(command, str) or not command.strip():
         return "Error: 'command' argument must be a non-empty string"
+
+    background = _truthy(arguments.get("background"))
+    if background:
+        # Background jobs stay local; tunnel RPC has no async job API yet.
+        root = resolve_work_root()
+        try:
+            proc = subprocess.Popen(
+                ["bash", "-lc", command],
+                cwd=str(root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError as exc:
+            return f"Error: could not start background command: {exc}"
+        job = process_registry.register(
+            command, proc, agent_id=current_agent_id()
+        )
+        return f"Started background job {job.id}"
+
+    remote = try_tunnel_rpc(
+        "bash",
+        {"command": command, "timeout": arguments.get("timeout")},
+        timeout=_timeout_seconds(arguments.get("timeout")),
+    )
+    if remote is not None:
+        return remote
 
     root = resolve_work_root()
     timeout = _timeout_seconds(arguments.get("timeout"))

@@ -4,7 +4,7 @@
   <div class="page-head">
     <div>
       <h1 class="page-title">Workplaces</h1>
-      <p class="page-sub">Machines your agents run on — local, SSH, or tunnel (connector later).</p>
+      <p class="page-sub">Machines your agents run on — local, SSH, or Tomo Connector tunnel.</p>
     </div>
     <button class="btn primary" type="button" id="newWorkplaceBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New workplace</button>
   </div>
@@ -24,7 +24,7 @@
           <select class="input" id="wpKind" style="max-width:220px">
             <option value="local">local</option>
             <option value="ssh">ssh</option>
-            <option value="tunnel">tunnel (connector later)</option>
+            <option value="tunnel">tunnel (Tomo Connector)</option>
           </select>
         </div>
         <div class="config-row wp-local-only"><div class="lbl">Root path</div>
@@ -51,8 +51,8 @@
             <p class="faint" id="wpKeyStatus" style="margin:6px 0 0;font-size:12px"></p>
           </div>
         </div>
-        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Note</div>
-          <div class="faint">Tunnel type is reserved for Tomo Connector — Connect will report “connector later”, not fake-connected.</div>
+        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Connector</div>
+          <div class="faint">Creates a pairing code. On the device: build <code>connector/</code> then <code>tomo-connector pair --code … --server …</code></div>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px">
           <button class="btn ghost" type="button" id="wpCancel">Cancel</button>
@@ -67,7 +67,7 @@
     {% with workplace=w %}{% include 'partials/workplace_tile.html' %}{% endwith %}
     {% else %}
     {% from 'partials/empty.html' import empty_state %}
-    {{ empty_state('No workplaces yet.', 'Create a local or SSH workplace for agent tools.') }}
+    {{ empty_state('No workplaces yet.', 'Create a local, SSH, or tunnel workplace for agent tools.') }}
     {% endfor %}
   </div>
 

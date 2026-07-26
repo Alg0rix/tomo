@@ -24,6 +24,7 @@ round.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 from typing import Any, AsyncIterator
@@ -154,7 +155,11 @@ async def run_turn(
                 handoff: dict[str, Any] | None = None
                 for cid, call in paired:
                     yield {"kind": "tool", "tool": call.name, "args": call.arguments}
-                    result = execute(call.name, call.arguments)
+                    # Run tools off the event loop so tunnel RPC can wait on
+                    # connector WebSocket traffic without deadlocking.
+                    result = await asyncio.to_thread(
+                        execute, call.name, call.arguments
+                    )
                     error = str(result).startswith("Error:")
                     yield {
                         "kind": "tool_result",

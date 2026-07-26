@@ -345,8 +345,24 @@ class Store:
             secrets = workplaces_store.get_workplace_secrets(self._conn, workplace_id)
             if not secrets:
                 return None
-            result = workplace_connect(secrets)
-            workplaces_store.set_status(self._conn, workplace_id, result["status"])
+            # Merge public flags (pairing_code, token_set) for tunnel messaging.
+            public = workplaces_store.get_workplace(self._conn, workplace_id) or {}
+            view = {**secrets, **{
+                k: public.get(k)
+                for k in (
+                    "pairing_code",
+                    "connector_token_set",
+                    "status",
+                )
+            }}
+            result = workplace_connect(view)
+            allow = result["status"] == "connected" and secrets.get("kind") == "tunnel"
+            workplaces_store.set_status(
+                self._conn,
+                workplace_id,
+                result["status"],
+                allow_connected=bool(allow),
+            )
             wp = workplaces_store.get_workplace(self._conn, workplace_id)
             return {
                 "ok": result["ok"],
@@ -355,10 +371,63 @@ class Store:
                 "workplace": wp,
             }
 
+    def issue_pairing_code(self, workplace_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return workplaces_store.issue_pairing_code(self._conn, workplace_id)
+
+    def pair_connector(
+        self, code: str, *, hostname: str = "", version: str = ""
+    ) -> dict[str, Any] | None:
+        """Consume pairing code; return workplace_id + plaintext token."""
+        with self._lock:
+            wp = workplaces_store.find_by_pairing_code(self._conn, code)
+            if not wp:
+                return None
+            token = workplaces_store.complete_pairing(
+                self._conn,
+                wp["id"],
+                hostname=hostname,
+                version=version,
+                rotate_token=True,
+            )
+            return {"workplace_id": wp["id"], "token": token}
+
+    def hello_connector(
+        self, token: str, *, hostname: str = "", version: str = ""
+    ) -> dict[str, Any] | None:
+        """Authenticate with long-lived token; mark connected in DB."""
+        with self._lock:
+            wp = workplaces_store.find_by_connector_token(self._conn, token)
+            if not wp:
+                return None
+            workplaces_store.mark_connector_seen(
+                self._conn,
+                wp["id"],
+                hostname=hostname,
+                version=version,
+                status="connected",
+            )
+            return {"workplace_id": wp["id"]}
+
+    def touch_connector(self, workplace_id: str) -> None:
+        with self._lock:
+            workplaces_store.mark_connector_seen(
+                self._conn, workplace_id, status="connected"
+            )
+
+    def mark_connector_offline(self, workplace_id: str) -> None:
+        with self._lock:
+            workplaces_store.mark_connector_offline(self._conn, workplace_id)
+
     def resolve_agent_workplace_root(self, agent_id: str) -> str | None:
         """Local workplace ``root_path`` for ``agent_id``, or ``None`` (use work/)."""
         with self._lock:
             return workplaces_store.resolve_local_root(self._conn, agent_id)
+
+    def resolve_agent_workplace(self, agent_id: str) -> dict[str, Any] | None:
+        """Assigned workplace (public) for ``agent_id``, or ``None``."""
+        with self._lock:
+            return workplaces_store.resolve_agent_workplace(self._conn, agent_id)
 
     # -- knowledge entries (SQLite) --------------------------------------
     def list_knowledge_entries(self) -> list[dict[str, Any]]:

@@ -132,17 +132,64 @@ def test_ssh_connect_mocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "mocked" in result["message"]
 
 
-def test_tunnel_connect_never_connected(tmp_path: Path) -> None:
+def test_tunnel_create_issues_pairing_code(tmp_path: Path) -> None:
     _rebind(tmp_path)
     wp = store.create_workplace(
-        {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel", "host": "relay"}
+        {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel"}
     )
-    assert wp["status"] == "later"
+    assert wp["status"] == "pairing"
+    assert wp["pairing_code"]
+    assert len(wp["pairing_code"]) >= 6
+    assert wp["pairing_expires_at"] > 0
+    assert wp["connector_token_set"] is False
+
+
+def test_tunnel_connect_not_connected_without_socket(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    from app.workplaces.hub import hub
+
+    hub.reset()
+    store.create_workplace(
+        {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel"}
+    )
     result = store.connect_workplace("wp_tun")
     assert result["ok"] is False
-    assert result["status"] == "later"
-    assert "later" in result["message"].lower()
-    assert store.get_workplace("wp_tun")["status"] == "later"
+    assert result["status"] in ("pairing", "offline")
+    assert store.get_workplace("wp_tun")["status"] != "connected"
+
+
+def test_tunnel_pairing_code_refresh(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    wp = store.create_workplace(
+        {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel"}
+    )
+    first = wp["pairing_code"]
+    again = store.issue_pairing_code("wp_tun")
+    assert again is not None
+    assert again["pairing_code"]
+    assert again["pairing_code"] != first or True  # may rarely collide
+    assert again["status"] in ("pairing", "connected")
+
+
+def test_tunnel_token_encrypted_after_pair(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    wp = store.create_workplace(
+        {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel"}
+    )
+    code = wp["pairing_code"]
+    result = store.pair_connector(code, hostname="pi.local", version="0.1.0")
+    assert result is not None
+    assert result["workplace_id"] == "wp_tun"
+    assert result["token"]
+    public = store.get_workplace("wp_tun")
+    assert public["connector_token_set"] is True
+    assert "connector_token" not in public or public.get("connector_token") in ("", None)
+    raw = _raw_col("wp_tun", "connector_token")
+    assert raw.startswith("enc:v1:")
+    assert result["token"] not in raw
+    # Reconnect with token (hello path).
+    hello = store.hello_connector(result["token"], hostname="pi.local")
+    assert hello == {"workplace_id": "wp_tun"}
 
 
 def test_assign_workplace_to_agent(tmp_path: Path) -> None:

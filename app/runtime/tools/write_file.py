@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.runtime.tools.sandbox import jail_path, resolve_work_root
+from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
 
 def run(arguments: dict[str, Any]) -> str:
@@ -17,6 +18,12 @@ def run(arguments: dict[str, Any]) -> str:
     content = arguments.get("content")
     if not isinstance(content, str):
         return "Error: 'content' argument must be a string"
+
+    remote = try_tunnel_rpc(
+        "write_file", {"path": path_arg, "content": content}
+    )
+    if remote is not None:
+        return remote
 
     root = resolve_work_root()
     target = jail_path(root, path_arg)

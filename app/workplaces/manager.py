@@ -1,10 +1,11 @@
-"""Workplace lifecycle — Connect/test dispatcher (Alpha Slice D)."""
+"""Workplace lifecycle — Connect/test dispatcher."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from app.workplaces.backends import local, ssh, tunnel
+from app.workplaces.hub import hub
 
 _BACKENDS = {
     "local": local.test_connection,
@@ -16,9 +17,8 @@ _BACKENDS = {
 def connect(workplace: dict[str, Any]) -> dict[str, Any]:
     """Run the kind-specific Connect probe.
 
-    Returns ``{"ok": bool, "status": str, "message": str}``. Tunnel never
-    becomes ``connected``. Local/SSH set ``connected`` on success, ``offline``
-    on failure.
+    Returns ``{"ok": bool, "status": str, "message": str}``.
+    Tunnel is ``connected`` only when the hub has a live WebSocket.
     """
     kind = (workplace.get("kind") or "").strip().lower()
     tester = _BACKENDS.get(kind)
@@ -30,8 +30,15 @@ def connect(workplace: dict[str, Any]) -> dict[str, Any]:
         }
     ok, message = tester(workplace)
     if kind == "tunnel":
-        status = "later"
-        ok = False
+        wid = (workplace.get("id") or "").strip()
+        if ok and hub.is_online(wid):
+            status = "connected"
+        elif workplace.get("pairing_code") or (workplace.get("status") == "pairing"):
+            status = "pairing"
+            ok = False
+        else:
+            status = "offline"
+            ok = False
     else:
         status = "connected" if ok else "offline"
     return {"ok": ok, "status": status, "message": message}

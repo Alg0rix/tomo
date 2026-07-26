@@ -149,11 +149,28 @@ async def delete_workplace(workplace_id: str, _: AuthDep):
 
 @router.post("/workplaces/{workplace_id}/connect")
 async def connect_workplace(workplace_id: str, _: AuthDep):
-    """Test connection; persist status (tunnel stays ``later``, never fake-connected)."""
+    """Test connection; persist status (tunnel only ``connected`` with live socket)."""
     result = store.connect_workplace(workplace_id)
     if not result:
         raise HTTPException(status_code=404, detail="Workplace not found")
     return result
+
+
+@router.post("/workplaces/{workplace_id}/pairing-code")
+async def issue_pairing_code(workplace_id: str, _: AuthDep):
+    """Generate a short-lived pairing code for a tunnel workplace."""
+    try:
+        wp = store.issue_pairing_code(workplace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not wp:
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return {
+        "workplace": wp,
+        "pairing_code": wp.get("pairing_code") or "",
+        "pairing_expires_at": wp.get("pairing_expires_at") or 0,
+        "pairing_ttl_seconds": wp.get("pairing_ttl_seconds") or 0,
+    }
 
 
 @router.get("/knowledge")

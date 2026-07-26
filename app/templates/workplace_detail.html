@@ -11,11 +11,9 @@
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       {{ workplace_status(workplace.status) }}
-      {% if workplace.kind != 'tunnel' %}
-      <button class="btn primary sm" type="button" id="wpConnectBtn" data-id="{{ workplace.id }}">Connect</button>
-      {% else %}
-      <span class="badge muted">connector later</span>
-      {% endif %}
+      <button class="btn primary sm" type="button" id="wpConnectBtn" data-id="{{ workplace.id }}">
+        {% if workplace.kind == 'tunnel' %}Refresh status{% else %}Connect{% endif %}
+      </button>
       <button class="btn ghost sm" type="button" id="wpEditBtn" data-id="{{ workplace.id }}">Edit</button>
     </div>
   </div>
@@ -46,7 +44,7 @@
           <select class="input" id="wpKind" style="max-width:220px">
             <option value="local" {% if workplace.kind == 'local' %}selected{% endif %}>local</option>
             <option value="ssh" {% if workplace.kind == 'ssh' %}selected{% endif %}>ssh</option>
-            <option value="tunnel" {% if workplace.kind == 'tunnel' %}selected{% endif %}>tunnel (connector later)</option>
+            <option value="tunnel" {% if workplace.kind == 'tunnel' %}selected{% endif %}>tunnel (Tomo Connector)</option>
           </select>
         </div>
         <div class="config-row wp-local-only"><div class="lbl">Root path</div>
@@ -73,8 +71,8 @@
             <p class="faint" id="wpKeyStatus" style="margin:6px 0 0;font-size:12px">{% if workplace.key_set %}Key set{% else %}No key{% endif %}</p>
           </div>
         </div>
-        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Note</div>
-          <div class="faint">Tunnel type is reserved for Tomo Connector — Connect reports “connector later”.</div>
+        <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Connector</div>
+          <div class="faint">Use Generate code below to pair a new device.</div>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px">
           <button class="btn ghost" type="button" id="wpCancel">Cancel</button>
@@ -99,7 +97,29 @@
         {% endif %}
         <div class="config-row"><div class="lbl">Agents</div><div>{{ workplace.agent_count }} assigned</div></div>
         {% if workplace.kind == 'tunnel' %}
-        <div class="config-row"><div class="lbl">Pairing</div><div><span class="badge muted">connector later</span></div></div>
+        <div class="config-row"><div class="lbl">Token</div><div>{% if workplace.connector_token_set %}<span class="badge ok">paired</span>{% else %}<span class="faint">not paired</span>{% endif %}</div></div>
+        {% if workplace.connector_hostname %}
+        <div class="config-row"><div class="lbl">Hostname</div><div class="mono">{{ workplace.connector_hostname }}</div></div>
+        {% endif %}
+        {% if workplace.connector_version %}
+        <div class="config-row"><div class="lbl">Connector</div><div class="mono">v{{ workplace.connector_version }}</div></div>
+        {% endif %}
+        <div class="config-row"><div class="lbl">Pairing code</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            {% if workplace.pairing_code %}
+            <code class="mono" id="wpPairingCode" style="font-size:1.1em;letter-spacing:0.08em">{{ workplace.pairing_code }}</code>
+            <button class="btn ghost sm" type="button" id="wpCopyCode" data-code="{{ workplace.pairing_code }}">Copy</button>
+            {% else %}
+            <span class="faint" id="wpPairingCode">—</span>
+            {% endif %}
+            <button class="btn ghost sm" type="button" id="wpGenPairing" data-id="{{ workplace.id }}">Generate code</button>
+          </div>
+        </div>
+        <div class="config-row"><div class="lbl">Install</div>
+          <pre class="mono" id="wpInstallSnippet" style="margin:0;padding:10px 12px;background:var(--surface-2,rgba(0,0,0,.15));border-radius:8px;font-size:12px;white-space:pre-wrap;max-width:100%">cd connector && go build -o tomo-connector .
+./tomo-connector pair --code {{ workplace.pairing_code or 'CODE' }} --server {{ request.base_url | string | trim('/') }}
+./tomo-connector run</pre>
+        </div>
         {% endif %}
       </div>
     </div>
