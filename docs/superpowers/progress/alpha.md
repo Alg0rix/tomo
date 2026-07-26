@@ -7,7 +7,7 @@
 
 | Slice | Name | Spec/Plan | Cline | Review | State |
 |-------|------|-----------|-------|--------|-------|
-| 0 | Tomo Home (`$TOMO_HOME`) | [plan](../plans/2026-07-26-alpha-slice-0-tomo-home.md) · [brief](../handoffs/alpha-slice-0-cline-brief.md) | done | pending review | **done** |
+| 0 | Tomo Home (`$TOMO_HOME`) | [plan](../plans/2026-07-26-alpha-slice-0-tomo-home.md) · [brief](../handoffs/alpha-slice-0-cline-brief.md) | done | **PASS** | **done** |
 | A | Agent identity + multi-model + UI honesty | pending | — | — | after Slice 0 |
 | B | Swarm delegation | — | — | — | — |
 | C | More tools | — | — | — | — |
@@ -25,4 +25,5 @@
 - 2026-07-26: Secrets policy updated — master key (`TOMO_SECRET_KEY` / `$TOMO_HOME/.secret_key`); SQLite secret fields encrypted at rest (Slice 0).  
 - 2026-07-26: §2.2 multi-model profiles — user configures catalog + default + per-agent (Slice A); Alpha-fresh, no upgrade path required in docs.  
 - 2026-07-26: Slice 0 **dispatched to Cline** via CLI (`cline -c …` + `alpha-slice-0-cline-brief.md`).
-- 2026-07-26: Slice 0 **implemented** by Cline — `$TOMO_HOME` tree + `ensure_tomo_home`; `defaults/SOUL.md` + `defaults/tomo.yaml`; `app/core/secrets.py` (Fernet at-rest encryption, `enc:v1:` prefix); `llm_api_key` ciphertext in SQLite + decrypted in-memory `get_settings`; `build_system_prompt` (SOUL/SYSTEM from home wired into the loop); optional `.env` loader (`override=False`); `TOMO_SESSION_SECRET` split from `TOMO_SECRET_KEY` (master key). Full suite green (197). Pending Cursor review.
+- 2026-07-26: Slice 0 **implemented** by Cline — `$TOMO_HOME` tree + `ensure_tomo_home`; `defaults/SOUL.md` + `defaults/tomo.yaml`; `app/core/secrets.py` (Fernet at-rest encryption, `enc:v1:` prefix); `llm_api_key` ciphertext in SQLite + decrypted in-memory `get_settings`; `build_system_prompt` (SOUL/SYSTEM from home wired into the loop); optional `.env` loader (`override=False`); `TOMO_SESSION_SECRET` split from `TOMO_SECRET_KEY` (master key). Full suite green (197). Pending Cursor review.  
+- 2026-07-26: Slice 0 **Cursor review PASS** — commit `ad8827f`; encryption + `.secret_key` 0600 + SOUL/SYSTEM loading verified. Ready for Slice A when you say go.
