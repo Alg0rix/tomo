@@ -5,8 +5,8 @@ function-tool schemas (for ``LLMClient.complete(..., tools=...)``), and
 dispatches ``execute(name, arguments)`` to the matching Python backend.
 
 Wired backends: ``calculator``, ``delegate``, ``bash``, ``read_file``,
-``write_file``. Adding a tool is a matter of dropping an
-``app/tools/<name>.json`` file and registering its backend in
+``write_file``, ``recall``, ``remember``. Adding a tool is a matter of dropping
+an ``app/tools/<name>.json`` file and registering its backend in
 :data:`_BACKENDS` below — dynamic ``backend``-path import is a later task.
 ``execute`` always returns a string: unknown tools and missing backends
 produce ``"Error: ..."`` strings rather than raising.
@@ -23,6 +23,8 @@ from app.runtime.tools import bash as _bash_backend
 from app.runtime.tools import calculator as _calculator_backend
 from app.runtime.tools import delegate as _delegate_backend
 from app.runtime.tools import read_file as _read_file_backend
+from app.runtime.tools import recall as _recall_backend
+from app.runtime.tools import remember as _remember_backend
 from app.runtime.tools import write_file as _write_file_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
@@ -36,6 +38,8 @@ _BACKENDS: dict[str, ToolRunner] = {
     "bash": _bash_backend.run,
     "read_file": _read_file_backend.run,
     "write_file": _write_file_backend.run,
+    "recall": _recall_backend.run,
+    "remember": _remember_backend.run,
 }
 
 

@@ -1,4 +1,4 @@
-"""Seed demo agents, sessions, and settings into an empty foundation DB.
+"""Seed demo agents, sessions, settings, and knowledge entries into an empty DB.
 
 Called by the store facade on init via :func:`seed_if_empty`. Seeding is
 idempotent: each section only runs when its table is empty, so an already
@@ -76,8 +76,47 @@ def _seed_settings(conn: sqlite3.Connection) -> None:
     conn.executemany("INSERT INTO settings (key, value_json) VALUES (?,?)", rows)
 
 
+def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
+    """Seed a small FAQ-style KB for recall demos (Slice E)."""
+    base = _now()
+    rows = [
+        (
+            "kb_vendor_deadline",
+            "Q3 vendor onboarding deadline",
+            "The Q3 vendor onboarding deadline is October 15, 2026. All vendor "
+            "packets must be submitted to Ops by that date.",
+            json.dumps(["vendors", "onboarding", "deadline", "q3"]),
+            base - 86400 * 3,
+            base - 86400 * 3,
+        ),
+        (
+            "kb_support_hours",
+            "Support business hours",
+            "Customer support is available Monday–Friday, 09:00–18:00 local time. "
+            "Urgent production incidents can page Ops outside those hours.",
+            json.dumps(["support", "hours", "faq"]),
+            base - 86400 * 2,
+            base - 86400 * 2,
+        ),
+        (
+            "kb_staging_cluster",
+            "Staging cluster hostname",
+            "The staging Kubernetes cluster hostname is staging.tomo.internal. "
+            "Deployments require the Ops agent workplace.",
+            json.dumps(["staging", "ops", "cluster"]),
+            base - 86400,
+            base - 86400,
+        ),
+    ]
+    conn.executemany(
+        "INSERT INTO knowledge_entries (id, title, body, tags_json, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?)",
+        rows,
+    )
+
+
 def seed_if_empty(conn: sqlite3.Connection) -> None:
-    """Seed agents/sessions/settings only when the corresponding table is empty.
+    """Seed agents/sessions/settings/KB only when the corresponding table is empty.
 
     Demo sessions are only seeded when every required coordinator/member agent
     (``main``, ``ops``, ``research``) already exists — otherwise the session
@@ -92,6 +131,8 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
                 _seed_sessions(conn)
         if _count(conn, "settings") == 0:
             _seed_settings(conn)
+        if _count(conn, "knowledge_entries") == 0:
+            _seed_knowledge_entries(conn)
         conn.commit()
     except Exception:
         conn.rollback()

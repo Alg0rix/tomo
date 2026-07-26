@@ -1,7 +1,7 @@
 """Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
-workplaces and ``platform_data`` for the remaining platform lists (skills,
-plugins, schedules, models, providers, safety rules, users, shared channels,
-eval_*). Tool catalog is sourced from the JSON tool registry.
+workplaces/knowledge_entries and ``platform_data`` for the remaining platform
+lists (skills, plugins, schedules, models, providers, safety rules, users,
+shared channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
 is unchanged. Busy state is process-local in-memory
@@ -17,6 +17,7 @@ from typing import Any
 from app.core.config import DB_PATH
 from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
+from app.models.mixins import knowledge_entries as knowledge_store
 from app.models.mixins import messages as messages_store
 from app.models.mixins import sessions as sessions_store
 from app.models.mixins import llm_profiles as llm_profiles_store
@@ -356,6 +357,35 @@ class Store:
         """Local workplace ``root_path`` for ``agent_id``, or ``None`` (use work/)."""
         with self._lock:
             return workplaces_store.resolve_local_root(self._conn, agent_id)
+
+    # -- knowledge entries (SQLite) --------------------------------------
+    def list_knowledge_entries(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return knowledge_store.list_entries(self._conn)
+
+    def get_knowledge_entry(self, entry_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return knowledge_store.get_entry(self._conn, entry_id)
+
+    def create_knowledge_entry(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return knowledge_store.create_entry(self._conn, data)
+
+    def update_knowledge_entry(
+        self, entry_id: str, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return knowledge_store.update_entry(self._conn, entry_id, data)
+
+    def delete_knowledge_entry(self, entry_id: str) -> bool:
+        with self._lock:
+            return knowledge_store.delete_entry(self._conn, entry_id)
+
+    def search_knowledge(
+        self, query: str, *, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            return knowledge_store.search_entries(self._conn, query, limit=limit)
 
     # -- platform lists (registry + platform_data) -----------------------
     def _plat(self, key: str) -> list[dict[str, Any]]:

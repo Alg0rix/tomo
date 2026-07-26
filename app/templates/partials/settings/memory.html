@@ -1,0 +1,38 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-memory" class="sys-section" style="display:none">
+  {{ section_head('Memory', 'Knowledge base entries. Agents retrieve these via the recall tool (keyword search).') }}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>Knowledge entries</h3>
+      <button class="btn primary sm" type="button" id="addKnowledgeBtn">+ Add entry</button>
+    </div>
+    <div class="card-body" id="knowledgeList" style="padding:8px 18px">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="knowledgeFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3 id="knowledgeFormTitle">Add entry</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="knowledgeForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="kbFormMode" value="add">
+        <div class="config-row"><div class="lbl">ID <span class="faint">(optional slug)</span></div>
+          <input class="input" id="kbId" pattern="[a-z0-9_]+" placeholder="auto from title" style="max-width:220px" spellcheck="false">
+        </div>
+        <div class="config-row"><div class="lbl">Title</div>
+          <input class="input" id="kbTitle" required placeholder="Q3 vendor deadline" style="max-width:420px">
+        </div>
+        <div class="config-row"><div class="lbl">Body</div>
+          <textarea class="input" id="kbBody" rows="5" placeholder="The fact or note to store…" style="max-width:520px;width:100%;min-height:100px"></textarea>
+        </div>
+        <div class="config-row"><div class="lbl">Tags</div>
+          <input class="input" id="kbTags" placeholder="vendors, deadline (comma-separated)" style="max-width:420px">
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="kbCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="kbSave">Save entry</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>

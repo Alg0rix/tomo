@@ -1,0 +1,32 @@
+{
+  "id": "remember",
+  "name": "Remember",
+  "description": "Save a fact into the knowledge base for later recall.",
+  "backend": "app.runtime.tools.remember",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "remember",
+      "description": "Persist a title/body (and optional tags) into Tomo's knowledge base.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short title for the knowledge entry."
+          },
+          "body": {
+            "type": "string",
+            "description": "The fact or note to store."
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional tags for keyword search."
+          }
+        },
+        "required": ["title", "body"]
+      }
+    }
+  }
+}

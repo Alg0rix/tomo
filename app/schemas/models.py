@@ -139,3 +139,22 @@ class WorkplaceUpdate(BaseModel):
     ssh_user: str | None = None
     ssh_password: str | None = None
     ssh_key: str | None = None
+
+
+class KnowledgeEntryCreate(BaseModel):
+    """Create a knowledge base entry (Slice E)."""
+
+    id: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
+    )
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(default="", max_length=20_000)
+    tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeEntryUpdate(BaseModel):
+    """Update a knowledge base entry."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, max_length=20_000)
+    tags: list[str] | None = None

@@ -22,12 +22,17 @@ from app.runtime.agent.loop import run_turn
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.runtime.llm.mock import MockLLMClient
-from app.runtime.llm.mock import _CALC_FINAL, _DEFAULT_REPLY
+from app.runtime.llm.mock import _CALC_FINAL, _DEFAULT_REPLY, _RECALL_FINAL
+from app.services import store
 
 
 def _calc_tools() -> list[dict[str, Any]]:
     """Minimal OpenAI tool schema advertising the calculator."""
     return [{"type": "function", "function": {"name": "calculator"}}]
+
+
+def _recall_tools() -> list[dict[str, Any]]:
+    return [{"type": "function", "function": {"name": "recall"}}]
 
 
 async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
@@ -73,6 +78,24 @@ async def test_calculator_path_emits_tool_then_result_then_final() -> None:
     assert result_ev["error"] is False
     assert final_ev["content"] == _CALC_FINAL
     assert final_ev.get("already_streamed") is True
+
+
+async def test_recall_path_returns_seeded_fact(tmp_path) -> None:
+    """New session path: MockLLM calls recall; result includes seeded KB fact."""
+    store.rebind(tmp_path / "recall_loop.db")
+    events = await _collect(
+        "What is the Q3 vendor onboarding deadline?",
+        llm=MockLLMClient(),
+        tools=_recall_tools(),
+    )
+    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
+    tool_ev = next(e for e in events if e["kind"] == "tool")
+    result_ev = next(e for e in events if e["kind"] == "tool_result")
+    assert tool_ev["tool"] == "recall"
+    assert "vendor" in tool_ev["args"]["query"].lower() or "deadline" in tool_ev["args"]["query"].lower()
+    assert "October 15, 2026" in result_ev["result"]
+    assert result_ev["error"] is False
+    assert _final(events)["content"] == _RECALL_FINAL
 
 
 async def test_calculator_error_result_sets_error_flag() -> None:

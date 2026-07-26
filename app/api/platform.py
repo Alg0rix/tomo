@@ -6,7 +6,14 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep
-from app.schemas import LLMProfileCreate, LLMProfileUpdate, WorkplaceCreate, WorkplaceUpdate
+from app.schemas import (
+    KnowledgeEntryCreate,
+    KnowledgeEntryUpdate,
+    LLMProfileCreate,
+    LLMProfileUpdate,
+    WorkplaceCreate,
+    WorkplaceUpdate,
+)
 from app.services import store
 
 router = APIRouter(prefix="/api")
@@ -129,6 +136,48 @@ async def connect_workplace(workplace_id: str, _: AuthDep):
     if not result:
         raise HTTPException(status_code=404, detail="Workplace not found")
     return result
+
+
+@router.get("/knowledge")
+async def list_knowledge(_: AuthDep):
+    return {"entries": store.list_knowledge_entries()}
+
+
+@router.post("/knowledge")
+async def create_knowledge(body: KnowledgeEntryCreate, _: AuthDep):
+    try:
+        data = body.model_dump(exclude_none=True)
+        return store.create_knowledge_entry(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/knowledge/{entry_id}")
+async def get_knowledge(entry_id: str, _: AuthDep):
+    entry = store.get_knowledge_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Knowledge entry not found")
+    return entry
+
+
+@router.put("/knowledge/{entry_id}")
+async def update_knowledge(entry_id: str, body: KnowledgeEntryUpdate, _: AuthDep):
+    try:
+        entry = store.update_knowledge_entry(
+            entry_id, body.model_dump(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not entry:
+        raise HTTPException(status_code=404, detail="Knowledge entry not found")
+    return entry
+
+
+@router.delete("/knowledge/{entry_id}")
+async def delete_knowledge(entry_id: str, _: AuthDep):
+    if not store.delete_knowledge_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Knowledge entry not found")
+    return {"success": True}
 
 
 @router.get("/schedules")

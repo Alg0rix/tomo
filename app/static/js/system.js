@@ -16,7 +16,7 @@
 
   function fromHash() {
     var h = (location.hash || '#general').replace('#', '');
-    show(h in { general: 1, models: 1, tools: 1, plugins: 1, hmads: 1, users: 1, shared_channel: 1, logs: 1 } ? h : 'general');
+    show(h in { general: 1, models: 1, memory: 1, tools: 1, plugins: 1, hmads: 1, users: 1, shared_channel: 1, logs: 1 } ? h : 'general');
   }
 
   nav.querySelectorAll('a').forEach(function (a) {
@@ -140,4 +140,89 @@
   }
 
   loadProfiles();
+
+  // ---- Knowledge entries (System → Memory) ----
+  var kbList = document.getElementById('knowledgeList');
+  var kbFormCard = document.getElementById('knowledgeFormCard');
+  var kbMode = document.getElementById('kbFormMode');
+  var kbId = document.getElementById('kbId');
+  var kbTitle = document.getElementById('kbTitle');
+  var kbBody = document.getElementById('kbBody');
+  var kbTags = document.getElementById('kbTags');
+
+  function parseTags(s) {
+    return String(s || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+  }
+
+  function kbRowHtml(e) {
+    var tags = (e.tags || []).map(function (t) { return '<span class="badge muted sm">' + esc(t) + '</span>'; }).join(' ');
+    var preview = (e.body || '').slice(0, 120);
+    if ((e.body || '').length > 120) preview += '…';
+    return '<div class="row" data-id="' + esc(e.id) + '"><div class="meta"><div class="title">' + esc(e.title) + ' <span class="faint mono">' + esc(e.id) + '</span></div><div class="desc">' + esc(preview) + (tags ? ' · ' + tags : '') + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-act="edit">Edit</button> <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+  }
+
+  function renderKnowledge(entries) {
+    if (!kbList) return;
+    if (!entries.length) { kbList.innerHTML = '<div class="empty">No knowledge entries yet.</div>'; return; }
+    kbList.innerHTML = entries.map(kbRowHtml).join('');
+  }
+
+  async function loadKnowledge() {
+    try {
+      var d = await Tomo.api('/api/knowledge');
+      if (d) renderKnowledge(d.entries || []);
+    } catch (e) { if (kbList) kbList.innerHTML = '<div class="empty">Could not load knowledge entries.</div>'; }
+  }
+
+  function openKbForm(mode, e) {
+    kbMode.value = mode;
+    document.getElementById('knowledgeFormTitle').textContent = mode === 'add' ? 'Add entry' : 'Edit entry';
+    if (mode === 'add') {
+      kbId.value = ''; kbId.disabled = false; kbTitle.value = ''; kbBody.value = ''; kbTags.value = '';
+    } else {
+      kbId.value = e.id; kbId.disabled = true; kbTitle.value = e.title || ''; kbBody.value = e.body || ''; kbTags.value = (e.tags || []).join(', ');
+    }
+    kbFormCard.classList.remove('hidden');
+  }
+
+  var addKb = document.getElementById('addKnowledgeBtn');
+  if (addKb) addKb.addEventListener('click', function () { openKbForm('add'); });
+  var cancelKb = document.getElementById('kbCancel');
+  if (cancelKb) cancelKb.addEventListener('click', function () { kbFormCard.classList.add('hidden'); });
+
+  if (kbList) {
+    kbList.addEventListener('click', async function (e) {
+      var btn = e.target.closest('button[data-act]'); if (!btn) return;
+      var row = btn.closest('[data-id]'); var eid = row ? row.dataset.id : ''; var act = btn.dataset.act;
+      if (act === 'edit') {
+        try { var ent = await Tomo.api('/api/knowledge/' + encodeURIComponent(eid)); if (ent) openKbForm('edit', ent); } catch (er) { Tomo.toast('Could not load entry', 'err'); }
+      } else if (act === 'delete') {
+        if (!confirm('Delete knowledge entry "' + eid + '"?')) return;
+        try { await Tomo.api('/api/knowledge/' + encodeURIComponent(eid), { method: 'DELETE' }); Tomo.toast('Entry deleted', 'ok'); loadKnowledge(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+      }
+    });
+  }
+
+  var saveKb = document.getElementById('kbSave');
+  if (saveKb) {
+    saveKb.addEventListener('click', async function () {
+      var title = kbTitle.value.trim();
+      if (!title) { Tomo.toast('Title is required', 'err'); return; }
+      var body = { title: title, body: kbBody.value, tags: parseTags(kbTags.value) };
+      try {
+        if (kbMode.value === 'add') {
+          var id = kbId.value.trim();
+          if (id) body.id = id;
+          await Tomo.api('/api/knowledge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          Tomo.toast('Entry created', 'ok');
+        } else {
+          await Tomo.api('/api/knowledge/' + encodeURIComponent(kbId.value), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          Tomo.toast('Entry saved', 'ok');
+        }
+        kbFormCard.classList.add('hidden'); loadKnowledge();
+      } catch (err) { Tomo.toast((err && err.message) || 'Could not save entry', 'err'); }
+    });
+  }
+
+  loadKnowledge();
 })();

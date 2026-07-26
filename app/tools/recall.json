@@ -1,0 +1,27 @@
+{
+  "id": "recall",
+  "name": "Recall",
+  "description": "Search the knowledge base for facts matching a query.",
+  "backend": "app.runtime.tools.recall",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "recall",
+      "description": "Search Tomo's knowledge base (title, body, tags) and return the top matching snippets.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keywords or question to search for in the knowledge base."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of snippets to return (default 5, max 20)."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  }
+}

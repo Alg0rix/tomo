@@ -9,6 +9,7 @@ Tables (per design spec §5):
 * ``settings``       — key/value platform settings (JSON-encoded values)
 * ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
 * ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
+* ``knowledge_entries`` — title/body/tags KB rows (Slice E; keyword recall)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -99,6 +100,15 @@ CREATE TABLE IF NOT EXISTS workplaces (
     ssh_key      TEXT NOT NULL DEFAULT '',
     created_at   REAL NOT NULL DEFAULT 0,
     updated_at   REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL DEFAULT '',
+    tags_json  TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL DEFAULT 0
 );
 """
 
