@@ -1,12 +1,45 @@
 {% from 'partials/page_head.html' import section_head %}
+{% from 'partials/toggle.html' import toggle %}
 
 <section id="sec-shared_channel" class="sys-section" style="display:none">
   {{ section_head('Shared channels', 'WhatsApp / Telegram numbers shared across agents with routing rules.') }}
+
+  <div class="card" style="margin-bottom:14px" id="telegramSettingsCard">
+    <div class="card-head">
+      <h3>Telegram bot</h3>
+      {% set tg_set = settings.telegram_bot_token_set if settings.telegram_bot_token_set is defined else false %}
+      {% set tg_on = settings.telegram_enabled %}
+      {% if tg_set and tg_on %}
+      <span class="badge ok">connected</span>
+      {% elif tg_set %}
+      <span class="badge muted">off</span>
+      {% else %}
+      <span class="badge muted">needs token</span>
+      {% endif %}
+    </div>
+    <div class="card-body card-body-pad">
+      <div class="config-row"><div class="lbl">Bot token</div>
+        <input class="input" type="password" id="setTgToken" value="{{ settings.telegram_bot_token or '' }}" placeholder="{% if tg_set %}•••• set — blank keeps existing{% else %}Paste bot token from @BotFather{% endif %}" style="width:100%;max-width:420px" autocomplete="new-password" spellcheck="false">
+      </div>
+      <div class="config-row"><div class="lbl">Enable long-poll</div>
+        {{ toggle(id='setTgEnabled', checked=settings.telegram_enabled) }}
+      </div>
+      <p class="faint" style="margin:8px 0 0;font-size:12px">Token is encrypted at rest. Inbound chats map to sessions under the coordinator agent.</p>
+      <div style="margin-top:14px"><button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button></div>
+    </div>
+  </div>
+
   {% for ch in shared_channels %}
   <div class="card" style="margin-bottom:14px">
     <div class="card-head">
       <h3>{{ ch.name }}</h3>
-      <span class="badge {{ 'ok' if ch.status == 'connected' else 'muted' }}">{{ ch.status }}</span>
+      {% if ch.status == 'connected' or ch.status == 'active' %}
+      <span class="badge ok">{{ ch.status }}</span>
+      {% elif ch.status == 'needs_token' %}
+      <span class="badge muted">needs token</span>
+      {% else %}
+      <span class="badge muted">{{ ch.status }}</span>
+      {% endif %}
     </div>
     <div class="card-body card-body-pad">
       <div class="config-row"><div class="lbl">Type</div><div>{{ ch.type }}</div></div>
@@ -34,7 +67,9 @@
         </tbody>
       </table>
       {% endif %}
-      {% if ch.status == 'planned' %}
+      {% if ch.type == 'telegram' %}
+      <p class="faint" style="margin-top:12px;font-size:12px">Configure token above. Status updates after save.</p>
+      {% elif ch.status == 'planned' %}
       <p class="faint" style="margin-top:12px;font-size:12px">🔜 Channel adapter not connected yet.</p>
       {% elif ch.status == 'disconnected' %}
       <button class="btn primary sm" type="button" disabled style="margin-top:12px">Connect QR</button>

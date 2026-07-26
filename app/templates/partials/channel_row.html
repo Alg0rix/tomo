@@ -4,6 +4,12 @@
   <div class="meta"><div class="name">{{ channel.name }}</div><div class="desc">{{ channel.type }}</div></div>
   {% if channel.status == 'planned' %}
   <span class="badge muted">🔜 planned</span>
+  {% elif channel.status == 'needs_token' %}
+  <span class="badge muted">needs token</span>
+  {% elif channel.status == 'connected' or channel.status == 'active' %}
+  <span class="badge ok">{{ channel.status }}</span>
+  {% elif channel.status == 'off' %}
+  <span class="badge muted">off</span>
   {% elif channel.enabled %}
   <span class="badge ok">active</span>
   {% else %}

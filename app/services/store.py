@@ -417,7 +417,16 @@ class Store:
         return self._plat("users")
 
     def list_shared_channels(self) -> list[dict[str, Any]]:
-        return self._plat("shared_channels")
+        from app.channels.telegram import telegram_status
+
+        status = telegram_status(self.get_settings())
+        out: list[dict[str, Any]] = []
+        for ch in self._plat("shared_channels"):
+            row = dict(ch)
+            if row.get("type") == "telegram":
+                row["status"] = status
+            out.append(row)
+        return out
 
     def list_eval_domains(self) -> list[dict[str, Any]]:
         return self._plat("eval_domains")
@@ -473,9 +482,12 @@ class Store:
         return [dict(s, assigned=s["id"] in assigned) for s in self.list_skills()]
 
     def get_agent_channels(self, agent_id: str) -> list[dict[str, Any]]:
+        from app.channels.telegram import telegram_status
+
+        tg = telegram_status(self.get_settings())
         base = [
             {"id": "web", "type": "web", "name": "Web UI", "status": "active"},
-            {"id": "telegram", "type": "telegram", "name": "Telegram", "status": "planned"},
+            {"id": "telegram", "type": "telegram", "name": "Telegram", "status": tg},
             {"id": "whatsapp", "type": "whatsapp", "name": "WhatsApp", "status": "planned"},
         ]
         n = (self.get_agent(agent_id) or {}).get("channel_count", 1)

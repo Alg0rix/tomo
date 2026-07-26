@@ -51,6 +51,36 @@
     });
   }
 
+  var saveTg = document.getElementById('saveTelegram');
+  if (saveTg) {
+    saveTg.addEventListener('click', async function () {
+      try {
+        var tokenEl = document.getElementById('setTgToken');
+        var enabledEl = document.getElementById('setTgEnabled');
+        var body = {
+          telegram_enabled: !!(enabledEl && enabledEl.checked),
+        };
+        var token = tokenEl ? tokenEl.value : '';
+        if (token && token.indexOf('•') === -1) body.telegram_bot_token = token;
+        var data = await Tomo.api('/api/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!data) return;
+        if (tokenEl) {
+          tokenEl.value = data.telegram_bot_token || '';
+          tokenEl.placeholder = data.telegram_bot_token_set
+            ? '•••• set — blank keeps existing'
+            : 'Paste bot token from @BotFather';
+        }
+        Tomo.toast('Telegram settings saved', 'ok');
+      } catch (e) {
+        Tomo.toast((e && e.message) || 'Could not save', 'err');
+      }
+    });
+  }
+
   // ---- LLM profiles (System → Models) ----
   var listEl = document.getElementById('profileList');
   var formCard = document.getElementById('profileFormCard');

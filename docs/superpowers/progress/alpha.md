@@ -13,7 +13,7 @@
 | C | More tools | [plan](../plans/2026-07-26-alpha-slice-c-tools.md) · [brief](../handoffs/alpha-slice-c-cline-brief.md) | done | — | **done** |
 | D | Workplaces local/SSH | [plan](../plans/2026-07-26-alpha-slice-d-workplaces.md) · [brief](../handoffs/alpha-slice-d-cline-brief.md) | done | — | **done** |
 | E | Memory / KB | [plan](../plans/2026-07-26-alpha-slice-e-memory.md) · [brief](../handoffs/alpha-slice-e-cline-brief.md) | done | — | **done** |
-| F | Extra channels (Telegram+) | — | — | — | — |
+| F | Extra channels (Telegram+) | [plan](../plans/2026-07-26-alpha-slice-f-telegram.md) · [brief](../handoffs/alpha-slice-f-cline-brief.md) | done | — | **done** |
 | G | Platform → SQLite + scheduler | — | — | — | — |
 | H | Alpha polish | — | — | — | — |
 
@@ -37,3 +37,4 @@
 - 2026-07-26: Slice C **implemented** (Cursor) — `bash` / `read_file` / `write_file` JSON defs + backends with `$TOMO_HOME/agents/<id>/work` cwd jail + timeouts; System → Tools from registry; SQLite `agent_tools` per-agent enablement; Tools panel Save wired; calculator + delegate kept green.
 - 2026-07-26: Slice D **implemented** (Cursor) — SQLite `workplaces` (local/ssh/tunnel); CRUD mixin + Connect (local path exists; SSH via mockable probe; tunnel honest “connector later”); SSH password/key Fernet-encrypted; `agents.workplace_id` assignment; bash/file tools resolve local workplace root (fallback `work/`); UI create/edit/Connect + agent config dropdown.
 - 2026-07-26: Slice E **implemented** (Cursor) — SQLite `knowledge_entries` (title/body/tags) + CRUD mixin; seed FAQ facts (`kb_vendor_deadline`, etc.); `recall` + `remember` tools (keyword search, no vector DB); System → Memory CRUD UI; MockLLM recall path; agent loop test recalls seeded October 15, 2026 deadline. Verify: `tests/unit/models/` + `tests/unit/runtime/tools/` green.
+- 2026-07-26: Slice F **implemented** (Cursor) — encrypted `telegram_bot_token` + `telegram_enabled` settings (masked GET, blank PUT keeps); `app/channels/telegram.py` long-poll supervisor + chat→session→`run_session_turn`→reply; Agent Channels + Shared channels status (`connected` / `needs_token` / `off`); mocked httpx Bot API tests. Verify: `tests/unit/channels/` + `tests/unit/runtime/` green.

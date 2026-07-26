@@ -34,7 +34,13 @@ async def _lifespan(_app: FastAPI):
         ensure_tomo_home()
     except Exception:
         pass
-    yield
+    from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
+
+    start_telegram_supervisor()
+    try:
+        yield
+    finally:
+        await stop_telegram_supervisor()
 
 
 def create_app() -> FastAPI:

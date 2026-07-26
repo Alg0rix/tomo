@@ -4,10 +4,11 @@ Values are JSON-encoded. The default settings shape comes from
 :func:`app.services.platform_data.seed_settings` (used to seed an empty DB and
 as a fallback when the table has no rows).
 
-``llm_api_key`` is a UI-managed secret: it is stored as **ciphertext** at rest
-(see :mod:`app.core.secrets`) and decrypted only in memory by
-:func:`get_settings` for runtime use. API/UI surfaces must call
-:func:`public_settings` so the secret is masked and never echoed over HTTP/HTML.
+Secret fields (``llm_api_key``, ``telegram_bot_token``) are UI-managed secrets:
+stored as **ciphertext** at rest (see :mod:`app.core.secrets`) and decrypted
+only in memory by :func:`get_settings` for runtime use. API/UI surfaces must
+call :func:`public_settings` so secrets are masked and never echoed over
+HTTP/HTML. A blank PUT keeps the existing ciphertext.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from app.core.secrets import decrypt_secret, encrypt_secret
 from app.services.platform_data import seed_settings
 
 _LLM_KEY = "llm_api_key"
+_TG_TOKEN_KEY = "telegram_bot_token"
+_SECRET_KEYS = frozenset({_LLM_KEY, _TG_TOKEN_KEY})
 
 
 def _defaults() -> dict[str, Any]:
@@ -27,12 +30,12 @@ def _defaults() -> dict[str, Any]:
 
 
 def get_settings(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Return full settings (with decrypted ``llm_api_key``) merged with defaults."""
+    """Return full settings (secrets decrypted) merged with defaults."""
     rows = conn.execute("SELECT key, value_json FROM settings").fetchall()
     out = _defaults()
     for r in rows:
         val = json.loads(r["value_json"])
-        if r["key"] == _LLM_KEY:
+        if r["key"] in _SECRET_KEYS:
             val = decrypt_secret(str(val))
         out[r["key"]] = val
     return out
@@ -49,31 +52,34 @@ def mask_api_key(key: str) -> str:
 
 
 def public_settings(data: dict[str, Any]) -> dict[str, Any]:
-    """Copy of settings safe for HTTP/HTML — API key masked, plus ``llm_api_key_set``."""
+    """Copy of settings safe for HTTP/HTML — secrets masked, plus ``*_set`` flags."""
     out = dict(data)
-    raw = str(out.get(_LLM_KEY) or "")
-    out["llm_api_key_set"] = bool(raw.strip())
-    out[_LLM_KEY] = mask_api_key(raw)
+    for key in _SECRET_KEYS:
+        raw = str(out.get(key) or "")
+        out[f"{key}_set"] = bool(raw.strip())
+        out[key] = mask_api_key(raw)
     return out
 
 
 def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
-    """Upsert settings. Empty/whitespace ``llm_api_key`` keeps the existing key.
+    """Upsert settings. Empty/whitespace secret fields keep the existing value.
 
     Empty ``llm_base_url`` / ``llm_model`` are ignored (keep existing / defaults).
     When ``llm_model`` is set, also writes ``default_model`` to the same value.
-    Returns **public** settings (masked key) — callers that need the raw key
+    Returns **public** settings (masked secrets) — callers that need raw secrets
     should call :func:`get_settings` separately.
     """
     payload = dict(data)
-    if _LLM_KEY in payload:
-        incoming = payload[_LLM_KEY]
+    for secret_key in _SECRET_KEYS:
+        if secret_key not in payload:
+            continue
+        incoming = payload[secret_key]
         if incoming is None or (isinstance(incoming, str) and not incoming.strip()):
-            # Blank/missing key keeps the existing ciphertext (never clears).
-            payload.pop(_LLM_KEY)
+            # Blank/missing secret keeps the existing ciphertext (never clears).
+            payload.pop(secret_key)
         else:
             # Encrypt at rest; the DB never stores a plaintext secret.
-            payload[_LLM_KEY] = encrypt_secret(str(incoming))
+            payload[secret_key] = encrypt_secret(str(incoming))
 
     for soft in ("llm_base_url", "llm_model"):
         if soft in payload:
