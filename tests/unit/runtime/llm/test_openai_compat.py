@@ -175,3 +175,90 @@ async def test_default_config_resolves_lazily(monkeypatch) -> None:
     assert client.endpoint == f"{_BASE}/chat/completions"
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.content == "ok"
+
+
+def test_whitespace_only_api_key_raises() -> None:
+    """A key of only spaces must be treated as missing after stripping."""
+    with pytest.raises(LLMConfigError):
+        OpenAICompatClient(api_key="   ", base_url=_BASE, model=_MODEL)
+
+
+def test_base_url_already_including_chat_completions_unchanged() -> None:
+    """A base_url that already ends with /chat/completions must not get a
+    second /chat/completions appended."""
+    client = OpenAICompatClient(
+        api_key=_KEY,
+        model=_MODEL,
+        base_url="http://x/v1/chat/completions",
+        transport=httpx.MockTransport(lambda req: httpx.Response(200)),
+    )
+    assert client.endpoint == "http://x/v1/chat/completions"
+
+
+async def test_non_dict_json_arguments_coerced_to_dict() -> None:
+    """JSON arguments that decode to a non-object (e.g. a list) must still
+    leave ToolCall.arguments as a dict."""
+    raw_tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "calculator", "arguments": "[1, 2]"},
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_completion_body(content=None, tool_calls=raw_tool_calls)
+        )
+
+    resp = await _client(httpx.MockTransport(handler)).complete(
+        [{"role": "user", "content": "hi"}]
+    )
+    assert len(resp.tool_calls) == 1
+    assert isinstance(resp.tool_calls[0].arguments, dict)
+
+
+async def test_malformed_choices_zero_raises_request_error() -> None:
+    """choices[0] being null must raise LLMRequestError, not AttributeError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [None]})
+
+    with pytest.raises(LLMRequestError):
+        await _client(httpx.MockTransport(handler)).complete(
+            [{"role": "user", "content": "hi"}]
+        )
+
+
+async def test_non_dict_tool_call_entry_is_skipped() -> None:
+    """Malformed (non-dict) tool_calls entries are skipped, not crashed on."""
+    raw_tool_calls = [
+        "not-a-dict",
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "calculator", "arguments": "{}"},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_completion_body(content=None, tool_calls=raw_tool_calls)
+        )
+
+    resp = await _client(httpx.MockTransport(handler)).complete(
+        [{"role": "user", "content": "hi"}]
+    )
+    assert len(resp.tool_calls) == 1
+    assert resp.tool_calls[0].name == "calculator"
+
+
+async def test_aclose_releases_client() -> None:
+    """aclose() closes the underlying httpx client without error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion_body(content="ok"))
+
+    client = _client(httpx.MockTransport(handler))
+    await client.complete([{"role": "user", "content": "hi"}])
+    await client.aclose()

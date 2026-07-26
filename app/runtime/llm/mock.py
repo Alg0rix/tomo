@@ -4,10 +4,13 @@ Behaviour (mirrors the real two-step calculator flow the agent loop uses):
 
 * A plain user message -> a fixed acknowledgement string, no tool calls.
 * A user message whose content contains ``calculate`` or ``=`` triggers a
-  single ``calculator`` tool call on the first ``complete``.
-* Once the conversation includes a ``tool`` role message (a tool result),
-  the next ``complete`` returns a final text answer instead of another
-  tool call.
+  single ``calculator`` tool call on the first ``complete`` — but only when
+  ``tools`` advertises a function named ``calculator``.
+* Once the conversation includes a ``tool`` role message *after the most
+  recent user message* (i.e. mid-turn), the next ``complete`` returns a
+  final text answer instead of another tool call. Tool results from earlier
+  turns do not suppress a fresh calculator call triggered by a new user
+  message.
 
 No network access; the logic is synchronous and wrapped in an ``async``
 method only to satisfy the :class:`LLMClient` protocol.
@@ -70,9 +73,36 @@ def _is_calc_request(content: str | None) -> bool:
     return "calculate" in content.lower() or "=" in content
 
 
-def _has_tool_result(messages: list[dict[str, Any]]) -> bool:
-    """True when the conversation already contains a tool result message."""
-    return any(msg.get("role") == "tool" for msg in messages)
+def _has_tool_result_after_last_user(messages: list[dict[str, Any]]) -> bool:
+    """True when a tool result message follows the most recent user message.
+
+    Tool results from earlier turns must NOT suppress a fresh calculator
+    call triggered by a new user message, so only messages after the last
+    ``user`` entry are considered. With no user message at all we fall back
+    to the legacy "any tool result -> final text" behaviour.
+    """
+    last_user_idx = None
+    for idx in range(len(messages) - 1, -1, -1):
+        if messages[idx].get("role") == "user":
+            last_user_idx = idx
+            break
+    if last_user_idx is None:
+        return any(msg.get("role") == "tool" for msg in messages)
+    return any(
+        messages[idx].get("role") == "tool"
+        for idx in range(last_user_idx + 1, len(messages))
+    )
+
+
+def _calculator_available(tools: list[dict[str, Any]] | None) -> bool:
+    """True when ``tools`` advertises a function named ``calculator``."""
+    if not tools:
+        return False
+    for tool in tools:
+        fn = (tool or {}).get("function") or {}
+        if fn.get("name") == "calculator":
+            return True
+    return False
 
 
 class MockLLMClient:
@@ -83,13 +113,13 @@ class MockLLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
-        # Second step of the calculator flow: a tool result is present, so
-        # produce the final text answer instead of another tool call.
-        if _has_tool_result(messages):
+        # Mid-turn: a tool result has come back since the last user message,
+        # so produce the final text answer instead of another tool call.
+        if _has_tool_result_after_last_user(messages):
             return LLMResponse(content=_CALC_FINAL, tool_calls=[])
 
         content = _last_user_content(messages)
-        if _is_calc_request(content):
+        if _is_calc_request(content) and _calculator_available(tools):
             return LLMResponse(
                 content=None,
                 tool_calls=[

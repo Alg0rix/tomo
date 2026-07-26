@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.runtime.llm.base import LLMClient, LLMResponse
-from app.runtime.llm.mock import MockLLMClient
+from app.runtime.llm.mock import MockLLMClient, _DEFAULT_REPLY
 
 
 def _user(content: str) -> dict:
@@ -30,6 +30,10 @@ def _tool_result(call_id: str, result: str) -> dict:
     return {"role": "tool", "tool_call_id": call_id, "content": result}
 
 
+# OpenAI-style tool schemas handed to ``complete(tools=...)``.
+_CALC_TOOLS = [{"type": "function", "function": {"name": "calculator"}}]
+
+
 def test_mock_satisfies_llm_client_protocol() -> None:
     assert isinstance(MockLLMClient(), LLMClient)
 
@@ -49,7 +53,7 @@ async def test_no_user_message_returns_default() -> None:
 
 
 async def test_calculate_keyword_triggers_calculator_tool_call() -> None:
-    resp = await MockLLMClient().complete([_user("calculate 2 + 2")])
+    resp = await MockLLMClient().complete([_user("calculate 2 + 2")], tools=_CALC_TOOLS)
     assert resp.content is None
     assert resp.has_tool_calls
     assert len(resp.tool_calls) == 1
@@ -59,14 +63,16 @@ async def test_calculate_keyword_triggers_calculator_tool_call() -> None:
 
 
 async def test_equals_sign_triggers_calculator_tool_call() -> None:
-    resp = await MockLLMClient().complete([_user("what is 3 * 4 =")])
+    resp = await MockLLMClient().complete([_user("what is 3 * 4 =")], tools=_CALC_TOOLS)
     assert resp.content is None
     assert resp.tool_calls[0].name == "calculator"
     assert resp.tool_calls[0].arguments["expression"] == "3 * 4"
 
 
 async def test_parenthesised_expression_extracted() -> None:
-    resp = await MockLLMClient().complete([_user("calculate 3 * (4 + 5)")])
+    resp = await MockLLMClient().complete(
+        [_user("calculate 3 * (4 + 5)")], tools=_CALC_TOOLS
+    )
     assert resp.tool_calls[0].arguments["expression"] == "3 * (4 + 5)"
 
 
@@ -86,7 +92,7 @@ async def test_two_step_calculator_flow_matches_agent_loop() -> None:
     -> final text. This is the exact shape the agent loop will rely on."""
     client = MockLLMClient()
 
-    first = await client.complete([_user("calculate 7 - 3")])
+    first = await client.complete([_user("calculate 7 - 3")], tools=_CALC_TOOLS)
     assert first.has_tool_calls
     assert first.tool_calls[0].name == "calculator"
     expr = first.tool_calls[0].arguments["expression"]
@@ -97,22 +103,66 @@ async def test_two_step_calculator_flow_matches_agent_loop() -> None:
         _assistant_tool_call("call_mock_calculator", expr),
         _tool_result("call_mock_calculator", "4"),
     ]
-    second = await client.complete(messages)
+    second = await client.complete(messages, tools=_CALC_TOOLS)
     assert second.content
     assert not second.has_tool_calls
 
 
-async def test_tool_result_takes_precedence_over_calc_keyword() -> None:
-    """Even if the latest user text still mentions calculate, a tool result
-    in the conversation means we are on the final step."""
+async def test_new_user_message_re_triggers_calculator_after_tool_result() -> None:
+    """A fresh user message following an earlier tool result must be able to
+    trigger a new calculator tool call. Historical tool results must NOT
+    suppress future calculator turns (the old full-history check did)."""
     messages = [
         _user("calculate 2 + 2"),
         _assistant_tool_call("call_mock_calculator", "2 + 2"),
         _tool_result("call_mock_calculator", "4"),
-        _user("calculate 5 + 5"),  # follow-up while result present
+        _user("calculate 5 + 5"),  # new turn -> new tool call
     ]
-    # The tool result from the first turn is still in history, so the mock
-    # should answer with final text rather than emit another tool call.
-    resp = await MockLLMClient().complete(messages)
-    assert resp.content
+    resp = await MockLLMClient().complete(messages, tools=_CALC_TOOLS)
+    assert resp.has_tool_calls
+    assert resp.tool_calls[0].name == "calculator"
+    assert resp.tool_calls[0].arguments["expression"] == "5 + 5"
+
+
+async def test_multi_turn_new_user_re_triggers_calculator() -> None:
+    """After a completed calculator turn (user -> tool call -> tool result ->
+    assistant final), a brand-new user calc message must trigger a fresh
+    calculator tool call rather than short-circuit to final text."""
+    messages = [
+        _user("calculate 2 + 2"),
+        _assistant_tool_call("call_mock_calculator", "2 + 2"),
+        _tool_result("call_mock_calculator", "4"),
+        {"role": "assistant", "content": "The calculation is complete."},
+        _user("calculate 3 + 3"),  # new turn
+    ]
+    resp = await MockLLMClient().complete(messages, tools=_CALC_TOOLS)
+    assert resp.has_tool_calls
+    assert resp.tool_calls[0].name == "calculator"
+    assert resp.tool_calls[0].arguments["expression"] == "3 + 3"
+
+
+async def test_calc_prompt_without_tools_returns_no_tool_calls() -> None:
+    """When no tools are advertised the mock must not emit calculator tool
+    calls even for calc-looking prompts (it returns the default reply)."""
+    resp = await MockLLMClient().complete([_user("calculate 2 + 2")], tools=None)
     assert resp.tool_calls == []
+    assert resp.content == _DEFAULT_REPLY
+
+
+async def test_calc_prompt_with_calculator_schema_emits_tool_call() -> None:
+    """With a calculator tool advertised, a calc prompt emits a tool call."""
+    resp = await MockLLMClient().complete(
+        [_user("calculate 2 + 2")], tools=_CALC_TOOLS
+    )
+    assert resp.has_tool_calls
+    assert resp.tool_calls[0].name == "calculator"
+
+
+async def test_calc_prompt_with_non_calculator_tools_returns_no_tool_calls() -> None:
+    """Tools that do not include calculator must not trigger a calc tool call."""
+    resp = await MockLLMClient().complete(
+        [_user("calculate 2 + 2")],
+        tools=[{"type": "function", "function": {"name": "search"}}],
+    )
+    assert resp.tool_calls == []
+    assert resp.content == _DEFAULT_REPLY

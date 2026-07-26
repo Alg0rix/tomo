@@ -15,6 +15,7 @@ the caller (registry / agent loop) never sees an exception.
 from __future__ import annotations
 
 import ast
+import math
 import operator
 from typing import Any
 
@@ -38,6 +39,24 @@ _UNARY_OPS: dict[type, Any] = {
 # Defensive caps to keep evaluation cheap and deterministic.
 _MAX_EXPR_LEN = 512
 _MAX_EXPONENT = 1000
+# Cap on the number of decimal digits in an integer result. This is well
+# under CPython's integer-to-string conversion limit (``sys.int_max_str_digits``
+# defaults to 4300), so ``str(result)`` can never raise ``ValueError`` and
+# nested powers such as ``(10**200)**200`` are refused before allocation.
+_MAX_RESULT_DIGITS = 1000
+
+_LOG10_2 = 0.3010299956639812
+
+
+def _estimate_int_digits(value: int) -> int:
+    """Approximate number of decimal digits in ``value`` (always >= 1).
+
+    Uses ``bit_length() * log10(2)`` as a safe upper bound, so the estimate
+    never under-counts and is cheap to compute for arbitrarily large ints.
+    """
+    if value == 0:
+        return 1
+    return max(1, int(value.bit_length() * _LOG10_2) + 1)
 
 
 def _format_result(value: int | float) -> str:
@@ -75,8 +94,22 @@ def _eval_node(node: ast.AST) -> int | float:
         right = _eval_node(node.right)
         if op_type in (ast.Div, ast.FloorDiv, ast.Mod) and right == 0:
             raise ZeroDivisionError("division by zero")
-        if op_type is ast.Pow and isinstance(right, int) and abs(right) > _MAX_EXPONENT:
-            raise ValueError(f"exponent too large (max {_MAX_EXPONENT})")
+        if op_type is ast.Pow:
+            # Cap exponents for both int and float operands — a float
+            # exponent like 1e6 must not bypass the int-only guard.
+            if abs(right) > _MAX_EXPONENT:
+                raise ValueError(f"exponent too large (max {_MAX_EXPONENT})")
+            # Estimate the integer result size before materialising it so a
+            # nested power such as (10**200)**200 is refused before the huge
+            # int is ever allocated.
+            if (
+                isinstance(left, int)
+                and isinstance(right, int)
+                and right > 0
+                and left != 0
+                and _estimate_int_digits(abs(left)) * right > _MAX_RESULT_DIGITS
+            ):
+                raise ValueError("result too large to represent")
         return _BINARY_OPS[op_type](left, right)
 
     if isinstance(node, ast.UnaryOp):
@@ -109,6 +142,17 @@ def evaluate(expression: str) -> str:
 
     try:
         result = _eval_node(tree)
+        # Reject non-real results (e.g. (-2)**0.5 yields a complex number).
+        if isinstance(result, complex):
+            return "Error: result is not a real number"
+        # Reject non-finite floats such as 2.0**2000 (overflow to inf) or NaN.
+        if isinstance(result, float) and not math.isfinite(result):
+            return "Error: result is too large to represent"
+        # Refuse integers that exceed our digit cap before str() is attempted
+        # (CPython itself refuses to stringify ints over ~4300 digits).
+        if isinstance(result, int) and _estimate_int_digits(result) > _MAX_RESULT_DIGITS:
+            return "Error: result too large to represent"
+        return _format_result(result)
     except ZeroDivisionError as exc:
         return f"Error: {exc}"
     except ValueError as exc:
@@ -117,8 +161,6 @@ def evaluate(expression: str) -> str:
         return "Error: expression too complex"
     except Exception as exc:  # pragma: no cover - defensive catch-all
         return f"Error: could not evaluate expression: {exc}"
-
-    return _format_result(result)
 
 
 def run(arguments: dict[str, Any]) -> str:

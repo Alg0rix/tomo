@@ -154,3 +154,49 @@ def test_exponent_cap_prevents_huge_int() -> None:
 
 def test_long_expression_rejected() -> None:
     assert evaluate("1 + " * 300 + "1").startswith("Error")
+
+
+# --- result-size and non-real guards (regression) -----------------------
+
+
+def test_nested_power_bomb_is_error_not_exception() -> None:
+    """(10**200)**200 bypasses the per-op exponent cap and builds a huge int;
+    it must be refused (as an error string) before the int is materialised."""
+    assert evaluate("(10**200)**200").startswith("Error")
+
+
+def test_nested_power_bomb_never_raises() -> None:
+    """evaluate() must never propagate an exception, even for size bombs."""
+    try:
+        result = evaluate("(10**200)**200")
+    except Exception as exc:  # pragma: no cover - regression guard
+        raise AssertionError(f"evaluate raised: {exc!r}") from exc
+    assert result.startswith("Error")
+
+
+def test_huge_float_exponent_is_error() -> None:
+    """Float exponents must be capped too (they previously bypassed the
+    int-only exponent guard)."""
+    assert evaluate("2 ** 100000.0").startswith("Error")
+
+
+def test_float_overflow_to_inf_is_error() -> None:
+    """A float result that overflows double precision to inf is rejected."""
+    assert evaluate("10.0 ** 1000").startswith("Error")
+
+
+def test_complex_result_is_error() -> None:
+    """(-2)**0.5 yields a complex number; it must surface as an error string,
+    not a complex string like '(...j)'."""
+    result = evaluate("(-2)**0.5")
+    assert result.startswith("Error")
+    assert "j" not in result
+
+
+def test_run_nested_power_bomb_never_raises() -> None:
+    """The registry entry point run() must also never raise on a size bomb."""
+    try:
+        result = run({"expression": "(10**200)**200"})
+    except Exception as exc:  # pragma: no cover - regression guard
+        raise AssertionError(f"run raised: {exc!r}") from exc
+    assert result.startswith("Error")
