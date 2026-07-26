@@ -121,8 +121,11 @@ def update_session_agents(
     return get_session(conn, session_id)
 
 
-def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str:
-    """Return the most recent single-agent session for (agent_id, user_id), or create one."""
+def find_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str | None:
+    """Return the most recent single-agent session id for (agent_id, user_id), or None.
+
+    Looks up — never creates — so callers can no-op when no session exists.
+    """
     row = conn.execute(
         "SELECT s.id FROM sessions s "
         "WHERE s.user_id=? AND s.coordinator_id=? "
@@ -131,8 +134,21 @@ def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str)
         "ORDER BY s.updated_at DESC LIMIT 1",
         (user_id, agent_id, agent_id),
     ).fetchone()
-    if row:
-        return row["id"]
+    return row["id"] if row else None
+
+
+def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str:
+    """Return the most recent single-agent session for (agent_id, user_id), or create one.
+
+    Raises ``ValueError`` if ``agent_id`` does not exist, mirroring
+    :func:`create_swarm_session`'s validation — otherwise the inserts would
+    raise a raw ``IntegrityError`` on the ``coordinator_id``/``agent_id`` FKs.
+    """
+    if not conn.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
+        raise ValueError(f"Agent does not exist: {agent_id}")
+    existing = find_session(conn, agent_id, user_id)
+    if existing:
+        return existing
     sid = _new_sid()
     now = _now()
     conn.execute(

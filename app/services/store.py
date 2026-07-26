@@ -160,18 +160,25 @@ class Store:
             return messages_store.get_session_history(self._conn, sid)
 
     def clear_session(self, agent_id: str, user_id: str) -> None:
+        # Look up — do not create — the single-agent session. If none exists,
+        # there is nothing to clear, so this is a no-op rather than inventing an
+        # empty session.
         with self._lock:
-            sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id)
+            sid = sessions_store.find_session(self._conn, agent_id, user_id)
+            if sid is None:
+                return
             messages_store.clear_session_history(self._conn, sid)
 
     # -- stats / dashboard -----------------------------------------------
-    def stats(self) -> dict[str, Any]:
-        agents = self.list_agents()
+    def _stats_from(
+        self, agents: list[dict[str, Any]], sessions: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Compute the stats dict from already-locked snapshots (no DB/lock access)."""
         enabled = [a for a in agents if a["enabled"]]
         return {
             "agent_count": len(agents),
             "enabled_agent_count": len(enabled),
-            "session_count": len(self.list_sessions()),
+            "session_count": len(sessions),
             "tool_count": len(self._platform["tools"]) or sum(a["tool_count"] for a in agents),
             "channel_count": sum(a["channel_count"] for a in agents),
             "active_channel_count": sum(a["channel_count"] for a in enabled),
@@ -179,17 +186,32 @@ class Store:
             "workplace_count": len(self._platform["workplaces"]),
         }
 
+    def stats(self) -> dict[str, Any]:
+        # Hold the lock for the whole snapshot so agents + sessions are read in
+        # one consistent view (no torn snapshot under concurrent writers).
+        with self._lock:
+            agents = agents_store.list_agents(self._conn, self._busy.ids())
+            sessions = sessions_store.list_sessions(self._conn)
+            return self._stats_from(agents, sessions)
+
     def dashboard_data(self) -> dict[str, Any]:
-        agents = self.list_agents()
-        sessions = self.list_sessions()
-        return {
-            "stats": self.stats(),
-            "recent_agents": agents[:5],
-            "recent_sessions": sessions[:6],
-            "busy_agents": [a["id"] for a in agents if a["busy"]],
-            "workplaces": [dict(w) for w in self._platform["workplaces"][:3]],
-            "schedules": [dict(s) for s in self._platform["schedules"][:3]],
-        }
+        # Single lock acquisition for the entire snapshot; mixin helpers do not
+        # take the lock, so there is no nested-lock deadlock.
+        with self._lock:
+            agents = agents_store.list_agents(self._conn, self._busy.ids())
+            sessions = sessions_store.list_sessions(self._conn)
+            # "Recent" agents = newest created first. list_agents() keeps the
+            # is_super DESC / created_at ASC order for the agents list API, so
+            # re-sort here for the dashboard panel only.
+            recent_agents = sorted(agents, key=lambda a: a["created_at"], reverse=True)[:5]
+            return {
+                "stats": self._stats_from(agents, sessions),
+                "recent_agents": recent_agents,
+                "recent_sessions": sessions[:6],
+                "busy_agents": [a["id"] for a in agents if a["busy"]],
+                "workplaces": [dict(w) for w in self._platform["workplaces"][:3]],
+                "schedules": [dict(s) for s in self._platform["schedules"][:3]],
+            }
 
     # -- settings (SQLite) -----------------------------------------------
     def get_settings(self) -> dict[str, Any]:

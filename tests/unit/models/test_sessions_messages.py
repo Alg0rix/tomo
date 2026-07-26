@@ -126,3 +126,40 @@ def test_delete_agent_drops_solo_session(tmp_path) -> None:
     sid = store.create_swarm_session(["ops"])
     store.delete_agent("ops")
     assert store.get_session(sid) is None
+
+
+def test_get_or_create_session_missing_agent_raises(tmp_path) -> None:
+    """get_or_create_session must validate the agent (ValueError, not raw FK)."""
+    _rebind(tmp_path)
+    with pytest.raises(ValueError):
+        store.get_or_create_session("ghost", "web")
+    # No session was created for the missing agent.
+    assert not any(s["coordinator_id"] == "ghost" for s in store.list_sessions())
+
+
+def test_clear_session_noop_when_no_session(tmp_path) -> None:
+    """clear_session(agent, user) must not invent an empty session (P3)."""
+    _rebind(tmp_path)
+    store.create_agent({"id": "custom", "name": "Custom"})
+    before_ids = {s["id"] for s in store.list_sessions()}
+    store.clear_session("custom", "web")  # no prior session -> no-op
+    after_ids = {s["id"] for s in store.list_sessions()}
+    assert before_ids == after_ids
+    assert not any(s["coordinator_id"] == "custom" for s in store.list_sessions())
+
+
+def test_clear_session_clears_existing_session(tmp_path) -> None:
+    """When a session exists, clear_session clears messages but keeps the session."""
+    _rebind(tmp_path)
+    store.append_history("ops", "web", {"type": "user", "content": "hi", "ts": time.time()})
+    store.append_history(
+        "ops", "web", {"type": "final", "content": "hello", "agent_id": "ops", "ts": time.time()}
+    )
+    assert store.get_history("ops", "web") != []
+    store.clear_session("ops", "web")
+    assert store.get_history("ops", "web") == []
+    # The session still exists (cleared, not deleted) — get_history reuses it.
+    sessions = [s for s in store.list_sessions() if s["coordinator_id"] == "ops"]
+    assert len(sessions) == 1
+    assert sessions[0]["message_count"] == 0
+

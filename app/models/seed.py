@@ -12,7 +12,10 @@ import json
 import sqlite3
 import time
 
-from app.services.platform_data import seed_settings
+# Demo sessions reference these agent ids as coordinators/members. Sessions are
+# only seeded when all of them already exist, so an empty ``sessions`` table
+# never FK-fails against a non-demo (custom-only) ``agents`` table.
+_REQUIRED_SESSION_AGENTS = ("main", "ops", "research")
 
 
 def _now() -> float:
@@ -21,6 +24,10 @@ def _now() -> float:
 
 def _count(conn: sqlite3.Connection, table: str) -> int:
     return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
+def _has_agent(conn: sqlite3.Connection, agent_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone() is not None
 
 
 def _seed_agents(conn: sqlite3.Connection) -> None:
@@ -58,16 +65,33 @@ def _seed_sessions(conn: sqlite3.Connection) -> None:
 
 
 def _seed_settings(conn: sqlite3.Connection) -> None:
+    # Lazy import: ``seed`` is imported during ``Store`` init, and a module-level
+    # import of ``app.services.platform_data`` would pull the ``app.services``
+    # package ``__init__`` (which itself imports the store). Importing here keeps
+    # ``app.models.seed`` free of that circular dependency at load time.
+    from app.services.platform_data import seed_settings
+
     rows = [(key, json.dumps(value)) for key, value in seed_settings().items()]
     conn.executemany("INSERT INTO settings (key, value_json) VALUES (?,?)", rows)
 
 
 def seed_if_empty(conn: sqlite3.Connection) -> None:
-    """Seed agents/sessions/settings only when the corresponding table is empty."""
-    if _count(conn, "agents") == 0:
-        _seed_agents(conn)
-    if _count(conn, "sessions") == 0:
-        _seed_sessions(conn)
-    if _count(conn, "settings") == 0:
-        _seed_settings(conn)
-    conn.commit()
+    """Seed agents/sessions/settings only when the corresponding table is empty.
+
+    Demo sessions are only seeded when every required coordinator/member agent
+    (``main``, ``ops``, ``research``) already exists — otherwise the session
+    inserts would FK-fail (e.g. a DB reopened with only custom agents). A failed
+    seed is rolled back so the connection/transaction is never left dirty.
+    """
+    try:
+        if _count(conn, "agents") == 0:
+            _seed_agents(conn)
+        if _count(conn, "sessions") == 0:
+            if all(_has_agent(conn, aid) for aid in _REQUIRED_SESSION_AGENTS):
+                _seed_sessions(conn)
+        if _count(conn, "settings") == 0:
+            _seed_settings(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
