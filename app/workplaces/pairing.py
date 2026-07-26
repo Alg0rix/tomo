@@ -8,9 +8,12 @@ import threading
 import time
 from collections import defaultdict
 
-# Short codes are easy to type; 6 chars from Crockford-ish alphabet (~30 bits).
-_ALPHABET = string.ascii_uppercase + string.digits
-_PAIRING_TTL_SECONDS = 30 * 60  # 30 minutes
+# Short codes; drop ambiguous 0/O/1/I.
+_ALPHABET = (
+    string.ascii_uppercase.replace("O", "").replace("I", "")
+    + string.digits.replace("0", "").replace("1", "")
+)
+_PAIRING_TTL_SECONDS = 15 * 60  # 15 minutes
 _MAX_ATTEMPTS_PER_WINDOW = 20
 _WINDOW_SECONDS = 300
 

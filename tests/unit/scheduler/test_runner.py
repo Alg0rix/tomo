@@ -1,4 +1,4 @@
-"""Scheduler runner fires a session turn (MockLLM) — Alpha Slice G."""
+"""Scheduler runner fires a session turn (ScriptedLLM) — Alpha Slice G."""
 
 from __future__ import annotations
 
@@ -7,16 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from app.runtime.llm.mock import MockLLMClient
 from app.scheduler import fire_due_schedules, fire_schedule
 from app.services import store
+from tests.fakes.llm import ScriptedLLM, text_reply
 
 
 @pytest.fixture(autouse=True)
-def _inject_mock_llm(monkeypatch) -> None:
+def _inject_scripted_llm(monkeypatch) -> None:
+    client = ScriptedLLM([text_reply("Scheduled reply.")] * 10)
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: MockLLMClient(),
+        lambda agent_id=None: client,
     )
 
 

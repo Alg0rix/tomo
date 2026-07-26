@@ -389,11 +389,13 @@ def complete_pairing(
     *,
     hostname: str = "",
     version: str = "",
+    platform: str = "",
     rotate_token: bool = True,
 ) -> str:
     """Mark paired: clear pairing code, set token, status connected.
 
     Returns the (new or existing) plaintext connector token.
+    Status is set to ``offline`` until the WebSocket registers (honest online).
     """
     row = conn.execute(
         "SELECT * FROM workplaces WHERE id=?", (workplace_id,)
@@ -409,6 +411,15 @@ def complete_pairing(
         token_plain = decrypt_secret(str(row["connector_token"] or ""))
         token_enc = row["connector_token"]
     host = (hostname or "").strip() or (row["host"] or "tunnel")
+    if platform:
+        # Encode platform into version field as "ver (platform)" when no separate col.
+        ver = (version or "").strip()[:48]
+        if ver:
+            ver = f"{ver}/{platform.strip()[:16]}"
+        else:
+            ver = platform.strip()[:64]
+    else:
+        ver = (version or "").strip()[:64]
     conn.execute(
         "UPDATE workplaces SET pairing_code='', pairing_expires_at=0, "
         "connector_token=?, connector_last_seen_at=?, connector_version=?, "
@@ -416,10 +427,10 @@ def complete_pairing(
         (
             token_enc,
             now,
-            (version or "").strip()[:64],
+            ver,
             (hostname or "").strip()[:128],
             host[:128],
-            "connected",
+            "offline",  # not connected until live WS
             now,
             workplace_id,
         ),
@@ -434,6 +445,7 @@ def mark_connector_seen(
     *,
     hostname: str = "",
     version: str = "",
+    platform: str = "",
     status: str = "connected",
 ) -> None:
     now = _now()
@@ -444,9 +456,12 @@ def mark_connector_seen(
         params.append(hostname.strip()[:128])
         sets.append("host=?")
         params.append(hostname.strip()[:128])
-    if version:
+    if version or platform:
+        ver = (version or "").strip()[:48]
+        if platform:
+            ver = f"{ver}/{platform.strip()[:16]}" if ver else platform.strip()[:64]
         sets.append("connector_version=?")
-        params.append(version.strip()[:64])
+        params.append(ver[:64])
     params.append(workplace_id)
     conn.execute(
         f"UPDATE workplaces SET {', '.join(sets)} WHERE id=?", params

@@ -13,6 +13,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "httpx>=0.27",
     "cryptography>=42",
+    "paramiko>=5.0.0",
 ]
 
 [build-system]

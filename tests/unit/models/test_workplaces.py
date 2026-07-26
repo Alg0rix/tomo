@@ -177,19 +177,22 @@ def test_tunnel_token_encrypted_after_pair(tmp_path: Path) -> None:
         {"id": "wp_tun", "name": "Tunnel", "kind": "tunnel"}
     )
     code = wp["pairing_code"]
-    result = store.pair_connector(code, hostname="pi.local", version="0.1.0")
+    result = store.pair_connector(code, hostname="pi.local", version="0.2.0")
     assert result is not None
     assert result["workplace_id"] == "wp_tun"
     assert result["token"]
     public = store.get_workplace("wp_tun")
     assert public["connector_token_set"] is True
+    # Paired but not live yet — honest offline until WebSocket registers.
+    assert public["status"] == "offline"
     assert "connector_token" not in public or public.get("connector_token") in ("", None)
     raw = _raw_col("wp_tun", "connector_token")
     assert raw.startswith("enc:v1:")
     assert result["token"] not in raw
-    # Reconnect with token (hello path).
+    # Reconnect with token (hello path) marks connected in DB.
     hello = store.hello_connector(result["token"], hostname="pi.local")
     assert hello == {"workplace_id": "wp_tun"}
+    assert store.get_workplace("wp_tun")["status"] == "connected"
 
 
 def test_assign_workplace_to_agent(tmp_path: Path) -> None:

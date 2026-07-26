@@ -2,19 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.core import home
 from app.runtime.tools import bash, sandbox
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
+from app.services import store
+from app.workplaces.hub import hub
 
 
 @pytest.fixture(autouse=True)
-def _reset() -> None:
+def _reset(tmp_path: Path) -> None:
+    store.rebind(tmp_path / "bash.db")
+    hub.reset()
+    # Ensure ops has no remote workplace so bash stays local.
+    try:
+        store.update_agent("ops", {"workplace_id": ""})
+    except Exception:
+        pass
     reset_registry()
     sandbox.reset_agent()
     yield
     sandbox.reset_agent()
+    hub.reset()
     reset_registry()
 
 

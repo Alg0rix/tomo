@@ -113,3 +113,17 @@ def test_status_cannot_force_tunnel_connected_via_api(tmp_path: Path) -> None:
     store.create_workplace({"id": "wp_tun", "name": "T", "kind": "tunnel"})
     store.update_workplace("wp_tun", {"status": "connected"})
     assert store.get_workplace("wp_tun")["status"] != "connected"
+
+
+def test_pairing_code_avoids_ambiguous_chars() -> None:
+    for _ in range(40):
+        code = generate_pairing_code()
+        assert not any(c in code for c in "01OI")
+
+
+def test_client_supports_replay() -> None:
+    from app.workplaces.hub import client_supports_replay
+
+    assert client_supports_replay(caps="idempotent-replay") is True
+    assert client_supports_replay(version="0.2.0") is True
+    assert client_supports_replay(version="0.1.0") is False

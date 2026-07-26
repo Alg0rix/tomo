@@ -1,49 +1,67 @@
 # Tomo Connector (Go)
 
 Lightweight agent that opens an **outbound WebSocket** to the Tomo server and
-runs the same tool surface (`bash`, `read_file`, `write_file`, …) for
-`kind=tunnel` workplaces — no inbound ports or SSH required.
+runs the same tool surface for `kind=tunnel` workplaces — no inbound ports or SSH.
+
+Layout:
+
+```
+connector/
+├── cmd/tomo-connector/   # CLI entrypoint
+├── internal/
+│   ├── version/          # version string
+│   ├── state/            # ~/.tomo-connector state
+│   ├── pair/             # HTTP pair
+│   ├── ws/               # WebSocket client + RPC loop
+│   └── executor/         # exec_bash, files, process jobs
+├── Makefile
+└── README.md
+```
 
 ## Build
 
 ```bash
 cd connector
 go mod tidy
-go build -o tomo-connector .
-# optional install
-# go install .
+make build
+# or: go build -o tomo-connector ./cmd/tomo-connector
 ```
 
 ## Pair & run
 
-On the Tomo UI: create a **tunnel** workplace → copy the pairing code.
-
 ```bash
 ./tomo-connector pair --code X7KQ2M --server http://coordinator:8787
-# stays connected; Ctrl-C to stop
-
-# later / after reboot (uses ~/.tomo-connector/state.json):
 ./tomo-connector run
 ./tomo-connector status
 ./tomo-connector logout
 ```
 
-State is stored under `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`) with
-file mode `0600`. Tool jail root defaults to `$TOMO_CONNECTOR_HOME/work`
-(override with `TOMO_CONNECTOR_ROOT`).
+Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
+
+State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).  
+Jail: `$TOMO_CONNECTOR_ROOT` or `$TOMO_CONNECTOR_HOME/work`.
 
 ## Protocol (v1)
 
-WebSocket path: `/api/connector/ws`
+### Pair — `POST /api/connector/pair`
 
-| Direction | Type | Purpose |
-|-----------|------|---------|
-| C→S | `pair` | `{code, hostname, version}` first-time bind |
-| S→C | `pair_ok` | `{workplace_id, token}` |
-| C→S | `hello` | `{token, hostname, version}` reconnect |
-| S→C | `hello_ok` | `{workplace_id}` |
-| C→S | `heartbeat` | keep-alive |
-| S→C | `rpc_request` | `{id, method, params}` |
-| C→S | `rpc_response` | `{id, ok, result\|error}` |
+```json
+{"pairing_code":"X7KQ2M","device_name":"pi","platform":"linux","version":"0.2.0"}
+→ {"ok":true,"connector_token":"…","workplace_id":"wp_pi"}
+```
 
-Methods: `bash`, `read_file`, `write_file`, `ping`, `cwd_info`.
+### Connect — `WS /api/connector/ws`
+
+Headers: `Authorization: Bearer <token>`, `X-Device-Name`, `X-Platform`,
+`X-Tomo-Connector-Version`, `X-Tomo-Caps: idempotent-replay`.
+
+| Method | Params | Result |
+|--------|--------|--------|
+| `exec_bash` | `{script, timeout, env, cwd}` | `{stdout, stderr, exit_code, …}` |
+| `exec_python` | `{code, …}` | same |
+| `read_file` / `write_file` | path/content | structured |
+| `str_replace` / `delete_file` / `search_files` | … | structured |
+| `process_start` / `list` / `status` / `kill` | jobs | job records |
+| `read_file_b64` / `write_file_b64` | binary chunks | portal-ready |
+
+Exactly-once: client caches RPC results by request `id` (~5 min).

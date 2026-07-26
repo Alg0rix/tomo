@@ -16,15 +16,16 @@ from app.channels.telegram import (
     run_channel_turn,
     user_id_for_chat,
 )
-from app.runtime.llm.mock import MockLLMClient
 from app.services import store
+from tests.fakes.llm import ScriptedLLM, text_reply
 
 
 @pytest.fixture(autouse=True)
-def _inject_mock_llm(monkeypatch) -> None:
+def _inject_scripted_llm(monkeypatch) -> None:
+    client = ScriptedLLM([text_reply("Telegram reply.")] * 20)
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: MockLLMClient(),
+        lambda agent_id=None: client,
     )
 
 

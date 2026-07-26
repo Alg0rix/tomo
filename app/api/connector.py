@@ -1,13 +1,14 @@
-"""Tomo Connector WebSocket endpoint (pairing + RPC hub).
+"""Tomo Connector endpoints (HTTP pair + WebSocket hub).
 
-Path: ``/api/connector/ws``
+* ``POST /api/connector/pair`` — unauthenticated HTTP pair (code → token)
+* ``WS /api/connector/ws`` — Bearer token in handshake headers preferred;
+  JSON ``hello`` / ``pair`` still accepted for older clients
 
-Protocol (JSON, ``v: 1``):
+Protocol (JSON, ``v: 1``) after auth:
 
-* Client ``pair`` {code, hostname?, version?} → server ``pair_ok`` {workplace_id, token}
-* Client ``hello`` {token, hostname?, version?} → server ``hello_ok`` {workplace_id}
-* Client ``heartbeat`` → server ``heartbeat_ack``
-* Server ``rpc_request`` {id, method, params} → client ``rpc_response`` {id, ok, result|error}
+* ``heartbeat`` ↔ ``heartbeat_ack`` (or ``ping`` ↔ ``pong``)
+* server ``rpc_request`` {id, method, params}
+* client ``rpc_response`` {id, ok, result|error}
 """
 
 from __future__ import annotations
@@ -16,10 +17,11 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from app.services import store
-from app.workplaces.hub import ConnectorSession, hub
+from app.workplaces.hub import ConnectorSession, client_supports_replay, hub
 from app.workplaces.pairing import rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -33,14 +35,133 @@ def _err(message: str) -> dict[str, Any]:
     return {"v": _PROTOCOL_V, "type": "error", "message": message}
 
 
+def _client_ip(request: Request | WebSocket) -> str:
+    if isinstance(request, Request):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        if request.client:
+            return request.client.host or ""
+        return ""
+    # WebSocket
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host or ""
+    return ""
+
+
+@router.post("/api/connector/pair")
+async def connector_pair_http(request: Request) -> JSONResponse:
+    """Pair with a short-lived code (called by tomo-connector; no admin session)."""
+    ip = _client_ip(request) or "unknown"
+    if not rate_limiter.allow(f"pair:{ip}"):
+        return JSONResponse({"ok": False, "error": "too many pairing attempts"}, 429)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    code = str(
+        data.get("pairing_code") or data.get("code") or ""
+    ).strip()
+    hostname = str(
+        data.get("device_name") or data.get("hostname") or ""
+    ).strip()
+    platform = str(data.get("platform") or "").strip()
+    version = str(data.get("version") or "").strip()
+    if not code:
+        return JSONResponse({"ok": False, "error": "pairing_code is required"}, 400)
+    try:
+        result = store.pair_connector(
+            code, hostname=hostname, version=version, platform=platform
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, 400)
+    if not result:
+        return JSONResponse(
+            {"ok": False, "error": "Invalid or expired pairing code"}, 400
+        )
+    return JSONResponse(
+        {
+            "ok": True,
+            "connector_token": result["token"],
+            "workplace_id": result["workplace_id"],
+            "workplace_name": result.get("workplace_name") or result["workplace_id"],
+        }
+    )
+
+
 @router.websocket("/api/connector/ws")
 async def connector_ws(websocket: WebSocket) -> None:
-    await websocket.accept()
+    client_host = _client_ip(websocket)
+    # Prefer Bearer auth at handshake.
+    auth = websocket.headers.get("authorization") or ""
+    token_hdr = ""
+    if auth.lower().startswith("bearer "):
+        token_hdr = auth[7:].strip()
+    hostname = (
+        websocket.headers.get("x-device-name")
+        or websocket.headers.get("x-tomo-device")
+        or ""
+    ).strip()
+    platform = (
+        websocket.headers.get("x-platform")
+        or websocket.headers.get("x-tomo-platform")
+        or ""
+    ).strip()
+    version = (
+        websocket.headers.get("x-tomo-connector-version")
+        or ""
+    ).strip()
+    caps = (
+        websocket.headers.get("x-tomo-caps")
+        or ""
+    ).strip()
+
     workplace_id: str | None = None
     session: ConnectorSession | None = None
-    client_host = ""
-    if websocket.client:
-        client_host = websocket.client.host or ""
+
+    if token_hdr:
+        if not rate_limiter.allow(f"hello:{client_host or 'unknown'}"):
+            await websocket.close(code=4408)
+            return
+        try:
+            result = store.hello_connector(
+                token_hdr,
+                hostname=hostname,
+                version=version,
+                platform=platform,
+            )
+        except ValueError:
+            result = None
+        if not result:
+            await websocket.close(code=4401)
+            return
+        await websocket.accept()
+        workplace_id = result["workplace_id"]
+        session = await _bind_session(
+            websocket,
+            workplace_id,
+            hostname=hostname,
+            version=version,
+            platform=platform,
+            caps=caps,
+        )
+        try:
+            await websocket.send_json(
+                {
+                    "v": _PROTOCOL_V,
+                    "type": "hello_ok",
+                    "workplace_id": workplace_id,
+                }
+            )
+        except Exception:
+            pass
+    else:
+        await websocket.accept()
 
     try:
         while True:
@@ -49,7 +170,10 @@ async def connector_ws(websocket: WebSocket) -> None:
             except WebSocketDisconnect:
                 break
             except Exception:
-                await websocket.send_json(_err("invalid JSON message"))
+                try:
+                    await websocket.send_json(_err("invalid JSON message"))
+                except Exception:
+                    break
                 continue
 
             if not isinstance(raw, dict):
@@ -57,17 +181,29 @@ async def connector_ws(websocket: WebSocket) -> None:
                 continue
 
             msg_type = str(raw.get("type") or "").strip().lower()
+
+            # Application-level ping.
+            if msg_type == "ping":
+                if session is not None:
+                    session.touch()
+                await websocket.send_json({"v": _PROTOCOL_V, "type": "pong"})
+                continue
+
             if msg_type == "pair":
                 if not rate_limiter.allow(f"pair:{client_host or 'unknown'}"):
                     await websocket.send_json(_err("too many pairing attempts"))
                     await websocket.close(code=4408)
                     return
-                code = str(raw.get("code") or "").strip()
-                hostname = str(raw.get("hostname") or "").strip()
+                code = str(raw.get("code") or raw.get("pairing_code") or "").strip()
+                hostname = str(raw.get("hostname") or raw.get("device_name") or "").strip()
                 version = str(raw.get("version") or "").strip()
+                platform = str(raw.get("platform") or "").strip()
                 try:
                     result = store.pair_connector(
-                        code, hostname=hostname, version=version
+                        code,
+                        hostname=hostname,
+                        version=version,
+                        platform=platform,
                     )
                 except ValueError as exc:
                     await websocket.send_json(_err(str(exc)))
@@ -77,7 +213,12 @@ async def connector_ws(websocket: WebSocket) -> None:
                     continue
                 workplace_id = result["workplace_id"]
                 session = await _bind_session(
-                    websocket, workplace_id, hostname=hostname, version=version
+                    websocket,
+                    workplace_id,
+                    hostname=hostname,
+                    version=version,
+                    platform=platform,
+                    caps=str(raw.get("caps") or ""),
                 )
                 await websocket.send_json(
                     {
@@ -85,6 +226,7 @@ async def connector_ws(websocket: WebSocket) -> None:
                         "type": "pair_ok",
                         "workplace_id": workplace_id,
                         "token": result["token"],
+                        "connector_token": result["token"],
                     }
                 )
                 continue
@@ -97,9 +239,13 @@ async def connector_ws(websocket: WebSocket) -> None:
                 token = str(raw.get("token") or "").strip()
                 hostname = str(raw.get("hostname") or "").strip()
                 version = str(raw.get("version") or "").strip()
+                platform = str(raw.get("platform") or "").strip()
                 try:
                     result = store.hello_connector(
-                        token, hostname=hostname, version=version
+                        token,
+                        hostname=hostname,
+                        version=version,
+                        platform=platform,
                     )
                 except ValueError as exc:
                     await websocket.send_json(_err(str(exc)))
@@ -110,7 +256,12 @@ async def connector_ws(websocket: WebSocket) -> None:
                     return
                 workplace_id = result["workplace_id"]
                 session = await _bind_session(
-                    websocket, workplace_id, hostname=hostname, version=version
+                    websocket,
+                    workplace_id,
+                    hostname=hostname,
+                    version=version,
+                    platform=platform,
+                    caps=str(raw.get("caps") or ""),
                 )
                 await websocket.send_json(
                     {
@@ -123,16 +274,17 @@ async def connector_ws(websocket: WebSocket) -> None:
 
             if session is None or workplace_id is None:
                 await websocket.send_json(
-                    _err("authenticate first with pair or hello")
+                    _err("authenticate first (Bearer token, pair, or hello)")
                 )
                 continue
 
-            if msg_type == "heartbeat":
+            if msg_type in ("heartbeat", "pong"):
                 session.touch()
                 store.touch_connector(workplace_id)
-                await websocket.send_json(
-                    {"v": _PROTOCOL_V, "type": "heartbeat_ack"}
-                )
+                if msg_type == "heartbeat":
+                    await websocket.send_json(
+                        {"v": _PROTOCOL_V, "type": "heartbeat_ack"}
+                    )
                 continue
 
             if msg_type == "rpc_response":
@@ -152,10 +304,11 @@ async def connector_ws(websocket: WebSocket) -> None:
 
     finally:
         if workplace_id is not None:
+            # Stale-connection guard: only unregister if this socket is current.
             if hub.unregister(workplace_id, websocket):
                 try:
                     store.mark_connector_offline(workplace_id)
-                except Exception:  # pragma: no cover - shutdown edge
+                except Exception:  # pragma: no cover
                     logger.exception("mark offline failed for %s", workplace_id)
 
 
@@ -165,18 +318,29 @@ async def _bind_session(
     *,
     hostname: str,
     version: str,
+    platform: str = "",
+    caps: str = "",
 ) -> ConnectorSession:
     loop = asyncio.get_running_loop()
+    replay_ok = client_supports_replay(caps=caps, version=version)
     session = ConnectorSession(
         workplace_id,
         websocket,
         loop,
         hostname=hostname,
         version=version,
+        platform=platform,
+        replay_ok=replay_ok,
     )
     prev = hub.register(session)
     if prev is not None and prev.websocket is not websocket:
-        prev.fail_all("replaced by new connector session")
+        # Hand off in-flight RPCs when both sides support replay.
+        if replay_ok and prev.replay_ok:
+            pending = prev.take_pending_for_replay()
+            if pending:
+                session.adopt_pending(pending)
+        else:
+            prev.fail_all("replaced by new connector session")
         try:
             await prev.websocket.close(code=4000)
         except Exception:

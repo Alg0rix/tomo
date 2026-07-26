@@ -1,17 +1,16 @@
-"""Agent turn loop tests with mock LLMs.
+"""Agent turn loop tests with ScriptedLLM and SQLite session history.
 
-Validates the internal event-stream contract the chat layer (Task 6) maps
-onto SSE:
+Validates the internal event-stream contract the chat layer maps onto SSE:
 
 * text-only prompt -> a single ``final`` event;
-* a ``run:`` prompt -> ``tool`` -> ``tool_result`` -> ``final``;
-* an ever-tool-calling mock -> an ``error`` event at the iteration cap;
+* a scripted bash tool call -> ``tool`` -> ``tool_result`` -> ``final``;
+* an ever-tool-calling stub -> an ``error`` event at the iteration cap;
 * reasoning text alongside a tool call -> a leading ``thinking`` event;
 * an LLM backend failure -> an ``error`` event.
 
-The loop is exercised with the real :class:`MockLLMClient` for the happy
-paths and small stub clients for the adversarial paths, so the contract is
-verified end to end without any network or HTTP.
+Happy paths use :class:`~tests.fakes.llm.ScriptedLLM` with explicit response
+queues. Prior-turn context is loaded from SQLite via ``append_session_history``
+/ ``get_session_history`` — not hand-built lists.
 """
 
 from __future__ import annotations
@@ -21,9 +20,12 @@ from typing import Any
 from app.runtime.agent.loop import run_turn
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
-from app.runtime.llm.mock import MockLLMClient
-from app.runtime.llm.mock import _BASH_FINAL, _DEFAULT_REPLY, _RECALL_FINAL
 from app.services import store
+from tests.fakes.llm import ScriptedLLM, bash_call, recall_call, text_reply, tool_then_text
+
+_DEFAULT_REPLY = "Ready to help."
+_BASH_FINAL = "The command finished."
+_RECALL_FINAL = "I found the relevant knowledge base entry."
 
 
 def _bash_tools() -> list[dict[str, Any]]:
@@ -51,18 +53,29 @@ def _final(events: list[dict[str, Any]]) -> dict[str, Any]:
     return next(e for e in reversed(events) if e["kind"] == "final")
 
 
+def _session_history(tmp_path, *entries: dict[str, Any], db_name: str = "loop.db") -> list[dict[str, Any]]:
+    """Persist entries in a fresh SQLite session and return store history."""
+    store.rebind(tmp_path / db_name)
+    sid = store.create_swarm_session(["main"], user_id="web")
+    for entry in entries:
+        store.append_session_history(sid, entry)
+    return store.get_session_history(sid)
+
+
 # --- happy paths --------------------------------------------------------
 
 
 async def test_text_only_path_yields_single_final() -> None:
-    events = await _collect("hello", llm=MockLLMClient(), tools=_bash_tools())
+    llm = ScriptedLLM([text_reply(_DEFAULT_REPLY)])
+    events = await _collect("hello", llm=llm, tools=_bash_tools())
     assert _kinds(events, drop_delta=True) == ["final"]
     assert _final(events)["content"] == _DEFAULT_REPLY
     assert "".join(e["content"] for e in events if e["kind"] == "delta") == _DEFAULT_REPLY
 
 
 async def test_bash_path_emits_tool_then_result_then_final() -> None:
-    events = await _collect("run: echo 4", llm=MockLLMClient(), tools=_bash_tools())
+    llm = ScriptedLLM(tool_then_text(bash_call("echo 4"), _BASH_FINAL))
+    events = await _collect("run: echo 4", llm=llm, tools=_bash_tools())
     assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
 
     tool_ev = next(e for e in events if e["kind"] == "tool")
@@ -81,11 +94,17 @@ async def test_bash_path_emits_tool_then_result_then_final() -> None:
 
 
 async def test_recall_path_returns_seeded_fact(tmp_path) -> None:
-    """New session path: MockLLM calls recall; result includes seeded KB fact."""
+    """Scripted recall tool call; result includes seeded KB fact."""
     store.rebind(tmp_path / "recall_loop.db")
+    llm = ScriptedLLM(
+        tool_then_text(
+            recall_call("Q3 vendor onboarding deadline"),
+            _RECALL_FINAL,
+        )
+    )
     events = await _collect(
         "What is the Q3 vendor onboarding deadline?",
-        llm=MockLLMClient(),
+        llm=llm,
         tools=_recall_tools(),
     )
     assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
@@ -100,22 +119,26 @@ async def test_recall_path_returns_seeded_fact(tmp_path) -> None:
 
 async def test_bash_error_result_sets_error_flag() -> None:
     """A tool that returns an ``Error:`` string must flag ``error=True``."""
-    events = await _collect("run:", llm=MockLLMClient(), tools=_bash_tools())
+    llm = ScriptedLLM(tool_then_text(bash_call(""), _BASH_FINAL))
+    events = await _collect("run:", llm=llm, tools=_bash_tools())
     result_ev = next(e for e in events if e["kind"] == "tool_result")
     assert result_ev["error"] is True
     assert result_ev["result"].startswith("Error")
 
 
-async def test_history_rebuilt_so_new_bash_turn_still_calls_tool() -> None:
-    """A prior completed bash turn in history must not suppress a fresh one."""
-    history = [
+async def test_history_rebuilt_so_new_bash_turn_still_calls_tool(tmp_path) -> None:
+    """A prior completed bash turn in SQLite history must not suppress a fresh one."""
+    history = _session_history(
+        tmp_path,
         {"type": "user", "content": "run: echo 4"},
         {"type": "tool_call", "function": "bash", "params": {"command": "echo 4"}},
         {"type": "tool_output", "content": "4"},
         {"type": "final", "content": _BASH_FINAL},
-    ]
+        db_name="hist_bash.db",
+    )
+    llm = ScriptedLLM(tool_then_text(bash_call("echo 10"), _BASH_FINAL))
     events = await _collect(
-        "run: echo 10", llm=MockLLMClient(), tools=_bash_tools(), history=history
+        "run: echo 10", llm=llm, tools=_bash_tools(), history=history
     )
     assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
     assert next(e for e in events if e["kind"] == "tool")["args"] == {"command": "echo 10"}
@@ -126,10 +149,16 @@ async def test_history_rebuilt_so_new_bash_turn_still_calls_tool() -> None:
 
 
 async def test_max_iterations_stops_cleanly_with_error_event() -> None:
-    """A mock that always requests tools must stop at the cap with ``error``."""
+    """A client that always requests tools must stop at the cap with ``error``."""
+    llm = ScriptedLLM(
+        [
+            bash_call("echo 1", id="call_a"),
+            bash_call("echo 1", id="call_b"),
+        ]
+    )
     events = await _collect(
         "keep calling tools",
-        llm=_AlwaysToolMock(),
+        llm=llm,
         tools=_bash_tools(),
         max_iterations=2,
     )
@@ -146,9 +175,22 @@ async def test_max_iterations_stops_cleanly_with_error_event() -> None:
 
 
 async def test_thinking_emitted_when_content_accompanies_tool_calls() -> None:
-    events = await _collect(
-        "plan then run", llm=_ThinkingThenFinalMock(), tools=_bash_tools()
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                content="Let me run that.",
+                tool_calls=[
+                    ToolCall(
+                        id="call_think",
+                        name="bash",
+                        arguments={"command": "echo 4"},
+                    )
+                ],
+            ),
+            text_reply("Done: 4"),
+        ]
     )
+    events = await _collect("plan then run", llm=llm, tools=_bash_tools())
     assert _kinds(events, drop_delta=True) == ["thinking", "tool", "tool_result", "final"]
     assert events[0] == {"kind": "thinking", "content": "Let me run that."}
     assert next(e for e in events if e["kind"] == "tool")["args"] == {"command": "echo 4"}
@@ -163,54 +205,14 @@ async def test_llm_exception_surfaces_as_error_event() -> None:
 
 
 async def test_empty_tool_list_keeps_text_only_path() -> None:
-    """No tools advertised -> mock returns its default reply as ``final``."""
-    events = await _collect("run: echo 2", llm=MockLLMClient(), tools=[])
+    """No tools advertised -> scripted text reply as ``final``."""
+    llm = ScriptedLLM([text_reply(_DEFAULT_REPLY)])
+    events = await _collect("run: echo 2", llm=llm, tools=[])
     assert _kinds(events, drop_delta=True) == ["final"]
     assert _final(events)["content"] == _DEFAULT_REPLY
 
 
 # --- stub LLM clients ---------------------------------------------------
-
-
-class _AlwaysToolMock:
-    """Always returns a bash tool call — never converges."""
-
-    async def complete(self, messages, tools=None):
-        return LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCall(
-                    id="call_loop",
-                    name="bash",
-                    arguments={"command": "echo 1"},
-                )
-            ],
-        )
-
-
-class _ThinkingThenFinalMock:
-    """First call: reasoning text + a bash call; then final text.
-
-    Instance-level state (not class-level) so each test gets a fresh mock.
-    """
-
-    def __init__(self) -> None:
-        self._seen = False
-
-    async def complete(self, messages, tools=None):
-        if not self._seen:
-            self._seen = True
-            return LLMResponse(
-                content="Let me run that.",
-                tool_calls=[
-                    ToolCall(
-                        id="call_think",
-                        name="bash",
-                        arguments={"command": "echo 4"},
-                    )
-                ],
-            )
-        return LLMResponse(content="Done: 4", tool_calls=[])
 
 
 class _BoomMock:
@@ -220,51 +222,30 @@ class _BoomMock:
         raise RuntimeError("upstream blew up")
 
 
+class _RecordingScripted:
+    """ScriptedLLM that also records messages passed to each ``complete``."""
+
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        self._inner = ScriptedLLM(responses)
+        self.captured: list[list[dict[str, Any]]] = []
+
+    async def complete(self, messages, tools=None):
+        self.captured.append(list(messages))
+        return await self._inner.complete(messages, tools)
+
+
 # --- turn-scoped ids / setup errors / user_message=None ----------------
-
-
-class _RecordingMock:
-    """Returns the default final reply; records messages passed to each call."""
-
-    def __init__(self) -> None:
-        self.captured: list[list[dict[str, Any]]] = []
-
-    async def complete(self, messages, tools=None):
-        self.captured.append(list(messages))
-        return LLMResponse(content=_DEFAULT_REPLY, tool_calls=[])
-
-
-class _EmptyIdTwoRoundMock:
-    """Bash tool calls with empty ids for two rounds, then a final answer.
-
-    Records the messages handed to each ``complete`` call so the test can
-    assert synthesised ids stay distinct across rounds.
-    """
-
-    def __init__(self) -> None:
-        self._round = 0
-        self.captured: list[list[dict[str, Any]]] = []
-
-    async def complete(self, messages, tools=None):
-        self.captured.append(list(messages))
-        if self._round < 2:
-            self._round += 1
-            return LLMResponse(
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id="",
-                        name="bash",
-                        arguments={"command": "echo 1"},
-                    )
-                ],
-            )
-        return LLMResponse(content="done", tool_calls=[])
 
 
 async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
     """Empty tool-call ids must not collide between completion rounds."""
-    mock = _EmptyIdTwoRoundMock()
+    empty = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(id="", name="bash", arguments={"command": "echo 1"})
+        ],
+    )
+    mock = _RecordingScripted([empty, empty, text_reply("done")])
     events = await _collect(
         "run twice", llm=mock, tools=_bash_tools(), max_iterations=4
     )
@@ -311,16 +292,20 @@ async def test_get_openai_tools_failure_surfaces_as_error_event(monkeypatch) -> 
         raise RuntimeError("registry exploded")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_openai_tools", _boom)
-    events = await _collect("hi", llm=MockLLMClient())
+    events = await _collect("hi", llm=ScriptedLLM([text_reply(_DEFAULT_REPLY)]))
     assert [e["kind"] for e in events] == ["error"]
     assert "setup" in events[0]["message"].lower()
     assert "registry exploded" in events[0]["message"]
 
 
-async def test_user_message_none_does_not_duplicate_history_user() -> None:
+async def test_user_message_none_does_not_duplicate_history_user(tmp_path) -> None:
     """``user_message=None`` must not append a second trailing user message."""
-    history = [{"type": "user", "content": "the new question"}]
-    recorder = _RecordingMock()
+    history = _session_history(
+        tmp_path,
+        {"type": "user", "content": "the new question"},
+        db_name="hist_none.db",
+    )
+    recorder = _RecordingScripted([text_reply(_DEFAULT_REPLY)])
     events = await _collect(None, llm=recorder, tools=_bash_tools(), history=history)
     assert _kinds(events, drop_delta=True) == ["final"]
     msgs = recorder.captured[-1]
@@ -334,7 +319,8 @@ async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
         "app.runtime.agent.loop.execute",
         lambda name, args: "Errorless computation succeeded",
     )
-    events = await _collect("run: echo 2", llm=MockLLMClient(), tools=_bash_tools())
+    llm = ScriptedLLM(tool_then_text(bash_call("echo 2"), _BASH_FINAL))
+    events = await _collect("run: echo 2", llm=llm, tools=_bash_tools())
     result_ev = next(e for e in events if e["kind"] == "tool_result")
     assert result_ev["error"] is False
     assert result_ev["result"] == "Errorless computation succeeded"
@@ -347,20 +333,19 @@ def _delegate_tools() -> list[dict[str, Any]]:
     return [{"type": "function", "function": {"name": "delegate"}}]
 
 
-class _DelegateMock:
-    """Coordinator calls ``delegate`` once; never produces its own final."""
-
-    async def complete(self, messages, tools=None):
-        return LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCall(
-                    id="call_delegate",
-                    name="delegate",
-                    arguments={"agent_id": "ops", "reason": "ops task"},
-                )
-            ],
-        )
+def _delegate_call(
+    agent_id: str = "ops", reason: str = "ops task", id: str = "call_delegate"
+) -> LLMResponse:
+    return LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id=id,
+                name="delegate",
+                arguments={"agent_id": agent_id, "reason": reason},
+            )
+        ],
+    )
 
 
 async def test_successful_delegate_yields_delegate_event_and_stops(
@@ -373,7 +358,7 @@ async def test_successful_delegate_yields_delegate_event_and_stops(
     )
     events = await _collect(
         "ask ops to help",
-        llm=_DelegateMock(),
+        llm=ScriptedLLM([_delegate_call()]),
         tools=_delegate_tools(),
         agent_id="main",
     )
@@ -387,33 +372,19 @@ async def test_successful_delegate_yields_delegate_event_and_stops(
 
 async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
     """A rejected delegate is a normal tool error; loop keeps iterating."""
-
-    class _DelegateThenFinal:
-        def __init__(self) -> None:
-            self._n = 0
-
-        async def complete(self, messages, tools=None):
-            self._n += 1
-            if self._n == 1:
-                return LLMResponse(
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="call_bad",
-                            name="delegate",
-                            arguments={"agent_id": "ghost"},
-                        )
-                    ],
-                )
-            return LLMResponse(content="I'll handle it myself.", tool_calls=[])
-
     monkeypatch.setattr(
         "app.runtime.agent.loop.execute",
         lambda name, args: "Error: 'ghost' is not a member of this session",
     )
+    llm = ScriptedLLM(
+        [
+            _delegate_call(agent_id="ghost", reason="", id="call_bad"),
+            text_reply("I'll handle it myself."),
+        ]
+    )
     events = await _collect(
         "delegate to ghost",
-        llm=_DelegateThenFinal(),
+        llm=llm,
         tools=_delegate_tools(),
         agent_id="main",
     )

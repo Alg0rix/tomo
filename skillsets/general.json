@@ -5,6 +5,7 @@
   "skills": [],
   "tools": [
     "bash",
+    "runpy",
     "read_file",
     "write_file",
     "str_replace",

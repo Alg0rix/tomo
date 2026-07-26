@@ -116,7 +116,8 @@
           </div>
         </div>
         <div class="config-row"><div class="lbl">Install</div>
-          <pre class="mono" id="wpInstallSnippet" style="margin:0;padding:10px 12px;background:var(--surface-2,rgba(0,0,0,.15));border-radius:8px;font-size:12px;white-space:pre-wrap;max-width:100%">cd connector && go build -o tomo-connector .
+          <pre class="mono" id="wpInstallSnippet" style="margin:0;padding:10px 12px;background:var(--surface-2,rgba(0,0,0,.15));border-radius:8px;font-size:12px;white-space:pre-wrap;max-width:100%">cd connector && make build
+# pair once (HTTP), then keep connected
 ./tomo-connector pair --code {{ workplace.pairing_code or 'CODE' }} --server {{ request.base_url | string | trim('/') }}
 ./tomo-connector run</pre>
         </div>

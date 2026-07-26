@@ -195,7 +195,7 @@ SSH requires inbound access, key management, and often manual setup per host. A 
 # and copy the pairing code (or POST /api/workplaces/{id}/pairing-code).
 
 # On the target device: build the Go connector, pair, run
-cd connector && go build -o tomo-connector .
+cd connector && make build
 ./tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
 # stays connected; later / after reboot:
 ./tomo-connector run    # auto-reconnect with saved token (~/.tomo-connector)

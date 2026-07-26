@@ -20,7 +20,8 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: 'content' argument must be a string"
 
     remote = try_tunnel_rpc(
-        "write_file", {"path": path_arg, "content": content}
+        "write_file",
+        {"path": path_arg, "content": content, "mode": "overwrite"},
     )
     if remote is not None:
         return remote

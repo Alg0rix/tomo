@@ -1,10 +1,11 @@
-"""process tool — list / status / kill background bash jobs."""
+"""process tool — list / status / kill background bash jobs (local, tunnel, SSH)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from app.runtime.tools import process_registry
+from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
 
 def run(arguments: dict[str, Any]) -> str:
@@ -18,6 +19,9 @@ def run(arguments: dict[str, Any]) -> str:
     job_id = arguments.get("id")
 
     if action == "list":
+        remote = try_tunnel_rpc("process_list", {})
+        if remote is not None:
+            return remote
         jobs = process_registry.list_jobs()
         if not jobs:
             return "No background jobs"
@@ -34,6 +38,10 @@ def run(arguments: dict[str, Any]) -> str:
         if not isinstance(job_id, str) or not job_id.strip():
             return "Error: 'id' is required for status/kill"
         job_id = job_id.strip()
+        method = "process_kill" if action == "kill" else "process_status"
+        remote = try_tunnel_rpc(method, {"id": job_id})
+        if remote is not None:
+            return remote
         if action == "kill":
             job = process_registry.kill(job_id)
         else:

@@ -1,5 +1,4 @@
-// tomo-connector — Go agent that opens an outbound WebSocket to Tomo
-// and runs bash/file RPC for tunnel workplaces.
+// tomo-connector — outbound WebSocket agent for Tomo tunnel workplaces.
 //
 //	tomo-connector pair --code <CODE> --server https://host:port
 //	tomo-connector run
@@ -10,11 +9,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"sync"
-)
 
-// Serializes websocket writes from heartbeat + RPC handlers.
-var writeMu sync.Mutex
+	"github.com/tomo-project/tomo/connector/internal/pair"
+	"github.com/tomo-project/tomo/connector/internal/state"
+	"github.com/tomo-project/tomo/connector/internal/version"
+	"github.com/tomo-project/tomo/connector/internal/ws"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,11 +28,11 @@ func main() {
 	case "pair":
 		err = cmdPair(args)
 	case "run":
-		err = runWithState()
+		err = ws.Run()
 	case "status":
-		err = printStatus()
+		err = state.PrintStatus()
 	case "logout":
-		err = clearState()
+		err = state.Clear()
 		if err == nil {
 			fmt.Println("logged out — local state removed")
 		}
@@ -61,7 +61,8 @@ Usage:
 Environment:
   TOMO_CONNECTOR_HOME   state directory (default ~/.tomo-connector)
   TOMO_CONNECTOR_ROOT   jail root for bash/files (default $HOME/.tomo-connector/work)
-`, connectorVersion)
+  TOMO_CONNECTOR_PAIR_AND_RUN=1   after pair, start run immediately
+`, version.Version)
 }
 
 func cmdPair(args []string) error {
@@ -87,5 +88,11 @@ func cmdPair(args []string) error {
 	if code == "" || server == "" {
 		return fmt.Errorf("usage: tomo-connector pair --code <CODE> --server <URL>")
 	}
-	return pairAndRun(server, code)
+	if err := pair.HTTP(server, code); err != nil {
+		return err
+	}
+	if os.Getenv("TOMO_CONNECTOR_PAIR_AND_RUN") == "1" {
+		return ws.Run()
+	}
+	return nil
 }

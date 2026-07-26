@@ -1,0 +1,27 @@
+{
+  "id": "runpy",
+  "name": "Run Python",
+  "description": "Execute a Python code snippet in the agent work-dir (or remote connector via exec_python).",
+  "backend": "app.runtime.tools.runpy",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "runpy",
+      "description": "Run Python code with cwd jailed to the agent's work directory (or tunnel workplace). Returns stdout/stderr text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Python source to execute (python3 -)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Optional timeout in seconds (default 30, max 120)."
+          }
+        },
+        "required": ["code"]
+      }
+    }
+  }
+}

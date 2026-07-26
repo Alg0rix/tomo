@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime.tools.sandbox import resolve_work_root
+from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
 _MAX_MATCHES = 50
 _MAX_SNIPPET = 200
@@ -27,6 +28,17 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: 'glob' argument must be a string"
 
     use_regex = bool(arguments.get("regex", False))
+    remote = try_tunnel_rpc(
+        "search_files",
+        {
+            "pattern": pattern,
+            "glob": glob_pat or "",
+            "regex": use_regex,
+        },
+    )
+    if remote is not None:
+        return remote
+
     if use_regex:
         try:
             cre = re.compile(pattern)

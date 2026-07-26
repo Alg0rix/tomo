@@ -60,7 +60,14 @@ def run(arguments: dict[str, Any]) -> str:
 
     background = _truthy(arguments.get("background"))
     if background:
-        # Background jobs stay local; tunnel RPC has no async job API yet.
+        # Tunnel / SSH: start remote background job via process_start.
+        remote_bg = try_tunnel_rpc(
+            "process_start",
+            {"command": command, "cwd": ""},
+            timeout=30.0,
+        )
+        if remote_bg is not None:
+            return remote_bg
         root = resolve_work_root()
         try:
             proc = subprocess.Popen(
@@ -77,10 +84,17 @@ def run(arguments: dict[str, Any]) -> str:
         )
         return f"Started background job {job.id}"
 
+    # Remote exec_bash on tunnel / SSH workplaces.
+    to = _timeout_seconds(arguments.get("timeout"))
     remote = try_tunnel_rpc(
-        "bash",
-        {"command": command, "timeout": arguments.get("timeout")},
-        timeout=_timeout_seconds(arguments.get("timeout")),
+        "exec_bash",
+        {
+            "script": command,
+            "timeout": int(to),
+            "env": {},
+            "cwd": "",
+        },
+        timeout=to + 10.0,
     )
     if remote is not None:
         return remote
