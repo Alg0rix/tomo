@@ -16,6 +16,8 @@
 
 Cline is invoked with a **task brief** (plan section + files + acceptance criteria). Cursor does **not** write production code for foundation tasks unless Cline is blocked and the human asks.
 
+**Per-task loop (autonomous):** Review → Adversarial review → Fix (if needed) → Next task. Do not wait for human "go" between tasks once the foundation run is underway.
+
 ---
 
 ## Status
@@ -65,6 +67,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 4 Calculator + registry | `788acce` | **PASS** |
 | 3–4 Adversarial fix | `057c2cf` | **PASS** |
 | 5 Agent turn loop | `6f3b39b` | **PASS** |
+| 5 Adversarial fix | _pending commit_ | **PASS** |
 
 ---
 
@@ -98,3 +101,5 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: **Task 3–4 fix REVIEW PASS** — commit `057c2cf`. Re-verified: runtime **85 passed**; adversarial recheck: nested pow → error string (no raise); mock multi-turn calc tools again after new user; whitespace key rejected; null choices → LLMRequestError; non-dict args coerced to dict; complex rejected; tools=None suppresses calc; URL no double path; instance httpx client. Ready for Task 5.
 - 2026-07-26: Dispatched Cline for **Task 5** (agent context + turn loop). Brief: `docs/superpowers/handoffs/task-05-cline-brief.md`.
 - 2026-07-26: **Task 5 REVIEW PASS** — commit `6f3b39b`. Runtime suite **108 passed**. `context.py` maps history→OpenAI messages; `loop.py` `run_turn` yields thinking/tool/tool_result/final/error; max iterations → error; no SSE/HTTP. Minor note: tool error flag is `result.startswith("Error")`. Ready for Task 6.
+- 2026-07-26: Dispatched Cline for **Task 5 fix pass** (all adversarial P1/P2/P3). Brief: `docs/superpowers/handoffs/task-05-fix-cline-brief.md`. Awaiting Cursor review.
+- 2026-07-26: **Task 5 fix pass — Cline done, ready for Cursor review.** Fixes: (P1) `context.py` emits synthetic `role: tool` `"Error: missing tool result"` for unpaired `tool_call` entries so no assistant `tool_calls` message dangles; (P1) `loop.py` `_with_ids` now draws empty tool-call ids from a turn-scoped `itertools.count()` (computed once per response, reused for assistant message + tool results) so `call_0` never repeats across rounds; (P1) setup (`get_llm`/`get_openai_tools`/`build_messages`) wrapped in try/except → `{"kind":"error","message":"Agent setup failed: …"}`, `run_turn` never raises; (P2) surplus `tool_output` rows dropped instead of mapped onto `calls[-1]` id; (P2) `user_message: str | None` (context already supported None); (P2) error flag is `str(result).startswith("Error:")`; (P3) system prompt read catches `(OSError, UnicodeError)`. Re-verified: runtime **117 passed** (full suite **153 passed**); +9 new tests (unpaired/surplus/partial pairing, distinct empty ids across 2 rounds, get_llm + get_openai_tools setup failures, `user_message=None` no duplicate, `Error:`-prefix specificity). No Task 6 changes. Commit msg: `fix: harden agent context pairing and turn error surfacing`.

@@ -182,3 +182,64 @@ def test_build_messages_defaults_system_prompt() -> None:
     assert msgs[0]["role"] == "system"
     assert msgs[0]["content"]  # non-empty default from defaults file
     assert msgs[-1] == {"role": "user", "content": "hi"}
+
+
+# --- unpaired / surplus tool pairing -----------------------------------
+
+
+def test_unpaired_tool_call_gets_synthetic_tool_result() -> None:
+    """A tool_call with no following tool_output still gets a tool result."""
+    history = [
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "user", "content": "are you done?"},
+    ]
+    msgs = history_to_messages(history)
+    # assistant tool_calls, synthetic tool result, then the later user.
+    assert [m["role"] for m in msgs] == ["assistant", "tool", "user"]
+    assert msgs[0]["tool_calls"][0]["id"] == msgs[1]["tool_call_id"]
+    assert msgs[1]["content"] == "Error: missing tool result"
+    assert msgs[2] == {"role": "user", "content": "are you done?"}
+
+
+def test_multiple_unpaired_calls_each_get_synthetic_result() -> None:
+    history = [
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "user", "content": "hello?"},
+    ]
+    msgs = history_to_messages(history)
+    assert [m["role"] for m in msgs] == ["assistant", "tool", "tool", "user"]
+    ids = [c["id"] for c in msgs[0]["tool_calls"]]
+    assert [m["tool_call_id"] for m in msgs[1:3]] == ids
+    assert all(m["content"] == "Error: missing tool result" for m in msgs[1:3])
+
+
+def test_partial_outputs_pair_first_calls_then_synthesize_the_rest() -> None:
+    """Fewer outputs than calls: pair in order, synthesize the remainder."""
+    history = [
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_output", "content": "2"},
+    ]
+    msgs = history_to_messages(history)
+    assert [m["role"] for m in msgs] == ["assistant", "tool", "tool"]
+    ids = [c["id"] for c in msgs[0]["tool_calls"]]
+    assert msgs[1] == {"role": "tool", "tool_call_id": ids[0], "content": "2"}
+    assert msgs[2] == {
+        "role": "tool",
+        "tool_call_id": ids[1],
+        "content": "Error: missing tool result",
+    }
+
+
+def test_surplus_tool_outputs_are_dropped_not_reused() -> None:
+    """Extra tool_output rows beyond the calls must not map onto the last id."""
+    history = [
+        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_output", "content": "4"},
+        {"type": "tool_output", "content": "stray"},
+    ]
+    msgs = history_to_messages(history)
+    # One assistant call, one paired tool result; the stray output is dropped.
+    assert [m["role"] for m in msgs] == ["assistant", "tool"]
+    assert msgs[1] == {"role": "tool", "tool_call_id": "hist_call_0", "content": "4"}

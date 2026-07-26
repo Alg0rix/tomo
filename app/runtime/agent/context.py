@@ -16,7 +16,9 @@ This module is pure transformation — no HTTP, no SSE, no persistence. The
 ``messages`` schema stores no ``tool_call_id``, so consecutive ``tool_call``
 entries are grouped into one assistant message and paired with the
 immediately following ``tool_output`` entries by order, using synthesised
-ids (``hist_call_<n>``).
+ids (``hist_call_<n>``). Calls with no matching output get a synthetic
+``role: tool`` result so the assistant ``tool_calls`` message is never left
+dangling; surplus outputs beyond the number of calls are dropped.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ def coordinator_system_prompt(path: Path | None = None) -> str:
     target = path if path is not None else _SYSTEM_PROMPT_PATH
     try:
         text = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return _FALLBACK_PROMPT
     text = text.strip()
     return text or _FALLBACK_PROMPT
@@ -56,7 +58,10 @@ def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, 
     ``user`` -> ``{"role": "user", ...}``; ``final`` -> assistant text; a run
     of consecutive ``tool_call`` entries -> one assistant message carrying
     ``tool_calls``; the following run of ``tool_output`` entries -> ``tool``
-    role messages paired by position. Unknown / internal types are skipped.
+    role messages paired by position. Calls without a matching output receive
+    a synthetic ``"Error: missing tool result"`` tool message; surplus
+    outputs beyond the number of calls are dropped. Unknown / internal types
+    are skipped.
     """
     messages: list[dict[str, Any]] = []
     if not history:
@@ -98,19 +103,32 @@ def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, 
                 i += 1
             messages.append({"role": "assistant", "content": None, "tool_calls": calls})
             # Pair the following consecutive tool_output entries by position.
+            # Surplus outputs beyond the number of calls are dropped (never
+            # mapped onto the last call's id); calls with no matching output
+            # get a synthetic tool result so the assistant tool_calls message
+            # is never left dangling.
             out_idx = 0
             while i < n and history[i].get("type") == "tool_output":
                 e = history[i]
-                cid = calls[out_idx]["id"] if out_idx < len(calls) else calls[-1]["id"]
+                if out_idx < len(calls):
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": calls[out_idx]["id"],
+                            "content": e.get("content") or "",
+                        }
+                    )
+                out_idx += 1
+                i += 1
+            while out_idx < len(calls):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": cid,
-                        "content": e.get("content") or "",
+                        "tool_call_id": calls[out_idx]["id"],
+                        "content": "Error: missing tool result",
                     }
                 )
                 out_idx += 1
-                i += 1
             continue
 
         # thinking / intermediate / error / delegate / unknown -> skip.

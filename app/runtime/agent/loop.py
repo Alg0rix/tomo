@@ -21,6 +21,7 @@ fed back before the next round.
 
 from __future__ import annotations
 
+import itertools
 import json
 from typing import Any, AsyncIterator
 
@@ -32,7 +33,7 @@ from app.runtime.tools.registry import execute, get_openai_tools
 
 
 async def run_turn(
-    user_message: str,
+    user_message: str | None,
     *,
     history: list[dict[str, Any]] | None = None,
     llm: LLMClient | None = None,
@@ -44,20 +45,40 @@ async def run_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one coordinator turn, yielding internal events.
 
-    ``llm`` / ``tools`` / ``system_prompt`` / ``max_iterations`` default to
-    the app configuration (``get_llm()``, ``get_openai_tools()``,
-    ``coordinator_system_prompt()``, ``LLM_MAX_TOOL_ITERATIONS``) but are
-    injectable for tests. ``agent_id`` / ``session_id`` are accepted as
-    context inputs for the persistence wiring in Task 6 and are not used
-    here. The function is an async generator — iterate with ``async for``.
+    ``user_message`` is the new turn input; pass ``None`` when the caller has
+    already persisted the user entry into ``history`` (the Task 6 pattern) so
+    it is not duplicated. ``llm`` / ``tools`` / ``system_prompt`` /
+    ``max_iterations`` default to the app configuration (``get_llm()``,
+    ``get_openai_tools()``, ``coordinator_system_prompt()``,
+    ``LLM_MAX_TOOL_ITERATIONS``) but are injectable for tests. ``agent_id`` /
+    ``session_id`` are accepted as context inputs for the persistence wiring
+    in Task 6 and are not used here. Setup failures (bad provider config,
+    broken tool schema, message assembly) and per-round backend failures are
+    surfaced as ``{"kind": "error", ...}`` events — ``run_turn`` never raises
+    out to the consumer. The function is an async generator — iterate with
+    ``async for``.
     """
-    client = llm if llm is not None else get_llm()
-    tool_schemas = tools if tools is not None else get_openai_tools()
-    limit = (
-        max_iterations if max_iterations is not None else config.LLM_MAX_TOOL_ITERATIONS
-    )
+    # --- setup: client / tools / messages --------------------------------
+    # Failures here (misconfigured provider via ``get_llm``, broken tool
+    # schema via ``get_openai_tools``, or message assembly) are surfaced as
+    # ``error`` events rather than raised, so a consumer iterating the
+    # generator never sees an exception escape ``run_turn``.
+    try:
+        client = llm if llm is not None else get_llm()
+        tool_schemas = tools if tools is not None else get_openai_tools()
+        limit = (
+            max_iterations
+            if max_iterations is not None
+            else config.LLM_MAX_TOOL_ITERATIONS
+        )
+        messages = build_messages(history, user_message, system_prompt=system_prompt)
+    except Exception as exc:  # setup must never raise out of run_turn
+        yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
+        return
 
-    messages = build_messages(history, user_message, system_prompt=system_prompt)
+    # Turn-scoped source of synthesised tool-call ids so empty ids never
+    # collide across completion rounds within one turn.
+    id_counter = itertools.count()
 
     iteration = 0
     while iteration < limit:
@@ -73,11 +94,12 @@ async def run_turn(
             yield {"kind": "thinking", "content": resp.content}
 
         if resp.has_tool_calls:
-            messages.append(_assistant_tool_calls_message(resp))
-            for cid, call in _with_ids(resp.tool_calls):
+            paired = _with_ids(resp.tool_calls, id_counter)
+            messages.append(_assistant_tool_calls_message(resp, paired))
+            for cid, call in paired:
                 yield {"kind": "tool", "tool": call.name, "args": call.arguments}
                 result = execute(call.name, call.arguments)
-                error = result.startswith("Error")
+                error = str(result).startswith("Error:")
                 yield {
                     "kind": "tool_result",
                     "tool": call.name,
@@ -102,23 +124,34 @@ async def run_turn(
     }
 
 
-def _with_ids(tool_calls: list[ToolCall]) -> list[tuple[str, ToolCall]]:
+def _with_ids(
+    tool_calls: list[ToolCall], counter: itertools.count
+) -> list[tuple[str, ToolCall]]:
     """Pair each tool call with a non-empty id, synthesising one if missing.
 
     Some backends (and hand-built test responses) may leave ``id`` empty;
     OpenAI requires every ``tool_calls`` entry and its matching ``tool``
-    result to share an id, so a stable fallback keeps the message chain
-    well-formed.
+    result to share an id. Synthesised ids draw from ``counter`` — a
+    turn-scoped monotonic source shared across completion rounds — so empty
+    ids never collide between rounds (``call_0`` from round one is not reused
+    in round two).
     """
     out: list[tuple[str, ToolCall]] = []
-    for i, call in enumerate(tool_calls):
-        cid = call.id or f"call_{i}"
+    for call in tool_calls:
+        cid = call.id or f"call_{next(counter)}"
         out.append((cid, call))
     return out
 
 
-def _assistant_tool_calls_message(resp: LLMResponse) -> dict[str, Any]:
-    """Build the OpenAI assistant message carrying this round's tool calls."""
+def _assistant_tool_calls_message(
+    resp: LLMResponse, paired: list[tuple[str, ToolCall]]
+) -> dict[str, Any]:
+    """Build the OpenAI assistant message carrying this round's tool calls.
+
+    ``paired`` is the already-id-assigned list from :func:`_with_ids` so the
+    ids in the assistant message and the matching ``tool`` results stay in
+    lockstep.
+    """
     return {
         "role": "assistant",
         "content": resp.content,
@@ -131,7 +164,7 @@ def _assistant_tool_calls_message(resp: LLMResponse) -> dict[str, Any]:
                     "arguments": json.dumps(call.arguments),
                 },
             }
-            for cid, call in _with_ids(resp.tool_calls)
+            for cid, call in paired
         ],
     }
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.runtime.agent.loop import run_turn
+from app.runtime.llm import LLMProviderError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.runtime.llm.mock import MockLLMClient
 from app.runtime.llm.mock import _CALC_FINAL, _DEFAULT_REPLY
@@ -29,7 +30,7 @@ def _calc_tools() -> list[dict[str, Any]]:
     return [{"type": "function", "function": {"name": "calculator"}}]
 
 
-async def _collect(user_message: str, **kw: Any) -> list[dict[str, Any]]:
+async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
     """Drain the ``run_turn`` async generator into a list of events."""
     return [ev async for ev in run_turn(user_message, **kw)]
 
@@ -179,3 +180,123 @@ class _BoomMock:
 
     async def complete(self, messages, tools=None):
         raise RuntimeError("upstream blew up")
+
+
+# --- turn-scoped ids / setup errors / user_message=None ----------------
+
+
+class _RecordingMock:
+    """Returns the default final reply; records messages passed to each call."""
+
+    def __init__(self) -> None:
+        self.captured: list[list[dict[str, Any]]] = []
+
+    async def complete(self, messages, tools=None):
+        self.captured.append(list(messages))
+        return LLMResponse(content=_DEFAULT_REPLY, tool_calls=[])
+
+
+class _EmptyIdTwoRoundMock:
+    """Calculator tool calls with empty ids for two rounds, then a final answer.
+
+    Records the messages handed to each ``complete`` call so the test can
+    assert synthesised ids stay distinct across rounds.
+    """
+
+    def __init__(self) -> None:
+        self._round = 0
+        self.captured: list[list[dict[str, Any]]] = []
+
+    async def complete(self, messages, tools=None):
+        self.captured.append(list(messages))
+        if self._round < 2:
+            self._round += 1
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="",
+                        name="calculator",
+                        arguments={"expression": "1 + 1"},
+                    )
+                ],
+            )
+        return LLMResponse(content="done", tool_calls=[])
+
+
+async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
+    """Empty tool-call ids must not collide between completion rounds."""
+    mock = _EmptyIdTwoRoundMock()
+    events = await _collect(
+        "calc twice", llm=mock, tools=_calc_tools(), max_iterations=4
+    )
+    assert [e["kind"] for e in events] == [
+        "tool",
+        "tool_result",
+        "tool",
+        "tool_result",
+        "final",
+    ]
+    # Messages fed to the final complete carry both rounds' tool ids.
+    final_messages = mock.captured[-1]
+    assistant_ids = [
+        tc["id"]
+        for m in final_messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+        for tc in m["tool_calls"]
+    ]
+    tool_ids = [m["tool_call_id"] for m in final_messages if m.get("role") == "tool"]
+    assert len(assistant_ids) == 2
+    assert len(tool_ids) == 2
+    # Distinct across rounds (the old ``call_{i}`` per-response scheme collided).
+    assert assistant_ids[0] != assistant_ids[1]
+    assert tool_ids[0] != tool_ids[1]
+    # Each assistant id matches its tool result id, in order.
+    assert assistant_ids == tool_ids
+
+
+async def test_setup_failure_surfaces_as_error_event(monkeypatch) -> None:
+    """A failing ``get_llm`` yields an error event; ``run_turn`` never raises."""
+    def _boom() -> None:
+        raise LLMProviderError("bad provider config")
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)
+    events = await _collect("hi", tools=_calc_tools())
+    assert [e["kind"] for e in events] == ["error"]
+    assert "setup" in events[0]["message"].lower()
+    assert "bad provider config" in events[0]["message"]
+
+
+async def test_get_openai_tools_failure_surfaces_as_error_event(monkeypatch) -> None:
+    """A failing ``get_openai_tools`` during setup yields an error event."""
+    def _boom() -> None:
+        raise RuntimeError("registry exploded")
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_openai_tools", _boom)
+    events = await _collect("hi", llm=MockLLMClient())
+    assert [e["kind"] for e in events] == ["error"]
+    assert "setup" in events[0]["message"].lower()
+    assert "registry exploded" in events[0]["message"]
+
+
+async def test_user_message_none_does_not_duplicate_history_user() -> None:
+    """``user_message=None`` must not append a second trailing user message."""
+    history = [{"type": "user", "content": "the new question"}]
+    recorder = _RecordingMock()
+    events = await _collect(None, llm=recorder, tools=_calc_tools(), history=history)
+    assert [e["kind"] for e in events] == ["final"]
+    msgs = recorder.captured[-1]
+    users = [m for m in msgs if m["role"] == "user"]
+    assert users == [{"role": "user", "content": "the new question"}]
+
+
+async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
+    """A result starting with ``Error`` but not ``Error:`` is not an error."""
+    monkeypatch.setattr(
+        "app.runtime.agent.loop.execute",
+        lambda name, args: "Errorless computation succeeded",
+    )
+    events = await _collect("calculate 2 + 2", llm=MockLLMClient(), tools=_calc_tools())
+    result_ev = next(e for e in events if e["kind"] == "tool_result")
+    assert result_ev["error"] is False
+    assert result_ev["result"] == "Errorless computation succeeded"
