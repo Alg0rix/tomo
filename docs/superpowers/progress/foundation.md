@@ -28,7 +28,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
 | Plan (`docs/superpowers/plans/…`) | **written** |
-| Cline execution loop | **Task 1–3 done** · next Task 4 |
+| Cline execution loop | **Task 1–4 done** · next Task 5 |
 
 ---
 
@@ -62,6 +62,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 2 Hybrid store facade | `f7b5297` | **PASS** (acceptance) |
 | 2b Adversarial fix | `48e9afc` | **PASS** |
 | 3 LLM mock + openai_compat | `e636884` | **PASS** |
+| 4 Calculator + registry | `788acce` | **PASS** |
 
 ---
 
@@ -88,3 +89,5 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: **Task 2b REVIEW PASS** — commit `48e9afc`. Re-verified: 36 tests passed; P1 repro (custom-only agents + rebind) no longer crashes. Seed skips demo sessions unless `main`/`ops`/`research` exist + rollback on failure; dashboard recent sort + atomic snapshot; `get_or_create` validates agent; `clear_session` no-ops via `find_session`; lazy import in seed. Ready for Task 3.
 - 2026-07-26: Dispatched Cline for **Task 3** (LLM mock + openai_compat). Brief: `docs/superpowers/handoffs/task-03-cline-brief.md`.
 - 2026-07-26: **Task 3 REVIEW PASS** — commit `e636884`. Re-verified: LLM + models suites green (56 passed). Modular (`base`/`mock`/`openai_compat`/`get_llm`); missing API key raises `LLMConfigError`; httpx MockTransport tests; no chat/loop wiring. Adversarial note (non-blocking): mock treats any `=` in user text as calc trigger (per brief) — can false-positive on prose; tighten later if agent loop needs it. Ready for Task 4.
+- 2026-07-26: Dispatched Cline for **Task 4** (calculator + registry). Brief: `docs/superpowers/handoffs/task-04-cline-brief.md`.
+- 2026-07-26: **Task 4 REVIEW PASS** — commit `788acce`. Re-verified: tools+llm **69 passed**. Safe `ast` whitelist (no eval); unknown/invalid → error strings; registry loads `tools/*.json` + hardcoded calculator backend. Adversarial note (P3, non-blocking): int exponent cap (`_MAX_EXPONENT`) does not apply to float exponents (`2**1000.0` still evaluates). Ready for Task 5.
