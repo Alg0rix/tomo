@@ -15,6 +15,25 @@
       }
     });
   });
+  var cfgSave = document.getElementById('cfgSave');
+  if (cfgSave) {
+    cfgSave.addEventListener('click', async function () {
+      var panel = document.getElementById('panel-config');
+      var agentId = panel ? panel.dataset.agentId : '';
+      var body = {
+        name: document.getElementById('cfgName').value.trim(),
+        role: document.getElementById('cfgRole').value.trim(),
+        model_id: document.getElementById('cfgModel').value,
+        description: document.getElementById('cfgDesc').value.trim(),
+      };
+      try {
+        await Tomo.api('/api/agents/' + encodeURIComponent(agentId), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        Tomo.toast('Configuration saved', 'ok');
+      } catch (e) { Tomo.toast((e && e.message) || 'Could not save', 'err'); }
+    });
+  }
   var wrap = document.querySelector('.chat-wrap');
   if (wrap && window.TomoChat) TomoChat.init(wrap);
 })();

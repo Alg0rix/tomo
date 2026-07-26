@@ -1,41 +1,46 @@
 {% from 'partials/page_head.html' import section_head %}
 
 <section id="sec-models" class="sys-section" style="display:none">
-  {{ section_head('Models & providers', 'OpenAI-compatible LLM endpoint used by the coordinator.') }}
+  {{ section_head('Models', 'OpenAI-compatible LLM profiles. Add one or more, mark a default, assign per agent.') }}
   <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>LLM connection</h3></div>
+    <div class="card-head"><h3>LLM profiles</h3>
+      <button class="btn primary sm" type="button" id="addProfileBtn">+ Add profile</button>
+    </div>
+    <div class="card-body" id="profileList" style="padding:8px 18px">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="profileFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3 id="profileFormTitle">Add profile</h3></div>
     <div class="card-body" style="padding:16px 18px">
-      <p class="faint" style="margin:0 0 14px;font-size:13px">
-        Works with OpenAI, OpenRouter, vLLM, LM Studio, and any host that exposes
-        <span class="mono">POST /v1/chat/completions</span>.
-      </p>
-      <form id="llmSettingsForm" autocomplete="off" onsubmit="return false;">
+      <form id="profileForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="profFormMode" value="add">
+        <div class="config-row"><div class="lbl">ID <span class="faint">(slug)</span></div>
+          <input class="input" id="profId" required pattern="[a-z0-9_]+" placeholder="default" style="max-width:220px" spellcheck="false">
+        </div>
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input" id="profName" required placeholder="Default" style="max-width:220px">
+        </div>
         <div class="config-row"><div class="lbl">Base URL</div>
-          <input class="input" type="url" id="setLlmBaseUrl" name="llm_base_url"
-            value="{{ settings.llm_base_url }}" style="max-width:420px"
-            placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
+          <input class="input" type="url" id="profBaseUrl" placeholder="https://api.openai.com/v1" style="max-width:420px" spellcheck="false">
         </div>
         <div class="config-row"><div class="lbl">API key</div>
           <div style="flex:1;max-width:420px">
-            <input class="input" type="password" id="setLlmApiKey" name="llm_api_key_new"
-              value="" style="width:100%"
-              placeholder="Paste a new key to replace"
-              autocomplete="new-password" spellcheck="false">
-            <p class="faint" id="llmKeyStatus" style="margin:6px 0 0;font-size:12px">
-              {% if settings.llm_api_key_set %}
-                On file: <span class="mono">{{ settings.llm_api_key }}</span> — leave blank to keep
-              {% else %}
-                Not set — required for chat
-              {% endif %}
-            </p>
+            <input class="input" type="password" id="profApiKey" placeholder="Paste key — encrypted at rest" style="width:100%" autocomplete="new-password" spellcheck="false">
+            <p class="faint" id="profKeyStatus" style="margin:6px 0 0;font-size:12px">Leave blank on edit to keep the existing key.</p>
           </div>
         </div>
         <div class="config-row"><div class="lbl">Model</div>
-          <input class="input" type="text" id="setLlmModel" name="llm_model"
-            value="{{ settings.llm_model }}" style="max-width:240px"
-            placeholder="gpt-4o-mini" autocomplete="off" spellcheck="false">
+          <input class="input" id="profModel" placeholder="gpt-4o-mini" style="max-width:220px" spellcheck="false">
         </div>
-        <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveModels">Save LLM settings</button></div>
+        <div class="config-row"><div class="lbl">Enabled</div>
+          <label class="toggle"><input type="checkbox" id="profEnabled" checked><span class="track"></span></label>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="profCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="profSave">Save profile</button>
+        </div>
       </form>
     </div>
   </div>

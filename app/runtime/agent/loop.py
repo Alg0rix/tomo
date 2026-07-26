@@ -96,7 +96,7 @@ async def run_turn(
     ``async for``.
     """
     try:
-        client = llm if llm is not None else get_llm()
+        client = llm if llm is not None else get_llm(agent_id)
         tool_schemas = tools if tools is not None else get_openai_tools()
         limit = (
             max_iterations

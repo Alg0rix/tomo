@@ -23,12 +23,23 @@ CREATE TABLE IF NOT EXISTS agents (
     name          TEXT NOT NULL,
     description   TEXT NOT NULL DEFAULT '',
     model_id      TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT '',
     enabled       INTEGER NOT NULL DEFAULT 1,
     is_super      INTEGER NOT NULL DEFAULT 0,
     tool_count    INTEGER NOT NULL DEFAULT 0,
     channel_count INTEGER NOT NULL DEFAULT 0,
     skill_count   INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS llm_profiles (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    base_url   TEXT NOT NULL DEFAULT '',
+    api_key    TEXT NOT NULL DEFAULT '',
+    model      TEXT NOT NULL DEFAULT '',
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -70,7 +81,12 @@ CREATE TABLE IF NOT EXISTS settings (
 def migrate(conn: sqlite3.Connection) -> None:
     """Create foundation tables if missing, then commit.
 
-    Idempotent: safe to call on an already-migrated database.
+    Idempotent: safe to call on an already-migrated database. ``CREATE TABLE
+    IF NOT EXISTS`` will not alter an existing ``agents`` table, so a pre-Slice-A
+    database gets the ``role`` column added via an explicit ``ALTER TABLE``.
     """
     conn.executescript(_SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)")}
+    if "role" not in cols:
+        conn.execute("ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''")
     conn.commit()

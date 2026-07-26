@@ -24,16 +24,17 @@
   document.getElementById('setupFinish').addEventListener('click', async function () {
     try {
       await Tomo.api('/api/setup', {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          setup_complete: true,
-          default_model: document.getElementById('setupModel').value,
+          base_url: document.getElementById('setupBaseUrl').value.trim(),
+          api_key: document.getElementById('setupApiKey').value.trim(),
+          model: document.getElementById('setupModel').value.trim(),
         }),
       });
       window.location.href = '/login';
     } catch (e) {
-      Tomo.toast('Setup failed', 'err');
+      Tomo.toast((e && e.message) || 'Setup failed', 'err');
     }
   });
 })();

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep
+from app.schemas import LLMProfileCreate, LLMProfileUpdate
 from app.services import store
 
 router = APIRouter(prefix="/api")
@@ -85,6 +86,53 @@ async def list_models(_: AuthDep):
     return {"models": store.list_models(), "providers": store.list_providers()}
 
 
+@router.get("/llm-profiles")
+async def list_llm_profiles(_: AuthDep):
+    return {
+        "profiles": store.list_llm_profiles(),
+        "default_id": store.get_default_llm_profile_id(),
+    }
+
+
+@router.post("/llm-profiles")
+async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
+    try:
+        return store.create_llm_profile(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-profiles/{profile_id}")
+async def get_llm_profile(profile_id: str, _: AuthDep):
+    prof = store.get_llm_profile(profile_id)
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return prof
+
+
+@router.put("/llm-profiles/{profile_id}")
+async def update_llm_profile(profile_id: str, body: LLMProfileUpdate, _: AuthDep):
+    prof = store.update_llm_profile(profile_id, body.model_dump(exclude_unset=True))
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return prof
+
+
+@router.delete("/llm-profiles/{profile_id}")
+async def delete_llm_profile(profile_id: str, _: AuthDep):
+    if not store.delete_llm_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"success": True}
+
+
+@router.post("/llm-profiles/{profile_id}/default")
+async def set_default_llm_profile(profile_id: str, _: AuthDep):
+    if not store.get_llm_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    store.set_default_llm_profile(profile_id)
+    return {"success": True, "default_id": profile_id}
+
+
 @router.get("/settings")
 async def get_settings(_: AuthDep):
     return store.get_public_settings()
@@ -98,9 +146,18 @@ async def update_settings(body: dict, _: AuthDep):
 @router.post("/setup")
 async def complete_setup(body: dict):
     if store.is_setup_complete():
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Setup already complete")
-    return store.update_settings({**body, "setup_complete": True})
+    base_url = (body.get("base_url") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    model = (body.get("model") or "").strip()
+    if base_url and model:
+        store.setup_default_profile(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            name=(body.get("name") or "Default"),
+        )
+    return store.update_settings({"setup_complete": True})
 
 
 @router.get("/agents/{agent_id}/tools")

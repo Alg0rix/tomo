@@ -21,6 +21,7 @@ def _row_to_agent(row: sqlite3.Row, busy_ids: set[str]) -> dict[str, Any]:
         "name": row["name"],
         "description": row["description"],
         "model_id": row["model_id"],
+        "role": row["role"],
         "enabled": bool(row["enabled"]),
         "is_super": bool(row["is_super"]),
         "tool_count": row["tool_count"],
@@ -68,13 +69,14 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         raise ValueError("Agent ID already exists")
     created_at = _now()
     conn.execute(
-        "INSERT INTO agents (id, name, description, model_id, enabled, is_super, "
-        "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO agents (id, name, description, model_id, role, enabled, is_super, "
+        "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
             data["id"],
             data.get("name", data["id"]),
             data.get("description", ""),
             data.get("model_id") or "",
+            data.get("role") or "",
             1, 0, 0, 0, 0, created_at,
         ),
     )
@@ -84,6 +86,7 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         "name": data.get("name", data["id"]),
         "description": data.get("description", ""),
         "model_id": data.get("model_id") or "",
+        "role": data.get("role") or "",
         "enabled": True,
         "is_super": False,
         "tool_count": 0,
@@ -102,7 +105,7 @@ def update_agent(
         return None
     sets: list[str] = []
     params: list[Any] = []
-    for key in ("name", "description", "model_id"):
+    for key in ("name", "description", "model_id", "role"):
         if key in data and data[key] is not None:
             sets.append(f"{key}=?")
             params.append(data[key])

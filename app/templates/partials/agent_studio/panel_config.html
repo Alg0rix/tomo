@@ -1,15 +1,33 @@
-<div class="agent-studio-panel hidden" id="panel-config">
+<div class="agent-studio-panel hidden" id="panel-config" data-agent-id="{{ agent.id }}">
   <div class="card">
-    <div class="card-head"><h3>Configuration</h3><span class="badge muted">read-only stub</span></div>
+    <div class="card-head"><h3>Configuration</h3></div>
     <div class="card-body" style="padding:16px 18px">
-      <div class="config-grid">
-        <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ agent.id }}</div></div>
-        <div class="config-row"><div class="lbl">Model</div><div class="mono">{{ agent.model_id or '—' }}</div></div>
-        <div class="config-row"><div class="lbl">Description</div><div>{{ agent.description or '—' }}</div></div>
-        <div class="config-row"><div class="lbl">Status</div>
-          <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
+      <form id="cfgForm" autocomplete="off" onsubmit="return false;">
+        <div class="config-grid">
+          <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ agent.id }}</div></div>
+          <div class="config-row"><div class="lbl">Name</div>
+            <input class="input" id="cfgName" value="{{ agent.name }}" style="max-width:240px">
+          </div>
+          <div class="config-row"><div class="lbl">Role</div>
+            <input class="input" id="cfgRole" value="{{ agent.role }}" placeholder="e.g. coordinator" style="max-width:240px">
+          </div>
+          <div class="config-row"><div class="lbl">Model</div>
+            <select class="input" id="cfgModel" style="max-width:240px">
+              <option value="" {% if not agent.model_id %}selected{% endif %}>Use default</option>
+              {% for p in llm_profiles %}
+              <option value="{{ p.id }}" {% if agent.model_id == p.id %}selected{% endif %}>{{ p.name }} ({{ p.model }}){% if not p.enabled %} · disabled{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="config-row"><div class="lbl">Description</div>
+            <input class="input" id="cfgDesc" value="{{ agent.description }}" style="max-width:420px">
+          </div>
+          <div class="config-row"><div class="lbl">Status</div>
+            <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
+          </div>
         </div>
-      </div>
+        <div style="margin-top:16px"><button class="btn primary sm" type="button" id="cfgSave">Save</button></div>
+      </form>
     </div>
   </div>
 </div>

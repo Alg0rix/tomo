@@ -10,7 +10,7 @@
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       const fd = new FormData(form);
-      const body = { id: fd.get('id'), name: fd.get('name'), description: fd.get('description'), model_id: fd.get('model_id') || null };
+      const body = { id: fd.get('id'), name: fd.get('name'), role: fd.get('role') || '', description: fd.get('description'), model_id: fd.get('model_id') || '' };
       try {
         await Tomo.api('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         Tomo.toast('Agent "' + body.name + '" created', 'ok');

@@ -272,7 +272,7 @@ async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
 
 async def test_setup_failure_surfaces_as_error_event(monkeypatch) -> None:
     """A failing ``get_llm`` yields an error event; ``run_turn`` never raises."""
-    def _boom() -> None:
+    def _boom(agent_id=None) -> None:
         raise LLMConfigError("bad provider config")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)

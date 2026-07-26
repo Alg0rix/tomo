@@ -73,6 +73,7 @@ def seed_settings() -> dict[str, Any]:
     return {
         "theme": "dark",
         "default_model": "gpt-4o-mini",
+        "default_model_id": "",
         "llm_base_url": "https://api.openai.com/v1",
         "llm_api_key": "",
         "llm_model": "gpt-4o-mini",

@@ -21,7 +21,7 @@ from app.services import run_session_turn, store
 def _inject_mock_llm(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda: MockLLMClient(),
+        lambda agent_id=None: MockLLMClient(),
     )
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
@@ -209,7 +209,7 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     store.rebind(tmp_path / "chat_error_busy.db")
     sid = store.create_swarm_session(["main"], user_id="web")
 
-    def _boom() -> None:
+    def _boom(agent_id=None) -> None:
         raise RuntimeError("forced setup failure")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)

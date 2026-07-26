@@ -19,6 +19,7 @@ from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
 from app.models.mixins import messages as messages_store
 from app.models.mixins import sessions as sessions_store
+from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import settings as settings_store
 from app.models.mixins.busy import BusyState
 from app.models.schema import migrate
@@ -257,6 +258,59 @@ class Store:
         """Upsert settings; returns public (masked) view."""
         with self._lock:
             return settings_store.update_settings(self._conn, data)
+
+    # -- llm profiles (SQLite) -------------------------------------------
+    def list_llm_profiles(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return llm_profiles_store.list_profiles(self._conn)
+
+    def get_llm_profile(self, profile_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return llm_profiles_store.get_public_profile(self._conn, profile_id)
+
+    def create_llm_profile(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return llm_profiles_store.create_profile(self._conn, data)
+
+    def update_llm_profile(self, profile_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return llm_profiles_store.update_profile(self._conn, profile_id, data)
+
+    def delete_llm_profile(self, profile_id: str) -> bool:
+        with self._lock:
+            return llm_profiles_store.delete_profile(self._conn, profile_id)
+
+    def set_default_llm_profile(self, profile_id: str) -> None:
+        with self._lock:
+            llm_profiles_store.set_default_model_id(self._conn, profile_id)
+
+    def get_default_llm_profile_id(self) -> str:
+        with self._lock:
+            return llm_profiles_store.get_default_model_id(self._conn)
+
+    def resolve_llm_profile(self, agent_id: str | None = None) -> dict[str, Any] | None:
+        """Decrypt + resolve the runtime LLM profile for an agent (or default)."""
+        with self._lock:
+            return llm_profiles_store.resolve_profile(self._conn, agent_id)
+
+    def setup_default_profile(
+        self, *, base_url: str, api_key: str, model: str, name: str = "Default"
+    ) -> dict[str, Any]:
+        """Create the first ``default`` profile and mark it default (setup wizard)."""
+        with self._lock:
+            prof = llm_profiles_store.create_profile(
+                self._conn,
+                {
+                    "id": "default",
+                    "name": name,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "model": model,
+                    "enabled": True,
+                },
+            )
+            llm_profiles_store.set_default_model_id(self._conn, "default")
+            return prof
 
     def is_setup_complete(self) -> bool:
         return bool(self.get_settings().get("setup_complete", True))

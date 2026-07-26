@@ -16,6 +16,7 @@ class Agent(BaseModel):
     name: str
     description: str = ""
     model_id: str | None = None
+    role: str = ""
     enabled: bool = True
     is_super: bool = False
     tool_count: int = 0
@@ -30,12 +31,14 @@ class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     description: str = ""
     model_id: str | None = None
+    role: str = ""
 
 
 class AgentUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=80)
     description: str | None = None
     model_id: str | None = None
+    role: str | None = None
     enabled: bool | None = None
 
 
@@ -83,3 +86,24 @@ class Stats(BaseModel):
     channel_count: int = 0
     active_channel_count: int = 0
     skill_count: int = 0
+
+
+class LLMProfileCreate(BaseModel):
+    """Create an LLM profile (OpenAI-compatible endpoint + credentials)."""
+
+    id: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    name: str = Field(min_length=1, max_length=80)
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    enabled: bool = True
+
+
+class LLMProfileUpdate(BaseModel):
+    """Update an LLM profile. A blank ``api_key`` keeps the existing ciphertext."""
+
+    name: str | None = Field(default=None, max_length=80)
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    enabled: bool | None = None

@@ -33,6 +33,7 @@ async def dashboard(request: Request, _: AuthDep):
 async def agents_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "agents.html", _ctx(
         request, "agents", agents=store.list_agents(), workplaces=store.list_workplaces(),
+        llm_profiles=store.list_llm_profiles(),
     ))
 
 
@@ -50,6 +51,7 @@ async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
         tools=store.get_agent_tools(agent_id),
         skills=store.get_agent_skills(agent_id),
         channels=store.get_agent_channels(agent_id),
+        llm_profiles=store.list_llm_profiles(),
     ))
 
 
@@ -128,6 +130,8 @@ async def system_page(request: Request, _: AuthDep):
         tools=store.list_tools(),
         models=store.list_models(),
         providers=store.list_providers(),
+        llm_profiles=store.list_llm_profiles(),
+        default_model_id=store.get_default_llm_profile_id(),
         plugins=store.list_plugins(),
         safety_rules=store.list_safety_rules(),
         users=store.list_users(),

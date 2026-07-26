@@ -1,4 +1,5 @@
 <div class="agent-studio-panel hidden" id="panel-channels">
+  <p class="faint" style="margin:0 0 12px"><span class="badge muted">Not wired yet</span> Per-agent channel routing arrives in a later slice.</p>
   {% for c in channels %}
   {% with channel=c %}{% include 'partials/channel_row.html' %}{% endwith %}
   {% endfor %}

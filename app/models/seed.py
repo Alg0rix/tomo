@@ -32,15 +32,16 @@ def _has_agent(conn: sqlite3.Connection, agent_id: str) -> bool:
 
 def _seed_agents(conn: sqlite3.Connection) -> None:
     base = _now()
+    # model_id is a profile id (empty = use default); roles are free-text labels.
     rows = [
-        ("main", "Tomo", "Coordinator agent — routes work across the swarm and handles direct chat.", "gpt-4o-mini", 1, 1, 12, 3, 4, base - 86400 * 14),
-        ("ops", "Ops", "Operations agent — deploys, runs shell tasks, watches workplaces.", "claude-3.5-sonnet", 1, 0, 8, 1, 6, base - 86400 * 9),
-        ("research", "Research", "Research agent — fetches, summarizes, and stores artifacts.", "gpt-4o", 1, 0, 6, 1, 3, base - 86400 * 5),
-        ("support", "Support", "Customer support agent — answers from the FAQ knowledge base.", "gpt-4o-mini", 0, 0, 5, 2, 2, base - 86400 * 2),
+        ("main", "Tomo", "Coordinator agent — answers direct chat; multi-agent handoff arrives soon.", "", "coordinator", 1, 1, 12, 3, 4, base - 86400 * 14),
+        ("ops", "Ops", "Operations agent — deploys, runs shell tasks, watches workplaces.", "", "ops", 1, 0, 8, 1, 6, base - 86400 * 9),
+        ("research", "Research", "Research agent — fetches, summarizes, and stores artifacts.", "", "research", 1, 0, 6, 1, 3, base - 86400 * 5),
+        ("support", "Support", "Customer support agent — answers from the FAQ knowledge base.", "", "support", 0, 0, 5, 2, 2, base - 86400 * 2),
     ]
     conn.executemany(
-        "INSERT INTO agents (id, name, description, model_id, enabled, is_super, "
-        "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO agents (id, name, description, model_id, role, enabled, is_super, "
+        "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         rows,
     )
 
