@@ -1,6 +1,6 @@
 """Foundation SQLite schema: DDL and ``migrate()``.
 
-Tables (per design spec §5):
+Tables (per design spec §5 + Alpha Slice G):
 
 * ``agents``         — swarm member definitions
 * ``sessions``       — conversation sessions (coordinator + owner)
@@ -10,6 +10,9 @@ Tables (per design spec §5):
 * ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
 * ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
 * ``knowledge_entries`` — title/body/tags KB rows (Slice E; keyword recall)
+* ``skills`` / ``agent_skills`` — skill catalog + per-agent links (Slice G)
+* ``plugins``        — plugin metadata enable/disable (Slice G)
+* ``schedules`` / ``schedule_runs`` — cron/interval jobs + run log (Slice G)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -109,6 +112,56 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     tags_json  TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    version     TEXT NOT NULL DEFAULT '1.0',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    tool_count  INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS agent_skills (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    PRIMARY KEY (agent_id, skill_id)
+);
+
+CREATE TABLE IF NOT EXISTS plugins (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    version     TEXT NOT NULL DEFAULT '1.0',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    has_ui      INTEGER NOT NULL DEFAULT 0,
+    ui_path     TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    agent_id          TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    cron              TEXT NOT NULL DEFAULT '',
+    interval_seconds  INTEGER NOT NULL DEFAULT 0,
+    message           TEXT NOT NULL DEFAULT '',
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    last_run          REAL,
+    next_run          REAL,
+    created_at        REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS schedule_runs (
+    id           TEXT PRIMARY KEY,
+    schedule_id  TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    session_id   TEXT,
+    status       TEXT NOT NULL DEFAULT 'ok',
+    error        TEXT NOT NULL DEFAULT '',
+    started_at   REAL NOT NULL DEFAULT 0,
+    finished_at  REAL
 );
 """
 

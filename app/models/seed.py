@@ -1,4 +1,4 @@
-"""Seed demo agents, sessions, settings, and knowledge entries into an empty DB.
+"""Seed demo agents, sessions, settings, and platform entities into an empty DB.
 
 Called by the store facade on init via :func:`seed_if_empty`. Seeding is
 idempotent: each section only runs when its table is empty, so an already
@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+
+from app.models.mixins.schedules import interval_from_cron
 
 # Demo sessions reference these agent ids as coordinators/members. Sessions are
 # only seeded when all of them already exist, so an empty ``sessions`` table
@@ -115,13 +117,109 @@ def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
     )
 
 
-def seed_if_empty(conn: sqlite3.Connection) -> None:
-    """Seed agents/sessions/settings/KB only when the corresponding table is empty.
+def _seed_skills(conn: sqlite3.Connection) -> None:
+    """Skill catalog + demo agent_skill links (Slice G)."""
+    from app.services.platform_data import seed_skills
 
-    Demo sessions are only seeded when every required coordinator/member agent
-    (``main``, ``ops``, ``research``) already exists — otherwise the session
-    inserts would FK-fail (e.g. a DB reopened with only custom agents). A failed
-    seed is rolled back so the connection/transaction is never left dirty.
+    base = _now()
+    for i, s in enumerate(seed_skills()):
+        conn.execute(
+            "INSERT INTO skills (id, name, description, version, enabled, tool_count, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                s["id"],
+                s["name"],
+                s["description"],
+                s.get("version", "1.0"),
+                1 if s.get("enabled", True) else 0,
+                int(s.get("tool_count") or 0),
+                base - 86400 * (4 - i),
+            ),
+        )
+    # Matches the previous hardcoded get_agent_skills map.
+    links = [
+        ("main", "onboarding"),
+        ("main", "deploy"),
+        ("ops", "deploy"),
+        ("research", "research_brief"),
+    ]
+    for agent_id, skill_id in links:
+        if _has_agent(conn, agent_id):
+            conn.execute(
+                "INSERT OR IGNORE INTO agent_skills (agent_id, skill_id) VALUES (?,?)",
+                (agent_id, skill_id),
+            )
+    for agent_id in ("main", "ops", "research", "support"):
+        if not _has_agent(conn, agent_id):
+            continue
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM agent_skills WHERE agent_id=?",
+            (agent_id,),
+        ).fetchone()["c"]
+        conn.execute(
+            "UPDATE agents SET skill_count=? WHERE id=?",
+            (int(count), agent_id),
+        )
+
+
+def _seed_plugins(conn: sqlite3.Connection) -> None:
+    from app.services.platform_data import seed_plugins
+
+    base = _now()
+    for i, p in enumerate(seed_plugins()):
+        conn.execute(
+            "INSERT INTO plugins (id, name, description, version, enabled, has_ui, "
+            "ui_path, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                p["id"],
+                p["name"],
+                p["description"],
+                p.get("version", "1.0"),
+                1 if p.get("enabled", True) else 0,
+                1 if p.get("has_ui") else 0,
+                p.get("ui_path") or "",
+                base - 86400 * (3 - i),
+            ),
+        )
+
+
+def _seed_schedules(conn: sqlite3.Connection) -> None:
+    """Seed demo schedules only when referenced agents exist."""
+    from app.services.platform_data import seed_schedules
+
+    base = _now()
+    for s in seed_schedules():
+        agent_id = s.get("agent_id") or ""
+        if not _has_agent(conn, agent_id):
+            continue
+        cron = s.get("cron") or ""
+        interval = interval_from_cron(cron)
+        enabled = 1 if s.get("enabled", True) else 0
+        next_run = s.get("next_run") if enabled else None
+        conn.execute(
+            "INSERT INTO schedules (id, name, agent_id, cron, interval_seconds, message, "
+            "enabled, last_run, next_run, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                s["id"],
+                s["name"],
+                agent_id,
+                cron,
+                interval,
+                f"[schedule] {s['name']}",
+                enabled,
+                s.get("last_run"),
+                next_run,
+                base - 3600,
+            ),
+        )
+
+
+def seed_if_empty(conn: sqlite3.Connection) -> None:
+    """Seed core + platform tables only when the corresponding table is empty.
+
+    Demo sessions/schedules are only seeded when required agents already exist —
+    otherwise inserts would FK-fail (e.g. a DB reopened with only custom agents).
+    A failed seed is rolled back so the connection/transaction is never left dirty.
     """
     try:
         if _count(conn, "agents") == 0:
@@ -133,6 +231,12 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
             _seed_settings(conn)
         if _count(conn, "knowledge_entries") == 0:
             _seed_knowledge_entries(conn)
+        if _count(conn, "skills") == 0:
+            _seed_skills(conn)
+        if _count(conn, "plugins") == 0:
+            _seed_plugins(conn)
+        if _count(conn, "schedules") == 0:
+            _seed_schedules(conn)
         conn.commit()
     except Exception:
         conn.rollback()

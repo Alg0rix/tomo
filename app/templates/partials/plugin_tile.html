@@ -1,9 +1,9 @@
 {% from 'partials/toggle.html' import toggle %}
 
-<div class="tile">
+<div class="tile" data-plugin-id="{{ plugin.id }}">
   <div class="tile-head">
     <div class="tile-title">{{ plugin.name }}</div>
-    {{ toggle(checked=plugin.enabled, disabled=true) }}
+    {{ toggle(checked=plugin.enabled, disabled=false, extra_class='plugin-toggle', title='Enable or disable plugin') }}
   </div>
   <div class="tile-desc">{{ plugin.description }}</div>
   <div class="tile-foot">

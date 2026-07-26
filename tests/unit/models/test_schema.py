@@ -13,6 +13,11 @@ EXPECTED_TABLES = {
     "agent_tools",
     "workplaces",
     "knowledge_entries",
+    "skills",
+    "agent_skills",
+    "plugins",
+    "schedules",
+    "schedule_runs",
 }
 
 

@@ -158,3 +158,28 @@ class KnowledgeEntryUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     body: str | None = Field(default=None, max_length=20_000)
     tags: list[str] | None = None
+
+
+class ScheduleCreate(BaseModel):
+    """Create an interval/cron schedule (Alpha Slice G)."""
+
+    id: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
+    )
+    name: str = Field(min_length=1, max_length=120)
+    agent_id: str = Field(min_length=1, max_length=64)
+    cron: str = ""
+    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 30)
+    message: str = Field(default="", max_length=4000)
+    enabled: bool = True
+
+
+class ScheduleUpdate(BaseModel):
+    """Update a schedule (enable/disable, interval, message, …)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    cron: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 30)
+    message: str | None = Field(default=None, max_length=4000)
+    enabled: bool | None = None

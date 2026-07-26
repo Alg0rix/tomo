@@ -35,11 +35,14 @@ async def _lifespan(_app: FastAPI):
     except Exception:
         pass
     from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
+    from app.scheduler import start_scheduler, stop_scheduler
 
     start_telegram_supervisor()
+    start_scheduler()
     try:
         yield
     finally:
+        await stop_scheduler()
         await stop_telegram_supervisor()
 
 

@@ -1,7 +1,8 @@
-<div class="skill-row">
+{% from 'partials/toggle.html' import toggle %}
+<div class="skill-row" {% if skill.assigned is defined %}data-skill-id="{{ skill.id }}"{% endif %}>
   <div class="meta"><div class="name">{{ skill.name }}</div><div class="desc">{{ skill.description }}</div></div>
   {% if skill.assigned is defined %}
-  <span class="badge {{ 'ok' if skill.assigned else 'muted' }}">{{ 'assigned' if skill.assigned else 'available' }}</span>
+  {{ toggle(checked=skill.assigned, disabled=false, extra_class='skill-assign') }}
   {% else %}
   <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'on' if skill.enabled else 'off' }}</span>
   {% endif %}

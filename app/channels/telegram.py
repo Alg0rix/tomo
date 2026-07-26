@@ -16,7 +16,6 @@ from typing import Any
 
 import httpx
 
-from app.services.chat import run_session_turn
 from app.services.store import store
 
 logger = logging.getLogger(__name__)
@@ -123,6 +122,10 @@ class TelegramAPI:
 
 async def run_channel_turn(session_id: str, message: str) -> str:
     """Run the web turn pipeline; return the latest final (or error) text."""
+    # Lazy import: chat → channels.web → channels package must not pull telegram
+    # at import time (circular with this module).
+    from app.services.chat import run_session_turn
+
     async with contextlib.aclosing(
         run_session_turn(session_id, message, "telegram")
     ) as agen:

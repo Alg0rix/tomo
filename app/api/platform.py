@@ -11,6 +11,8 @@ from app.schemas import (
     KnowledgeEntryUpdate,
     LLMProfileCreate,
     LLMProfileUpdate,
+    ScheduleCreate,
+    ScheduleUpdate,
     WorkplaceCreate,
     WorkplaceUpdate,
 )
@@ -88,6 +90,22 @@ async def get_plugin(plugin_id: str, _: AuthDep):
     if not plugin:
         raise HTTPException(status_code=404, detail="Plugin not found")
     return plugin
+
+
+@router.put("/plugins/{plugin_id}")
+async def update_plugin(plugin_id: str, body: dict, _: AuthDep):
+    plugin = store.update_plugin(plugin_id, body)
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Plugin not found")
+    return plugin
+
+
+@router.put("/skills/{skill_id}")
+async def update_skill(skill_id: str, body: dict, _: AuthDep):
+    skill = store.update_skill(skill_id, body)
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return skill
 
 
 @router.get("/workplaces")
@@ -192,12 +210,45 @@ async def list_schedules(_: AuthDep):
     return {"schedules": rows}
 
 
+@router.post("/schedules")
+async def create_schedule(body: ScheduleCreate, _: AuthDep):
+    try:
+        return store.create_schedule(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/schedules/{schedule_id}")
 async def get_schedule(schedule_id: str, _: AuthDep):
     sch = store.get_schedule(schedule_id)
     if not sch:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return sch
+
+
+@router.put("/schedules/{schedule_id}")
+async def update_schedule(schedule_id: str, body: ScheduleUpdate, _: AuthDep):
+    try:
+        sch = store.update_schedule(schedule_id, body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not sch:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return sch
+
+
+@router.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str, _: AuthDep):
+    if not store.delete_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"success": True}
+
+
+@router.get("/schedules/{schedule_id}/runs")
+async def list_schedule_runs(schedule_id: str, _: AuthDep):
+    if not store.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"runs": store.list_schedule_runs(schedule_id)}
 
 
 @router.get("/models")
@@ -284,6 +335,31 @@ async def agent_skills(agent_id: str, _: AuthDep):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     return {"skills": store.get_agent_skills(agent_id)}
+
+
+@router.put("/agents/{agent_id}/skills")
+async def update_agent_skills(agent_id: str, body: dict, _: AuthDep):
+    """Persist per-agent skill assignment.
+
+    Body: ``{"skill_ids": ["onboarding", "deploy"]}`` or
+    ``{"skills": [{"id": "onboarding", "assigned": true}, ...]}``.
+    """
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    skill_ids: list[str] = []
+    if isinstance(body.get("skill_ids"), list):
+        skill_ids = [str(x) for x in body["skill_ids"] if x]
+    elif isinstance(body.get("skills"), list):
+        for row in body["skills"]:
+            if isinstance(row, dict) and row.get("assigned") and row.get("id"):
+                skill_ids.append(str(row["id"]))
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Body must include 'skill_ids' list or 'skills' list",
+        )
+    skills = store.set_agent_skills(agent_id, skill_ids)
+    return {"skills": skills}
 
 
 @router.get("/agents/{agent_id}/channels")

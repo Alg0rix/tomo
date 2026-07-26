@@ -55,6 +55,25 @@
       } catch (e) { Tomo.toast((e && e.message) || 'Could not save tools', 'err'); }
     });
   }
+  var skillsSave = document.getElementById('skillsSave');
+  if (skillsSave) {
+    skillsSave.addEventListener('click', async function () {
+      var panel = document.getElementById('panel-skills');
+      var agentId = panel ? panel.dataset.agentId : '';
+      var skillIds = [];
+      panel.querySelectorAll('.skill-row[data-skill-id]').forEach(function (row) {
+        var input = row.querySelector('input[type="checkbox"]');
+        if (input && input.checked) skillIds.push(row.dataset.skillId);
+      });
+      try {
+        await Tomo.api('/api/agents/' + encodeURIComponent(agentId) + '/skills', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skill_ids: skillIds }),
+        });
+        Tomo.toast('Skills saved', 'ok');
+      } catch (e) { Tomo.toast((e && e.message) || 'Could not save skills', 'err'); }
+    });
+  }
   var wrap = document.querySelector('.chat-wrap');
   if (wrap && window.TomoChat) TomoChat.init(wrap);
 })();

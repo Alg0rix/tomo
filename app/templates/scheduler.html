@@ -4,31 +4,79 @@
   <div class="page-head">
     <div>
       <h1 class="page-title">Scheduler</h1>
-      <p class="page-sub">Cron jobs that wake agents on a schedule.</p>
+      <p class="page-sub">Interval jobs that wake agents and run a turn.</p>
     </div>
-    <button class="btn primary" type="button" disabled>New schedule</button>
+    <button class="btn primary" type="button" id="newScheduleBtn">New schedule</button>
+  </div>
+
+  <div class="card hidden" id="scheduleFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3>New schedule</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="scheduleForm" autocomplete="off" onsubmit="return false;">
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input" id="schName" required placeholder="Morning digest" style="max-width:280px">
+        </div>
+        <div class="config-row"><div class="lbl">Agent</div>
+          <select class="input" id="schAgent" style="max-width:280px">
+            {% for a in agents %}
+            <option value="{{ a.id }}">{{ a.name }} ({{ a.id }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="config-row"><div class="lbl">Interval (seconds)</div>
+          <input class="input" type="number" id="schInterval" min="5" value="3600" style="max-width:140px">
+        </div>
+        <div class="config-row"><div class="lbl">Message</div>
+          <input class="input" id="schMessage" placeholder="Prompt sent to the agent" style="max-width:420px">
+        </div>
+        <div class="config-row"><div class="lbl">Enabled</div>
+          <label style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="schEnabled" checked>
+            <span class="faint">Run when due</span>
+          </label>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="schCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="schSave">Create</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <div class="card">
     <table class="data-table">
       <thead>
-        <tr><th>Name</th><th>Agent</th><th>Schedule</th><th>Status</th><th>Next run</th></tr>
+        <tr><th>Name</th><th>Agent</th><th>Schedule</th><th>Status</th><th>Next run</th><th></th></tr>
       </thead>
       <tbody>
         {% for s in schedules %}
-        <tr>
+        <tr data-id="{{ s.id }}">
           <td><strong>{{ s.name }}</strong></td>
           <td>
             {% set ag = agents | selectattr('id', 'equalto', s.agent_id) | first %}
             <a href="/agents/{{ s.agent_id }}" class="dim">{{ ag.name if ag else s.agent_id }}</a>
           </td>
-          <td class="mono faint">{{ s.cron }}</td>
-          <td>{% if s.enabled %}<span class="badge ok">on</span>{% else %}<span class="badge muted">off</span>{% endif %}</td>
+          <td class="mono faint">
+            {% if s.interval_seconds %}every {{ s.interval_seconds }}s{% else %}{{ s.cron }}{% endif %}
+            {% if s.cron and s.interval_seconds %}<span class="faint"> · {{ s.cron }}</span>{% endif %}
+          </td>
+          <td>
+            {% if s.enabled %}<span class="badge ok">on</span>{% else %}<span class="badge muted">off</span>{% endif %}
+          </td>
           <td class="faint mono" style="font-size:12px">{% if s.next_run %}{{ ts(s.next_run) }}{% else %}—{% endif %}</td>
+          <td>
+            <button class="btn ghost sm sch-toggle" type="button"
+              data-id="{{ s.id }}" data-enabled="{{ '1' if s.enabled else '0' }}">
+              {{ 'Disable' if s.enabled else 'Enable' }}
+            </button>
+          </td>
         </tr>
+        {% else %}
+        <tr><td colspan="6" class="faint" style="text-align:center;padding:28px">No schedules yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/scheduler.js') }}"></script>{% endblock %}

@@ -1,7 +1,7 @@
 """Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
-workplaces/knowledge_entries and ``platform_data`` for the remaining platform
-lists (skills, plugins, schedules, models, providers, safety rules, users,
-shared channels, eval_*). Tool catalog is sourced from the JSON tool registry.
+workplaces/knowledge_entries/skills/plugins/schedules and ``platform_data``
+for remaining stub lists (models, providers, safety rules, users, shared
+channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
 is unchanged. Busy state is process-local in-memory
@@ -19,7 +19,10 @@ from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
 from app.models.mixins import knowledge_entries as knowledge_store
 from app.models.mixins import messages as messages_store
+from app.models.mixins import plugins as plugins_store
+from app.models.mixins import schedules as schedules_store
 from app.models.mixins import sessions as sessions_store
+from app.models.mixins import skills as skills_store
 from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import settings as settings_store
 from app.models.mixins import tools as tools_store
@@ -33,19 +36,16 @@ from app.services.platform_data import (
     seed_eval_runs,
     seed_evaluators,
     seed_models,
-    seed_plugins,
     seed_providers,
-    seed_schedules,
     seed_safety_rules,
     seed_shared_channels,
-    seed_skills,
     seed_users,
 )
 from app.workplaces.manager import connect as workplace_connect
 
 
 class Store:
-    """Hybrid facade: SQLite for core entities, platform_data for lists."""
+    """Hybrid facade: SQLite for Alpha entities, platform_data for stubs."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         self._lock = threading.RLock()
@@ -73,10 +73,8 @@ class Store:
             self._open()
 
     def _seed_platform(self) -> dict[str, list[dict[str, Any]]]:
+        """In-memory stubs still used for gated/eval and unused catalog tiles."""
         return {
-            "skills": seed_skills(),
-            "plugins": seed_plugins(),
-            "schedules": seed_schedules(),
             "providers": seed_providers(),
             "models": seed_models(),
             "safety_rules": seed_safety_rules(),
@@ -208,6 +206,7 @@ class Store:
         agents: list[dict[str, Any]],
         sessions: list[dict[str, Any]],
         workplace_count: int,
+        skill_count: int,
     ) -> dict[str, Any]:
         """Compute the stats dict from already-locked snapshots (no DB/lock access)."""
         enabled = [a for a in agents if a["enabled"]]
@@ -218,7 +217,7 @@ class Store:
             "tool_count": len(get_registry().names()) or sum(a["tool_count"] for a in agents),
             "channel_count": sum(a["channel_count"] for a in agents),
             "active_channel_count": sum(a["channel_count"] for a in enabled),
-            "skill_count": len(self._platform["skills"]) or sum(a["skill_count"] for a in agents),
+            "skill_count": skill_count or sum(a["skill_count"] for a in agents),
             "workplace_count": workplace_count,
         }
 
@@ -227,21 +226,24 @@ class Store:
             agents = agents_store.list_agents(self._conn, self._busy.ids())
             sessions = sessions_store.list_sessions(self._conn)
             wps = workplaces_store.list_workplaces(self._conn)
-            return self._stats_from(agents, sessions, len(wps))
+            skills = skills_store.list_skills(self._conn)
+            return self._stats_from(agents, sessions, len(wps), len(skills))
 
     def dashboard_data(self) -> dict[str, Any]:
         with self._lock:
             agents = agents_store.list_agents(self._conn, self._busy.ids())
             sessions = sessions_store.list_sessions(self._conn)
             workplaces = workplaces_store.list_workplaces(self._conn)
+            skills = skills_store.list_skills(self._conn)
+            schedules = schedules_store.list_schedules(self._conn)
             recent_agents = sorted(agents, key=lambda a: a["created_at"], reverse=True)[:5]
             return {
-                "stats": self._stats_from(agents, sessions, len(workplaces)),
+                "stats": self._stats_from(agents, sessions, len(workplaces), len(skills)),
                 "recent_agents": recent_agents,
                 "recent_sessions": sessions[:6],
                 "busy_agents": [a["id"] for a in agents if a["busy"]],
                 "workplaces": workplaces[:3],
-                "schedules": [dict(s) for s in self._platform["schedules"][:3]],
+                "schedules": schedules[:3],
             }
 
     # -- settings (SQLite) -----------------------------------------------
@@ -387,22 +389,101 @@ class Store:
         with self._lock:
             return knowledge_store.search_entries(self._conn, query, limit=limit)
 
-    # -- platform lists (registry + platform_data) -----------------------
+    # -- skills / plugins / schedules (SQLite) ---------------------------
+    def list_skills(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return skills_store.list_skills(self._conn)
+
+    def get_skill(self, skill_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return skills_store.get_skill(self._conn, skill_id)
+
+    def update_skill(self, skill_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return skills_store.update_skill(self._conn, skill_id, data)
+
+    def list_plugins(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return plugins_store.list_plugins(self._conn)
+
+    def get_plugin(self, plugin_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return plugins_store.get_plugin(self._conn, plugin_id)
+
+    def update_plugin(self, plugin_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return plugins_store.update_plugin(self._conn, plugin_id, data)
+
+    def list_schedules(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return schedules_store.list_schedules(self._conn)
+
+    def get_schedule(self, schedule_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.get_schedule(self._conn, schedule_id)
+
+    def create_schedule(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return schedules_store.create_schedule(self._conn, data)
+
+    def update_schedule(
+        self, schedule_id: str, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.update_schedule(self._conn, schedule_id, data)
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        with self._lock:
+            return schedules_store.delete_schedule(self._conn, schedule_id)
+
+    def list_due_schedules(self, now: float | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            return schedules_store.list_due(self._conn, now)
+
+    def begin_schedule_run(
+        self,
+        schedule_id: str,
+        *,
+        session_id: str | None = None,
+        now: float | None = None,
+    ) -> str:
+        with self._lock:
+            return schedules_store.begin_run(
+                self._conn, schedule_id, session_id=session_id, now=now
+            )
+
+    def finish_schedule_run(
+        self,
+        run_id: str,
+        *,
+        status: str = "ok",
+        error: str = "",
+        session_id: str | None = None,
+        now: float | None = None,
+    ) -> None:
+        with self._lock:
+            schedules_store.finish_run(
+                self._conn,
+                run_id,
+                status=status,
+                error=error,
+                session_id=session_id,
+                now=now,
+            )
+
+    def list_schedule_runs(
+        self, schedule_id: str | None = None, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            return schedules_store.list_runs(self._conn, schedule_id, limit=limit)
+
+    # -- platform stubs (platform_data) ----------------------------------
     def _plat(self, key: str) -> list[dict[str, Any]]:
         return [dict(x) for x in self._platform[key]]
 
     def list_tools(self) -> list[dict[str, Any]]:
         """Global tool catalog from the JSON registry (not platform_data seed)."""
         return get_registry().list_catalog()
-
-    def list_skills(self) -> list[dict[str, Any]]:
-        return self._plat("skills")
-
-    def list_plugins(self) -> list[dict[str, Any]]:
-        return self._plat("plugins")
-
-    def list_schedules(self) -> list[dict[str, Any]]:
-        return self._plat("schedules")
 
     def list_models(self) -> list[dict[str, Any]]:
         return self._plat("models")
@@ -437,15 +518,6 @@ class Store:
     def list_eval_runs(self) -> list[dict[str, Any]]:
         return sorted(self._plat("eval_runs"), key=lambda r: r.get("started_at", 0), reverse=True)
 
-    def get_skill(self, skill_id: str) -> dict[str, Any] | None:
-        return next((dict(s) for s in self._platform["skills"] if s["id"] == skill_id), None)
-
-    def get_plugin(self, plugin_id: str) -> dict[str, Any] | None:
-        return next((dict(p) for p in self._platform["plugins"] if p["id"] == plugin_id), None)
-
-    def get_schedule(self, schedule_id: str) -> dict[str, Any] | None:
-        return next((dict(s) for s in self._platform["schedules"] if s["id"] == schedule_id), None)
-
     def get_eval_run(self, run_id: str) -> dict[str, Any] | None:
         return next((dict(r) for r in self._platform["eval_runs"] if r["id"] == run_id), None)
 
@@ -478,8 +550,16 @@ class Store:
         return get_openai_tools(self.get_enabled_tool_ids(agent_id))
 
     def get_agent_skills(self, agent_id: str) -> list[dict[str, Any]]:
-        assigned = {"main": {"onboarding", "deploy"}, "ops": {"deploy"}, "research": {"research_brief"}}.get(agent_id, set())
-        return [dict(s, assigned=s["id"] in assigned) for s in self.list_skills()]
+        with self._lock:
+            return skills_store.list_for_agent(self._conn, agent_id)
+
+    def set_agent_skills(
+        self, agent_id: str, skill_ids: list[str]
+    ) -> list[dict[str, Any]] | None:
+        if not self.get_agent(agent_id):
+            return None
+        with self._lock:
+            return skills_store.set_for_agent(self._conn, agent_id, skill_ids)
 
     def get_agent_channels(self, agent_id: str) -> list[dict[str, Any]]:
         from app.channels.telegram import telegram_status
