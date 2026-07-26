@@ -400,12 +400,42 @@ See `tools/` for declarative tool definitions; Python implementations go in `app
 
 ## Getting started
 
+Tomo's **foundation thin vertical is live** — the smallest end-to-end real path is wired: a SQLite-backed store, a mock or OpenAI-compatible LLM, a `calculator` tool, a coordinator-only agent turn loop, and a web chat UI streaming over SSE. The broader swarm (multi-agent delegation, learning loop, memory, extra channels) is still on the roadmap.
+
 ```bash
 git clone <repo-url>
 cd tomo
+uv sync                    # create .venv and install dependencies
+uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
 ```
 
-> **Note:** Tomo is under active development. The coordinator runtime, agent definitions, and deployment guides are coming next.
+### Configuration
+
+All settings are environment variables (see `app/core/config.py`). The defaults work out of the box for local development.
+
+**LLM provider** — `TOMO_LLM_PROVIDER` selects the backend:
+
+- `mock` (default) — a deterministic in-process LLM used for tests and local play. No API key required; the mock can exercise the `calculator` tool on its own.
+- `openai_compat` — any OpenAI-compatible chat completions endpoint:
+
+  ```bash
+  export TOMO_LLM_PROVIDER=openai_compat
+  export TOMO_LLM_API_KEY=sk-...                              # required for real endpoints
+  export TOMO_LLM_BASE_URL=https://api.openai.com/v1          # or your compatible host
+  export TOMO_LLM_MODEL=gpt-4o-mini
+  ```
+
+**Database** — state lives in SQLite at `TOMO_DB_PATH` (default `var/tomo.db`). The `var/` directory and the database file are created automatically on first run; point it elsewhere with `export TOMO_DB_PATH=/path/to/tomo.db`.
+
+**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`), `TOMO_RELOAD` (default `false`).
+
+### Tests
+
+```bash
+uv run pytest
+```
+
+> **Note:** Tomo is under active development. Multi-agent coordination, the learning loop, memory, and additional channel adapters are coming next.
 
 ---
 

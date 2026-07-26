@@ -30,7 +30,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
 | Plan (`docs/superpowers/plans/…`) | **written** |
-| Cline execution loop | **Task 1–5 done** · next Task 6 |
+| Cline execution loop | **Task 1–7 done** (+ adversarial fix passes) · **foundation vertical complete** |
 
 ---
 
@@ -68,7 +68,8 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 3–4 Adversarial fix | `057c2cf` | **PASS** |
 | 5 Agent turn loop | `6f3b39b` | **PASS** |
 | 5b Adversarial fix | `9b620b1` | **PASS** |
-| 5 Adversarial fix | _pending commit_ | **PASS** |
+| 6 Web + chat SSE wiring | `a2542ac` | **PASS** |
+| 6b Adversarial fix | `cb4b804` | **PASS** |
 
 ---
 
@@ -106,3 +107,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: **Task 5 adversarial fix PASS** — `9b620b1`. Unpaired tool_calls get synthetic results; unique tool ids across iterations; setup errors → error events; surplus tool_outputs dropped; `user_message=None`; `Error:` prefix; Unicode prompt fallback. Proceeding to Task 6.
 - 2026-07-26: Dispatched Cline for **Task 5 fix pass** (all adversarial P1/P2/P3). Brief: `docs/superpowers/handoffs/task-05-fix-cline-brief.md`. Awaiting Cursor review.
 - 2026-07-26: **Task 5 fix pass — Cline done, ready for Cursor review.** Fixes: (P1) `context.py` emits synthetic `role: tool` `"Error: missing tool result"` for unpaired `tool_call` entries so no assistant `tool_calls` message dangles; (P1) `loop.py` `_with_ids` now draws empty tool-call ids from a turn-scoped `itertools.count()` (computed once per response, reused for assistant message + tool results) so `call_0` never repeats across rounds; (P1) setup (`get_llm`/`get_openai_tools`/`build_messages`) wrapped in try/except → `{"kind":"error","message":"Agent setup failed: …"}`, `run_turn` never raises; (P2) surplus `tool_output` rows dropped instead of mapped onto `calls[-1]` id; (P2) `user_message: str | None` (context already supported None); (P2) error flag is `str(result).startswith("Error:")`; (P3) system prompt read catches `(OSError, UnicodeError)`. Re-verified: runtime **117 passed** (full suite **153 passed**); +9 new tests (unpaired/surplus/partial pairing, distinct empty ids across 2 rounds, get_llm + get_openai_tools setup failures, `user_message=None` no duplicate, `Error:`-prefix specificity). No Task 6 changes. Commit msg: `fix: harden agent context pairing and turn error surfacing`.
+- 2026-07-26: Dispatched Cline for **Task 6** (web channel + chat SSE wiring, coordinator-only). Brief: `docs/superpowers/handoffs/task-06-cline-brief.md`.
+- 2026-07-26: **Task 6 REVIEW PASS** — commit `a2542ac`. Web chat runs the real agent loop over SSE (coordinator-only): `chat.py` maps loop kinds → SSE events (`thinking`/`tool`/`tool_result`/`delta`+`done`/`error`), emits `state` busy + `turn.start`, and persists `user`/`tool_call`/`tool_output`/`final` via `append_session_history`. `agent_ids` preserved. Integration test collects a `done` event with mock LLM + temp DB.
+- 2026-07-26: **Task 6 adversarial fix PASS** — commit `cb4b804`. P1: `stream_turn_sse` `try/finally` only clears busy (no `yield` in `finally`); the trailing busy-false `state` is yielded after normal completion; `chat.py` and `app/api/stream.py` wrap turn/heartbeat generators in `contextlib.aclosing` so a client disconnect cascades to the synchronous busy clear instead of suspending until GC. P1: `chat.js` `error` listener splits named SSE `error` events (rendered as an agent error bubble) from transport failures ("Stream interrupted"). P2: `turn_id` restored on `done`; user/tool rows persisted before yielding. Re-verified runtime green.
+- 2026-07-26: **Foundation thin vertical COMPLETE.** The autonomous Review → Adversarial → Fix → Next loop (no human gate between tasks) carried Tasks 1–6 through every fix pass. Live path: SQLite store (`app/models/`) → mock/openai_compat LLM (`app/runtime/llm/`) → `calculator` tool (`app/runtime/tools/`) → coordinator-only agent turn loop (`app/runtime/agent/`) → web chat over SSE (`app/channels/web.py` + `app/services/chat.py`). Task 7 = docs closeout (this log + `README.md` + `docs/architecture.md`).
