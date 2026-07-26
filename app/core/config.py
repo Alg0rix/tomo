@@ -16,8 +16,31 @@ TEMPLATE_DIR = APP_DIR / "templates"
 DATA_DIR = APP_DIR / "data"
 
 REPO_ROOT = APP_DIR.parent
-VAR_DIR = Path(os.environ.get("TOMO_VAR_DIR", str(REPO_ROOT / "var")))
-DB_PATH = Path(os.environ.get("TOMO_DB_PATH", str(VAR_DIR / "tomo.db")))
+
+
+def _load_home_env(home_root: Path) -> None:
+    """Load ``$TOMO_HOME/.env`` into ``os.environ`` (override=False; process env wins).
+
+    Minimal KEY=VAL parser (no external dependency). Skips blank/comment lines
+    and strips surrounding quotes. ``TOMO_HOME`` itself cannot be set here (it
+    locates the file). Never logs values. No-op when the file is absent.
+    """
+    env_file = home_root / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -27,13 +50,30 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# --- Tomo Home ($TOMO_HOME) ---
+# Writable user root (default ~/.tomo). The DB defaults to $TOMO_HOME/state;
+# set TOMO_DB_PATH / TOMO_VAR_DIR to override (e.g. keep a legacy var/tomo.db).
+TOMO_HOME = Path(
+    os.environ.get("TOMO_HOME", str(Path.home() / ".tomo"))
+).expanduser()
+# Optional bootstrap .env is loaded before the config lines below so it can
+# supply e.g. TOMO_DB_PATH / TOMO_ADMIN_PASSWORD (process env still wins).
+_load_home_env(TOMO_HOME)
+VAR_DIR = Path(os.environ.get("TOMO_VAR_DIR", str(TOMO_HOME / "state")))
+DB_PATH = Path(os.environ.get("TOMO_DB_PATH", str(VAR_DIR / "tomo.db")))
+
+
 # --- Server ---
 HOST = os.environ.get("TOMO_HOST", "127.0.0.1")
 PORT = int(os.environ.get("TOMO_PORT", "8787"))
 RELOAD = _env_bool("TOMO_RELOAD", default=False)
 
 # --- Auth ---
-SECRET_KEY = os.environ.get("TOMO_SECRET_KEY", "tomo-dev-secret-change-me")
+# Session-cookie signing secret (NOT the at-rest master key). The master key for
+# encrypting SQLite secrets is TOMO_SECRET_KEY (see app.core.secrets). Set
+# TOMO_SESSION_SECRET to a stable value in any real deploy; the dev default is
+# single-user only.
+SESSION_SECRET = os.environ.get("TOMO_SESSION_SECRET", "tomo-dev-secret-change-me")
 ADMIN_PASSWORD = os.environ.get("TOMO_ADMIN_PASSWORD", "tomo")
 SESSION_COOKIE_NAME = "tomo_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days

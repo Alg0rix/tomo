@@ -27,7 +27,7 @@ import itertools
 import json
 from typing import Any, AsyncIterator
 
-from app.runtime.agent.context import build_messages
+from app.runtime.agent.context import build_messages, build_system_prompt
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.tools.registry import execute, get_openai_tools
@@ -85,10 +85,11 @@ async def run_turn(
     already persisted the user entry into ``history`` (the Task 6 pattern) so
     it is not duplicated. ``llm`` / ``tools`` / ``system_prompt`` /
     ``max_iterations`` default to settings-backed ``get_llm()``,
-    ``get_openai_tools()``, ``coordinator_system_prompt()``, and
-    ``max_tool_iterations`` but are injectable for tests. ``agent_id`` /
-    ``session_id`` are accepted as context inputs for the persistence wiring
-    in Task 6 and are not used here. Setup failures (bad LLM config,
+    ``get_openai_tools()``, ``build_system_prompt(agent_id)``, and
+    ``max_tool_iterations`` but are injectable for tests. ``agent_id`` selects
+    the per-agent ``SYSTEM.md`` / ``SOUL.md`` from ``$TOMO_HOME`` (via
+    :func:`build_system_prompt`); ``session_id`` is a context input for the
+    persistence wiring in Task 6. Setup failures (bad LLM config,
     broken tool schema, message assembly) and per-round backend failures are
     surfaced as ``{"kind": "error", ...}`` events — ``run_turn`` never raises
     out to the consumer. The function is an async generator — iterate with
@@ -102,7 +103,10 @@ async def run_turn(
             if max_iterations is not None
             else _max_tool_iterations()
         )
-        messages = build_messages(history, user_message, system_prompt=system_prompt)
+        prompt = system_prompt
+        if prompt is None:
+            prompt = build_system_prompt(agent_id)
+        messages = build_messages(history, user_message, system_prompt=prompt)
     except Exception as exc:
         yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
         return

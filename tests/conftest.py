@@ -1,12 +1,15 @@
 """Pytest fixtures and test configuration.
 
-The foundation SQLite DB path is forced onto a temp directory BEFORE
-``app.core.config`` is imported, so the module-level ``store = Store()``
-singleton never touches the production ``var/tomo.db``. Individual tests
-rebind the store to their own ``tmp_path`` for isolation.
+The Tomo Home root (``$TOMO_HOME``) and the SQLite DB path are forced onto temp
+directories BEFORE ``app.core.config`` is imported, so the module-level
+``store = Store()`` singleton never touches the developer's real ``~/.tomo`` or
+``var/tomo.db``. Individual tests rebind the store to their own ``tmp_path``
+for isolation. ``TOMO_SECRET_KEY`` is intentionally left unset so tests
+exercise the ``$TOMO_HOME/.secret_key`` path (auto-created on first use).
 """
 import os
 import tempfile
 
-_TEST_VAR = tempfile.mkdtemp(prefix="tomo-pytest-")
-os.environ["TOMO_DB_PATH"] = os.path.join(_TEST_VAR, "tomo.db")
+_TEST_HOME = tempfile.mkdtemp(prefix="tomo-home-pytest-")
+os.environ["TOMO_HOME"] = _TEST_HOME
+os.environ.setdefault("TOMO_DB_PATH", os.path.join(_TEST_HOME, "state", "tomo.db"))

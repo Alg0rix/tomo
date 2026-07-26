@@ -168,7 +168,7 @@ async def evaluate_settings_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
     return templates.TemplateResponse(request, "evaluate_settings.html", _ctx(
-        request, "evaluate", eval_page="settings", settings=store.get_settings(),
+        request, "evaluate", eval_page="settings", settings=store.get_public_settings(),
     ))
 
 

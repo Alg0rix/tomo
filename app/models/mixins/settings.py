@@ -4,8 +4,10 @@ Values are JSON-encoded. The default settings shape comes from
 :func:`app.services.platform_data.seed_settings` (used to seed an empty DB and
 as a fallback when the table has no rows).
 
-``llm_api_key`` is stored in full for runtime use. API/UI surfaces must call
-:func:`public_settings` so the secret is masked and never echoed.
+``llm_api_key`` is a UI-managed secret: it is stored as **ciphertext** at rest
+(see :mod:`app.core.secrets`) and decrypted only in memory by
+:func:`get_settings` for runtime use. API/UI surfaces must call
+:func:`public_settings` so the secret is masked and never echoed over HTTP/HTML.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import json
 import sqlite3
 from typing import Any
 
+from app.core.secrets import decrypt_secret, encrypt_secret
 from app.services.platform_data import seed_settings
 
 _LLM_KEY = "llm_api_key"
@@ -24,11 +27,14 @@ def _defaults() -> dict[str, Any]:
 
 
 def get_settings(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Return full settings (including raw ``llm_api_key``) merged with defaults."""
+    """Return full settings (with decrypted ``llm_api_key``) merged with defaults."""
     rows = conn.execute("SELECT key, value_json FROM settings").fetchall()
     out = _defaults()
     for r in rows:
-        out[r["key"]] = json.loads(r["value_json"])
+        val = json.loads(r["value_json"])
+        if r["key"] == _LLM_KEY:
+            val = decrypt_secret(str(val))
+        out[r["key"]] = val
     return out
 
 
@@ -63,7 +69,11 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     if _LLM_KEY in payload:
         incoming = payload[_LLM_KEY]
         if incoming is None or (isinstance(incoming, str) and not incoming.strip()):
+            # Blank/missing key keeps the existing ciphertext (never clears).
             payload.pop(_LLM_KEY)
+        else:
+            # Encrypt at rest; the DB never stores a plaintext secret.
+            payload[_LLM_KEY] = encrypt_secret(str(incoming))
 
     for soft in ("llm_base_url", "llm_model"):
         if soft in payload:

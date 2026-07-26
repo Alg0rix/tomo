@@ -1,0 +1,5 @@
+# Tomo preferences — non-secret only.
+# Never put API keys or the master encryption key here. Manage LLM credentials
+# in the UI (System → Models); they are encrypted at rest in the SQLite DB.
+brand: Tomo
+theme: dark

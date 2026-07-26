@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core import config
+from app.core import config, home
 
 _SYSTEM_PROMPT_PATH = config.REPO_ROOT / "defaults" / "coordinator_system.md"
 _FALLBACK_PROMPT = (
@@ -50,6 +50,55 @@ def coordinator_system_prompt(path: Path | None = None) -> str:
         return _FALLBACK_PROMPT
     text = text.strip()
     return text or _FALLBACK_PROMPT
+
+
+def _read_md(path: Path) -> str:
+    """Read a markdown file, returning stripped text or '' when missing/blank."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+    return text.strip()
+
+
+def build_system_prompt(
+    agent_id: str | None = None, *, home_root: Path | None = None
+) -> str:
+    """Build the system prompt for a coordinator/agent turn from ``$TOMO_HOME``.
+
+    Resolution order (locked, Alpha spec §2.1):
+
+    1. **Base instructions** — ``$TOMO_HOME/agents/<id>/SYSTEM.md`` when
+       ``agent_id`` is given and the file is non-empty; otherwise the repo
+       default via :func:`coordinator_system_prompt`.
+    2. **Global persona** — ``$TOMO_HOME/SOUL.md`` is *prepended* when present.
+    3. **Agent persona overlay** — ``$TOMO_HOME/agents/<id>/SOUL.md`` is
+       *appended* after the base when present (only when ``agent_id`` is given).
+
+    Sections are joined with a blank line. No secrets are read from files.
+    ``home_root`` overrides the home root (tests); it defaults to
+    :data:`app.core.config.TOMO_HOME`.
+    """
+    root = Path(home_root) if home_root is not None else config.TOMO_HOME
+    parts: list[str] = []
+
+    global_soul = _read_md(home.soul_path(root))
+    if global_soul:
+        parts.append(global_soul)
+
+    base = ""
+    if agent_id:
+        base = _read_md(home.agent_system_path(agent_id, root))
+    if not base:
+        base = coordinator_system_prompt()
+    parts.append(base)
+
+    if agent_id:
+        agent_soul = _read_md(home.agent_soul_path(agent_id, root))
+        if agent_soul:
+            parts.append(agent_soul)
+
+    return "\n\n".join(parts)
 
 
 def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -170,6 +219,7 @@ def _dumps_args(params: Any) -> str:
 
 __all__ = [
     "coordinator_system_prompt",
+    "build_system_prompt",
     "history_to_messages",
     "build_messages",
 ]

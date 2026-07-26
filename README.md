@@ -412,17 +412,58 @@ uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
 
 ### Configuration
 
-**LLM** — open **System → Models** and set:
+**Tomo Home (`$TOMO_HOME`)** — Tomo's writable user root (default `~/.tomo`).
+Set `export TOMO_HOME=/path/to/tomo` to relocate it. On first start the tree is
+created and seeded from the shipped `defaults/`:
 
-- Base URL (OpenAI-compatible host, default `https://api.openai.com/v1`)
-- API key (required for chat)
-- Model id (e.g. `gpt-4o-mini`)
+```text
+$TOMO_HOME/
+├── tomo.yaml          # non-secret prefs only (never API keys / master key)
+├── .env               # optional bootstrap secrets (dotfile; never auto-created)
+├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
+├── SOUL.md            # global default persona
+├── library/{skills,memory}
+├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge,work}
+├── workplaces/
+└── state/tomo.db      # SQLite (secret settings encrypted at rest)
+```
 
-Until an API key is saved, chat returns a clear error pointing at that page. Max tool iterations live under **System → General**.
+Persona/prompt files use the familiar names `SOUL.md` (persona) and `SYSTEM.md`
+(agent system prompt). Edit them under `$TOMO_HOME` to customize Tomo without
+touching the git tree; the coordinator loads `$TOMO_HOME/SOUL.md` plus each
+agent's `SYSTEM.md` / `SOUL.md` at turn time.
 
-**Database** — state lives in SQLite at `TOMO_DB_PATH` (default `var/tomo.db`). The `var/` directory and the database file are created automatically on first run; point it elsewhere with `export TOMO_DB_PATH=/path/to/tomo.db`.
+**Secrets policy** — UI-managed secrets (LLM API key, …) are stored **encrypted
+at rest** in the SQLite `settings` table, never as plaintext. A master key
+encrypts/decrypts them (Fernet, `cryptography`):
 
-**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`), `TOMO_RELOAD` (default `false`). Also `TOMO_ADMIN_PASSWORD` / `TOMO_SECRET_KEY` for auth.
+- **Master key sources** (first match wins): process env `TOMO_SECRET_KEY`
+  (preferred for containers / CI), else `$TOMO_HOME/.secret_key` (auto-created
+  on first run, `chmod 600`, never overwritten).
+- `tomo.yaml` never holds secrets or the master key.
+- GET settings returns **masked** values + `*_set` flags; a blank PUT keeps the
+  existing key. Decrypted secrets never travel over HTTP/HTML.
+- **Back up `.secret_key` / `TOMO_SECRET_KEY`** with the same care as the DB —
+  losing it makes encrypted secrets unrecoverable.
+- Optional `$TOMO_HOME/.env` (dotfile, `0600`) may hold plaintext bootstrap
+  values (loaded with `override=False`, process env wins). Prefer moving durable
+  secrets into encrypted SQLite via the UI. Never name it `secrets.env`.
+
+**LLM** — open **System → Models** and set Base URL, API key, and model id
+(e.g. `gpt-4o-mini`). The API key is encrypted before it touches SQLite. Until a
+key is saved, chat returns a clear error pointing at that page. Max tool
+iterations live under **System → General**.
+
+**Database** — state lives in SQLite at `$TOMO_HOME/state/tomo.db` by default
+(`TOMO_DB_PATH` / `TOMO_VAR_DIR` override). The directory and DB are created on
+first run. To keep a legacy `var/tomo.db`, set
+`export TOMO_DB_PATH=var/tomo.db` (there is no automatic migration).
+
+**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`),
+`TOMO_RELOAD` (default `false`). Session cookies are signed with
+`TOMO_SESSION_SECRET` (default dev value; set a stable secret in any real
+deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
+**at-rest master key** (see Secrets policy), not the session secret.
 
 ### Tests
 
