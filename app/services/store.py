@@ -183,6 +183,12 @@ class Store:
         with self._lock:
             messages_store.clear_session_history(self._conn, session_id)
 
+    def search_messages(
+        self, query: str, *, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            return messages_store.search_messages(self._conn, query, limit=limit)
+
     def append_history(self, agent_id: str, user_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
             sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id)
@@ -376,7 +382,12 @@ class Store:
             return workplaces_store.issue_pairing_code(self._conn, workplace_id)
 
     def pair_connector(
-        self, code: str, *, hostname: str = "", version: str = ""
+        self,
+        code: str,
+        *,
+        hostname: str = "",
+        version: str = "",
+        platform: str = "",
     ) -> dict[str, Any] | None:
         """Consume pairing code; return workplace_id + plaintext token."""
         with self._lock:
@@ -388,12 +399,22 @@ class Store:
                 wp["id"],
                 hostname=hostname,
                 version=version,
+                platform=platform,
                 rotate_token=True,
             )
-            return {"workplace_id": wp["id"], "token": token}
+            return {
+                "workplace_id": wp["id"],
+                "workplace_name": wp.get("name") or wp["id"],
+                "token": token,
+            }
 
     def hello_connector(
-        self, token: str, *, hostname: str = "", version: str = ""
+        self,
+        token: str,
+        *,
+        hostname: str = "",
+        version: str = "",
+        platform: str = "",
     ) -> dict[str, Any] | None:
         """Authenticate with long-lived token; mark connected in DB."""
         with self._lock:
@@ -405,6 +426,7 @@ class Store:
                 wp["id"],
                 hostname=hostname,
                 version=version,
+                platform=platform,
                 status="connected",
             )
             return {"workplace_id": wp["id"]}

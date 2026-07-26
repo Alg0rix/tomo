@@ -1,0 +1,27 @@
+{
+  "id": "process",
+  "name": "Process",
+  "description": "List, inspect, or kill background bash jobs.",
+  "backend": "app.runtime.tools.process",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "process",
+      "description": "Manage background jobs started with bash background=true. Actions: list, status, kill.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "list | status | kill"
+          },
+          "id": {
+            "type": "string",
+            "description": "Job id (required for status/kill)."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

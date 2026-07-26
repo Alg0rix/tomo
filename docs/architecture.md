@@ -4,7 +4,7 @@
 - **Schemas vs models** — Pydantic at the edge; SQL mixins in `app/models` for persistence.
 - **Extensions at the root** — `skills/` and `plugins/` are installable trees; `app/extensions` loads them.
 - **Tools in two places** — JSON contracts in `app/tools/`; Python backends in `app/runtime/tools/`.
-- **Foundation thin vertical (live)** — SQLite store → LLM → `calculator` → coordinator turn loop → web chat SSE. Spec: `docs/superpowers/specs/2026-07-26-foundation-thin-vertical-design.md`.
+- **Foundation thin vertical (live)** — SQLite store → LLM → tools (bash/files/web/memory) → coordinator turn loop → web chat SSE. Spec: `docs/superpowers/specs/2026-07-26-foundation-thin-vertical-design.md`.
 - **Alpha kitchen-sink (complete)** — slices 0→H on top of foundation:
 
 ```text

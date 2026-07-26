@@ -1,0 +1,31 @@
+{
+  "id": "todo",
+  "name": "Todo",
+  "description": "Track a simple todo list under $TOMO_HOME/library/memory.",
+  "backend": "app.runtime.tools.todo",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "todo",
+      "description": "list, add, or complete todos stored in the library memory directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "list | add | complete"
+          },
+          "content": {
+            "type": "string",
+            "description": "Todo text (required for add)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Todo id (required for complete)."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

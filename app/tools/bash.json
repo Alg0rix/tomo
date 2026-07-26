@@ -18,6 +18,10 @@
           "timeout": {
             "type": "number",
             "description": "Optional timeout in seconds (default 30, max 120)."
+          },
+          "background": {
+            "type": "boolean",
+            "description": "If true, start without waiting and return a process job id."
           }
         },
         "required": ["command"]

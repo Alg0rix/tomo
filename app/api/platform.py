@@ -42,7 +42,7 @@ async def agent_tools(agent_id: str, _: AuthDep):
 async def update_agent_tools(agent_id: str, body: dict, _: AuthDep):
     """Persist per-agent tool enablement.
 
-    Body: ``{"enabled": {"bash": true, "calculator": false, ...}}`` or
+    Body: ``{"enabled": {"bash": true, "web_fetch": false, ...}}`` or
     ``{"tools": [{"id": "bash", "enabled": true}, ...]}``.
     """
     if not store.get_agent(agent_id):

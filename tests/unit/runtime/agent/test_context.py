@@ -66,7 +66,7 @@ def test_user_and_final_map_to_chat_roles() -> None:
 
 def test_tool_call_and_output_are_paired() -> None:
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "tool_output", "content": "4"},
     ]
     msgs = history_to_messages(history)
@@ -76,15 +76,15 @@ def test_tool_call_and_output_are_paired() -> None:
     call = msgs[0]["tool_calls"][0]
     assert call["id"] == "hist_call_0"
     assert call["type"] == "function"
-    assert call["function"]["name"] == "calculator"
-    assert json.loads(call["function"]["arguments"]) == {"expression": "2 + 2"}
+    assert call["function"]["name"] == "bash"
+    assert json.loads(call["function"]["arguments"]) == {"command": "echo 2"}
     assert msgs[1] == {"role": "tool", "tool_call_id": "hist_call_0", "content": "4"}
 
 
 def test_consecutive_tool_calls_grouped_then_outputs_paired_in_order() -> None:
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 1"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "tool_output", "content": "2"},
         {"type": "tool_output", "content": "4"},
     ]
@@ -126,12 +126,12 @@ def test_unknown_entry_type_is_skipped_safely() -> None:
 
 def test_separate_turns_pair_with_fresh_ids() -> None:
     history = [
-        {"type": "user", "content": "calculate 1 + 1"},
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
+        {"type": "user", "content": "run: echo 1"},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 1"}},
         {"type": "tool_output", "content": "2"},
         {"type": "final", "content": "done"},
-        {"type": "user", "content": "calculate 2 + 2"},
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "user", "content": "run: echo 2"},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "tool_output", "content": "4"},
     ]
     msgs = history_to_messages(history)
@@ -151,7 +151,7 @@ def test_separate_turns_pair_with_fresh_ids() -> None:
 
 def test_missing_params_default_to_empty_object() -> None:
     history = [
-        {"type": "tool_call", "function": "calculator"},
+        {"type": "tool_call", "function": "bash"},
         {"type": "tool_output", "content": "ok"},
     ]
     msgs = history_to_messages(history)
@@ -190,7 +190,7 @@ def test_build_messages_defaults_system_prompt() -> None:
 def test_unpaired_tool_call_gets_synthetic_tool_result() -> None:
     """A tool_call with no following tool_output still gets a tool result."""
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "user", "content": "are you done?"},
     ]
     msgs = history_to_messages(history)
@@ -203,8 +203,8 @@ def test_unpaired_tool_call_gets_synthetic_tool_result() -> None:
 
 def test_multiple_unpaired_calls_each_get_synthetic_result() -> None:
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 1"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "user", "content": "hello?"},
     ]
     msgs = history_to_messages(history)
@@ -217,8 +217,8 @@ def test_multiple_unpaired_calls_each_get_synthetic_result() -> None:
 def test_partial_outputs_pair_first_calls_then_synthesize_the_rest() -> None:
     """Fewer outputs than calls: pair in order, synthesize the remainder."""
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "1 + 1"}},
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 1"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "tool_output", "content": "2"},
     ]
     msgs = history_to_messages(history)
@@ -235,7 +235,7 @@ def test_partial_outputs_pair_first_calls_then_synthesize_the_rest() -> None:
 def test_surplus_tool_outputs_are_dropped_not_reused() -> None:
     """Extra tool_output rows beyond the calls must not map onto the last id."""
     history = [
-        {"type": "tool_call", "function": "calculator", "params": {"expression": "2 + 2"}},
+        {"type": "tool_call", "function": "bash", "params": {"command": "echo 2"}},
         {"type": "tool_output", "content": "4"},
         {"type": "tool_output", "content": "stray"},
     ]

@@ -139,11 +139,11 @@ async def test_second_turn_does_not_reemit_session_title(tmp_path) -> None:
     assert store.get_session(sid)["title"] == "first question about billing"
 
 
-async def test_calc_turn_emits_tool_events_and_persists_entries(tmp_path) -> None:
-    store.rebind(tmp_path / "chat_calc.db")
+async def test_bash_turn_emits_tool_events_and_persists_entries(tmp_path) -> None:
+    store.rebind(tmp_path / "chat_bash.db")
     sid = store.create_swarm_session(["main"], user_id="web")
 
-    events = await _collect(sid, "calculate 2 + 2")
+    events = await _collect(sid, "run: echo 4")
 
     # tool -> tool_result -> (delta) -> done
     assert _names(events)[:1] == ["state"]
@@ -153,10 +153,10 @@ async def test_calc_turn_emits_tool_events_and_persists_entries(tmp_path) -> Non
         "tool_result",
     ]
     tool_ev = _data(events, "tool")[0]
-    assert tool_ev["tool"] == "calculator"
-    assert tool_ev["args"] == {"expression": "2 + 2"}
+    assert tool_ev["tool"] == "bash"
+    assert tool_ev["args"] == {"command": "echo 4"}
     result_ev = _data(events, "tool_result")[0]
-    assert result_ev["result"] == "4"
+    assert result_ev["result"].strip() == "4"
     assert result_ev["error"] is False
     assert _data(events, "done")
 
@@ -168,19 +168,19 @@ async def test_calc_turn_emits_tool_events_and_persists_entries(tmp_path) -> Non
     assert "final" in types
     # persisted tool_call carries the function + params; tool_output the result
     call = next(h for h in history if h["type"] == "tool_call")
-    assert call["function"] == "calculator"
-    assert call["params"] == {"expression": "2 + 2"}
+    assert call["function"] == "bash"
+    assert call["params"] == {"command": "echo 4"}
     out = next(h for h in history if h["type"] == "tool_output")
-    assert out["content"] == "4"
+    assert out["content"].strip() == "4"
     assert out["error"] is False
 
 
 async def test_coordinator_only_keeps_agent_ids_unchanged(tmp_path) -> None:
-    """A calc turn stays on the coordinator; membership is not mutated."""
+    """A bash turn stays on the coordinator; membership is not mutated."""
     store.rebind(tmp_path / "chat_swarm.db")
     sid = store.create_swarm_session(["main", "research"], user_id="web")
 
-    await _collect(sid, "calculate 3 + 4")
+    await _collect(sid, "run: echo 7")
 
     session = store.get_session(sid)
     assert session is not None
@@ -371,7 +371,7 @@ async def test_early_close_persists_seen_event_and_clears_busy(tmp_path) -> None
 
     seen_tool = False
     async with contextlib.aclosing(
-        run_session_turn(sid, "calculate 2 + 2", "web", start_seq=0)
+        run_session_turn(sid, "run: echo 4", "web", start_seq=0)
     ) as agen:
         async for chunk in agen:
             if chunk.startswith("event: tool\n"):

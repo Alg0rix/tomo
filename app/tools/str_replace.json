@@ -1,0 +1,31 @@
+{
+  "id": "str_replace",
+  "name": "String Replace",
+  "description": "Replace a unique substring in a file under the agent work-dir sandbox.",
+  "backend": "app.runtime.tools.str_replace",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "str_replace",
+      "description": "Replace old_string with new_string in a file. Fails if old_string is missing or not unique.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path under the sandbox cwd."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "Exact text to find (must occur exactly once)."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "Replacement text."
+          }
+        },
+        "required": ["path", "old_string", "new_string"]
+      }
+    }
+  }
+}

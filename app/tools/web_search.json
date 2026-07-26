@@ -1,0 +1,23 @@
+{
+  "id": "web_search",
+  "name": "Web Search",
+  "description": "Search the web via DuckDuckGo Instant Answer (no API key).",
+  "backend": "app.runtime.tools.web_search",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Return top Instant Answer / related topic snippets for a query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  }
+}

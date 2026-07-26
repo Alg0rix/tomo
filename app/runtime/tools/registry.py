@@ -4,12 +4,11 @@ Loads every ``app/tools/*.json`` definition, exposes the OpenAI-compatible
 function-tool schemas (for ``LLMClient.complete(..., tools=...)``), and
 dispatches ``execute(name, arguments)`` to the matching Python backend.
 
-Wired backends: ``calculator``, ``delegate``, ``bash``, ``read_file``,
-``write_file``, ``recall``, ``remember``. Adding a tool is a matter of dropping
-an ``app/tools/<name>.json`` file and registering its backend in
-:data:`_BACKENDS` below — dynamic ``backend``-path import is a later task.
-``execute`` always returns a string: unknown tools and missing backends
-produce ``"Error: ..."`` strings rather than raising.
+Wired backends cover coding, web, process, memory, and skills tools.
+Adding a tool is a matter of dropping an ``app/tools/<name>.json`` file and
+registering its backend in :data:`_BACKENDS` below — dynamic ``backend``-path
+import is a later task. ``execute`` always returns a string: unknown tools
+and missing backends produce ``"Error: ..."`` strings rather than raising.
 """
 
 from __future__ import annotations
@@ -20,11 +19,21 @@ from typing import Any, Callable, Iterable
 
 from app.core import config
 from app.runtime.tools import bash as _bash_backend
-from app.runtime.tools import calculator as _calculator_backend
+from app.runtime.tools import clarify as _clarify_backend
+from app.runtime.tools import delete_file as _delete_file_backend
 from app.runtime.tools import delegate as _delegate_backend
+from app.runtime.tools import forget_memory as _forget_memory_backend
+from app.runtime.tools import process as _process_backend
 from app.runtime.tools import read_file as _read_file_backend
 from app.runtime.tools import recall as _recall_backend
 from app.runtime.tools import remember as _remember_backend
+from app.runtime.tools import search_files as _search_files_backend
+from app.runtime.tools import session_search as _session_search_backend
+from app.runtime.tools import skills_tools as _skills_tools
+from app.runtime.tools import str_replace as _str_replace_backend
+from app.runtime.tools import todo as _todo_backend
+from app.runtime.tools import web_fetch as _web_fetch_backend
+from app.runtime.tools import web_search as _web_search_backend
 from app.runtime.tools import write_file as _write_file_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
@@ -33,11 +42,22 @@ ToolRunner = Callable[[dict[str, Any]], str]
 # Repo-controlled Python modules; the JSON ``backend`` field is kept accurate
 # for documentation and a future dynamic-import task.
 _BACKENDS: dict[str, ToolRunner] = {
-    "calculator": _calculator_backend.run,
     "delegate": _delegate_backend.run,
     "bash": _bash_backend.run,
     "read_file": _read_file_backend.run,
     "write_file": _write_file_backend.run,
+    "str_replace": _str_replace_backend.run,
+    "search_files": _search_files_backend.run,
+    "delete_file": _delete_file_backend.run,
+    "web_fetch": _web_fetch_backend.run,
+    "web_search": _web_search_backend.run,
+    "process": _process_backend.run,
+    "todo": _todo_backend.run,
+    "session_search": _session_search_backend.run,
+    "list_skills": _skills_tools.list_skills_run,
+    "use_skill": _skills_tools.use_skill_run,
+    "clarify": _clarify_backend.run,
+    "forget_memory": _forget_memory_backend.run,
     "recall": _recall_backend.run,
     "remember": _remember_backend.run,
 }
@@ -177,4 +197,3 @@ __all__ = [
     "execute",
     "reset_registry",
 ]
-

@@ -1,0 +1,18 @@
+{
+  "id": "list_skills",
+  "name": "List Skills",
+  "description": "List skills registered in the platform catalog.",
+  "backend": "app.runtime.tools.skills_tools",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "list_skills",
+      "description": "Return id/name/description for each skill in SQLite.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  }
+}

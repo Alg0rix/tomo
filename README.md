@@ -17,7 +17,7 @@ What ships in Alpha (slices 0→H):
 | **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
 | **Models** | Multi-profile catalog, default + per-agent model |
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
-| **Tools** | `calculator`, `bash`, `read_file`, `write_file`, `recall`, `remember`, `delegate` |
+| **Tools** | `bash`, `read_file`, `write_file`, `str_replace`, `search_files`, `delete_file`, `web_fetch`, `web_search`, `process`, `todo`, `session_search`, `list_skills`, `use_skill`, `clarify`, `forget_memory`, `recall`, `remember`, `delegate` |
 | **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) |
 | **Memory / KB** | SQLite knowledge entries + recall/remember tools |
 | **Channels** | Web UI + Telegram long-poll bot |
@@ -346,16 +346,13 @@ General-purpose primitives — enable per agent based on your use case:
 
 | Tool | Purpose |
 |------|---------|
-| `bash` | Run shell scripts (local, remote, or sandboxed) |
-| `runpy` | Execute Python with persistent session state |
-| `read_file` / `write_file` / `str_replace` / `patch` | File operations (coding, config, documents) |
-| `sshc` | Ad-hoc SSH session |
-| `portal_copy` / `copy_status` | Move files between workplaces |
-| `agent_info` | Inspect another agent's capabilities |
-| `save_artifact` / `list_artifacts` / `fetch_artifact` | Persistent outputs across sessions |
-| `send_file` / `read_attachment` | Channel file exchange |
-| `describe_image` / `transcribe_audio` | Vision and voice input |
-| `get_weather` / `calculator` / `get_current_date` | Utility tools (examples of easy extensions) |
+| `bash` | Run shell commands (optional `background` + `process` for jobs) |
+| `read_file` / `write_file` / `str_replace` / `delete_file` / `search_files` | File ops under the agent sandbox |
+| `web_fetch` / `web_search` | Fetch URLs and search the web |
+| `todo` / `session_search` | Lightweight todos and message search |
+| `list_skills` / `use_skill` | Browse and load skill descriptions |
+| `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
+| `recall` / `remember` / `delegate` | Memory and swarm handoff |
 
 See the `app/tools/` directory for the full catalog.
 

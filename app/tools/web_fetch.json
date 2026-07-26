@@ -1,0 +1,23 @@
+{
+  "id": "web_fetch",
+  "name": "Web Fetch",
+  "description": "Fetch readable text content from a public HTTP(S) URL.",
+  "backend": "app.runtime.tools.web_fetch",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "HTTP GET a URL and return truncated text. Private/loopback hosts are blocked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "http or https URL to fetch."
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  }
+}

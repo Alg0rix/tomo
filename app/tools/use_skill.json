@@ -1,0 +1,23 @@
+{
+  "id": "use_skill",
+  "name": "Use Skill",
+  "description": "Load a skill's description/body by id.",
+  "backend": "app.runtime.tools.skills_tools",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "use_skill",
+      "description": "Return the skill description so the agent can follow it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "description": "Skill id from list_skills."
+          }
+        },
+        "required": ["skill_id"]
+      }
+    }
+  }
+}

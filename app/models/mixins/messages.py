@@ -107,3 +107,34 @@ def clear_session_history(conn: sqlite3.Connection, session_id: str) -> None:
         (_now(), session_id),
     )
     conn.commit()
+
+
+def search_messages(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Keyword LIKE search over message ``content`` across all sessions."""
+    text = (query or "").strip()
+    if not text:
+        return []
+    k = max(1, min(int(limit or 10), 50))
+    pattern = f"%{text}%"
+    rows = conn.execute(
+        "SELECT session_id, type, content, agent_id, function, ts "
+        "FROM messages WHERE content LIKE ? COLLATE NOCASE "
+        "ORDER BY ts DESC LIMIT ?",
+        (pattern, k),
+    ).fetchall()
+    return [
+        {
+            "session_id": r["session_id"],
+            "type": r["type"],
+            "content": r["content"] or "",
+            "agent_id": r["agent_id"],
+            "function": r["function"],
+            "ts": r["ts"],
+        }
+        for r in rows
+    ]

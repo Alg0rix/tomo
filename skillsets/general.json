@@ -3,5 +3,24 @@
   "name": "General assistant",
   "description": "Default coordinator-friendly profile.",
   "skills": [],
-  "tools": ["calculator", "read_file", "write_file"]
+  "tools": [
+    "bash",
+    "read_file",
+    "write_file",
+    "str_replace",
+    "search_files",
+    "delete_file",
+    "web_fetch",
+    "web_search",
+    "process",
+    "todo",
+    "session_search",
+    "list_skills",
+    "use_skill",
+    "clarify",
+    "forget_memory",
+    "recall",
+    "remember",
+    "delegate"
+  ]
 }

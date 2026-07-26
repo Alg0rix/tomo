@@ -1,0 +1,31 @@
+{
+  "id": "search_files",
+  "name": "Search Files",
+  "description": "Search for a pattern in files under the agent work-dir sandbox.",
+  "backend": "app.runtime.tools.search_files",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "search_files",
+      "description": "Walk the sandbox and return path:line:snippet matches (capped). Supports substring or regex.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Substring or regex pattern to find."
+          },
+          "glob": {
+            "type": "string",
+            "description": "Optional filename glob (e.g. *.py)."
+          },
+          "regex": {
+            "type": "boolean",
+            "description": "When true, treat pattern as a regex."
+          }
+        },
+        "required": ["pattern"]
+      }
+    }
+  }
+}

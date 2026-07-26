@@ -1,0 +1,23 @@
+{
+  "id": "delete_file",
+  "name": "Delete File",
+  "description": "Delete a file under the agent work-dir sandbox (files only).",
+  "backend": "app.runtime.tools.delete_file",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "delete_file",
+      "description": "Delete a file relative to the sandbox cwd. Directories are rejected.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path under the sandbox cwd."
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  }
+}

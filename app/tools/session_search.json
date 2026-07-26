@@ -1,0 +1,27 @@
+{
+  "id": "session_search",
+  "name": "Session Search",
+  "description": "Keyword search over persisted session messages.",
+  "backend": "app.runtime.tools.session_search",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "session_search",
+      "description": "Search message content across sessions (SQLite LIKE) and return snippets.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keyword to find in message content."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max hits (default 10)."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  }
+}

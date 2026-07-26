@@ -1,0 +1,27 @@
+{
+  "id": "forget_memory",
+  "name": "Forget Memory",
+  "description": "Delete a knowledge base entry by id or query.",
+  "backend": "app.runtime.tools.forget_memory",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "forget_memory",
+      "description": "Remove a knowledge entry. Prefer id; otherwise delete the top query match.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Knowledge entry id."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query when id is unknown."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}
