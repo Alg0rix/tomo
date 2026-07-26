@@ -132,5 +132,18 @@ class MockLLMClient:
             )
         return LLMResponse(content=_DEFAULT_REPLY, tool_calls=[])
 
+    async def stream_complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ):
+        """Yield the full reply as one delta (tests), then a done response."""
+        resp = await self.complete(messages, tools)
+        if resp.content and not resp.has_tool_calls:
+            words = resp.content.split(" ")
+            for i, w in enumerate(words):
+                yield {"type": "delta", "content": w if i == 0 else (" " + w)}
+        yield {"type": "done", "response": resp}
+
 
 __all__ = ["MockLLMClient"]

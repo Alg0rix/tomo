@@ -1,47 +1,31 @@
-"""``get_llm()`` factory tests across providers and misconfiguration."""
+"""``get_llm()`` factory — settings-backed OpenAI-compatible client only."""
 
 from __future__ import annotations
 
 import pytest
 
-from app.core import config
-from app.runtime.llm import (
-    LLMProviderError,
-    MockLLMClient,
-    OpenAICompatClient,
-    get_llm,
-)
+from app.runtime.llm import OpenAICompatClient, get_llm
 from app.runtime.llm.openai_compat import LLMConfigError
+from app.services import store
 
 
-def test_default_provider_returns_mock(monkeypatch) -> None:
-    monkeypatch.setattr(config, "LLM_PROVIDER", "mock")
-    client = get_llm()
-    assert isinstance(client, MockLLMClient)
+def _rebind(tmp_path) -> None:
+    store.rebind(tmp_path / "llm-factory.db")
 
 
-def test_openai_compat_provider_returns_client(monkeypatch) -> None:
-    monkeypatch.setattr(config, "LLM_PROVIDER", "openai_compat")
-    monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
-    monkeypatch.setattr(config, "LLM_BASE_URL", "https://example.test/v1")
-    monkeypatch.setattr(config, "LLM_MODEL", "gpt-4o-mini")
+def test_get_llm_raises_without_api_key(tmp_path) -> None:
+    _rebind(tmp_path)
+    with pytest.raises(LLMConfigError, match="System"):
+        get_llm()
+
+
+def test_get_llm_builds_client_from_settings(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.update_settings({
+        "llm_api_key": "sk-test",
+        "llm_base_url": "https://example.test/v1",
+        "llm_model": "gpt-test",
+    })
     client = get_llm()
     assert isinstance(client, OpenAICompatClient)
-
-
-def test_openai_compat_missing_api_key_raises(monkeypatch) -> None:
-    monkeypatch.setattr(config, "LLM_PROVIDER", "openai_compat")
-    monkeypatch.setattr(config, "LLM_API_KEY", "")
-    with pytest.raises(LLMConfigError):
-        get_llm()
-
-
-def test_unknown_provider_raises(monkeypatch) -> None:
-    monkeypatch.setattr(config, "LLM_PROVIDER", "bogus")
-    with pytest.raises(LLMProviderError):
-        get_llm()
-
-
-def test_provider_is_case_insensitive(monkeypatch) -> None:
-    monkeypatch.setattr(config, "LLM_PROVIDER", "MOCK")
-    assert isinstance(get_llm(), MockLLMClient)
+    assert client.endpoint == "https://example.test/v1/chat/completions"

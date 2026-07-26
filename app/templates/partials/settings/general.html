@@ -6,12 +6,7 @@
   <div class="card">
     <div class="card-body" style="padding:16px 18px">
       <div class="config-row"><div class="lbl">Version</div><div class="mono">0.1.0</div></div>
-      <div class="config-row"><div class="lbl">Runtime</div><div><span class="badge muted">stubbed</span> coordinator pending</div></div>
-      <div class="config-row"><div class="lbl">Default model</div>
-        <select class="input" id="setDefaultModel" style="max-width:240px">
-          {% for m in models %}<option value="{{ m.id }}" {% if m.is_default %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
-        </select>
-      </div>
+      <div class="config-row"><div class="lbl">Runtime</div><div><span class="badge ok">live</span> coordinator · settings-backed LLM</div></div>
       <div class="config-row"><div class="lbl">Max tool iterations</div>
         <input class="input" type="number" id="setMaxIter" value="{{ settings.max_tool_iterations }}" style="max-width:100px">
       </div>

@@ -118,7 +118,7 @@ async def scheduler_page(request: Request, _: AuthDep):
 async def system_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "system.html", _ctx(
         request, "system",
-        settings=store.get_settings(),
+        settings=store.get_public_settings(),
         tools=store.list_tools(),
         models=store.list_models(),
         providers=store.list_providers(),

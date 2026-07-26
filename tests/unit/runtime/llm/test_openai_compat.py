@@ -160,18 +160,17 @@ async def test_request_error_wraps_network_failure() -> None:
         )
 
 
-async def test_default_config_resolves_lazily(monkeypatch) -> None:
-    """Constructing without explicit args reads live config values."""
-    from app.core import config
-
-    monkeypatch.setattr(config, "LLM_BASE_URL", _BASE)
-    monkeypatch.setattr(config, "LLM_API_KEY", _KEY)
-    monkeypatch.setattr(config, "LLM_MODEL", _MODEL)
-
+async def test_explicit_args_client() -> None:
+    """Constructing with explicit args does not need env/config."""
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_completion_body(content="ok"))
 
-    client = OpenAICompatClient(transport=httpx.MockTransport(handler))
+    client = OpenAICompatClient(
+        base_url=_BASE,
+        api_key=_KEY,
+        model=_MODEL,
+        transport=httpx.MockTransport(handler),
+    )
     assert client.endpoint == f"{_BASE}/chat/completions"
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.content == "ok"

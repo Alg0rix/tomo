@@ -81,7 +81,7 @@ async def list_models(_: AuthDep):
 
 @router.get("/settings")
 async def get_settings(_: AuthDep):
-    return store.get_settings()
+    return store.get_public_settings()
 
 
 @router.put("/settings")

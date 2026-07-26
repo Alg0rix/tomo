@@ -1,0 +1,8 @@
+---
+description: Never start or restart the Tomo server — the user runs it themselves.
+alwaysApply: true
+---
+
+# Tomo server
+
+Do **not** start, restart, or kill the Tomo app server (`python -m app.main`, uvicorn on 8787, etc.). The user runs it themselves. Only change code; tell them to reload if needed.

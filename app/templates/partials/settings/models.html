@@ -1,33 +1,42 @@
 {% from 'partials/page_head.html' import section_head %}
-{% from 'partials/toggle.html' import toggle %}
 
 <section id="sec-models" class="sys-section" style="display:none">
-  {{ section_head('Models & providers', 'LLM providers and model catalog.') }}
+  {{ section_head('Models & providers', 'OpenAI-compatible LLM endpoint used by the coordinator.') }}
   <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>Providers</h3></div>
-    <div class="card-body">
-      {% for p in providers %}
-      <div class="row">
-        <div class="meta"><div class="title">{{ p.name }}</div><div class="desc">{{ p.model_count }} models</div></div>
-        {{ toggle(checked=p.enabled, disabled=true) }}
-      </div>
-      {% endfor %}
+    <div class="card-head"><h3>LLM connection</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <p class="faint" style="margin:0 0 14px;font-size:13px">
+        Works with OpenAI, OpenRouter, vLLM, LM Studio, and any host that exposes
+        <span class="mono">POST /v1/chat/completions</span>.
+      </p>
+      <form id="llmSettingsForm" autocomplete="off" onsubmit="return false;">
+        <div class="config-row"><div class="lbl">Base URL</div>
+          <input class="input" type="url" id="setLlmBaseUrl" name="llm_base_url"
+            value="{{ settings.llm_base_url }}" style="max-width:420px"
+            placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="config-row"><div class="lbl">API key</div>
+          <div style="flex:1;max-width:420px">
+            <input class="input" type="password" id="setLlmApiKey" name="llm_api_key_new"
+              value="" style="width:100%"
+              placeholder="Paste a new key to replace"
+              autocomplete="new-password" spellcheck="false">
+            <p class="faint" id="llmKeyStatus" style="margin:6px 0 0;font-size:12px">
+              {% if settings.llm_api_key_set %}
+                On file: <span class="mono">{{ settings.llm_api_key }}</span> — leave blank to keep
+              {% else %}
+                Not set — required for chat
+              {% endif %}
+            </p>
+          </div>
+        </div>
+        <div class="config-row"><div class="lbl">Model</div>
+          <input class="input" type="text" id="setLlmModel" name="llm_model"
+            value="{{ settings.llm_model }}" style="max-width:240px"
+            placeholder="gpt-4o-mini" autocomplete="off" spellcheck="false">
+        </div>
+        <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveModels">Save LLM settings</button></div>
+      </form>
     </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><h3>Models</h3></div>
-    <table class="data-table">
-      <thead><tr><th>Model</th><th>Provider</th><th>Context</th><th>Default</th></tr></thead>
-      <tbody>
-        {% for m in models %}
-        <tr>
-          <td class="mono">{{ m.id }}</td>
-          <td>{{ m.provider_id }}</td>
-          <td class="faint">{{ (m.context / 1000)|int }}k</td>
-          <td>{% if m.is_default %}<span class="badge accent sm">default</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
   </div>
 </section>

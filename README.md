@@ -400,7 +400,7 @@ See `tools/` for declarative tool definitions; Python implementations go in `app
 
 ## Getting started
 
-Tomo's **foundation thin vertical is live** — the smallest end-to-end real path is wired: a SQLite-backed store, a mock or OpenAI-compatible LLM, a `calculator` tool, a coordinator-only agent turn loop, and a web chat UI streaming over SSE. The broader swarm (multi-agent delegation, learning loop, memory, extra channels) is still on the roadmap.
+Tomo's **foundation thin vertical is live** — SQLite store, OpenAI-compatible LLM (configured in System → Models), a `calculator` tool, a coordinator-only agent turn loop, and web chat over SSE. The broader swarm (multi-agent delegation, learning loop, memory, extra channels) is still on the roadmap.
 
 ```bash
 git clone <repo-url>
@@ -411,23 +411,17 @@ uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
 
 ### Configuration
 
-All settings are environment variables (see `app/core/config.py`). The defaults work out of the box for local development.
+**LLM** — open **System → Models** and set:
 
-**LLM provider** — `TOMO_LLM_PROVIDER` selects the backend:
+- Base URL (OpenAI-compatible host, default `https://api.openai.com/v1`)
+- API key (required for chat)
+- Model id (e.g. `gpt-4o-mini`)
 
-- `mock` (default) — a deterministic in-process LLM used for tests and local play. No API key required; the mock can exercise the `calculator` tool on its own.
-- `openai_compat` — any OpenAI-compatible chat completions endpoint:
-
-  ```bash
-  export TOMO_LLM_PROVIDER=openai_compat
-  export TOMO_LLM_API_KEY=sk-...                              # required for real endpoints
-  export TOMO_LLM_BASE_URL=https://api.openai.com/v1          # or your compatible host
-  export TOMO_LLM_MODEL=gpt-4o-mini
-  ```
+Until an API key is saved, chat returns a clear error pointing at that page. Max tool iterations live under **System → General**.
 
 **Database** — state lives in SQLite at `TOMO_DB_PATH` (default `var/tomo.db`). The `var/` directory and the database file are created automatically on first run; point it elsewhere with `export TOMO_DB_PATH=/path/to/tomo.db`.
 
-**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`), `TOMO_RELOAD` (default `false`).
+**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`), `TOMO_RELOAD` (default `false`). Also `TOMO_ADMIN_PASSWORD` / `TOMO_SECRET_KEY` for auth.
 
 ### Tests
 

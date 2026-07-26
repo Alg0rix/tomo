@@ -1,5 +1,5 @@
 /* chat.js — streaming chat client (agent detail + swarm sessions page).
- * Event protocol: state · turn.start · thinking · tool · tool_result · delta · done · delegate · error · heartbeat
+ * Event protocol: state · turn.start · session · thinking · tool · tool_result · delta · done · delegate · error · heartbeat
  */
 (function () {
   "use strict";
@@ -14,8 +14,20 @@
     root.querySelectorAll('pre code').forEach(function (b) { try { hljs.highlightElement(b); } catch (e) {} });
   }
   function renderMarkdown(el) {
+    // Idempotent: textContent of already-parsed HTML drops markdown markers,
+    // so a second pass (e.g. history render then TomoChat.init) would flatten
+    // formatting to plain text on refresh.
+    if (!el || el.dataset.md === '1') return;
     el.innerHTML = md(el.textContent);
     renderCode(el);
+    el.dataset.md = '1';
+  }
+
+  function setMarkdown(el, text) {
+    if (!el) return;
+    el.dataset.md = '0';
+    el.textContent = text == null ? '' : String(text);
+    renderMarkdown(el);
   }
 
   function agentColor(id) {
@@ -90,8 +102,21 @@
       let thinkEl = null, asstEl = null, asstBody = null, raw = '', closed = false;
       let turnAgentName = defaultAgentName;
       let turnAgentId = agentId || '';
+      let turnActive = false;
 
       es = new EventSource(streamUrl(text));
+
+      // Log every wire event (browser console) for debugging streams / titles.
+      [
+        'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
+        'delta', 'done', 'delegate', 'error', 'heartbeat', 'auth_expired',
+      ].forEach(function (name) {
+        es.addEventListener(name, function (e) {
+          var payload = e && e.data;
+          try { payload = JSON.parse(e.data || '{}'); } catch (_) {}
+          console.log('[tomo sse]', name, payload);
+        });
+      });
 
       function close() {
         if (closed) return;
@@ -109,9 +134,19 @@
         atBottom();
       }
 
+      function endTurn() {
+        if (closed) return;
+        close();
+        Tomo.renderRail && Tomo.renderRail();
+        wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+      }
+
       es.addEventListener('state', function (e) {
         const d = JSON.parse(e.data || '{}');
         setStatus(d.busy ? 'amber' : 'ok', d.busy ? 'busy' : 'online');
+        // Close only after a turn started and busy clears — keeps the stream
+        // open past `done` so the LLM session-title event is received.
+        if (!d.busy && turnActive) endTurn();
       });
       es.addEventListener('delegate', function (e) {
         const d = JSON.parse(e.data || '{}');
@@ -123,9 +158,28 @@
       });
       es.addEventListener('turn.start', function (e) {
         const d = JSON.parse(e.data || '{}');
+        turnActive = true;
         turnAgentName = d.agent || turnAgentName;
         turnAgentId = d.agent_id || turnAgentId;
-        if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; turn.appendChild(thinkEl); }
+        // Pending assistant bubble with streaming cursor (Evonic-style) —
+        // never an empty purple thinking slab.
+        if (!asstEl) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
+          asstEl = tmp.firstElementChild;
+          asstEl.classList.add('streaming');
+          turn.appendChild(asstEl);
+          asstBody = asstEl.querySelector('.bubble-body');
+          asstBody.innerHTML = '';
+        }
+        atBottom();
+      });
+      es.addEventListener('session', function (e) {
+        const d = JSON.parse(e.data || '{}');
+        if (!d.title) return;
+        wrap.dispatchEvent(new CustomEvent('tomo:session-title', {
+          detail: { session_id: d.session_id || sessionId, title: d.title },
+        }));
       });
       es.addEventListener('thinking', function (e) {
         const d = JSON.parse(e.data || '{}');
@@ -137,6 +191,7 @@
       });
       es.addEventListener('tool', function (e) {
         const d = JSON.parse(e.data || '{}');
+        if (asstEl) asstEl.classList.remove('streaming');
         const card = document.createElement('div');
         card.className = 'tool';
         card.innerHTML = '<div><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tres" style="display:none"></div>';
@@ -166,9 +221,9 @@
           turn.appendChild(asstEl);
           asstBody = asstEl.querySelector('.bubble-body');
         }
+        asstEl.classList.add('streaming');
         raw += d.content || '';
-        asstBody.innerHTML = md(raw);
-        renderCode(asstBody);
+        setMarkdown(asstBody, raw);
         atBottom();
       });
       es.addEventListener('done', function (e) {
@@ -176,21 +231,20 @@
         if (d.agent) turnAgentName = d.agent;
         if (d.agent_id) turnAgentId = d.agent_id;
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        if (d.content && asstBody) { raw = d.content; asstBody.innerHTML = md(raw); renderCode(asstBody); }
+        if (d.content && asstBody) { raw = d.content; setMarkdown(asstBody, raw); }
         if (!asstEl) {
           const tmp = document.createElement('div');
           tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
           asstEl = tmp.firstElementChild;
           turn.appendChild(asstEl);
           asstBody = asstEl.querySelector('.bubble-body');
-          asstBody.innerHTML = md(d.content || '');
-          renderCode(asstBody);
+          setMarkdown(asstBody, d.content || '');
         }
+        if (asstEl) asstEl.classList.remove('streaming');
         atBottom();
         setStatus('ok', 'online');
-        close();
-        Tomo.renderRail && Tomo.renderRail();
-        wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+        // Do not close here — wait for trailing state busy=false so the LLM
+        // session-title event (emitted after done) is still received.
       });
       // The 'error' listener fires for TWO distinct cases:
       //  (1) a named SSE event `event: error\ndata: {"message": ...}` — a server
@@ -273,7 +327,7 @@
     return { destroy: closeStream, send: send };
   }
 
-  window.TomoChat = { init: initChat, renderMarkdown: renderMarkdown };
+  window.TomoChat = { init: initChat, renderMarkdown: renderMarkdown, setMarkdown: setMarkdown };
 
   document.querySelectorAll('.chat-wrap').forEach(function (wrap) {
     initChat(wrap);

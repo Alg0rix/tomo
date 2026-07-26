@@ -7,16 +7,18 @@ and yields a stream of internal ``dict`` events for the chat layer (Task 6)
 to map onto SSE:
 
 * ``{"kind": "thinking", "content": str}``          # optional reasoning
+* ``{"kind": "delta", "content": str}``             # streamed text token/chunk
 * ``{"kind": "tool", "tool": str, "args": dict}``
 * ``{"kind": "tool_result", "tool": str, "result": str, "error": bool}``
-* ``{"kind": "final", "content": str}``
+* ``{"kind": "final", "content": str, "already_streamed": bool}``
 * ``{"kind": "error", "message": str}``
 
 The loop stops when the model returns plain text (-> ``final``) or when
-``LLM_MAX_TOOL_ITERATIONS`` completion rounds are exhausted without a final
-answer (-> ``error``). One "iteration" is one ``complete()`` round, which
-may carry several tool calls; every tool call is executed and its result
-fed back before the next round.
+``max_tool_iterations`` completion rounds are exhausted without a final
+answer (-> ``error``). One "iteration" is one LLM completion round (streamed
+when the client supports ``stream_complete``), which may carry several tool
+calls; every tool call is executed and its result fed back before the next
+round.
 """
 
 from __future__ import annotations
@@ -25,11 +27,45 @@ import itertools
 import json
 from typing import Any, AsyncIterator
 
-from app.core import config
 from app.runtime.agent.context import build_messages
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.tools.registry import execute, get_openai_tools
+
+
+def _max_tool_iterations() -> int:
+    from app.services import store
+
+    try:
+        raw = store.get_settings().get("max_tool_iterations", 12)
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 12
+
+
+async def _llm_round(
+    client: LLMClient,
+    messages: list[dict[str, Any]],
+    tool_schemas: list[dict[str, Any]],
+) -> AsyncIterator[dict[str, Any]]:
+    """Run one LLM round, preferring token streaming when available.
+
+    Yields ``{"kind": "delta", ...}`` chunks, then
+    ``{"kind": "_response", "response": LLMResponse}``.
+    """
+    stream_fn = getattr(client, "stream_complete", None)
+    if stream_fn is None:
+        resp = await client.complete(messages, tool_schemas)
+        if resp.content and not resp.has_tool_calls:
+            yield {"kind": "delta", "content": resp.content}
+        yield {"kind": "_response", "response": resp}
+        return
+
+    async for ev in stream_fn(messages, tool_schemas):
+        if ev.get("type") == "delta" and ev.get("content"):
+            yield {"kind": "delta", "content": ev["content"]}
+        elif ev.get("type") == "done":
+            yield {"kind": "_response", "response": ev["response"]}
 
 
 async def run_turn(
@@ -48,48 +84,51 @@ async def run_turn(
     ``user_message`` is the new turn input; pass ``None`` when the caller has
     already persisted the user entry into ``history`` (the Task 6 pattern) so
     it is not duplicated. ``llm`` / ``tools`` / ``system_prompt`` /
-    ``max_iterations`` default to the app configuration (``get_llm()``,
-    ``get_openai_tools()``, ``coordinator_system_prompt()``,
-    ``LLM_MAX_TOOL_ITERATIONS``) but are injectable for tests. ``agent_id`` /
+    ``max_iterations`` default to settings-backed ``get_llm()``,
+    ``get_openai_tools()``, ``coordinator_system_prompt()``, and
+    ``max_tool_iterations`` but are injectable for tests. ``agent_id`` /
     ``session_id`` are accepted as context inputs for the persistence wiring
-    in Task 6 and are not used here. Setup failures (bad provider config,
+    in Task 6 and are not used here. Setup failures (bad LLM config,
     broken tool schema, message assembly) and per-round backend failures are
     surfaced as ``{"kind": "error", ...}`` events — ``run_turn`` never raises
     out to the consumer. The function is an async generator — iterate with
     ``async for``.
     """
-    # --- setup: client / tools / messages --------------------------------
-    # Failures here (misconfigured provider via ``get_llm``, broken tool
-    # schema via ``get_openai_tools``, or message assembly) are surfaced as
-    # ``error`` events rather than raised, so a consumer iterating the
-    # generator never sees an exception escape ``run_turn``.
     try:
         client = llm if llm is not None else get_llm()
         tool_schemas = tools if tools is not None else get_openai_tools()
         limit = (
             max_iterations
             if max_iterations is not None
-            else config.LLM_MAX_TOOL_ITERATIONS
+            else _max_tool_iterations()
         )
         messages = build_messages(history, user_message, system_prompt=system_prompt)
-    except Exception as exc:  # setup must never raise out of run_turn
+    except Exception as exc:
         yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
         return
 
-    # Turn-scoped source of synthesised tool-call ids so empty ids never
-    # collide across completion rounds within one turn.
     id_counter = itertools.count()
 
     iteration = 0
     while iteration < limit:
         iteration += 1
+        resp: LLMResponse | None = None
+        streamed = False
         try:
-            resp = await client.complete(messages, tool_schemas)
-        except Exception as exc:  # surface any backend failure as an error event
+            async for piece in _llm_round(client, messages, tool_schemas):
+                if piece["kind"] == "delta":
+                    streamed = True
+                    yield piece
+                elif piece["kind"] == "_response":
+                    resp = piece["response"]
+        except Exception as exc:
             yield {"kind": "error", "message": f"LLM request failed: {exc}"}
             return
 
-        # Optional reasoning emitted alongside tool calls.
+        if resp is None:
+            yield {"kind": "error", "message": "LLM stream ended without a response"}
+            return
+
         if resp.has_tool_calls and resp.content:
             yield {"kind": "thinking", "content": resp.content}
 
@@ -109,13 +148,15 @@ async def run_turn(
                 messages.append(
                     {"role": "tool", "tool_call_id": cid, "content": result}
                 )
-            continue  # feed results back and run the next round
+            continue
 
-        # Plain-text answer -> final.
-        yield {"kind": "final", "content": resp.content or ""}
+        yield {
+            "kind": "final",
+            "content": resp.content or "",
+            "already_streamed": streamed,
+        }
         return
 
-    # Exhausted the iteration budget without a final answer.
     yield {
         "kind": "error",
         "message": (

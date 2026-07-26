@@ -65,6 +65,43 @@ def test_first_user_message_renames_session(tmp_path) -> None:
     assert store.get_session(sid)["title"] == "Plan the Q3 launch carefully"
 
 
+def test_derive_session_title_collapses_and_truncates() -> None:
+    from app.models.mixins.messages import derive_session_title
+
+    assert derive_session_title("  hello\nworld  ") == "hello world"
+    long = "word " * 30
+    title = derive_session_title(long, max_len=40)
+    assert len(title) <= 41  # ellipsis
+    assert title.endswith("…")
+    assert "  " not in title
+
+
+def test_append_returns_resolved_title_once(tmp_path) -> None:
+    _rebind(tmp_path)
+    sid = store.create_swarm_session(["main"])
+    first = store.append_session_history(
+        sid, {"type": "user", "content": "Ship the darkroom fix tonight", "ts": time.time()}
+    )
+    assert first == "Ship the darkroom fix tonight"
+    second = store.append_session_history(
+        sid, {"type": "user", "content": "and also the docs", "ts": time.time()}
+    )
+    assert second is None
+    assert store.get_session(sid)["title"] == "Ship the darkroom fix tonight"
+
+
+def test_set_session_title(tmp_path) -> None:
+    _rebind(tmp_path)
+    sid = store.create_swarm_session(["main"])
+    before = store.get_session(sid)["updated_at"]
+    s = store.set_session_title(sid, "Q3 Launch Plan")
+    assert s is not None
+    assert s["title"] == "Q3 Launch Plan"
+    assert store.get_session(sid)["title"] == "Q3 Launch Plan"
+    assert store.get_session(sid)["updated_at"] >= before
+    assert store.set_session_title("ses_missing", "Nope") is None
+
+
 def test_clear_session_by_id(tmp_path) -> None:
     _rebind(tmp_path)
     sid = store.create_swarm_session(["main"])

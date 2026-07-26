@@ -37,6 +37,29 @@
     return names.join(' · ') || s.agent_id || 'Swarm';
   }
 
+  function applyChatHeader(s) {
+    const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
+    const label = sessionLabel(s);
+    const title = (s.title || '').trim() || label;
+    document.getElementById('chatAgentName').textContent = title;
+    document.getElementById('chatSessionMeta').textContent =
+      label + ' · ' + ids.length + ' agent' + (ids.length === 1 ? '' : 's');
+    chatWrap.dataset.agentName = label;
+  }
+
+  function applySessionTitle(sessionId, title) {
+    const s = sessions.find(function (x) { return x.id === sessionId; });
+    if (s) s.title = title;
+    if (sessionId === activeId) {
+      const cur = sessions.find(function (x) { return x.id === sessionId; });
+      if (cur) applyChatHeader(cur);
+      else {
+        document.getElementById('chatAgentName').textContent = title;
+      }
+    }
+    renderList(searchEl ? searchEl.value : '');
+  }
+
   function params() {
     return new URLSearchParams(location.search);
   }
@@ -127,12 +150,19 @@
       const row = document.createElement('div');
       row.className = 'msg ' + role;
       const avStyle = role === 'assistant' && e.agent_id ? ' style="background:' + agentColor(e.agent_id) + '"' : '';
+      const proseClass = role === 'assistant' ? 'bubble-body prose' : 'bubble-body';
       row.innerHTML = '<div class="av"' + avStyle + '>' + esc(role === 'user' ? 'You' : who.slice(0, 1).toUpperCase()) + '</div>' +
-        '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose">' + esc(e.content || '') + '</div></div>';
+        '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="' + proseClass + '"></div></div>';
+      const body = row.querySelector('.bubble-body');
+      if (role === 'assistant' && window.TomoChat && TomoChat.setMarkdown) {
+        TomoChat.setMarkdown(body, e.content || '');
+      } else if (role === 'assistant' && window.TomoChat && TomoChat.renderMarkdown) {
+        body.textContent = e.content || '';
+        TomoChat.renderMarkdown(body);
+      } else {
+        body.textContent = e.content || '';
+      }
       scroll.appendChild(row);
-    });
-    scroll.querySelectorAll('.prose').forEach(function (el) {
-      if (window.TomoChat && TomoChat.renderMarkdown) TomoChat.renderMarkdown(el);
     });
   }
 
@@ -157,8 +187,7 @@
     chatWrap.dataset.chatInit = '0';
     delete chatWrap.dataset.agentId;
 
-    document.getElementById('chatAgentName').textContent = label;
-    document.getElementById('chatSessionMeta').textContent = sessionId + ' · ' + ids.length + ' agent' + (ids.length === 1 ? '' : 's');
+    applyChatHeader(s);
     renderAvatars(ids);
 
     if (chatHandle && chatHandle.destroy) chatHandle.destroy();
@@ -168,11 +197,6 @@
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
-      chatWrap.addEventListener('tomo:chat-done', refreshSessions, { once: true });
-      chatWrap.addEventListener('tomo:chat-cleared', function () {
-        renderHistory([]);
-        refreshSessions();
-      }, { once: true });
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
       Tomo.toast('Could not load session', 'err');
@@ -235,6 +259,21 @@
   }
 
   if (searchEl) searchEl.addEventListener('input', function () { renderList(searchEl.value); });
+
+  chatWrap.addEventListener('tomo:session-title', function (ev) {
+    const d = ev.detail || {};
+    if (d.title) applySessionTitle(d.session_id || activeId, d.title);
+  });
+  chatWrap.addEventListener('tomo:chat-done', function () {
+    refreshSessions().then(function () {
+      const cur = sessions.find(function (x) { return x.id === activeId; });
+      if (cur) applyChatHeader(cur);
+    });
+  });
+  chatWrap.addEventListener('tomo:chat-cleared', function () {
+    renderHistory([]);
+    refreshSessions();
+  });
 
   function bindModal(m, closeAttr) {
     if (!m) return;

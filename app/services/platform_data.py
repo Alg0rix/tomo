@@ -73,6 +73,9 @@ def seed_settings() -> dict[str, Any]:
     return {
         "theme": "dark",
         "default_model": "gpt-4o-mini",
+        "llm_base_url": "https://api.openai.com/v1",
+        "llm_api_key": "",
+        "llm_model": "gpt-4o-mini",
         "max_tool_iterations": 12,
         "concurrency_limit": 4,
         "learning_enabled": True,

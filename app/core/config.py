@@ -41,10 +41,3 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 # --- Brand ---
 BRAND = "Tomo"
 BRAND_SUBTITLE = "友達 · agent swarm"
-
-# --- LLM ---
-LLM_PROVIDER = os.environ.get("TOMO_LLM_PROVIDER", "mock")  # mock | openai_compat
-LLM_BASE_URL = os.environ.get("TOMO_LLM_BASE_URL", "https://api.openai.com/v1")
-LLM_API_KEY = os.environ.get("TOMO_LLM_API_KEY", "")
-LLM_MODEL = os.environ.get("TOMO_LLM_MODEL", "gpt-4o-mini")
-LLM_MAX_TOOL_ITERATIONS = int(os.environ.get("TOMO_LLM_MAX_TOOL_ITERATIONS", "6"))

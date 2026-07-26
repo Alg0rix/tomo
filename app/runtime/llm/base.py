@@ -1,13 +1,9 @@
 """LLM client protocol and shared response types.
 
-Defines the minimal contract every LLM backend (mock, OpenAI-compatible,
-future providers) must satisfy: a single ``complete`` coroutine that turns
-a list of OpenAI-style chat messages (plus optional tool schemas) into an
-:class:`LLMResponse`.
-
-This is intentionally **completion-first** for the foundation thin
-vertical — the agent loop awaits the full response and maps it to SSE
-events. True token streaming is out of scope here.
+Defines the minimal contract every LLM backend must satisfy: ``complete``
+for a full response, and optionally ``stream_complete`` for token deltas
+(OpenAI-compatible streaming). The agent loop prefers ``stream_complete``
+when present so the UI can render tokens as they arrive.
 """
 
 from __future__ import annotations
@@ -31,7 +27,7 @@ class ToolCall:
 
 @dataclass
 class LLMResponse:
-    """Result of one ``complete`` call.
+    """Result of one ``complete`` / stream assembly.
 
     ``content`` is the model's textual answer (``None`` when the model
     only emitted tool calls). ``tool_calls`` is empty for plain-text turns.
@@ -48,13 +44,19 @@ class LLMResponse:
 
 @runtime_checkable
 class LLMClient(Protocol):
-    """Async LLM client contract (completion-first)."""
+    """Async LLM client contract."""
 
     async def complete(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse: ...
+
+
+# Optional duck-typed method (not on Protocol):
+# async def stream_complete(messages, tools=None) -> AsyncIterator[dict]
+#   yields {"type": "delta", "content": str}
+#   yields {"type": "done", "response": LLMResponse}
 
 
 __all__ = ["ToolCall", "LLMResponse", "LLMClient"]

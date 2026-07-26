@@ -75,20 +75,15 @@ class OpenAICompatClient:
         timeout: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        # Read config lazily so tests/monkeypatching and direct construction
-        # both see live values rather than import-time snapshots.
-        from app.core import config
-
-        self._base_url = (base_url or config.LLM_BASE_URL).rstrip("/")
-        self._model = model or config.LLM_MODEL
+        self._base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        self._model = model or "gpt-4o-mini"
         self._timeout = timeout
 
-        resolved_key = api_key if api_key is not None else config.LLM_API_KEY
         # Strip whitespace so a key of only spaces is treated as missing.
-        resolved_key = (resolved_key or "").strip()
+        resolved_key = (api_key or "").strip()
         if not resolved_key:
             raise LLMConfigError(
-                "TOMO_LLM_API_KEY is required when TOMO_LLM_PROVIDER=openai_compat."
+                "Configure LLM in System → Models (API key required)."
             )
         self._api_key = resolved_key
 
@@ -155,6 +150,107 @@ class OpenAICompatClient:
             content=message.get("content"),
             tool_calls=_parse_tool_calls(message.get("tool_calls") or []),
         )
+
+    async def stream_complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ):
+        """Stream chat completions; yield text deltas then a final response.
+
+        Yields ``{"type": "delta", "content": str}`` for each content piece,
+        then ``{"type": "done", "response": LLMResponse}``. Tool-call-only
+        rounds may yield no deltas before ``done``.
+        """
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+        content_parts: list[str] = []
+        # index -> {id, name, arguments_str}
+        tool_acc: dict[int, dict[str, str]] = {}
+
+        try:
+            async with self._client.stream(
+                "POST", self.endpoint, json=payload, headers=headers
+            ) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread())[:200]
+                    raise LLMRequestError(
+                        f"LLM returned HTTP {resp.status_code}: {body!r}"
+                    )
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices") or []
+                    if not choices or not isinstance(choices[0], dict):
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    if not isinstance(delta, dict):
+                        continue
+                    piece = delta.get("content")
+                    if piece:
+                        content_parts.append(piece)
+                        yield {"type": "delta", "content": piece}
+                    for tc in delta.get("tool_calls") or []:
+                        if not isinstance(tc, dict):
+                            continue
+                        idx = int(tc.get("index") or 0)
+                        slot = tool_acc.setdefault(
+                            idx, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if tc.get("id"):
+                            slot["id"] = str(tc["id"])
+                        fn = tc.get("function") or {}
+                        if isinstance(fn, dict):
+                            if fn.get("name"):
+                                slot["name"] = str(fn["name"])
+                            if fn.get("arguments"):
+                                slot["arguments"] += str(fn["arguments"])
+        except httpx.RequestError as exc:
+            raise LLMRequestError(f"LLM request failed: {exc}") from exc
+
+        raw_tools = []
+        for idx in sorted(tool_acc):
+            slot = tool_acc[idx]
+            raw_tools.append(
+                {
+                    "id": slot["id"],
+                    "type": "function",
+                    "function": {
+                        "name": slot["name"],
+                        "arguments": slot["arguments"] or "{}",
+                    },
+                }
+            )
+        text = "".join(content_parts) if content_parts else None
+        yield {
+            "type": "done",
+            "response": LLMResponse(
+                content=text,
+                tool_calls=_parse_tool_calls(raw_tools),
+            ),
+        }
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connections."""

@@ -1,39 +1,33 @@
 """LLM client factory and public re-exports.
 
-``get_llm()`` returns a client implementing :class:`LLMClient` based on
-``TOMO_LLM_PROVIDER``:
-
-* ``mock`` (default) -> :class:`MockLLMClient` — no network, deterministic.
-* ``openai_compat`` -> :class:`OpenAICompatClient` — real HTTP via httpx.
-
-Unknown providers raise :class:`LLMProviderError` so misconfiguration
-fails fast. Configuration is read lazily from :mod:`app.core.config` at
-call time so tests can monkeypatch env-derived values.
+``get_llm()`` builds an :class:`OpenAICompatClient` from SQLite settings
+(``llm_base_url``, ``llm_api_key``, ``llm_model``). There is no mock provider
+in the product path — tests inject :class:`MockLLMClient` into ``run_turn``.
 """
 
 from __future__ import annotations
 
-from app.core import config
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.llm.mock import MockLLMClient
-from app.runtime.llm.openai_compat import OpenAICompatClient
-
-
-class LLMProviderError(RuntimeError):
-    """Raised when ``TOMO_LLM_PROVIDER`` is not a recognised value."""
+from app.runtime.llm.openai_compat import LLMConfigError, OpenAICompatClient
 
 
 def get_llm() -> LLMClient:
-    """Return the LLM client selected by ``TOMO_LLM_PROVIDER``."""
-    provider = (config.LLM_PROVIDER or "").strip().lower()
-    if provider == "mock":
-        return MockLLMClient()
-    if provider == "openai_compat":
-        return OpenAICompatClient()
-    raise LLMProviderError(
-        f"Unknown TOMO_LLM_PROVIDER={config.LLM_PROVIDER!r}; "
-        "expected 'mock' or 'openai_compat'."
-    )
+    """Return an OpenAI-compatible client from System settings.
+
+    Raises :class:`LLMConfigError` when the API key is not configured.
+    """
+    from app.services import store
+
+    settings = store.get_settings()
+    api_key = str(settings.get("llm_api_key") or "").strip()
+    if not api_key:
+        raise LLMConfigError(
+            "Configure LLM in System → Models (API key required)."
+        )
+    base_url = str(settings.get("llm_base_url") or "").strip() or "https://api.openai.com/v1"
+    model = str(settings.get("llm_model") or settings.get("default_model") or "gpt-4o-mini")
+    return OpenAICompatClient(base_url=base_url, api_key=api_key, model=model)
 
 
 __all__ = [
@@ -42,6 +36,6 @@ __all__ = [
     "ToolCall",
     "MockLLMClient",
     "OpenAICompatClient",
+    "LLMConfigError",
     "get_llm",
-    "LLMProviderError",
 ]

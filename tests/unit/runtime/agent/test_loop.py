@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.runtime.agent.loop import run_turn
-from app.runtime.llm import LLMProviderError
+from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.runtime.llm.mock import MockLLMClient
 from app.runtime.llm.mock import _CALC_FINAL, _DEFAULT_REPLY
@@ -35,20 +35,34 @@ async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
     return [ev async for ev in run_turn(user_message, **kw)]
 
 
+def _kinds(events: list[dict[str, Any]], *, drop_delta: bool = False) -> list[str]:
+    kinds = [e["kind"] for e in events]
+    if drop_delta:
+        return [k for k in kinds if k != "delta"]
+    return kinds
+
+
+def _final(events: list[dict[str, Any]]) -> dict[str, Any]:
+    return next(e for e in reversed(events) if e["kind"] == "final")
+
+
 # --- happy paths --------------------------------------------------------
 
 
 async def test_text_only_path_yields_single_final() -> None:
     events = await _collect("hello", llm=MockLLMClient(), tools=_calc_tools())
-    assert [e["kind"] for e in events] == ["final"]
-    assert events[0]["content"] == _DEFAULT_REPLY
+    assert _kinds(events, drop_delta=True) == ["final"]
+    assert _final(events)["content"] == _DEFAULT_REPLY
+    assert "".join(e["content"] for e in events if e["kind"] == "delta") == _DEFAULT_REPLY
 
 
 async def test_calculator_path_emits_tool_then_result_then_final() -> None:
     events = await _collect("calculate 2 + 2", llm=MockLLMClient(), tools=_calc_tools())
-    assert [e["kind"] for e in events] == ["tool", "tool_result", "final"]
+    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
 
-    tool_ev, result_ev, final_ev = events
+    tool_ev = next(e for e in events if e["kind"] == "tool")
+    result_ev = next(e for e in events if e["kind"] == "tool_result")
+    final_ev = _final(events)
     assert tool_ev == {
         "kind": "tool",
         "tool": "calculator",
@@ -57,7 +71,8 @@ async def test_calculator_path_emits_tool_then_result_then_final() -> None:
     assert result_ev["tool"] == "calculator"
     assert result_ev["result"] == "4"
     assert result_ev["error"] is False
-    assert final_ev == {"kind": "final", "content": _CALC_FINAL}
+    assert final_ev["content"] == _CALC_FINAL
+    assert final_ev.get("already_streamed") is True
 
 
 async def test_calculator_error_result_sets_error_flag() -> None:
@@ -79,9 +94,9 @@ async def test_history_rebuilt_so_new_calc_turn_still_calls_tool() -> None:
     events = await _collect(
         "calculate 5 + 5", llm=MockLLMClient(), tools=_calc_tools(), history=history
     )
-    assert [e["kind"] for e in events] == ["tool", "tool_result", "final"]
-    assert events[0]["args"] == {"expression": "5 + 5"}
-    assert events[1]["result"] == "10"
+    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
+    assert next(e for e in events if e["kind"] == "tool")["args"] == {"expression": "5 + 5"}
+    assert next(e for e in events if e["kind"] == "tool_result")["result"] == "10"
 
 
 # --- adversarial paths --------------------------------------------------
@@ -111,10 +126,10 @@ async def test_thinking_emitted_when_content_accompanies_tool_calls() -> None:
     events = await _collect(
         "plan then calc", llm=_ThinkingThenFinalMock(), tools=_calc_tools()
     )
-    assert [e["kind"] for e in events] == ["thinking", "tool", "tool_result", "final"]
+    assert _kinds(events, drop_delta=True) == ["thinking", "tool", "tool_result", "final"]
     assert events[0] == {"kind": "thinking", "content": "Let me compute that."}
-    assert events[1]["args"] == {"expression": "2 + 2"}
-    assert events[3] == {"kind": "final", "content": "Done: 4"}
+    assert next(e for e in events if e["kind"] == "tool")["args"] == {"expression": "2 + 2"}
+    assert _final(events)["content"] == "Done: 4"
 
 
 async def test_llm_exception_surfaces_as_error_event() -> None:
@@ -127,8 +142,8 @@ async def test_llm_exception_surfaces_as_error_event() -> None:
 async def test_empty_tool_list_keeps_text_only_path() -> None:
     """No tools advertised -> mock returns its default reply as ``final``."""
     events = await _collect("calculate 2 + 2", llm=MockLLMClient(), tools=[])
-    assert [e["kind"] for e in events] == ["final"]
-    assert events[0]["content"] == _DEFAULT_REPLY
+    assert _kinds(events, drop_delta=True) == ["final"]
+    assert _final(events)["content"] == _DEFAULT_REPLY
 
 
 # --- stub LLM clients ---------------------------------------------------
@@ -230,7 +245,7 @@ async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
     events = await _collect(
         "calc twice", llm=mock, tools=_calc_tools(), max_iterations=4
     )
-    assert [e["kind"] for e in events] == [
+    assert _kinds(events, drop_delta=True) == [
         "tool",
         "tool_result",
         "tool",
@@ -258,7 +273,7 @@ async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
 async def test_setup_failure_surfaces_as_error_event(monkeypatch) -> None:
     """A failing ``get_llm`` yields an error event; ``run_turn`` never raises."""
     def _boom() -> None:
-        raise LLMProviderError("bad provider config")
+        raise LLMConfigError("bad provider config")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)
     events = await _collect("hi", tools=_calc_tools())
@@ -284,7 +299,7 @@ async def test_user_message_none_does_not_duplicate_history_user() -> None:
     history = [{"type": "user", "content": "the new question"}]
     recorder = _RecordingMock()
     events = await _collect(None, llm=recorder, tools=_calc_tools(), history=history)
-    assert [e["kind"] for e in events] == ["final"]
+    assert _kinds(events, drop_delta=True) == ["final"]
     msgs = recorder.captured[-1]
     users = [m for m in msgs if m["role"] == "user"]
     assert users == [{"role": "user", "content": "the new question"}]

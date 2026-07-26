@@ -1,11 +1,9 @@
-"""Integration: web chat SSE wiring over the real agent loop (mock LLM).
+"""Integration: web chat SSE wiring over the real agent loop.
 
-Drives ``run_session_turn`` end to end against a per-test temp SQLite DB with
-the default mock LLM (no API keys): a plain turn yields a ``done`` event and
-persists user + final history; a calculator turn additionally persists
-``tool_call`` / ``tool_output`` entries. The SSE stream is drained fully — the
-turn generator terminates after the trailing busy-false ``state`` (the
-infinite heartbeat is added by the route, not by ``run_session_turn``).
+Drives ``run_session_turn`` end to end against a per-test temp SQLite DB.
+Product LLM is settings-backed (no mock provider); these tests inject
+:class:`MockLLMClient` via ``get_llm`` so the stream contract is verified
+without a network or API key.
 """
 
 from __future__ import annotations
@@ -13,8 +11,18 @@ from __future__ import annotations
 import contextlib
 import json
 
+import pytest
+
+from app.runtime.llm.mock import MockLLMClient
 from app.services import run_session_turn, store
 
+
+@pytest.fixture(autouse=True)
+def _inject_mock_llm(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.runtime.agent.loop.get_llm",
+        lambda: MockLLMClient(),
+    )
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
     """Split a raw SSE buffer into ``(event_name, data)`` pairs."""
@@ -78,6 +86,57 @@ async def test_plain_turn_emits_done_and_persists_user_final(tmp_path) -> None:
     # plain path used no tools
     assert "tool_call" not in types
     assert "tool_output" not in types
+    # First user message auto-resolves a provisional chat name on the stream.
+    # Without an LLM title mock, the upgrade soft-fails and keeps the provisional.
+    assert store.get_session(sid)["title"] == "hello there"
+    session_ev = _data(events, "session")
+    assert session_ev and session_ev[0]["title"] == "hello there"
+    assert session_ev[0]["session_id"] == sid
+
+
+async def test_llm_upgrades_session_title_after_first_final(tmp_path, monkeypatch) -> None:
+    store.rebind(tmp_path / "chat_title_llm.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+
+    async def _fake_title(user_text: str, assistant_text: str, *, llm=None) -> str:
+        assert "hello there" in user_text
+        assert assistant_text
+        return "Greeting Chat"
+
+    monkeypatch.setattr("app.channels.web.generate_session_title", _fake_title)
+
+    events = await _collect(sid, "hello there")
+    titles = [d["title"] for d in _data(events, "session")]
+    assert titles == ["hello there", "Greeting Chat"]
+    assert store.get_session(sid)["title"] == "Greeting Chat"
+
+    events2 = await _collect(sid, "follow up")
+    assert _data(events2, "session") == []
+    assert store.get_session(sid)["title"] == "Greeting Chat"
+
+
+async def test_llm_title_failure_keeps_provisional(tmp_path, monkeypatch) -> None:
+    store.rebind(tmp_path / "chat_title_fail.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+
+    async def _none_title(user_text: str, assistant_text: str, *, llm=None):
+        return None
+
+    monkeypatch.setattr("app.channels.web.generate_session_title", _none_title)
+
+    events = await _collect(sid, "ship the darkroom fix")
+    assert [d["title"] for d in _data(events, "session")] == ["ship the darkroom fix"]
+    assert store.get_session(sid)["title"] == "ship the darkroom fix"
+    assert _data(events, "done")
+
+
+async def test_second_turn_does_not_reemit_session_title(tmp_path) -> None:
+    store.rebind(tmp_path / "chat_title_once.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    await _collect(sid, "first question about billing")
+    events = await _collect(sid, "follow up")
+    assert _data(events, "session") == []
+    assert store.get_session(sid)["title"] == "first question about billing"
 
 
 async def test_calc_turn_emits_tool_events_and_persists_entries(tmp_path) -> None:

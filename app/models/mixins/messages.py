@@ -3,8 +3,8 @@
 Maps the existing ``ChatEntry`` replay shape (type/content/agent_id/function/
 params/error/ts) onto the ``messages`` columns. ``params`` is JSON-encoded
 into ``params_json``; booleans are stored as INTEGER. Appending a message also
-bumps the parent session's ``message_count`` / ``updated_at`` and renames a
-fresh "New conversation"/"New swarm chat" session on its first user message.
+bumps the parent session's ``message_count`` / ``updated_at`` and auto-resolves
+a fresh "New conversation"/"New swarm chat" title from the first user message.
 """
 
 from __future__ import annotations
@@ -15,10 +15,30 @@ import time
 from typing import Any
 
 _NEW_SESSION_TITLES = ("New conversation", "New swarm chat")
+_TITLE_MAX_LEN = 60
 
 
 def _now() -> float:
     return time.time()
+
+
+def derive_session_title(content: str, *, max_len: int = _TITLE_MAX_LEN) -> str:
+    """Turn the first user message into a short session title.
+
+    Collapses whitespace, keeps the first line's intent, and truncates on a
+    word boundary when longer than ``max_len``.
+    """
+    text = " ".join((content or "").split()).strip()
+    if not text:
+        return "New conversation"
+    if len(text) <= max_len:
+        return text
+    cut = text[: max_len + 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    else:
+        cut = text[:max_len]
+    return cut.rstrip(".,;:!?…") + "…"
 
 
 def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
@@ -42,7 +62,10 @@ def get_session_history(conn: sqlite3.Connection, session_id: str) -> list[dict[
     return [_row_to_entry(r) for r in rows]
 
 
-def append_session_history(conn: sqlite3.Connection, session_id: str, entry: dict[str, Any]) -> None:
+def append_session_history(
+    conn: sqlite3.Connection, session_id: str, entry: dict[str, Any]
+) -> str | None:
+    """Append a history entry. Returns the new session title when auto-resolved."""
     entry.setdefault("ts", _now())
     params = entry.get("params")
     params_json = json.dumps(params) if params is not None else None
@@ -67,12 +90,14 @@ def append_session_history(conn: sqlite3.Connection, session_id: str, entry: dic
         "UPDATE sessions SET message_count=?, updated_at=? WHERE id=?",
         (count, _now(), session_id),
     )
+    resolved: str | None = None
     if entry.get("type") == "user":
         current = conn.execute("SELECT title FROM sessions WHERE id=?", (session_id,)).fetchone()
         if current and current["title"] in _NEW_SESSION_TITLES:
-            title = (entry.get("content") or current["title"])[:60]
-            conn.execute("UPDATE sessions SET title=? WHERE id=?", (title, session_id))
+            resolved = derive_session_title(entry.get("content") or "")
+            conn.execute("UPDATE sessions SET title=? WHERE id=?", (resolved, session_id))
     conn.commit()
+    return resolved
 
 
 def clear_session_history(conn: sqlite3.Connection, session_id: str) -> None:

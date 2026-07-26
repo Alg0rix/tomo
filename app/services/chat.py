@@ -9,19 +9,22 @@ is re-exported from the web channel for any caller that still reaches for it.
 
 Coordinator-only: a session turn runs *only* ``coordinator_id``; multi-agent
 delegation is intentionally unused for the foundation thin vertical and
-``agent_ids`` membership is left unchanged. The LLM defaults to the mock
-provider (``TOMO_LLM_PROVIDER=mock``) so turns work with no API keys.
+``agent_ids`` membership is left unchanged. The LLM is configured in
+System → Models (SQLite settings).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from typing import Any, AsyncIterator
 
 from app.channels.web import _fmt_sse, stream_turn_sse
 
 from .store import store
+
+logger = logging.getLogger(__name__)
 
 
 def _coordinator_for(session: dict[str, Any]) -> str | None:
@@ -45,6 +48,7 @@ async def run_session_turn(
     if not session:
         # The route validates existence and 404s first; stay defensive so a
         # missing session still yields a well-formed error stream.
+        logger.warning("turn rejected session_id=%s reason=session not found", session_id)
         seq = start_seq
         seq += 1
         yield _fmt_sse(
@@ -53,12 +57,20 @@ async def run_session_turn(
         return
     coordinator_id = _coordinator_for(session)
     if not coordinator_id:
+        logger.warning("turn rejected session_id=%s reason=no coordinator", session_id)
         seq = start_seq
         seq += 1
         yield _fmt_sse(
             {"event": "error", "data": {"message": "Session has no coordinator"}, "seq": seq}
         )
         return
+    logger.info(
+        "turn accept session_id=%s user_id=%s coordinator_id=%s message=%r",
+        session_id,
+        user_id,
+        coordinator_id,
+        (message or "")[:120],
+    )
     # aclosing ensures that closing this generator (on disconnect — see the
     # route-level aclosing in app/api/stream.py) cascades into stream_turn_sse's
     # `finally`, which clears the coordinator's busy flag synchronously instead

@@ -156,6 +156,10 @@ class Store:
         with self._lock:
             return sessions_store.update_session_agents(self._conn, session_id, agent_ids)
 
+    def set_session_title(self, session_id: str, title: str) -> dict[str, Any] | None:
+        with self._lock:
+            return sessions_store.set_session_title(self._conn, session_id, title)
+
     def get_or_create_session(self, agent_id: str, user_id: str) -> str:
         with self._lock:
             return sessions_store.get_or_create_session(self._conn, agent_id, user_id)
@@ -165,9 +169,10 @@ class Store:
         with self._lock:
             return messages_store.get_session_history(self._conn, session_id)
 
-    def append_session_history(self, session_id: str, entry: dict[str, Any]) -> None:
+    def append_session_history(self, session_id: str, entry: dict[str, Any]) -> str | None:
+        """Append history. Returns new session title when auto-resolved from first user message."""
         with self._lock:
-            messages_store.append_session_history(self._conn, session_id, entry)
+            return messages_store.append_session_history(self._conn, session_id, entry)
 
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
@@ -239,10 +244,17 @@ class Store:
 
     # -- settings (SQLite) -----------------------------------------------
     def get_settings(self) -> dict[str, Any]:
+        """Full settings including raw ``llm_api_key`` (runtime / internal)."""
         with self._lock:
             return settings_store.get_settings(self._conn)
 
+    def get_public_settings(self) -> dict[str, Any]:
+        """Settings safe for HTTP/HTML — API key masked."""
+        with self._lock:
+            return settings_store.public_settings(settings_store.get_settings(self._conn))
+
     def update_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Upsert settings; returns public (masked) view."""
         with self._lock:
             return settings_store.update_settings(self._conn, data)
 

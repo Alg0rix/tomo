@@ -121,6 +121,21 @@ def update_session_agents(
     return get_session(conn, session_id)
 
 
+def set_session_title(
+    conn: sqlite3.Connection, session_id: str, title: str
+) -> dict[str, Any] | None:
+    """Set session title and bump ``updated_at``. Returns the session dict or None."""
+    row = conn.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
+    if not row:
+        return None
+    conn.execute(
+        "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
+        (title, _now(), session_id),
+    )
+    conn.commit()
+    return get_session(conn, session_id)
+
+
 def find_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str | None:
     """Return the most recent single-agent session id for (agent_id, user_id), or None.
 
