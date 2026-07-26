@@ -176,7 +176,7 @@ async def test_calc_turn_emits_tool_events_and_persists_entries(tmp_path) -> Non
 
 
 async def test_coordinator_only_keeps_agent_ids_unchanged(tmp_path) -> None:
-    """A swarm session runs only the coordinator; membership is not mutated."""
+    """A calc turn stays on the coordinator; membership is not mutated."""
     store.rebind(tmp_path / "chat_swarm.db")
     sid = store.create_swarm_session(["main", "research"], user_id="web")
 
@@ -186,7 +186,7 @@ async def test_coordinator_only_keeps_agent_ids_unchanged(tmp_path) -> None:
     assert session is not None
     assert session["agent_ids"] == ["main", "research"]
     assert session["coordinator_id"] == "main"
-    # only the coordinator produced a final entry
+    # no handoff — only the coordinator produced a final entry
     finals = [h for h in store.get_session_history(sid) if h["type"] == "final"]
     assert finals and finals[0]["agent_id"] == "main"
 
@@ -227,6 +227,134 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     types = [h["type"] for h in store.get_session_history(sid)]
     assert "error" in types
     assert store.get_agent("main")["busy"] is False
+
+
+async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> None:
+    """Coordinator ``delegate`` tool → SSE delegate → member final in transcript."""
+    from app.runtime.llm.base import LLMResponse, ToolCall
+
+    store.rebind(tmp_path / "chat_delegate.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+
+    class _CoordDelegate:
+        async def complete(self, messages, tools=None):
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_d",
+                        name="delegate",
+                        arguments={"agent_id": "ops", "reason": "ops work"},
+                    )
+                ],
+            )
+
+    class _OpsReply:
+        async def complete(self, messages, tools=None):
+            return LLMResponse(content="Ops reporting: disk looks fine.", tool_calls=[])
+
+        async def stream_complete(self, messages, tools=None):
+            resp = await self.complete(messages, tools)
+            if resp.content:
+                yield {"type": "delta", "content": resp.content}
+            yield {"type": "done", "response": resp}
+
+    def _llm(agent_id=None):
+        if agent_id == "ops":
+            return _OpsReply()
+        return _CoordDelegate()
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
+
+    events = await _collect(sid, "please have ops check the disk")
+
+    assert "delegate" in _names(events)
+    handoff = _data(events, "delegate")[0]
+    assert handoff["from"] == "main"
+    assert handoff["to"] == "ops"
+    assert handoff.get("reason") in ("ops work", "delegate", "tool")
+
+    dones = _data(events, "done")
+    assert dones and dones[-1]["agent_id"] == "ops"
+    assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
+        dones[-1].get("content") or ""
+    )
+
+    history = store.get_session_history(sid)
+    types = [h["type"] for h in history]
+    assert "delegate" in types
+    assert types.count("tool_call") >= 1
+    finals = [h for h in history if h["type"] == "final"]
+    assert finals and finals[-1]["agent_id"] == "ops"
+    assert store.get_agent("main")["busy"] is False
+    assert store.get_agent("ops")["busy"] is False
+
+
+async def test_mention_forces_ops_without_coordinator_tools(
+    tmp_path, monkeypatch
+) -> None:
+    """``@ops …`` skips the coordinator tool loop and runs ops directly."""
+    from app.runtime.llm.base import LLMResponse
+
+    store.rebind(tmp_path / "chat_mention.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+
+    class _OpsOnly:
+        async def complete(self, messages, tools=None):
+            # Member should see the stripped prompt, not the @mention.
+            user = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                "",
+            )
+            assert "check disk" in user
+            assert not user.lstrip().startswith("@")
+            return LLMResponse(content="Ops on it.", tool_calls=[])
+
+        async def stream_complete(self, messages, tools=None):
+            resp = await self.complete(messages, tools)
+            if resp.content:
+                yield {"type": "delta", "content": resp.content}
+            yield {"type": "done", "response": resp}
+
+    class _BoomCoord:
+        async def complete(self, messages, tools=None):
+            raise AssertionError("coordinator loop must be skipped for @mention")
+
+    def _llm(agent_id=None):
+        if agent_id == "ops":
+            return _OpsOnly()
+        return _BoomCoord()
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
+
+    events = await _collect(sid, "@ops check disk")
+
+    assert _data(events, "turn.start")[0].get("delegate") is True
+    assert "delegate" in _names(events)
+    assert _data(events, "delegate")[0]["reason"] == "mention"
+    assert "tool" not in _names(events)
+    assert _data(events, "done")[0]["agent_id"] == "ops"
+
+    history = store.get_session_history(sid)
+    assert history[0]["type"] == "user"
+    assert history[0]["content"] == "@ops check disk"
+    finals = [h for h in history if h["type"] == "final"]
+    assert finals and finals[0]["agent_id"] == "ops"
+
+
+async def test_mention_non_member_falls_through_to_coordinator(
+    tmp_path, monkeypatch
+) -> None:
+    """``@support`` when support is not a session member → coordinator answers."""
+    store.rebind(tmp_path / "chat_mention_nonmember.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+
+    events = await _collect(sid, "@support help me")
+
+    assert _data(events, "turn.start")[0].get("delegate") is False
+    assert "delegate" not in _names(events)
+    dones = _data(events, "done")
+    assert dones and dones[0]["agent_id"] == "main"
 
 
 async def test_early_close_persists_seen_event_and_clears_busy(tmp_path) -> None:

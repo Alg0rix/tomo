@@ -4,9 +4,8 @@ Loads every ``app/tools/*.json`` definition, exposes the OpenAI-compatible
 function-tool schemas (for ``LLMClient.complete(..., tools=...)``), and
 dispatches ``execute(name, arguments)`` to the matching Python backend.
 
-For the foundation thin vertical only the ``calculator`` tool is wired; its
-backend is :func:`app.runtime.tools.calculator.run`. Adding a future tool is
-a matter of dropping an ``app/tools/<name>.json`` file and registering its
+Wired backends include ``calculator`` and ``delegate``. Adding a tool is a
+matter of dropping an ``app/tools/<name>.json`` file and registering its
 backend in :data:`_BACKENDS` below — dynamic ``backend``-path import is a
 later task. ``execute`` always returns a string: unknown tools and missing
 backends produce ``"Error: ..."`` strings rather than raising.
@@ -20,14 +19,16 @@ from typing import Any, Callable
 
 from app.core import config
 from app.runtime.tools import calculator as _calculator_backend
+from app.runtime.tools import delegate as _delegate_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
-# Foundation backends keyed by the tool name in each JSON ``schema.function.name``.
-# Backends are repo-controlled Python modules; the JSON ``backend`` field is
-# kept accurate for documentation and a future dynamic-import task.
+# Backends keyed by the tool name in each JSON ``schema.function.name``.
+# Repo-controlled Python modules; the JSON ``backend`` field is kept accurate
+# for documentation and a future dynamic-import task.
 _BACKENDS: dict[str, ToolRunner] = {
     "calculator": _calculator_backend.run,
+    "delegate": _delegate_backend.run,
 }
 
 

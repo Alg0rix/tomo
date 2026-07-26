@@ -1,16 +1,11 @@
-"""Web chat SSE wiring — public streaming entrypoints over the coordinator
-agent loop.
+"""Web chat SSE wiring — public streaming entrypoints over the agent loop.
 
 Thin orchestration: resolve the session/coordinator for an incoming chat
-message, then delegate the loop->SSE mapping + persistence to the web-channel
-helper :func:`app.channels.web.stream_turn_sse`. The heartbeat/state streams
-and the user-message recorder live here too; the SSE formatter ``_fmt_sse``
-is re-exported from the web channel for any caller that still reaches for it.
-
-Coordinator-only: a session turn runs *only* ``coordinator_id``; multi-agent
-delegation is intentionally unused for the foundation thin vertical and
-``agent_ids`` membership is left unchanged. The LLM is configured in
-System → Models (SQLite settings).
+message, then delegate the loop->SSE mapping + persistence (including swarm
+``delegate`` / ``@mention`` handoff) to :func:`app.channels.web.stream_turn_sse`.
+The heartbeat/state streams and the user-message recorder live here too; the
+SSE formatter ``_fmt_sse`` is re-exported from the web channel for callers that
+still reach for it.
 """
 
 from __future__ import annotations
@@ -39,10 +34,10 @@ def _coordinator_for(session: dict[str, Any]) -> str | None:
 async def run_session_turn(
     session_id: str, message: str, user_id: str, start_seq: int = 0
 ) -> AsyncIterator[str]:
-    """Stream one coordinator turn for a session (swarm or single-agent).
+    """Stream one turn for a session (swarm or single-agent).
 
-    Runs only ``coordinator_id`` and ignores multi-agent delegation;
-    ``agent_ids`` membership is unchanged.
+    Starts on ``coordinator_id``; ``stream_turn_sse`` may hand off to a session
+    member via ``delegate`` tool or leading ``@mention``.
     """
     session = store.get_session(session_id)
     if not session:

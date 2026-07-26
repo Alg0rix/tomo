@@ -10,6 +10,7 @@ to map onto SSE:
 * ``{"kind": "delta", "content": str}``             # streamed text token/chunk
 * ``{"kind": "tool", "tool": str, "args": dict}``
 * ``{"kind": "tool_result", "tool": str, "result": str, "error": bool}``
+* ``{"kind": "delegate", "from": str, "to": str, "reason": str}``
 * ``{"kind": "final", "content": str, "already_streamed": bool}``
 * ``{"kind": "error", "message": str}``
 
@@ -30,6 +31,7 @@ from typing import Any, AsyncIterator
 from app.runtime.agent.context import build_messages, build_system_prompt
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
+from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute, get_openai_tools
 
 
@@ -139,6 +141,7 @@ async def run_turn(
         if resp.has_tool_calls:
             paired = _with_ids(resp.tool_calls, id_counter)
             messages.append(_assistant_tool_calls_message(resp, paired))
+            handoff: dict[str, Any] | None = None
             for cid, call in paired:
                 yield {"kind": "tool", "tool": call.name, "args": call.arguments}
                 result = execute(call.name, call.arguments)
@@ -152,6 +155,21 @@ async def run_turn(
                 messages.append(
                     {"role": "tool", "tool_call_id": cid, "content": result}
                 )
+                if call.name == "delegate" and not error and handoff is None:
+                    target = parse_delegated_id(str(result))
+                    if target:
+                        reason = call.arguments.get("reason")
+                        if not isinstance(reason, str) or not reason.strip():
+                            reason = "delegate"
+                        handoff = {
+                            "kind": "delegate",
+                            "from": agent_id or "",
+                            "to": target,
+                            "reason": reason.strip(),
+                        }
+            if handoff is not None:
+                yield handoff
+                return
             continue
 
         yield {

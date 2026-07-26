@@ -1,0 +1,31 @@
+{
+  "id": "delegate",
+  "name": "Delegate",
+  "description": "Hand the current task to another agent in this session's swarm.",
+  "backend": "app.runtime.tools.delegate",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "delegate",
+      "description": "Delegate the current turn to another session member agent by id or name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Target agent id (preferred)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Target agent display name (alternative to agent_id)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short reason for the handoff (optional)."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

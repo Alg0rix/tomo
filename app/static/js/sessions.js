@@ -133,7 +133,7 @@
     const scroll = chatWrap.querySelector('.chat-scroll');
     scroll.innerHTML = '';
     if (!entries.length) {
-      scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the coordinator</div><div>Send a message — the coordinator answers here. Multi-agent handoff arrives in a later release.</div></div>';
+      scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
       return;
     }
     entries.forEach(function (e) {

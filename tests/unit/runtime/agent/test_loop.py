@@ -315,3 +315,85 @@ async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
     result_ev = next(e for e in events if e["kind"] == "tool_result")
     assert result_ev["error"] is False
     assert result_ev["result"] == "Errorless computation succeeded"
+
+
+# --- swarm delegation ---------------------------------------------------
+
+
+def _delegate_tools() -> list[dict[str, Any]]:
+    return [{"type": "function", "function": {"name": "delegate"}}]
+
+
+class _DelegateMock:
+    """Coordinator calls ``delegate`` once; never produces its own final."""
+
+    async def complete(self, messages, tools=None):
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call_delegate",
+                    name="delegate",
+                    arguments={"agent_id": "ops", "reason": "ops task"},
+                )
+            ],
+        )
+
+
+async def test_successful_delegate_yields_delegate_event_and_stops(
+    monkeypatch,
+) -> None:
+    """After a successful delegate tool, loop emits ``delegate`` and returns."""
+    monkeypatch.setattr(
+        "app.runtime.agent.loop.execute",
+        lambda name, args: "Delegated to ops",
+    )
+    events = await _collect(
+        "ask ops to help",
+        llm=_DelegateMock(),
+        tools=_delegate_tools(),
+        agent_id="main",
+    )
+    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "delegate"]
+    handoff = next(e for e in events if e["kind"] == "delegate")
+    assert handoff["from"] == "main"
+    assert handoff["to"] == "ops"
+    assert handoff["reason"] == "ops task"
+    assert not any(e["kind"] == "final" for e in events)
+
+
+async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
+    """A rejected delegate is a normal tool error; loop keeps iterating."""
+
+    class _DelegateThenFinal:
+        def __init__(self) -> None:
+            self._n = 0
+
+        async def complete(self, messages, tools=None):
+            self._n += 1
+            if self._n == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_bad",
+                            name="delegate",
+                            arguments={"agent_id": "ghost"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="I'll handle it myself.", tool_calls=[])
+
+    monkeypatch.setattr(
+        "app.runtime.agent.loop.execute",
+        lambda name, args: "Error: 'ghost' is not a member of this session",
+    )
+    events = await _collect(
+        "delegate to ghost",
+        llm=_DelegateThenFinal(),
+        tools=_delegate_tools(),
+        agent_id="main",
+    )
+    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
+    assert not any(e["kind"] == "delegate" for e in events)
+    assert _final(events)["content"] == "I'll handle it myself."
