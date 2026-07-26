@@ -14,9 +14,7 @@
     <div class="card-body" style="padding:16px 18px">
       <form id="workplaceForm" autocomplete="off" onsubmit="return false;">
         <input type="hidden" id="wpFormMode" value="add">
-        <div class="config-row"><div class="lbl">ID <span class="faint">(slug)</span></div>
-          <input class="input" id="wpId" required pattern="[a-z0-9_]+" placeholder="wp_local" style="max-width:220px" spellcheck="false">
-        </div>
+        <input type="hidden" id="wpId" value="">
         <div class="config-row"><div class="lbl">Name</div>
           <input class="input" id="wpName" required placeholder="Local Dev" style="max-width:220px">
         </div>

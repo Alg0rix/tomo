@@ -121,9 +121,9 @@
     fMode.value = mode;
     document.getElementById('profileFormTitle').textContent = mode === 'add' ? 'Add profile' : 'Edit profile';
     if (mode === 'add') {
-      fId.value = ''; fId.disabled = false; fName.value = ''; fBase.value = ''; fKey.value = ''; fModel.value = ''; fEnabled.checked = true;
+      fId.value = ''; fName.value = ''; fBase.value = ''; fKey.value = ''; fModel.value = ''; fEnabled.checked = true;
     } else {
-      fId.value = p.id; fId.disabled = true; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fEnabled.checked = !!p.enabled;
+      fId.value = p.id; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fEnabled.checked = !!p.enabled;
     }
     formCard.classList.remove('hidden');
   }
@@ -156,8 +156,6 @@
       if (key && key.indexOf('•') === -1) body.api_key = key;
       try {
         if (fMode.value === 'add') {
-          body.id = fId.value.trim();
-          if (!body.id) { Tomo.toast('ID is required', 'err'); return; }
           await Tomo.api('/api/llm-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           Tomo.toast('Profile created', 'ok');
         } else {
@@ -208,9 +206,9 @@
     kbMode.value = mode;
     document.getElementById('knowledgeFormTitle').textContent = mode === 'add' ? 'Add entry' : 'Edit entry';
     if (mode === 'add') {
-      kbId.value = ''; kbId.disabled = false; kbTitle.value = ''; kbBody.value = ''; kbTags.value = '';
+      kbId.value = ''; kbTitle.value = ''; kbBody.value = ''; kbTags.value = '';
     } else {
-      kbId.value = e.id; kbId.disabled = true; kbTitle.value = e.title || ''; kbBody.value = e.body || ''; kbTags.value = (e.tags || []).join(', ');
+      kbId.value = e.id; kbTitle.value = e.title || ''; kbBody.value = e.body || ''; kbTags.value = (e.tags || []).join(', ');
     }
     kbFormCard.classList.remove('hidden');
   }
@@ -241,8 +239,6 @@
       var body = { title: title, body: kbBody.value, tags: parseTags(kbTags.value) };
       try {
         if (kbMode.value === 'add') {
-          var id = kbId.value.trim();
-          if (id) body.id = id;
           await Tomo.api('/api/knowledge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           Tomo.toast('Entry created', 'ok');
         } else {

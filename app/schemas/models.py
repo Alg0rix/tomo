@@ -18,6 +18,8 @@ class Agent(BaseModel):
     model_id: str | None = None
     role: str = ""
     workplace_id: str = ""
+    workplace_scope: str = "single"  # single | list | all_tunnels | all
+    workplace_ids: list[str] = Field(default_factory=list)
     enabled: bool = True
     is_super: bool = False
     tool_count: int = 0
@@ -28,12 +30,18 @@ class Agent(BaseModel):
 
 
 class AgentCreate(BaseModel):
-    id: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    """Create an agent. ``id`` is optional — server auto-slugs from ``name``."""
+
+    id: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
+    )
     name: str = Field(min_length=1, max_length=80)
     description: str = ""
     model_id: str | None = None
     role: str = ""
     workplace_id: str = ""
+    workplace_ids: list[str] = Field(default_factory=list)
+    workplace_scope: str = "single"  # single | list | all_tunnels | all
 
 
 class AgentUpdate(BaseModel):
@@ -42,6 +50,8 @@ class AgentUpdate(BaseModel):
     model_id: str | None = None
     role: str | None = None
     workplace_id: str | None = None
+    workplace_ids: list[str] | None = None
+    workplace_scope: str | None = None  # single | list | all_tunnels | all
     enabled: bool | None = None
 
 
@@ -52,7 +62,12 @@ class ChatMessageIn(BaseModel):
 
 
 class SessionCreate(BaseModel):
-    agent_ids: list[str] = Field(min_length=1)
+    """Create/update session membership.
+
+    Empty ``agent_ids`` means full swarm (all enabled agents).
+    """
+
+    agent_ids: list[str] = Field(default_factory=list)
     user_id: str = "web"
     coordinator_id: str | None = None
 
@@ -92,9 +107,11 @@ class Stats(BaseModel):
 
 
 class LLMProfileCreate(BaseModel):
-    """Create an LLM profile (OpenAI-compatible endpoint + credentials)."""
+    """Create an LLM profile. ``id`` optional — auto from ``name``."""
 
-    id: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    id: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
+    )
     name: str = Field(min_length=1, max_length=80)
     base_url: str = ""
     api_key: str = ""
@@ -113,9 +130,11 @@ class LLMProfileUpdate(BaseModel):
 
 
 class WorkplaceCreate(BaseModel):
-    """Create a workplace (local / ssh / tunnel)."""
+    """Create a workplace (local / ssh / tunnel). ``id`` optional — auto from ``name``."""
 
-    id: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    id: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
+    )
     name: str = Field(min_length=1, max_length=80)
     kind: Literal["local", "ssh", "tunnel"] = "local"
     host: str = ""

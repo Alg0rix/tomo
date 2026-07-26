@@ -6,6 +6,7 @@
   "tools": [
     "bash",
     "runpy",
+    "register_workplace",
     "read_file",
     "write_file",
     "str_replace",

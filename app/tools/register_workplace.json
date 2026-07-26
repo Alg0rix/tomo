@@ -1,0 +1,49 @@
+{
+  "id": "register_workplace",
+  "name": "Register workplace",
+  "description": "Create or reuse a workplace (local path, SSH host, or tunnel label) and optionally assign it to the current agent for this turn. Use when the user names a server path or machine to work on.",
+  "backend": "app.runtime.tools.register_workplace",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "register_workplace",
+      "description": "Register a workplace. For local debugging: kind=local and path=/abs/path. Sets the workplace for subsequent tools in this turn when use_now is true.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name (defaults from path basename)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["local", "ssh", "tunnel"],
+            "description": "Workplace type (default local)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Local root path (required for kind=local)."
+          },
+          "root_path": {
+            "type": "string",
+            "description": "Alias for path / remote root."
+          },
+          "ssh_host": { "type": "string" },
+          "ssh_user": { "type": "string" },
+          "ssh_port": { "type": "integer" },
+          "ssh_password": { "type": "string" },
+          "ssh_key": { "type": "string" },
+          "assign_to_agent": {
+            "type": "boolean",
+            "description": "Add workplace to the current agent (default true)."
+          },
+          "use_now": {
+            "type": "boolean",
+            "description": "Bind this workplace for the rest of the turn (default true)."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

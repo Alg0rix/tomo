@@ -52,6 +52,31 @@ def test_tunnel_offline_error(tmp_path: Path) -> None:
     assert "offline" in out.lower()
 
 
+def test_all_tunnels_hint_picks_host(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    store.create_workplace(
+        {"id": "wp_aio", "name": "aio-serv", "kind": "tunnel"}
+    )
+    store.create_workplace(
+        {"id": "wp_other", "name": "other", "kind": "tunnel"}
+    )
+    store.update_agent(
+        "ops",
+        {"workplace_scope": "all_tunnels", "workplace_id": "", "workplace_ids": []},
+    )
+    sandbox.bind_agent("ops")
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+    from app.runtime.tools.workplace_remote import resolve_agent_workplace
+
+    toks = bind_workplace(hint="aio-serv")
+    try:
+        wp = resolve_agent_workplace("ops")
+        assert wp is not None
+        assert wp["id"] == "wp_aio"
+    finally:
+        reset_workplace(toks)
+
+
 def test_ssh_routes_to_ssh_exec(tmp_path: Path) -> None:
     _rebind(tmp_path)
     store.create_workplace(

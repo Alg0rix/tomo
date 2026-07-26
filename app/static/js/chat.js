@@ -41,6 +41,10 @@
     return '<div class="msg ' + role + '"><div class="av"' + style + '>' + av + '</div><div class="bubble"><div class="who">' + who + '</div><div class="bubble-body prose"></div></div></div>';
   }
 
+  function highlightMentions(text) {
+    return esc(text).replace(/@([a-zA-Z0-9_\-]+)/g, '<span class="mention-chip">@$1</span>');
+  }
+
   function initChat(wrap) {
     if (!wrap || wrap.dataset.chatInit === '1') return;
     wrap.dataset.chatInit = '1';
@@ -52,11 +56,127 @@
     const sendBtn = wrap.querySelector('.chat-send');
     const clearBtn = wrap.querySelector('.chat-clear');
     const statusEl = wrap.querySelector('.chat-status');
+    const mentionMenu = wrap.querySelector('.mention-menu');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
+
+    let mentionOpen = false;
+    let mentionIndex = 0;
+    let mentionMatches = [];
+    let mentionRange = null; // {start, end} of @query in input
 
     function currentSessionId() { return wrap.dataset.sessionId || ''; }
     function pendingAgentIds() {
       return (wrap.dataset.pendingAgents || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    function mentionableAgents() {
+      // Prefer full catalog from sessions page; fall back to ids only.
+      try {
+        if (wrap.dataset.agentsJson) {
+          const list = JSON.parse(wrap.dataset.agentsJson);
+          if (Array.isArray(list) && list.length) return list;
+        }
+      } catch (e) {}
+      const ids = (wrap.dataset.agentIds || wrap.dataset.pendingAgents || '')
+        .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      if (ids.length) {
+        return ids.map(function (id) { return { id: id, name: id }; });
+      }
+      if (agentId) return [{ id: agentId, name: defaultAgentName || agentId }];
+      return [];
+    }
+
+    function hideMentions() {
+      mentionOpen = false;
+      mentionMatches = [];
+      mentionRange = null;
+      if (mentionMenu) {
+        mentionMenu.classList.add('hidden');
+        mentionMenu.innerHTML = '';
+      }
+    }
+
+    function renderMentionMenu() {
+      if (!mentionMenu) return;
+      if (!mentionMatches.length) {
+        hideMentions();
+        return;
+      }
+      mentionMenu.innerHTML = mentionMatches.map(function (a, i) {
+        const active = i === mentionIndex ? ' active' : '';
+        const letter = esc((a.name || a.id || '?').slice(0, 1).toUpperCase());
+        const bg = agentColor(a.id);
+        return '<button type="button" class="mention-item' + active + '" data-idx="' + i + '" role="option">' +
+          '<span class="av" style="background:' + bg + '">' + letter + '</span>' +
+          '<span class="meta"><span class="name">' + esc(a.name || a.id) + '</span>' +
+          '<span class="id">@' + esc(a.id) + '</span></span></button>';
+      }).join('');
+      mentionMenu.classList.remove('hidden');
+      mentionOpen = true;
+      mentionMenu.querySelectorAll('.mention-item').forEach(function (btn) {
+        btn.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          insertMention(parseInt(btn.dataset.idx, 10) || 0);
+        });
+      });
+    }
+
+    function filterMentions(query) {
+      const q = (query || '').toLowerCase();
+      const all = mentionableAgents().filter(function (a) {
+        return a && a.id && a.enabled !== false;
+      });
+      if (!q) return all.slice(0, 12);
+      return all.filter(function (a) {
+        const id = String(a.id || '').toLowerCase();
+        const name = String(a.name || '').toLowerCase();
+        const role = String(a.role || '').toLowerCase();
+        return id.indexOf(q) === 0 || name.indexOf(q) === 0 || role.indexOf(q) === 0 ||
+          id.indexOf(q) >= 0 || name.indexOf(q) >= 0;
+      }).slice(0, 12);
+    }
+
+    function detectMention() {
+      if (!input) return null;
+      const val = input.value;
+      const caret = input.selectionStart != null ? input.selectionStart : val.length;
+      const before = val.slice(0, caret);
+      // Find last @ not preceded by word char (start or whitespace).
+      const m = before.match(/(^|[\s([{])@([^\s@]*)$/);
+      if (!m) return null;
+      const query = m[2] || '';
+      const start = caret - query.length - 1; // index of @
+      return { start: start, end: caret, query: query };
+    }
+
+    function updateMentions() {
+      if (!mentionMenu) return;
+      const hit = detectMention();
+      if (!hit) {
+        hideMentions();
+        return;
+      }
+      mentionRange = { start: hit.start, end: hit.end };
+      mentionMatches = filterMentions(hit.query);
+      mentionIndex = 0;
+      renderMentionMenu();
+    }
+
+    function insertMention(idx) {
+      if (!input || !mentionRange || !mentionMatches[idx]) return;
+      const agent = mentionMatches[idx];
+      const val = input.value;
+      const before = val.slice(0, mentionRange.start);
+      const after = val.slice(mentionRange.end);
+      // Prefer @id for reliable server resolve; show name in UI via chip.
+      const token = '@' + agent.id + ' ';
+      input.value = before + token + after;
+      const pos = before.length + token.length;
+      input.setSelectionRange(pos, pos);
+      hideMentions();
+      input.focus();
+      sendBtn.disabled = !input.value.trim() || sending;
+      resize();
     }
 
     // Session chat may be a client-side draft (pendingAgents, no sessionId yet).
@@ -319,7 +439,7 @@
       if (empty) empty.remove();
       const u = document.createElement('div');
       u.innerHTML = bubbleHtml('user', defaultAgentName);
-      u.querySelector('.bubble-body').textContent = value;
+      u.querySelector('.bubble-body').innerHTML = highlightMentions(value);
       scroll.appendChild(u.firstElementChild);
       atBottom();
       streamTurn(value);
@@ -328,9 +448,38 @@
     input.addEventListener('input', function () {
       sendBtn.disabled = !input.value.trim() || sending;
       resize();
+      updateMentions();
     });
     input.addEventListener('keydown', function (e) {
+      if (mentionOpen && mentionMatches.length) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          mentionIndex = (mentionIndex + 1) % mentionMatches.length;
+          renderMentionMenu();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          mentionIndex = (mentionIndex - 1 + mentionMatches.length) % mentionMatches.length;
+          renderMentionMenu();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          insertMention(mentionIndex);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          hideMentions();
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+    input.addEventListener('blur', function () {
+      // Delay so mousedown on menu still fires.
+      setTimeout(hideMentions, 150);
     });
     sendBtn.addEventListener('click', function () { send(); });
     resize();

@@ -26,6 +26,7 @@ from app.runtime.tools import forget_memory as _forget_memory_backend
 from app.runtime.tools import process as _process_backend
 from app.runtime.tools import read_file as _read_file_backend
 from app.runtime.tools import recall as _recall_backend
+from app.runtime.tools import register_workplace as _register_workplace_backend
 from app.runtime.tools import remember as _remember_backend
 from app.runtime.tools import runpy as _runpy_backend
 from app.runtime.tools import search_files as _search_files_backend
@@ -46,6 +47,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "delegate": _delegate_backend.run,
     "bash": _bash_backend.run,
     "runpy": _runpy_backend.run,
+    "register_workplace": _register_workplace_backend.run,
     "read_file": _read_file_backend.run,
     "write_file": _write_file_backend.run,
     "str_replace": _str_replace_backend.run,

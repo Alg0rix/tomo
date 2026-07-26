@@ -7,7 +7,7 @@
     <div>
       <a class="faint back-link" href="/workplaces">← Workplaces</a>
       <h1 class="page-title">{{ workplace.name }}</h1>
-      <p class="page-sub"><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span> · {{ workplace.host }}</p>
+      <p class="page-sub"><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span> · {{ workplace.host_detail or workplace.host }}</p>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       {{ workplace_status(workplace.status) }}
@@ -86,31 +86,46 @@
     <div class="card">
       <div class="card-head"><h3>Connection</h3></div>
       <div class="card-body card-body-pad">
-        <div class="config-row"><div class="lbl">Host</div><div class="mono">{{ workplace.host }}</div></div>
-        <div class="config-row"><div class="lbl">Type</div><div>{{ workplace.kind }}</div></div>
+        <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ workplace.id }}</div></div>
+        <div class="config-row"><div class="lbl">Type</div><div><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span></div></div>
+        <div class="config-row"><div class="lbl">Status</div><div>{{ workplace_status(workplace.status) }}{% if workplace.kind == 'tunnel' %} · {% if workplace.online %}<span class="badge ok">live socket</span>{% else %}<span class="badge muted">no live socket</span>{% endif %}{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Host</div><div class="mono">{{ workplace.host_detail or workplace.host or '—' }}</div></div>
         {% if workplace.kind == 'local' %}
         <div class="config-row"><div class="lbl">Root path</div><div class="mono">{{ workplace.root_path or '—' }}</div></div>
         {% endif %}
         {% if workplace.kind == 'ssh' %}
-        <div class="config-row"><div class="lbl">SSH</div><div class="mono">{{ workplace.ssh_user }}@{{ workplace.ssh_host }}:{{ workplace.ssh_port }}</div></div>
+        <div class="config-row"><div class="lbl">SSH host</div><div class="mono">{{ workplace.ssh_host or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">SSH port</div><div class="mono">{{ workplace.ssh_port or 22 }}</div></div>
+        <div class="config-row"><div class="lbl">SSH user</div><div class="mono">{{ workplace.ssh_user or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">SSH target</div><div class="mono">{{ workplace.ssh_user }}@{{ workplace.ssh_host }}:{{ workplace.ssh_port }}</div></div>
         <div class="config-row"><div class="lbl">Auth</div><div>{% if workplace.password_set %}password{% endif %}{% if workplace.password_set and workplace.key_set %} · {% endif %}{% if workplace.key_set %}key{% endif %}{% if not workplace.password_set and not workplace.key_set %}<span class="faint">none set</span>{% endif %}</div></div>
+        {% if workplace.root_path %}
+        <div class="config-row"><div class="lbl">Remote root</div><div class="mono">{{ workplace.root_path }}</div></div>
+        {% endif %}
         {% endif %}
         <div class="config-row"><div class="lbl">Agents</div><div>{{ workplace.agent_count }} assigned</div></div>
+        <div class="config-row"><div class="lbl">Updated</div><div class="faint">{{ ts(workplace.updated_at) if workplace.updated_at else '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Created</div><div class="faint">{{ ts(workplace.created_at) if workplace.created_at else '—' }}</div></div>
         {% if workplace.kind == 'tunnel' %}
-        <div class="config-row"><div class="lbl">Token</div><div>{% if workplace.connector_token_set %}<span class="badge ok">paired</span>{% else %}<span class="faint">not paired</span>{% endif %}</div></div>
-        {% if workplace.connector_hostname %}
-        <div class="config-row"><div class="lbl">Hostname</div><div class="mono">{{ workplace.connector_hostname }}</div></div>
-        {% endif %}
-        {% if workplace.connector_version %}
-        <div class="config-row"><div class="lbl">Connector</div><div class="mono">v{{ workplace.connector_version }}</div></div>
+        <div class="config-row"><div class="lbl">Paired</div><div>{% if workplace.connector_token_set %}<span class="badge ok">token set</span>{% else %}<span class="faint">not paired</span>{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Hostname</div><div class="mono">{{ workplace.connector_hostname or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Device IP</div><div class="mono">{{ workplace.connector_remote_ip or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Platform</div><div class="mono">{{ workplace.connector_platform or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Connector ver</div><div class="mono">{% if workplace.connector_version %}{{ workplace.connector_version if workplace.connector_version.startswith('v') else 'v' ~ workplace.connector_version.split('/')[0] }}{% else %}—{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Last seen</div><div class="faint">{% if workplace.connector_last_seen_at %}{{ ts(workplace.connector_last_seen_at) }}{% else %}—{% endif %}</div></div>
+        {% if workplace.connector_connected_at %}
+        <div class="config-row"><div class="lbl">Session since</div><div class="faint">{{ ts(workplace.connector_connected_at) }}</div></div>
         {% endif %}
         <div class="config-row"><div class="lbl">Pairing code</div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             {% if workplace.pairing_code %}
             <code class="mono" id="wpPairingCode" style="font-size:1.1em;letter-spacing:0.08em">{{ workplace.pairing_code }}</code>
             <button class="btn ghost sm" type="button" id="wpCopyCode" data-code="{{ workplace.pairing_code }}">Copy</button>
+            {% if workplace.pairing_expires_at %}
+            <span class="faint">expires {{ ts(workplace.pairing_expires_at) }}</span>
+            {% endif %}
             {% else %}
-            <span class="faint" id="wpPairingCode">—</span>
+            <span class="faint" id="wpPairingCode">—{% if workplace.pairing_expired %} (expired){% endif %}</span>
             {% endif %}
             <button class="btn ghost sm" type="button" id="wpGenPairing" data-id="{{ workplace.id }}">Generate code</button>
           </div>

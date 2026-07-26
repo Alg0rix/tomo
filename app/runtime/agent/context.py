@@ -97,8 +97,67 @@ def build_system_prompt(
         agent_soul = _read_md(home.agent_soul_path(agent_id, root))
         if agent_soul:
             parts.append(agent_soul)
+        wp_block = _workplace_prompt_section(agent_id)
+        if wp_block:
+            parts.append(wp_block)
 
     return "\n\n".join(parts)
+
+
+def _workplace_prompt_section(agent_id: str) -> str:
+    """Describe assigned workplaces so the model can target hosts / register paths."""
+    try:
+        from app.services import store
+
+        agent = store.get_agent(agent_id)
+        if not agent:
+            return ""
+        scope = (agent.get("workplace_scope") or "single").strip().lower()
+        all_wps = store.list_workplaces()
+        if scope == "all":
+            allowed = all_wps
+            label = "all workplaces"
+        elif scope == "all_tunnels":
+            allowed = [w for w in all_wps if (w.get("kind") or "") == "tunnel"]
+            label = "all tunnel connectors"
+        else:
+            ids = list(agent.get("workplace_ids") or [])
+            primary = (agent.get("workplace_id") or "").strip()
+            if primary and primary not in ids:
+                ids = [primary] + ids
+            by_id = {w["id"]: w for w in all_wps}
+            allowed = [by_id[i] for i in ids if i in by_id]
+            label = "assigned workplaces" if allowed else "none (local sandbox work/)"
+
+        lines = [
+            "## Workplaces",
+            f"Scope: {scope} ({label}).",
+            "Use register_workplace(kind=local, path=...) when the user names a local "
+            "project path to debug (auto-registers and binds it for this turn).",
+            "When the user names a host (e.g. aio-serv), run tools against that "
+            "workplace — pass workplace= in bash if needed.",
+        ]
+        if allowed:
+            lines.append("Available:")
+            for w in allowed[:40]:
+                host = (
+                    w.get("host")
+                    or w.get("host_detail")
+                    or w.get("connector_hostname")
+                    or w.get("ssh_host")
+                    or w.get("root_path")
+                    or ""
+                )
+                status = w.get("status") or ""
+                bit = f"- {w.get('name')} id={w.get('id')} kind={w.get('kind')}"
+                if host:
+                    bit += f" host={host}"
+                if status:
+                    bit += f" status={status}"
+                lines.append(bit)
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def history_to_messages(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:

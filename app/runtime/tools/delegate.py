@@ -27,9 +27,15 @@ def bind_context(
 
 
 def reset_context(token: Token | None = None) -> None:
-    """Clear or reset the bound session context."""
+    """Clear or reset the bound session context.
+
+    Tolerates reset from a different Context (async generator aclose paths).
+    """
     if token is not None:
-        _ctx.reset(token)
+        try:
+            _ctx.reset(token)
+        except ValueError:
+            _ctx.set(None)
     else:
         _ctx.set(None)
 
@@ -53,7 +59,10 @@ def run(arguments: dict[str, Any]) -> str:
         query=query,
     )
     if not target:
-        return f"Error: '{query.strip()}' is not a member of this session"
+        return (
+            f"Error: no enabled agent matches '{query.strip()}'. "
+            "Check the agent name/id (swarm sessions include all enabled agents)."
+        )
 
     return f"Delegated to {target}"
 

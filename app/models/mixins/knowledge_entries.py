@@ -87,12 +87,15 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
     title = (data.get("title") or "").strip()
     if not title:
         raise ValueError("title is required")
-    eid = (data.get("id") or "").strip()
-    if eid:
-        if conn.execute("SELECT 1 FROM knowledge_entries WHERE id=?", (eid,)).fetchone():
-            raise ValueError("Knowledge entry ID already exists")
-    else:
-        eid = _new_id(conn, title)
+    from app.models.ids import unique_id
+
+    eid = unique_id(
+        conn,
+        "knowledge_entries",
+        name=title,
+        prefix="kb",
+        explicit=(data.get("id") or None) or None,
+    )
     now = _now()
     conn.execute(
         "INSERT INTO knowledge_entries (id, title, body, tags_json, created_at, updated_at) "

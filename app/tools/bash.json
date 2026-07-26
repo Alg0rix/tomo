@@ -22,6 +22,10 @@
           "background": {
             "type": "boolean",
             "description": "If true, start without waiting and return a process job id."
+          },
+          "workplace": {
+            "type": "string",
+            "description": "Optional workplace id/name/host when the agent has multiple (e.g. aio-serv)."
           }
         },
         "required": ["command"]

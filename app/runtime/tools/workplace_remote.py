@@ -1,6 +1,7 @@
 """Route agent tools to tunnel (WebSocket) or SSH (Paramiko) workplaces.
 
-Local workplaces return ``None`` so callers run sandbox logic.
+Supports multi-workplace agents (list / all tunnels / all) and per-turn
+overrides via :mod:`app.runtime.tools.workplace_ctx`.
 """
 
 from __future__ import annotations
@@ -9,6 +10,11 @@ import json
 from typing import Any
 
 from app.runtime.tools.sandbox import current_agent_id
+from app.runtime.tools.workplace_ctx import (
+    current_workplace_hint,
+    current_workplace_id,
+    match_workplace,
+)
 from app.workplaces.hub import hub
 
 _DEFAULT_TIMEOUT = 60.0
@@ -27,20 +33,83 @@ def _timeout_seconds(raw: Any, default: float = _DEFAULT_TIMEOUT) -> float:
     return min(value, _MAX_TIMEOUT)
 
 
+def _agent_allowed_workplaces(agent: dict[str, Any]) -> list[dict[str, Any]]:
+    from app.services import store
+
+    all_wps = store.list_workplaces()
+    scope = (agent.get("workplace_scope") or "single").strip().lower()
+    if scope == "all":
+        return list(all_wps)
+    if scope == "all_tunnels":
+        return [w for w in all_wps if (w.get("kind") or "") == "tunnel"]
+    ids = list(agent.get("workplace_ids") or [])
+    primary = (agent.get("workplace_id") or "").strip()
+    if primary and primary not in ids:
+        ids = [primary] + ids
+    if not ids:
+        return []
+    by_id = {w["id"]: w for w in all_wps}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | None:
+    """Pick the workplace for this agent + turn (hint / override / default)."""
     aid = agent_id if agent_id is not None else current_agent_id()
     if not aid:
         return None
     try:
         from app.services import store
 
-        return store.resolve_agent_workplace(aid)
+        agent = store.get_agent(aid)
     except Exception:
         return None
+    if not agent:
+        return None
+
+    # Explicit per-turn bind (register_workplace / tool arg).
+    override = current_workplace_id()
+    if override:
+        try:
+            from app.services import store
+
+            wp = store.get_workplace(override)
+            if wp:
+                return wp
+        except Exception:
+            pass
+
+    allowed = _agent_allowed_workplaces(agent)
+    hint = current_workplace_hint()
+    if hint and allowed:
+        hit = match_workplace(allowed, hint)
+        if hit:
+            return hit
+    if not allowed:
+        # single empty → local sandbox
+        return None
+
+    scope = (agent.get("workplace_scope") or "single").strip().lower()
+    # Prefer online tunnel when multiple.
+    if scope in ("all_tunnels", "all", "list") and len(allowed) > 1:
+        for w in allowed:
+            if (w.get("kind") or "") == "tunnel" and hub.is_online(w["id"]):
+                return w
+        # Named primary if set
+        primary = (agent.get("workplace_id") or "").strip()
+        for w in allowed:
+            if w["id"] == primary:
+                return w
+        return allowed[0]
+
+    primary = (agent.get("workplace_id") or "").strip()
+    if primary:
+        for w in allowed:
+            if w["id"] == primary:
+                return w
+    return allowed[0] if allowed else None
 
 
 def agent_remote_kind(agent_id: str | None = None) -> str | None:
-    """Return ``tunnel`` / ``ssh`` if agent is on a remote workplace, else ``None``."""
     wp = resolve_agent_workplace(agent_id)
     if not wp:
         return None
@@ -51,7 +120,6 @@ def agent_remote_kind(agent_id: str | None = None) -> str | None:
 
 
 def format_rpc_result(method: str, result: Any) -> str:
-    """Turn a remote result into an agent-facing string."""
     if result is None:
         return "(no output)"
 
@@ -87,7 +155,11 @@ def format_rpc_result(method: str, result: Any) -> str:
             if method == "delete_file":
                 return f"Deleted {path}" if path else "Deleted file"
             if method == "str_replace":
-                return f"Replaced 1 occurrence in {path}" if path else "Replaced 1 occurrence"
+                return (
+                    f"Replaced 1 occurrence in {path}"
+                    if path
+                    else "Replaced 1 occurrence"
+                )
             return f"Wrote file to {path}" if path else "Wrote file"
         if result.get("error"):
             return f"Error: {result['error']}"
@@ -140,25 +212,26 @@ def format_rpc_result(method: str, result: Any) -> str:
     return str(result)
 
 
-def _call_tunnel(method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
-    wid = None
-    wp = resolve_agent_workplace()
-    if wp:
-        wid = wp.get("id")
+def _call_tunnel(
+    wp: dict[str, Any], method: str, params: dict[str, Any], timeout: float
+) -> dict[str, Any]:
+    wid = str(wp.get("id") or "")
     if not wid:
-        return {"ok": False, "error": "not a tunnel workplace"}
-    if not hub.is_online(str(wid)):
+        return {"ok": False, "error": "missing workplace id"}
+    if not hub.is_online(wid):
         return {
             "ok": False,
-            "error": "tunnel workplace is offline (connector not connected)",
+            "error": (
+                f"tunnel workplace {wp.get('name') or wid!r} is offline "
+                "(connector not connected)"
+            ),
         }
-    return hub.call(str(wid), method, dict(params), timeout=timeout)
+    return hub.call(wid, method, dict(params), timeout=timeout)
 
 
-def _call_ssh(method: str, params: dict[str, Any]) -> dict[str, Any]:
-    wp = resolve_agent_workplace()
-    if not wp:
-        return {"ok": False, "error": "not an ssh workplace"}
+def _call_ssh(
+    wp: dict[str, Any], method: str, params: dict[str, Any]
+) -> dict[str, Any]:
     wid = wp.get("id")
     try:
         from app.services import store
@@ -177,35 +250,56 @@ def try_remote(
     params: dict[str, Any],
     *,
     timeout: float | None = None,
+    workplace_hint: str | None = None,
 ) -> str | None:
-    """If agent is on tunnel/ssh, run remote method; else ``None`` (use local).
+    """If agent has a remote workplace for this turn, run RPC; else ``None``."""
+    # Optional per-call hint (e.g. bash workplace=)
+    hint_token = None
+    if workplace_hint:
+        from app.runtime.tools import workplace_ctx as wctx
 
-    Offline / failures return ``Error: ...`` strings (never raises).
-    """
-    kind = agent_remote_kind()
-    if kind is None:
-        return None
-    to = _timeout_seconds(timeout if timeout is not None else params.get("timeout"))
-    if kind == "tunnel":
-        payload = _call_tunnel(method, params, to)
-    elif kind == "ssh":
-        payload = _call_ssh(method, params)
-    else:
-        return None
-    if not payload.get("ok"):
-        err = payload.get("error") or "remote call failed"
-        return f"Error: {err}"
-    return format_rpc_result(method, payload.get("result"))
+        hint_token = wctx._workplace_hint.set(workplace_hint)  # noqa: SLF001
+    try:
+        wp = resolve_agent_workplace()
+        if not wp:
+            return None
+        kind = (wp.get("kind") or "").strip().lower()
+        if kind == "local":
+            # Local workplace uses path via sandbox, not remote RPC.
+            return None
+        if kind not in ("tunnel", "ssh"):
+            return None
+        to = _timeout_seconds(
+            timeout if timeout is not None else params.get("timeout")
+        )
+        if kind == "tunnel":
+            payload = _call_tunnel(wp, method, params, to)
+        else:
+            payload = _call_ssh(wp, method, params)
+        if not payload.get("ok"):
+            err = payload.get("error") or "remote call failed"
+            return f"Error: {err}"
+        return format_rpc_result(method, payload.get("result"))
+    finally:
+        if hint_token is not None:
+            try:
+                from app.runtime.tools import workplace_ctx as wctx
+
+                wctx._workplace_hint.reset(hint_token)  # noqa: SLF001
+            except ValueError:
+                pass
 
 
-# Back-compat aliases used by existing tools.
 def try_tunnel_rpc(
     method: str,
     params: dict[str, Any],
     *,
     timeout: float | None = None,
+    workplace_hint: str | None = None,
 ) -> str | None:
-    return try_remote(method, params, timeout=timeout)
+    return try_remote(
+        method, params, timeout=timeout, workplace_hint=workplace_hint
+    )
 
 
 def agent_tunnel_workplace_id(agent_id: str | None = None) -> str | None:

@@ -50,6 +50,22 @@ def test_resolve_target_empty_query() -> None:
     assert resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="   ") is None
 
 
+def test_resolve_target_unique_prefix() -> None:
+    assert resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="re") == "research"
+    assert resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="op") == "ops"
+
+
+def test_resolve_target_by_role() -> None:
+    agents = [
+        {"id": "main", "name": "Tomo", "role": "coordinator"},
+        {"id": "ops", "name": "Ops", "role": "ops"},
+    ]
+    assert (
+        resolve_target(agent_ids=["main", "ops"], agents=agents, query="coordinator")
+        == "main"
+    )
+
+
 def test_parse_leading_mention_strips_handle() -> None:
     assert parse_leading_mention("@ops check disk") == ("ops", "check disk")
     assert parse_leading_mention("@Ops   restart nginx") == ("Ops", "restart nginx")

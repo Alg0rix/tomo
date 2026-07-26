@@ -10,11 +10,11 @@
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       const fd = new FormData(form);
-      const body = { id: fd.get('id'), name: fd.get('name'), role: fd.get('role') || '', description: fd.get('description'), model_id: fd.get('model_id') || '' };
+      const body = { name: fd.get('name'), role: fd.get('role') || '', description: fd.get('description'), model_id: fd.get('model_id') || '' };
       try {
-        await Tomo.api('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const created = await Tomo.api('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         Tomo.toast('Agent "' + body.name + '" created', 'ok');
-        setTimeout(function () { location.href = '/agents/' + encodeURIComponent(body.id); }, 600);
+        setTimeout(function () { location.href = '/agents/' + encodeURIComponent(created.id); }, 600);
       } catch (err) { Tomo.toast(err.message || 'Could not create agent', 'err'); }
     });
   }

@@ -72,11 +72,21 @@ async def connector_pair_http(request: Request) -> JSONResponse:
     ).strip()
     platform = str(data.get("platform") or "").strip()
     version = str(data.get("version") or "").strip()
+    # Prefer device-reported LAN IP over TCP peer (peer is often 127.0.0.1).
+    device_ip = str(
+        data.get("local_ip") or data.get("device_ip") or ""
+    ).strip()
+    peer = ip if ip not in ("", "unknown") else ""
+    stored_ip = device_ip or (peer if peer not in ("127.0.0.1", "::1") else "")
     if not code:
         return JSONResponse({"ok": False, "error": "pairing_code is required"}, 400)
     try:
         result = store.pair_connector(
-            code, hostname=hostname, version=version, platform=platform
+            code,
+            hostname=hostname,
+            version=version,
+            platform=platform,
+            remote_ip=stored_ip,
         )
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, 400)
@@ -120,6 +130,14 @@ async def connector_ws(websocket: WebSocket) -> None:
         websocket.headers.get("x-tomo-caps")
         or ""
     ).strip()
+    device_ip = (
+        websocket.headers.get("x-tomo-local-ip")
+        or websocket.headers.get("x-device-ip")
+        or ""
+    ).strip()
+    peer = client_host or ""
+    # Device LAN IP preferred; never treat loopback peer as "the" device IP.
+    stored_ip = device_ip or (peer if peer not in ("127.0.0.1", "::1", "unknown") else "")
 
     workplace_id: str | None = None
     session: ConnectorSession | None = None
@@ -134,6 +152,7 @@ async def connector_ws(websocket: WebSocket) -> None:
                 hostname=hostname,
                 version=version,
                 platform=platform,
+                remote_ip=stored_ip,
             )
         except ValueError:
             result = None
@@ -148,6 +167,7 @@ async def connector_ws(websocket: WebSocket) -> None:
             hostname=hostname,
             version=version,
             platform=platform,
+            remote_ip=stored_ip,
             caps=caps,
         )
         try:
@@ -198,12 +218,15 @@ async def connector_ws(websocket: WebSocket) -> None:
                 hostname = str(raw.get("hostname") or raw.get("device_name") or "").strip()
                 version = str(raw.get("version") or "").strip()
                 platform = str(raw.get("platform") or "").strip()
+                msg_ip = str(raw.get("local_ip") or raw.get("device_ip") or "").strip()
+                use_ip = msg_ip or stored_ip
                 try:
                     result = store.pair_connector(
                         code,
                         hostname=hostname,
                         version=version,
                         platform=platform,
+                        remote_ip=use_ip,
                     )
                 except ValueError as exc:
                     await websocket.send_json(_err(str(exc)))
@@ -218,6 +241,7 @@ async def connector_ws(websocket: WebSocket) -> None:
                     hostname=hostname,
                     version=version,
                     platform=platform,
+                    remote_ip=use_ip,
                     caps=str(raw.get("caps") or ""),
                 )
                 await websocket.send_json(
@@ -240,12 +264,15 @@ async def connector_ws(websocket: WebSocket) -> None:
                 hostname = str(raw.get("hostname") or "").strip()
                 version = str(raw.get("version") or "").strip()
                 platform = str(raw.get("platform") or "").strip()
+                msg_ip = str(raw.get("local_ip") or raw.get("device_ip") or "").strip()
+                use_ip = msg_ip or stored_ip
                 try:
                     result = store.hello_connector(
                         token,
                         hostname=hostname,
                         version=version,
                         platform=platform,
+                        remote_ip=use_ip,
                     )
                 except ValueError as exc:
                     await websocket.send_json(_err(str(exc)))
@@ -261,6 +288,7 @@ async def connector_ws(websocket: WebSocket) -> None:
                     hostname=hostname,
                     version=version,
                     platform=platform,
+                    remote_ip=use_ip,
                     caps=str(raw.get("caps") or ""),
                 )
                 await websocket.send_json(
@@ -280,7 +308,13 @@ async def connector_ws(websocket: WebSocket) -> None:
 
             if msg_type in ("heartbeat", "pong"):
                 session.touch()
-                store.touch_connector(workplace_id)
+                store.touch_connector(
+                    workplace_id,
+                    remote_ip=session.remote_ip or stored_ip,
+                    hostname=session.hostname,
+                    version=session.version,
+                    platform=session.platform,
+                )
                 if msg_type == "heartbeat":
                     await websocket.send_json(
                         {"v": _PROTOCOL_V, "type": "heartbeat_ack"}
@@ -319,6 +353,7 @@ async def _bind_session(
     hostname: str,
     version: str,
     platform: str = "",
+    remote_ip: str = "",
     caps: str = "",
 ) -> ConnectorSession:
     loop = asyncio.get_running_loop()
@@ -330,6 +365,7 @@ async def _bind_session(
         hostname=hostname,
         version=version,
         platform=platform,
+        remote_ip=remote_ip,
         replay_ok=replay_ok,
     )
     prev = hub.register(session)

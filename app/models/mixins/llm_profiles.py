@@ -83,15 +83,22 @@ def get_profile(conn: sqlite3.Connection, profile_id: str) -> dict[str, Any] | N
 
 
 def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
-    pid = data["id"]
-    if conn.execute("SELECT 1 FROM llm_profiles WHERE id=?", (pid,)).fetchone():
-        raise ValueError("Profile ID already exists")
+    from app.models.ids import unique_id
+
+    name = (data.get("name") or "").strip() or "profile"
+    pid = unique_id(
+        conn,
+        "llm_profiles",
+        name=name,
+        prefix="",
+        explicit=(data.get("id") or None),
+    )
     conn.execute(
         "INSERT INTO llm_profiles (id, name, base_url, api_key, model, enabled, created_at) "
         "VALUES (?,?,?,?,?,?,?)",
         (
             pid,
-            data.get("name") or pid,
+            name,
             data.get("base_url") or "",
             encrypt_secret(data.get("api_key")),
             data.get("model") or "",

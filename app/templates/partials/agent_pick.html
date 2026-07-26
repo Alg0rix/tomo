@@ -1,8 +1,8 @@
 {% from 'partials/avatar.html' import avatar %}
-
+{% set checked = pick_checked if pick_checked is defined else true %}
 <label class="agent-pick{% if not agent.enabled %} disabled{% endif %}">
   <input type="checkbox" name="agent" value="{{ agent.id }}"
-    {% if checked is defined and checked %}checked{% elif agent.is_super %}checked{% elif agent.enabled %}checked{% endif %}
+    {% if agent.enabled and checked %}checked{% endif %}
     {% if not agent.enabled %}disabled{% endif %}>
   {{ avatar(agent.id, agent.name, 'sm') }}
   <span class="agent-pick-meta">

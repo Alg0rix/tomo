@@ -6,17 +6,23 @@ from pathlib import Path
 
 from app.core import home
 from app.runtime.tools.sandbox import jail_path, resolve_work_root, bind_agent, reset_agent
+from app.runtime.tools.workplace_ctx import reset_workplace
 from app.services import store
 
 
-def test_resolve_work_root_creates_dir() -> None:
+def test_resolve_work_root_creates_dir(tmp_path: Path) -> None:
+    store.rebind(tmp_path / "sandbox-default.db")
     reset_agent()
+    reset_workplace()
     bind_agent("ops")
-    root = resolve_work_root()
-    assert root.is_dir()
-    assert root.name == "work"
-    assert "ops" in str(root)
-    reset_agent()
+    try:
+        root = resolve_work_root()
+        assert root.is_dir()
+        assert root.name == "work"
+        assert "ops" in str(root)
+    finally:
+        reset_agent()
+        reset_workplace()
 
 
 def test_resolve_work_root_uses_local_workplace(tmp_path: Path) -> None:

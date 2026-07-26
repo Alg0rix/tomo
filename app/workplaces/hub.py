@@ -58,6 +58,7 @@ class ConnectorSession:
         hostname: str = "",
         version: str = "",
         platform: str = "",
+        remote_ip: str = "",
         replay_ok: bool = False,
     ) -> None:
         self.workplace_id = workplace_id
@@ -66,6 +67,7 @@ class ConnectorSession:
         self.hostname = hostname
         self.version = version
         self.platform = platform
+        self.remote_ip = remote_ip
         self.replay_ok = replay_ok
         self.connected_at = time.time()
         self.last_seen = self.connected_at

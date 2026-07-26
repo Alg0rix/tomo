@@ -569,6 +569,34 @@ img { max-width: 100%; display: block; }
 .composer .send svg { width: 19px; height: 19px; }
 .composer .send:disabled { opacity: .45; cursor: not-allowed; }
 .chat-hint { max-width: 820px; margin: 6px auto 0; font-size: 11px; color: var(--text-faint); text-align: center; }
+.composer-inner.mention-host { position: relative; }
+.mention-menu {
+  position: absolute; left: 0; right: 54px; bottom: calc(100% + 6px);
+  max-height: 220px; overflow: auto; z-index: 40;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.28);
+  padding: 4px;
+}
+.mention-menu.hidden { display: none; }
+.mention-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; color: inherit;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  font: inherit;
+}
+.mention-item:hover, .mention-item.active { background: var(--accent-soft); }
+.mention-item .av {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff;
+}
+.mention-item .meta { min-width: 0; }
+.mention-item .name { font-size: 13px; font-weight: 600; }
+.mention-item .id { font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+.mention-chip {
+  display: inline-block; padding: 0 6px; border-radius: 6px;
+  background: rgba(255,255,255,.18); font-weight: 600; font-size: .92em;
+}
+.msg.assistant .mention-chip { background: var(--accent-soft); color: var(--accent); }
 
 /* ─── Sessions / main chat ──────────────────────────────────────── */
 .sessions-page { display: flex; height: calc(100vh - var(--header-h)); min-height: 0; }
@@ -757,6 +785,10 @@ img { max-width: 100%; display: block; }
 .config-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .config-row:last-child { border-bottom: none; }
 .config-row .lbl { font-size: 12.5px; color: var(--text-dim); font-weight: 600; padding-top: 10px; }
+.workplace-multi { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.workplace-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; line-height: 1.35; }
+.workplace-check input { margin-top: 2px; accent-color: var(--accent); }
+.workplace-check .muted { color: var(--text-faint); font-weight: 400; }
 .tool-row, .skill-row, .channel-row {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px;
   border: 1px solid var(--border); border-radius: var(--r-sm); margin-bottom: 8px; background: var(--surface);

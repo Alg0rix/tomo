@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS workplaces (
     connector_last_seen_at REAL NOT NULL DEFAULT 0,
     connector_version      TEXT NOT NULL DEFAULT '',
     connector_hostname     TEXT NOT NULL DEFAULT '',
+    connector_platform     TEXT NOT NULL DEFAULT '',
+    connector_remote_ip    TEXT NOT NULL DEFAULT '',
     created_at             REAL NOT NULL DEFAULT 0,
     updated_at             REAL NOT NULL DEFAULT 0
 );
@@ -188,6 +190,14 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE agents ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"
         )
+    if "workplace_scope" not in cols:
+        conn.execute(
+            "ALTER TABLE agents ADD COLUMN workplace_scope TEXT NOT NULL DEFAULT 'single'"
+        )
+    if "workplace_ids_json" not in cols:
+        conn.execute(
+            "ALTER TABLE agents ADD COLUMN workplace_ids_json TEXT NOT NULL DEFAULT '[]'"
+        )
     # Connector tunnel columns (idempotent ALTER for pre-connector DBs).
     wp_cols = {r[1] for r in conn.execute("PRAGMA table_info(workplaces)")}
     _wp_alters = {
@@ -197,6 +207,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         "connector_last_seen_at": "ALTER TABLE workplaces ADD COLUMN connector_last_seen_at REAL NOT NULL DEFAULT 0",
         "connector_version": "ALTER TABLE workplaces ADD COLUMN connector_version TEXT NOT NULL DEFAULT ''",
         "connector_hostname": "ALTER TABLE workplaces ADD COLUMN connector_hostname TEXT NOT NULL DEFAULT ''",
+        "connector_platform": "ALTER TABLE workplaces ADD COLUMN connector_platform TEXT NOT NULL DEFAULT ''",
+        "connector_remote_ip": "ALTER TABLE workplaces ADD COLUMN connector_remote_ip TEXT NOT NULL DEFAULT ''",
     }
     for col, ddl in _wp_alters.items():
         if col not in wp_cols:

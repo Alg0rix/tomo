@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/tomo-project/tomo/connector/internal/clog"
 )
 
 // Handle dispatches method → result (JSON-serializable).
@@ -15,38 +18,51 @@ func Handle(method string, params map[string]any) (any, error) {
 	if params == nil {
 		params = map[string]any{}
 	}
+	t0 := time.Now()
+	clog.Event("exec.start", "method", method, "params", clog.JSON(params, 400))
+	var (
+		result any
+		err    error
+	)
 	switch method {
 	case "ping":
-		return "pong", nil
+		result = "pong"
 	case "cwd_info":
-		return strings.TrimRight(WorkRoot(), string(os.PathSeparator)), nil
+		result = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
 	case "exec_bash", "bash":
-		return execBash(params)
+		result, err = execBash(params)
 	case "exec_python":
-		return execPython(params)
+		result, err = execPython(params)
 	case "read_file":
-		return readFile(params)
+		result, err = readFile(params)
 	case "write_file":
-		return writeFile(params)
+		result, err = writeFile(params)
 	case "read_file_b64":
-		return readFileB64(params)
+		result, err = readFileB64(params)
 	case "write_file_b64":
-		return writeFileB64(params)
+		result, err = writeFileB64(params)
 	case "str_replace":
-		return strReplace(params)
+		result, err = strReplace(params)
 	case "delete_file":
-		return deleteFile(params)
+		result, err = deleteFile(params)
 	case "search_files":
-		return searchFiles(params)
+		result, err = searchFiles(params)
 	case "process_start":
-		return processStart(params)
+		result, err = processStart(params)
 	case "process_list":
-		return listJobs(), nil
+		result = listJobs()
 	case "process_status":
-		return processStatus(params)
+		result, err = processStatus(params)
 	case "process_kill":
-		return processKill(params)
+		result, err = processKill(params)
 	default:
-		return nil, fmt.Errorf("unknown method: %s", method)
+		err = fmt.Errorf("unknown method: %s", method)
 	}
+	ms := time.Since(t0).Milliseconds()
+	if err != nil {
+		clog.Error("exec.done", err, "method", method, "ok", false, "ms", ms)
+	} else {
+		clog.Event("exec.done", "method", method, "ok", true, "ms", ms, "result", clog.JSON(result, 400))
+	}
+	return result, err
 }

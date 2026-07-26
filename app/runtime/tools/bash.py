@@ -58,6 +58,12 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(command, str) or not command.strip():
         return "Error: 'command' argument must be a non-empty string"
 
+    wp_hint = arguments.get("workplace") or arguments.get("workplace_id")
+    if isinstance(wp_hint, str):
+        wp_hint = wp_hint.strip() or None
+    else:
+        wp_hint = None
+
     background = _truthy(arguments.get("background"))
     if background:
         # Tunnel / SSH: start remote background job via process_start.
@@ -65,6 +71,7 @@ def run(arguments: dict[str, Any]) -> str:
             "process_start",
             {"command": command, "cwd": ""},
             timeout=30.0,
+            workplace_hint=wp_hint,
         )
         if remote_bg is not None:
             return remote_bg
@@ -95,25 +102,45 @@ def run(arguments: dict[str, Any]) -> str:
             "cwd": "",
         },
         timeout=to + 10.0,
+        workplace_hint=wp_hint,
     )
     if remote is not None:
         return remote
 
-    root = resolve_work_root()
-    timeout = _timeout_seconds(arguments.get("timeout"))
+    # Local sandbox: optionally bind workplace hint so multi-wp agents hit
+    # the right root_path, then capture the resolved path before unbinding.
+    root_tokens = None
+    if wp_hint:
+        try:
+            from app.runtime.tools.workplace_ctx import bind_workplace
+
+            root_tokens = bind_workplace(hint=wp_hint)
+        except Exception:
+            root_tokens = None
     try:
-        completed = subprocess.run(
-            ["bash", "-lc", command],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return f"Error: command timed out after {timeout:g}s"
-    except OSError as exc:
-        return f"Error: could not run command: {exc}"
+        root = resolve_work_root()
+        timeout = _timeout_seconds(arguments.get("timeout"))
+        try:
+            completed = subprocess.run(
+                ["bash", "-lc", command],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return f"Error: command timed out after {timeout:g}s"
+        except OSError as exc:
+            return f"Error: could not run command: {exc}"
+    finally:
+        if root_tokens is not None:
+            try:
+                from app.runtime.tools.workplace_ctx import reset_workplace
+
+                reset_workplace(root_tokens)
+            except Exception:
+                pass
 
     stdout = _clip(completed.stdout or "")
     stderr = _clip(completed.stderr or "")

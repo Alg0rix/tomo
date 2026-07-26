@@ -28,7 +28,7 @@
       modeEl.value = "add";
       document.getElementById("workplaceFormTitle").textContent = "New workplace";
       var idEl = document.getElementById("wpId");
-      if (idEl) { idEl.disabled = false; idEl.value = ""; }
+      if (idEl) { idEl.value = ""; }
       document.getElementById("wpName").value = "";
       kindEl.value = "local";
       document.getElementById("wpRootPath").value = "";
@@ -80,8 +80,6 @@
       var mode = modeEl ? modeEl.value : "add";
       try {
         if (mode === "add") {
-          body.id = document.getElementById("wpId").value.trim();
-          if (!body.id) { Tomo.toast("ID is required", "err"); return; }
           var created = await Tomo.api("/api/workplaces", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),

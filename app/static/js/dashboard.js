@@ -27,9 +27,9 @@
     if (!text || !sendBtn) return;
     sendBtn.dataset.busy = '1';
     syncSend();
-    // Lazy create: deep-link to sessions draft; chat persists on first send.
+    // Full swarm by default (not coordinator-only) so delegate works immediately.
     const p = new URLSearchParams();
-    p.set('agent', coordinatorId || 'main');
+    p.set('swarm', '1');
     p.set('q', text);
     window.location.href = '/sessions?' + p.toString();
   }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/tomo-project/tomo/connector/internal/clog"
 	"github.com/tomo-project/tomo/connector/internal/pair"
 	"github.com/tomo-project/tomo/connector/internal/state"
 	"github.com/tomo-project/tomo/connector/internal/version"
@@ -17,12 +18,14 @@ import (
 )
 
 func main() {
+	clog.Setup()
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
 	args := os.Args[2:]
+	clog.Event("cli.command", "cmd", cmd, "version", version.Version)
 	var err error
 	switch cmd {
 	case "pair":
@@ -34,19 +37,23 @@ func main() {
 	case "logout":
 		err = state.Clear()
 		if err == nil {
+			clog.Event("cli.logout")
 			fmt.Println("logged out — local state removed")
 		}
 	case "help", "-h", "--help":
 		printUsage()
 	default:
+		clog.Event("cli.unknown_command", "cmd", cmd)
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(2)
 	}
 	if err != nil {
+		clog.Error("cli.exit_error", err, "cmd", cmd)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	clog.Event("cli.exit_ok", "cmd", cmd)
 }
 
 func printUsage() {

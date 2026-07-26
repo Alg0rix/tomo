@@ -68,6 +68,7 @@
     const p = new URLSearchParams(location.search);
     if (sessionId) p.set('s', sessionId); else p.delete('s');
     p.delete('agent');
+    p.delete('swarm');
     p.delete('q');
     const q = p.toString();
     history.replaceState(null, '', q ? ('?' + q) : location.pathname);
@@ -183,6 +184,7 @@
     chatWrap.dataset.sessionId = sessionId;
     chatWrap.dataset.userId = s.user_id || 'web';
     chatWrap.dataset.agentIds = ids.join(',');
+    chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.agentName = label;
     chatWrap.dataset.chatInit = '0';
     delete chatWrap.dataset.agentId;
@@ -229,6 +231,19 @@
     return Array.from(container.querySelectorAll('input[name="agent"]:checked')).map(function (el) { return el.value; });
   }
 
+  function allEnabledAgentIds() {
+    return Object.keys(agents).filter(function (id) {
+      return agents[id] && agents[id].enabled !== false;
+    });
+  }
+
+  function agentsJsonFor(ids) {
+    return JSON.stringify((ids || []).map(function (id) {
+      const a = agents[id] || {};
+      return { id: id, name: a.name || id, role: a.role || '', enabled: a.enabled !== false };
+    }));
+  }
+
   function openDraft(agentIds, opts) {
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
@@ -244,6 +259,7 @@
     chatWrap.dataset.pendingAgents = ids.join(',');
     chatWrap.dataset.userId = 'web';
     chatWrap.dataset.agentIds = ids.join(',');
+    chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.chatInit = '0';
 
     const draft = {
@@ -264,12 +280,17 @@
   }
 
   function startNewChat(agentIds, opts) {
-    if (!agentIds.length) {
-      Tomo.toast('Pick at least one agent', 'err');
+    var ids = agentIds && agentIds.length ? agentIds.slice() : allEnabledAgentIds();
+    if (!ids.length) {
+      Tomo.toast('No enabled agents', 'err');
       return;
     }
     // Persist only on first message (chat.js ensureSession).
-    openDraft(agentIds, opts);
+    openDraft(ids, opts);
+  }
+
+  function startDefaultSwarm(opts) {
+    startNewChat(allEnabledAgentIds(), opts);
   }
 
   function buildEditList(ids) {
@@ -323,14 +344,26 @@
   bindModal(modal, '1');
   bindModal(editModal, '2');
 
-  if (newBtn && modal) {
-    newBtn.addEventListener('click', function () { modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false'); });
+  if (newBtn) {
+    // Default: full swarm immediately. Hold Alt/Option for the picker (subset/solo).
+    newBtn.addEventListener('click', function (e) {
+      if (e.altKey && modal) {
+        // Pre-check all enabled for the modal.
+        document.querySelectorAll('#newChatAgents input[name="agent"]').forEach(function (el) {
+          if (!el.disabled) el.checked = true;
+        });
+        modal.classList.remove('hidden');
+        modal.setAttribute('aria-hidden', 'false');
+        return;
+      }
+      startDefaultSwarm();
+    });
   }
   if (newConfirm) {
     newConfirm.addEventListener('click', function () {
       const ids = pickedAgentIds(document.getElementById('newChatAgents'));
       modal.classList.add('hidden');
-      startNewChat(ids);
+      startNewChat(ids.length ? ids : allEnabledAgentIds());
     });
   }
 
@@ -365,11 +398,13 @@
   refreshSessions().then(function () {
     const wanted = params().get('s');
     const agent = params().get('agent');
+    const swarm = params().get('swarm');
     const firstMessage = params().get('q') || '';
     // Strip q before auto-send so refresh cannot resend the home composer message.
     if (params().has('q')) stripQueryParam('q');
     if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
-    else if (agent) startNewChat([agent], { pendingMessage: firstMessage });
+    else if (swarm === '1' || swarm === 'true') startDefaultSwarm({ pendingMessage: firstMessage });
+    else if (agent) startNewChat([agent], { pendingMessage: firstMessage }); // intentional solo
     else if (sessions.length) selectSession(sessions[0].id);
   });
 })();

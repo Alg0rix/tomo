@@ -16,9 +16,7 @@
     <div class="card-body" style="padding:16px 18px">
       <form id="knowledgeForm" autocomplete="off" onsubmit="return false;">
         <input type="hidden" id="kbFormMode" value="add">
-        <div class="config-row"><div class="lbl">ID <span class="faint">(optional slug)</span></div>
-          <input class="input" id="kbId" pattern="[a-z0-9_]+" placeholder="auto from title" style="max-width:220px" spellcheck="false">
-        </div>
+        <input type="hidden" id="kbId" value="">
         <div class="config-row"><div class="lbl">Title</div>
           <input class="input" id="kbTitle" required placeholder="Q3 vendor deadline" style="max-width:420px">
         </div>

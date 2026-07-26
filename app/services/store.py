@@ -99,18 +99,25 @@ class Store:
         with self._lock:
             return agents_store.get_coordinator(self._conn, self._busy.ids())
 
-    def create_home_session(self, user_id: str = "web") -> dict[str, Any]:
-        """Create a coordinator-only session for the dashboard chat home.
+    def list_enabled_agent_ids(self) -> list[str]:
+        """Ids of enabled agents (coordinator / super first)."""
+        with self._lock:
+            return agents_store.list_enabled_agent_ids(self._conn)
 
-        Returns ``session_id``, ``coordinator_id``, and ``coordinator_name``.
-        Raises ``ValueError`` when no enabled coordinator/agent exists.
+    def create_home_session(self, user_id: str = "web") -> dict[str, Any]:
+        """Create a **full-swarm** session for the dashboard chat home.
+
+        All enabled agents are members so delegate works without picking a team.
+        Coordinator is the super agent (or first enabled). Raises ``ValueError``
+        when no enabled agent exists.
         """
         with self._lock:
             coord = agents_store.get_coordinator(self._conn, self._busy.ids())
             if not coord:
                 raise ValueError("No enabled coordinator agent available")
+            swarm = agents_store.list_enabled_agent_ids(self._conn)
             session_id = sessions_store.create_swarm_session(
-                self._conn, [coord["id"]], user_id, coord["id"]
+                self._conn, swarm, user_id, coord["id"]
             )
             return {
                 "session_id": session_id,
@@ -126,9 +133,16 @@ class Store:
         with self._lock:
             if "workplace_id" in data and data["workplace_id"]:
                 wid = str(data["workplace_id"]).strip()
-                if wid and not workplaces_store.get_workplace(self._conn, wid):
-                    raise ValueError(f"Workplace not found: {wid}")
+                if wid and wid not in ("__all_tunnels__", "__all__"):
+                    if not workplaces_store.get_workplace(self._conn, wid):
+                        raise ValueError(f"Workplace not found: {wid}")
                 data = {**data, "workplace_id": wid}
+            if "workplace_ids" in data and data["workplace_ids"] is not None:
+                ids = [str(x).strip() for x in data["workplace_ids"] if str(x).strip()]
+                for wid in ids:
+                    if not workplaces_store.get_workplace(self._conn, wid):
+                        raise ValueError(f"Workplace not found: {wid}")
+                data = {**data, "workplace_ids": ids}
             return agents_store.update_agent(self._conn, agent_id, data, self._busy.ids())
 
     def delete_agent(self, agent_id: str) -> bool:
@@ -401,6 +415,7 @@ class Store:
         hostname: str = "",
         version: str = "",
         platform: str = "",
+        remote_ip: str = "",
     ) -> dict[str, Any] | None:
         """Consume pairing code; return workplace_id + plaintext token."""
         with self._lock:
@@ -413,6 +428,7 @@ class Store:
                 hostname=hostname,
                 version=version,
                 platform=platform,
+                remote_ip=remote_ip,
                 rotate_token=True,
             )
             return {
@@ -428,6 +444,7 @@ class Store:
         hostname: str = "",
         version: str = "",
         platform: str = "",
+        remote_ip: str = "",
     ) -> dict[str, Any] | None:
         """Authenticate with long-lived token; mark connected in DB."""
         with self._lock:
@@ -440,14 +457,29 @@ class Store:
                 hostname=hostname,
                 version=version,
                 platform=platform,
+                remote_ip=remote_ip,
                 status="connected",
             )
             return {"workplace_id": wp["id"]}
 
-    def touch_connector(self, workplace_id: str) -> None:
+    def touch_connector(
+        self,
+        workplace_id: str,
+        *,
+        remote_ip: str = "",
+        hostname: str = "",
+        version: str = "",
+        platform: str = "",
+    ) -> None:
         with self._lock:
             workplaces_store.mark_connector_seen(
-                self._conn, workplace_id, status="connected"
+                self._conn,
+                workplace_id,
+                hostname=hostname,
+                version=version,
+                platform=platform,
+                remote_ip=remote_ip,
+                status="connected",
             )
 
     def mark_connector_offline(self, workplace_id: str) -> None:

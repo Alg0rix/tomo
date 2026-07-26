@@ -116,7 +116,7 @@ async def list_workplaces(_: AuthDep):
 @router.post("/workplaces")
 async def create_workplace(body: WorkplaceCreate, _: AuthDep):
     try:
-        return store.create_workplace(body.model_dump())
+        return store.create_workplace(body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -284,7 +284,7 @@ async def list_llm_profiles(_: AuthDep):
 @router.post("/llm-profiles")
 async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
     try:
-        return store.create_llm_profile(body.model_dump())
+        return store.create_llm_profile(body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

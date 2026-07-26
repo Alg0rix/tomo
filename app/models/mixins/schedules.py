@@ -104,12 +104,15 @@ def create_schedule(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     if not conn.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
         raise ValueError(f"Agent not found: {agent_id}")
 
-    sid = (data.get("id") or "").strip()
-    if sid:
-        if conn.execute("SELECT 1 FROM schedules WHERE id=?", (sid,)).fetchone():
-            raise ValueError("Schedule ID already exists")
-    else:
-        sid = _new_id(conn, name)
+    from app.models.ids import unique_id
+
+    sid = unique_id(
+        conn,
+        "schedules",
+        name=name,
+        prefix="sch",
+        explicit=(data.get("id") or None) or None,
+    )
 
     cron = (data.get("cron") or "").strip()
     interval = data.get("interval_seconds")

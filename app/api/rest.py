@@ -49,7 +49,7 @@ async def get_agent(agent_id: str, _: AuthDep):
 @router.post("/agents")
 async def create_agent(body: AgentCreate, _: AuthDep):
     try:
-        return store.create_agent(body.model_dump())
+        return store.create_agent(body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

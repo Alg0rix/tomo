@@ -100,6 +100,16 @@ async def run_turn(
     ``async for``.
     """
     sandbox_token = sandbox.bind_agent(agent_id)
+    # Optional workplace hint from caller (mention trailing host / tool context).
+    wp_tokens = None
+    try:
+        from app.runtime.tools import workplace_ctx as _wp_ctx
+
+        # Preserve any pre-bound workplace (register_workplace mid-turn).
+        if _wp_ctx.current_workplace_id() is None and _wp_ctx.current_workplace_hint() is None:
+            pass
+    except Exception:
+        pass
     try:
         try:
             client = llm if llm is not None else get_llm(agent_id)

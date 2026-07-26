@@ -19,13 +19,46 @@
               {% endfor %}
             </select>
           </div>
-          <div class="config-row"><div class="lbl">Workplace</div>
-            <select class="input" id="cfgWorkplace" style="max-width:240px">
+          <div class="config-row"><div class="lbl">Workplace scope</div>
+            {% set scope = agent.workplace_scope or 'single' %}
+            <select class="input" id="cfgWorkplaceScope" style="max-width:280px">
+              <option value="single" {% if scope == 'single' %}selected{% endif %}>Single workplace</option>
+              <option value="list" {% if scope == 'list' %}selected{% endif %}>Multiple workplaces</option>
+              <option value="all_tunnels" {% if scope == 'all_tunnels' %}selected{% endif %}>All tunnel connectors</option>
+              <option value="all" {% if scope == 'all' %}selected{% endif %}>All workplaces</option>
+            </select>
+          </div>
+          <div class="config-row" id="cfgWorkplaceSingleRow">
+            <div class="lbl">Primary workplace</div>
+            <select class="input" id="cfgWorkplace" style="max-width:280px">
               <option value="" {% if not agent.workplace_id %}selected{% endif %}>Default sandbox (work/)</option>
               {% for w in workplaces %}
-              <option value="{{ w.id }}" {% if agent.workplace_id == w.id %}selected{% endif %}>{{ w.name }} ({{ w.kind }})</option>
+              <option value="{{ w.id }}" {% if agent.workplace_id == w.id %}selected{% endif %}>{{ w.name }} ({{ w.kind }}){% if w.host %} · {{ w.host }}{% endif %}</option>
               {% endfor %}
             </select>
+          </div>
+          <div class="config-row" id="cfgWorkplaceListRow" style="display:none">
+            <div class="lbl">Workplaces</div>
+            <div class="workplace-multi" id="cfgWorkplaceList" style="max-width:360px">
+              {% set selected_ids = agent.workplace_ids or [] %}
+              {% if agent.workplace_id and agent.workplace_id not in selected_ids %}
+                {% set selected_ids = [agent.workplace_id] + selected_ids %}
+              {% endif %}
+              {% if workplaces %}
+                {% for w in workplaces %}
+                <label class="workplace-check">
+                  <input type="checkbox" value="{{ w.id }}" {% if w.id in selected_ids %}checked{% endif %}>
+                  <span>{{ w.name }} <span class="muted">({{ w.kind }}{% if w.host %} · {{ w.host }}{% endif %})</span></span>
+                </label>
+                {% endfor %}
+              {% else %}
+                <div class="muted" style="font-size:13px">No workplaces yet — create one under Agents → Workplaces.</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="config-row" id="cfgWorkplaceScopeHint" style="display:none">
+            <div class="lbl"></div>
+            <div class="muted" style="font-size:12.5px;line-height:1.45;max-width:420px" id="cfgWorkplaceScopeHintText"></div>
           </div>
           <div class="config-row"><div class="lbl">Description</div>
             <input class="input" id="cfgDesc" value="{{ agent.description }}" style="max-width:420px">

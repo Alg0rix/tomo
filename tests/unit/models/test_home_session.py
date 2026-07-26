@@ -29,7 +29,7 @@ def test_get_coordinator_falls_back_when_super_disabled(tmp_path) -> None:
     assert coord["enabled"] is True
 
 
-def test_create_home_session_coordinator_only(tmp_path) -> None:
+def test_create_home_session_full_swarm(tmp_path) -> None:
     _rebind(tmp_path)
     created = store.create_home_session(user_id="web")
     assert created["coordinator_id"] == "main"
@@ -38,10 +38,21 @@ def test_create_home_session_coordinator_only(tmp_path) -> None:
 
     session = store.get_session(created["session_id"])
     assert session is not None
-    assert session["agent_ids"] == ["main"]
+    enabled = store.list_enabled_agent_ids()
+    # Swarm includes every enabled agent; coordinator first.
+    assert session["agent_ids"][0] == "main"
+    assert set(session["agent_ids"]) == set(enabled)
+    assert len(session["agent_ids"]) >= 2
     assert session["coordinator_id"] == "main"
     assert session["agent_id"] == "main"
     assert session["user_id"] == "web"
+
+
+def test_create_swarm_empty_ids_means_all_enabled(tmp_path) -> None:
+    _rebind(tmp_path)
+    sid = store.create_swarm_session([], user_id="web")
+    session = store.get_session(sid)
+    assert set(session["agent_ids"]) == set(store.list_enabled_agent_ids())
 
 
 def test_create_home_session_raises_without_enabled_agents(tmp_path) -> None:

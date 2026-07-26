@@ -68,11 +68,22 @@ def _valid_agent_ids(conn: sqlite3.Connection, agent_ids: list[str]) -> list[str
 
 def create_swarm_session(
     conn: sqlite3.Connection,
-    agent_ids: list[str],
+    agent_ids: list[str] | None = None,
     user_id: str = "web",
     coordinator_id: str | None = None,
 ) -> str:
-    ids = _valid_agent_ids(conn, agent_ids)
+    """Create a session.
+
+    Empty / omitted ``agent_ids`` means **full swarm** (all enabled agents).
+    Pass a single id for intentional one-agent chat.
+    """
+    from app.models.mixins.agents import list_enabled_agent_ids
+
+    raw = list(agent_ids) if agent_ids is not None else []
+    if not raw:
+        # Empty list / omitted → full swarm (all enabled agents).
+        raw = list_enabled_agent_ids(conn)
+    ids = _valid_agent_ids(conn, raw)
     if not ids:
         raise ValueError("At least one valid agent is required")
     coord = coordinator_id if coordinator_id in ids else ids[0]
@@ -82,6 +93,9 @@ def create_swarm_session(
     ).fetchone()
     if super_row:
         coord = super_row["id"]
+    # Coordinator first in membership for stable UI ordering.
+    if coord in ids:
+        ids = [coord] + [a for a in ids if a != coord]
     sid = _new_sid()
     now = _now()
     title = "New swarm chat" if len(ids) > 1 else "New conversation"

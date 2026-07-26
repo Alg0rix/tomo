@@ -15,16 +15,58 @@
       }
     });
   });
+  function syncWorkplaceUi() {
+    var scopeEl = document.getElementById('cfgWorkplaceScope');
+    var scope = scopeEl ? scopeEl.value : 'single';
+    var singleRow = document.getElementById('cfgWorkplaceSingleRow');
+    var listRow = document.getElementById('cfgWorkplaceListRow');
+    var hintRow = document.getElementById('cfgWorkplaceScopeHint');
+    var hintText = document.getElementById('cfgWorkplaceScopeHintText');
+    if (singleRow) singleRow.style.display = (scope === 'single' || scope === 'list') ? '' : 'none';
+    if (listRow) listRow.style.display = scope === 'list' ? '' : 'none';
+    if (hintRow) {
+      if (scope === 'all_tunnels') {
+        hintRow.style.display = '';
+        if (hintText) hintText.textContent = 'This agent can use every connected tunnel workplace. Mention a host in chat (e.g. “@ops check disk aio-serv”) to pick one.';
+      } else if (scope === 'all') {
+        hintRow.style.display = '';
+        if (hintText) hintText.textContent = 'This agent can use every workplace (local, SSH, tunnel). Mention a name/host to select one per turn.';
+      } else {
+        hintRow.style.display = 'none';
+      }
+    }
+  }
+  var scopeSel = document.getElementById('cfgWorkplaceScope');
+  if (scopeSel) {
+    scopeSel.addEventListener('change', syncWorkplaceUi);
+    syncWorkplaceUi();
+  }
   var cfgSave = document.getElementById('cfgSave');
   if (cfgSave) {
     cfgSave.addEventListener('click', async function () {
       var panel = document.getElementById('panel-config');
       var agentId = panel ? panel.dataset.agentId : '';
+      var scope = (document.getElementById('cfgWorkplaceScope') || { value: 'single' }).value;
+      var workplaceId = (document.getElementById('cfgWorkplace') || { value: '' }).value;
+      var workplaceIds = [];
+      if (scope === 'list') {
+        document.querySelectorAll('#cfgWorkplaceList input[type="checkbox"]:checked').forEach(function (cb) {
+          workplaceIds.push(cb.value);
+        });
+        if (!workplaceId && workplaceIds.length) workplaceId = workplaceIds[0];
+      } else if (scope === 'single') {
+        if (workplaceId) workplaceIds = [workplaceId];
+      } else {
+        workplaceId = '';
+        workplaceIds = [];
+      }
       var body = {
         name: document.getElementById('cfgName').value.trim(),
         role: document.getElementById('cfgRole').value.trim(),
         model_id: document.getElementById('cfgModel').value,
-        workplace_id: (document.getElementById('cfgWorkplace') || { value: '' }).value,
+        workplace_id: workplaceId,
+        workplace_ids: workplaceIds,
+        workplace_scope: scope,
         description: document.getElementById('cfgDesc').value.trim(),
       };
       try {

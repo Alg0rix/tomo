@@ -28,9 +28,18 @@ def bind_agent(agent_id: str | None) -> Token:
 
 
 def reset_agent(token: Token | None = None) -> None:
-    """Clear or reset the bound agent id."""
+    """Clear or reset the bound agent id.
+
+    Safe across async-generator ``aclose`` / ``GeneratorExit``: ContextVar
+    tokens must be reset in the same Context that created them. When the
+    consumer cancels a nested ``run_turn`` (e.g. after a delegate handoff
+    yield), cleanup may run in a different Context — fall back to ``set(None)``.
+    """
     if token is not None:
-        _agent_id.reset(token)
+        try:
+            _agent_id.reset(token)
+        except ValueError:
+            _agent_id.set(None)
     else:
         _agent_id.set(None)
 
@@ -50,13 +59,27 @@ def _safe_agent_id(agent_id: str | None) -> str:
 
 
 def _workplace_local_root(agent_id: str) -> Path | None:
-    """Resolve a local workplace root for ``agent_id``, or ``None`` to fall back."""
-    try:
-        from app.services import store
+    """Resolve a local workplace root for ``agent_id``, or ``None`` to fall back.
 
-        raw = store.resolve_agent_workplace_root(agent_id)
+    Prefers the turn-aware resolver (multi-workplace + mention/register bind)
+    so ``register_workplace`` and trailing host tokens affect bash/file cwd.
+    """
+    raw: str | None = None
+    try:
+        from app.runtime.tools.workplace_remote import resolve_agent_workplace
+
+        wp = resolve_agent_workplace(agent_id)
+        if wp and (wp.get("kind") or "") == "local":
+            raw = (wp.get("root_path") or "").strip() or None
     except Exception:
-        return None
+        raw = None
+    if not raw:
+        try:
+            from app.services import store
+
+            raw = store.resolve_agent_workplace_root(agent_id)
+        except Exception:
+            return None
     if not raw:
         return None
     path = Path(raw).expanduser()

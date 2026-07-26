@@ -1,18 +1,18 @@
 <div id="newChatModal" class="modal hidden" aria-hidden="true">
   <div class="modal-backdrop" data-close="1"></div>
   <div class="modal-card modal-wide">
-    <div class="modal-head"><h3>New swarm chat</h3></div>
+    <div class="modal-head"><h3>Custom chat</h3></div>
     <div class="modal-body">
-      <p class="modal-lead">Pick one or more agents. The coordinator routes work; @mention a member to hand off.</p>
+      <p class="modal-lead">Default chats already use the full swarm. Use this only to limit the session to specific agents.</p>
       <div class="agent-pick-list" id="newChatAgents">
         {% for a in agents_list %}
-        {% with agent=a %}{% include 'partials/agent_pick.html' %}{% endwith %}
+        {% with agent=a, pick_checked=true %}{% include 'partials/agent_pick.html' %}{% endwith %}
         {% endfor %}
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" type="button" data-close="1">Cancel</button>
-      <button class="btn primary" type="button" id="newChatConfirm">Start swarm</button>
+      <button class="btn primary" type="button" id="newChatConfirm">Start</button>
     </div>
   </div>
 </div>

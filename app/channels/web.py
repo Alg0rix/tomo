@@ -35,14 +35,39 @@ _fmt_sse = fmt_sse
 
 
 def _session_agents(session: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
-    """Return ``(agent_ids, agent_dicts)`` for membership-safe routing."""
-    ids = [aid for aid in (session.get("agent_ids") or []) if isinstance(aid, str)]
-    agents: list[dict[str, Any]] = []
+    """Agents available for routing (delegate / @mention).
+
+    Swarm product default: **all enabled agents** can receive handoffs, even if
+    they were added after the session was created. Session ``agent_ids`` still
+    describe the chat header membership; routing is not locked to that list
+    unless the session is intentional solo (exactly one member and only one
+    enabled agent overall — rare). In practice every multi-agent product path
+    uses the full enabled swarm.
+    """
+    session_ids = [aid for aid in (session.get("agent_ids") or []) if isinstance(aid, str)]
+    try:
+        enabled_ids = store.list_enabled_agent_ids()
+    except Exception:
+        enabled_ids = []
+    # Full swarm for routing when any multi-agent session or home swarm.
+    if len(session_ids) != 1 or len(enabled_ids) > 1:
+        ids = list(enabled_ids) if enabled_ids else list(session_ids)
+    else:
+        ids = list(session_ids)
+    # Preserve session order first, then any extra enabled agents.
+    ordered: list[str] = []
+    for aid in session_ids + ids:
+        if aid not in ordered and aid in ids:
+            ordered.append(aid)
     for aid in ids:
+        if aid not in ordered:
+            ordered.append(aid)
+    agents: list[dict[str, Any]] = []
+    for aid in ordered:
         agent = store.get_agent(aid)
-        if agent:
+        if agent and agent.get("enabled", True):
             agents.append(agent)
-    return ids, agents
+    return [a["id"] for a in agents], agents
 
 
 def _agent_label(agent_id: str) -> str:
@@ -244,6 +269,33 @@ async def stream_turn_sse(
                 agent_ids=member_ids, agents=member_agents, query=mention
             )
 
+        # Trailing workplace token: "@ops check disk aio-serv" → hint aio-serv
+        wp_tokens = None
+        try:
+            from app.runtime.tools.workplace_ctx import (
+                bind_workplace,
+                reset_workplace,
+                strip_workplace_hint,
+            )
+
+            wps = store.list_workplaces()
+            body_for_wp = mention_rest if force_target else message
+            stripped, wp_hint = strip_workplace_hint(body_for_wp, wps)
+            if wp_hint:
+                if force_target:
+                    mention_rest = stripped
+                else:
+                    # Keep full message for coordinator; still bind workplace hint.
+                    pass
+                wp_tokens = bind_workplace(hint=wp_hint)
+                logger.info(
+                    "workplace hint session_id=%s hint=%r",
+                    session_id,
+                    wp_hint,
+                )
+        except Exception:
+            wp_tokens = None
+
         will_delegate = bool(force_target)
         start_agent_id = force_target or coordinator_id
         start_agent_name = _agent_label(start_agent_id)
@@ -365,6 +417,13 @@ async def stream_turn_sse(
     finally:
         if ctx_token is not None:
             delegate_tool.reset_context(ctx_token)
+        try:
+            if wp_tokens is not None:
+                from app.runtime.tools.workplace_ctx import reset_workplace
+
+                reset_workplace(wp_tokens)
+        except Exception:
+            pass
         for aid in list(busy_ids):
             store.set_busy(aid, False)
         store.set_busy(coordinator_id, False)

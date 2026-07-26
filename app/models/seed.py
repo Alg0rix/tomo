@@ -44,6 +44,14 @@ def _seed_agents(conn: sqlite3.Connection) -> None:
         "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         rows,
     )
+    # Ops can reach every tunnel connector by default (not 1 agent = 1 workplace).
+    try:
+        conn.execute(
+            "UPDATE agents SET workplace_scope='all_tunnels' WHERE id='ops'"
+        )
+    except sqlite3.OperationalError:
+        # Column may not exist yet if migrate runs after seed in some paths.
+        pass
 
 
 def _seed_settings(conn: sqlite3.Connection) -> None:
