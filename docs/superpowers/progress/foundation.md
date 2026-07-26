@@ -28,7 +28,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | Design sections | **done** (§1–§4 approved) |
 | Spec (`docs/superpowers/specs/…`) | **approved** |
 | Plan (`docs/superpowers/plans/…`) | **written** |
-| Cline execution loop | **Task 1–4 done + 3–4 fix** · next Task 5 |
+| Cline execution loop | **Task 1–5 done** · next Task 6 |
 
 ---
 
@@ -64,6 +64,7 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 | 3 LLM mock + openai_compat | `e636884` | **PASS** |
 | 4 Calculator + registry | `788acce` | **PASS** |
 | 3–4 Adversarial fix | `057c2cf` | **PASS** |
+| 5 Agent turn loop | `6f3b39b` | **PASS** |
 
 ---
 
@@ -95,3 +96,5 @@ Cline is invoked with a **task brief** (plan section + files + acceptance criter
 - 2026-07-26: **Adversarial review Tasks 3–4** (defect-first). Confirmed P1s: (1) nested `**` can bypass per-op exponent cap → huge int / DoS; (2) mock `_has_tool_result` is any historical `tool` message → second calc turn in a session never tools again (breaks Task 5 multi-turn under default mock). P2: whitespace API key accepted; non-dict JSON tool arguments; malformed `choices[0]` can leak AttributeError; complex result from `(-2)**0.5`. Awaiting fix-vs-debt decision before Task 5.
 - 2026-07-26: Dispatched Cline for **Task 3–4 fix pass** (all P1/P2/P3). Brief: `docs/superpowers/handoffs/task-03-04-fix-cline-brief.md`.
 - 2026-07-26: **Task 3–4 fix REVIEW PASS** — commit `057c2cf`. Re-verified: runtime **85 passed**; adversarial recheck: nested pow → error string (no raise); mock multi-turn calc tools again after new user; whitespace key rejected; null choices → LLMRequestError; non-dict args coerced to dict; complex rejected; tools=None suppresses calc; URL no double path; instance httpx client. Ready for Task 5.
+- 2026-07-26: Dispatched Cline for **Task 5** (agent context + turn loop). Brief: `docs/superpowers/handoffs/task-05-cline-brief.md`.
+- 2026-07-26: **Task 5 REVIEW PASS** — commit `6f3b39b`. Runtime suite **108 passed**. `context.py` maps history→OpenAI messages; `loop.py` `run_turn` yields thinking/tool/tool_result/final/error; max iterations → error; no SSE/HTTP. Minor note: tool error flag is `result.startswith("Error")`. Ready for Task 6.
