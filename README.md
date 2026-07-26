@@ -1,10 +1,33 @@
 # Tomo (友達)
 
-> **Work in progress** — UI and platform APIs are functional stubs. Coordinator runtime, channel adapters, and production deployment are still being built.
+> **Alpha kitchen-sink is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → Telegram → schedule. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
 
 **Tomodachi** — a general-purpose agent swarm that learns, coordinates, and acts on your behalf.
 
 Tomo starts broad: a **coordinator** plus a team of agents that can talk to you, connect to your machines, use tools, and **get smarter over time**. You shape it into whatever you need — ops automation, customer support, research, coding, personal assistant — by adding agents, skills, and knowledge. The platform stays the same; the use case is yours to define.
+
+---
+
+## Alpha (kitchen-sink)
+
+What ships in Alpha (slices 0→H):
+
+| Area | Status |
+|------|--------|
+| **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
+| **Models** | Multi-profile catalog, default + per-agent model |
+| **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
+| **Tools** | `calculator`, `bash`, `read_file`, `write_file`, `recall`, `remember`, `delegate` |
+| **Workplaces** | Local + SSH (tunnel labeled connector-later) |
+| **Memory / KB** | SQLite knowledge entries + recall/remember tools |
+| **Channels** | Web UI + Telegram long-poll bot |
+| **Scheduler** | Interval schedules fire agent turns in-process |
+| **Platform** | Skills/plugins/schedules in SQLite |
+| **Eval** | Hidden by default (`TOMO_EVAL_UI`) |
+
+**Demo path:** Dashboard home chat → session with Main+Ops handoff → tools on a workplace → ask a KB fact → Telegram ping → create a short-interval schedule.
+
+Progress: [`docs/superpowers/progress/alpha.md`](docs/superpowers/progress/alpha.md) · Spec: [`docs/superpowers/specs/2026-07-26-alpha-kitchen-sink-design.md`](docs/superpowers/specs/2026-07-26-alpha-kitchen-sink-design.md)
 
 ---
 
@@ -190,9 +213,9 @@ The **portal** system lets agents copy files between workplaces and the coordina
 
 ## Channels — talk to your swarm from anywhere
 
-> **Status:** Not implemented yet. This section describes the **target design** for how Tomo will connect to messaging apps.
+> **Alpha:** Web UI and Telegram bot are live. WhatsApp and other adapters remain planned.
 
-Tomo agents aren't locked to a terminal. **Channels** will be the bridge between your swarm and the messaging apps you already use — inspired by multi-platform agents like [Hermes](https://github.com/NousResearch/hermes-agent) that let you chat from Telegram while the agent works on a cloud VM.
+Tomo agents aren't locked to a terminal. **Channels** bridge your swarm and the messaging apps you already use — inspired by multi-platform agents like [Hermes](https://github.com/NousResearch/hermes-agent).
 
 ```
 You (Telegram)  ──►  Channel  ──►  Agent  ──►  Workplace
@@ -211,16 +234,14 @@ The agent doesn't change underneath. You pick the interface; Tomo handles routin
 
 Same pattern works for ops deploys, research summaries, or code reviews. The channel is just how you talk to it.
 
-### Planned channels
+### Channels today
 
 | Channel | Status | Notes |
 |---------|--------|-------|
-| **Telegram** | 🔜 Planned | Bot token via BotFather; text, files, images |
-| **WhatsApp** | 🔜 Planned | WhatsApp Web bridge; multi-agent dispatch, group awareness |
-| **Web UI** | 🔜 Planned | Dashboard for agent management and direct chat |
-| **Discord** | 🔜 Planned | |
-| **Slack** | 🔜 Planned | |
-| **CLI** | 🔜 Planned | Terminal interface for local interaction |
+| **Web UI** | ✅ Alpha | Dashboard, swarm chat (SSE), agent studio |
+| **Telegram** | ✅ Alpha | Bot token in System → Channels; long-poll |
+| **WhatsApp** | 🔜 Planned | WhatsApp Web bridge |
+| **Discord / Slack / CLI** | 🔜 Planned | |
 
 ### The mobile pattern
 
@@ -274,7 +295,7 @@ tomo channel add --agent main --type whatsapp \
   --name "Tomo WhatsApp"
 ```
 
-Or via the web UI: Agents → Channels → Add Channel. *(Planned — not available yet.)*
+Configure Telegram under **System → Channels** (encrypted token; blank PUT keeps existing). Agents → Channels shows per-agent status.
 
 ---
 
@@ -340,7 +361,7 @@ See the `app/tools/` directory for the full catalog.
 
 ## Project structure
 
-Tomo separates **HTTP surfaces**, **runtime execution**, **persistence**, and **installable extensions**. Stub modules exist today; the UI and JSON store are wired, runtime packages are scaffolded for implementation.
+Tomo separates **HTTP surfaces**, **runtime execution**, **persistence**, and **installable extensions**. Alpha wires FastAPI surfaces to SQLite models, runtime loop, tools, channels, and workplaces.
 
 ```
 tomo/
@@ -350,18 +371,18 @@ tomo/
 │   ├── api/                      # JSON REST + SSE (/api/…)
 │   ├── web/                      # HTML pages + login
 │   ├── schemas/                  # Pydantic request/response models
-│   ├── models/                   # DB layer (schema, mixins) — stub
-│   ├── runtime/                  # Agent execution core — stub
+│   ├── models/                   # DB layer (schema, mixins) — SQLite
+│   ├── runtime/                  # Agent execution core (loop, LLM, tools)
 │   │   ├── coordinator/          # Swarm routing and delegation
 │   │   ├── agent/                # LLM turn loop, context
 │   │   ├── memory/               # Recall and knowledge adapters
 │   │   ├── events/               # Internal event bus
 │   │   └── tools/                # Built-in Python tool backends
 │   ├── tools/                    # Declarative tool JSON (schema + backend ref)
-│   ├── channels/                 # Web, Telegram, WhatsApp adapters — stub
-│   ├── workplaces/               # Local / SSH / tunnel backends — stub
-│   ├── extensions/               # Skill + plugin loaders — stub
-│   ├── services/                 # JSON store + chat stub (current MVP)
+│   ├── channels/                 # Web + Telegram (WhatsApp later)
+│   ├── workplaces/               # Local / SSH / tunnel (tunnel stub)
+│   ├── extensions/               # Skill + plugin loaders
+│   ├── services/                 # Store facade + chat/SSE
 │   ├── static/                   # CSS + JS (Darkroom UI)
 │   ├── templates/                # Jinja pages + partials/
 │   └── data/                     # Local JSON persistence (dev)
@@ -393,7 +414,7 @@ tomo/
 | **Extensions** | `skills/`, `plugins/`, `app/extensions/` | Drop-in packages + loaders |
 | **Ops** | `cli/`, `scripts/`, `var/` | Lifecycle, tooling, local runtime dirs |
 
-**Today:** `app/services/store.py` backs the UI with seeded JSON. New packages under `runtime/`, `models/`, and `channels/` are empty scaffolds ready for the coordinator and channel work on the roadmap.
+**Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
 
 See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`. Local reference clone: `tmp/hermes-agent/` (NousResearch/hermes-agent).
 
@@ -401,7 +422,7 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 
 ## Getting started
 
-Tomo's **foundation thin vertical is live** — SQLite store, OpenAI-compatible LLM (configured in System → Models), a `calculator` tool, a coordinator-only agent turn loop, and web chat over SSE. The broader swarm (multi-agent delegation, learning loop, memory, extra channels) is still on the roadmap.
+Tomo's **Alpha kitchen-sink is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on workplaces, KB recall, Telegram, and interval scheduler. Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
 ```bash
 git clone <repo-url>
@@ -471,20 +492,20 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 uv run pytest
 ```
 
-> **Note:** Tomo is under active development. Multi-agent coordination, the learning loop, memory, and additional channel adapters are coming next.
+> **Note:** Alpha kitchen-sink (slices 0→H) is complete. Next: deeper learning loop, connector tunnel product, more channels — see Roadmap.
 
 ---
 
 ## Roadmap
 
-- [ ] Coordinator service — task routing, agent lifecycle, swarm orchestration
+- [x] Alpha kitchen-sink — home, models, swarm handoff, tools, workplaces, KB, Telegram, scheduler
 - [ ] Learning loop — observe → distill → reuse → refine; autonomous skill creation
-- [ ] Memory engine — conversation history, semantic search, knowledge graph
+- [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
 - [ ] Tomo Connector — WebSocket tunnel agent for remote workplaces
-- [ ] Agent definitions — YAML/JSON config for roles, models, and toolsets
-- [ ] Channel adapters — Telegram, WhatsApp, Web UI (first wave); Discord, Slack, CLI
+- [ ] Channel adapters — WhatsApp; Discord, Slack, CLI
 - [ ] Skill registry — install and share community skills
 - [ ] Observability — traces, artifact browser, cost tracking per agent
+- [ ] Eval / evaluator UI (gated today via `TOMO_EVAL_UI`)
 
 ---
 

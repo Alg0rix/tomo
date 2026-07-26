@@ -2,6 +2,8 @@
   <p class="faint" style="margin:0 0 12px">Assign skills from the library to this agent. Changes apply on Save.</p>
   {% for s in skills %}
   {% with skill=s %}{% include 'partials/skill_row.html' %}{% endwith %}
+  {% else %}
+  <div class="empty">No skills in the library yet.</div>
   {% endfor %}
   <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
     <button class="btn primary sm" type="button" id="skillsSave">Save</button>

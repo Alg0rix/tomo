@@ -4,5 +4,7 @@
   {{ section_head('Tool registry', 'Global tools available to agents.') }}
   {% for t in tools %}
   {% with tool=t %}{% include 'partials/tool_row.html' %}{% endwith %}
+  {% else %}
+  <div class="empty">No tools in the registry yet.</div>
   {% endfor %}
 </section>

@@ -15,7 +15,25 @@
 | E | Memory / KB | [plan](../plans/2026-07-26-alpha-slice-e-memory.md) · [brief](../handoffs/alpha-slice-e-cline-brief.md) | done | — | **done** |
 | F | Extra channels (Telegram+) | [plan](../plans/2026-07-26-alpha-slice-f-telegram.md) · [brief](../handoffs/alpha-slice-f-cline-brief.md) | done | — | **done** |
 | G | Platform → SQLite + scheduler | [plan](../plans/2026-07-26-alpha-slice-g-platform-scheduler.md) · [brief](../handoffs/alpha-slice-g-cline-brief.md) | done | — | **done** |
-| H | Alpha polish | — | — | — | — |
+| H | Alpha polish | [plan](../plans/2026-07-26-alpha-slice-h-polish.md) · [brief](../handoffs/alpha-slice-h-cline-brief.md) | done | — | **done** |
+
+**Kitchen-sink Alpha: COMPLETE** (2026-07-26).
+
+## Demo checklist
+
+Manual smoke path (no stub walls; Eval stays hidden):
+
+1. **Home** — Dashboard: message Tomo → session opens; title provisional then LLM.
+2. **Models** — System → Models: two profiles + default; agents on different profiles.
+3. **Swarm** — Chat with Main+Ops; question needing ops → `delegate` + Ops answer.
+4. **@mention** — `@ops check disk` → Ops responds.
+5. **Tools** — Ask to write a file under workplace → tool events → file exists.
+6. **Workplace** — Agent on second local (or SSH) root → command runs there.
+7. **Memory** — Fresh session: ask seeded KB fact → correct recall.
+8. **Telegram** — Enable + token in System → Channels; ping bot → reply.
+9. **Scheduler** — Create short-interval schedule → turn fires.
+10. **Persist** — Restart server → profiles, workplaces, KB, schedules intact.
+11. **Nav** — No Evaluate; System has no Safety/Users/Logs stubs.
 
 ## Log
 
@@ -39,3 +57,4 @@
 - 2026-07-26: Slice E **implemented** (Cursor) — SQLite `knowledge_entries` (title/body/tags) + CRUD mixin; seed FAQ facts (`kb_vendor_deadline`, etc.); `recall` + `remember` tools (keyword search, no vector DB); System → Memory CRUD UI; MockLLM recall path; agent loop test recalls seeded October 15, 2026 deadline. Verify: `tests/unit/models/` + `tests/unit/runtime/tools/` green.
 - 2026-07-26: Slice F **implemented** (Cursor) — encrypted `telegram_bot_token` + `telegram_enabled` settings (masked GET, blank PUT keeps); `app/channels/telegram.py` long-poll supervisor + chat→session→`run_session_turn`→reply; Agent Channels + Shared channels status (`connected` / `needs_token` / `off`); mocked httpx Bot API tests. Verify: `tests/unit/channels/` + `tests/unit/runtime/` green.
 - 2026-07-26: Slice G **implemented** (Cursor) — SQLite `skills`/`agent_skills`, `plugins`, `schedules`/`schedule_runs`; one-time empty-table seed; store facade names stable; in-process interval scheduler fires `run_session_turn` (lifespan); Scheduler UI create/list/enable; plugin enable + agent skill assign; eval stays gated. Circular import fix: lazy telegram↔chat. Verify: `tests/unit/models/` + `tests/unit/` 289 passed.
+- 2026-07-26: Slice H **implemented** (Cursor) — Nav honesty (hide System Safety/Users/Logs stubs; remove dead Upload skill); empty states for workplaces/tools/skills; README Alpha section + architecture notes; progress closeout + demo checklist; H plan/brief committed. **Alpha kitchen-sink COMPLETE.**

@@ -129,13 +129,9 @@ async def system_page(request: Request, _: AuthDep):
         request, "system",
         settings=store.get_public_settings(),
         tools=store.list_tools(),
-        models=store.list_models(),
-        providers=store.list_providers(),
         llm_profiles=store.list_llm_profiles(),
         default_model_id=store.get_default_llm_profile_id(),
         plugins=store.list_plugins(),
-        safety_rules=store.list_safety_rules(),
-        users=store.list_users(),
         shared_channels=store.list_shared_channels(),
     ))
 

@@ -65,6 +65,9 @@
   <div class="tile-grid" id="workplaceTiles">
     {% for w in workplaces %}
     {% with workplace=w %}{% include 'partials/workplace_tile.html' %}{% endwith %}
+    {% else %}
+    {% from 'partials/empty.html' import empty_state %}
+    {{ empty_state('No workplaces yet.', 'Create a local or SSH workplace for agent tools.') }}
     {% endfor %}
   </div>
 

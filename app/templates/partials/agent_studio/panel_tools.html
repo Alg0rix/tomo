@@ -7,6 +7,8 @@
     <span class="mono faint" style="font-size:11px">{{ t.backend }}</span>
     {{ toggle(checked=t.enabled, disabled=false, extra_class='tool-enable') }}
   </div>
+  {% else %}
+  <div class="empty">No tools registered yet.</div>
   {% endfor %}
   <div style="margin-top:16px"><button class="btn primary sm" type="button" id="toolsSave">Save</button></div>
 </div>
