@@ -108,6 +108,10 @@ def build_system_prompt(
         agent_soul = _read_md(home.agent_soul_path(agent_id, root))
         if agent_soul:
             parts.append(agent_soul)
+        # Coordinator (and any agent with delegate) needs the live swarm roster.
+        swarm_block = _swarm_agents_prompt_section(agent_id)
+        if swarm_block:
+            parts.append(swarm_block)
         wp_block = _workplace_prompt_section(agent_id)
         if wp_block:
             parts.append(wp_block)
@@ -115,8 +119,138 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
+def _swarm_agents_prompt_section(agent_id: str) -> str:
+    """List enabled swarm members so the model can ``delegate`` by id/name.
+
+    Injected for every agent turn that has a store (not only is_super):
+    specialists still need to know peers exist if they re-delegate.
+    """
+    try:
+        from app.services import store
+
+        me = store.get_agent(agent_id)
+        if not me:
+            return ""
+        agents = [
+            a
+            for a in store.list_agents()
+            if a.get("enabled", True) and a.get("id")
+        ]
+        if not agents:
+            return ""
+        lines = [
+            "## Swarm agents (live)",
+            "You are **{}** (id=`{}`). Use the `delegate` tool with "
+            "`agent_id` or `name` from this list — do not invent agents.".format(
+                me.get("name") or agent_id, agent_id
+            ),
+            "Prefer handing work to a specialist over doing their domain yourself.",
+            "",
+            "Members:",
+        ]
+        for a in agents:
+            aid = a["id"]
+            name = a.get("name") or aid
+            role = (a.get("role") or "").strip()
+            desc = (a.get("description") or "").strip()
+            bits = [f"- **{name}** `id={aid}`"]
+            if role:
+                bits.append(f"role={role}")
+            if a.get("is_super"):
+                bits.append("coordinator")
+            if aid == agent_id:
+                bits.append("← you")
+            line = " ".join(bits)
+            if desc:
+                # Keep roster compact for the context window.
+                short = desc if len(desc) <= 120 else desc[:117] + "…"
+                line += f" — {short}"
+            lines.append(line)
+        lines.append(
+            "\nExample: delegate(agent_id=\"ops\", reason=\"ping google from all tunnels\")"
+        )
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _format_workplace_for_prompt(w: dict[str, Any]) -> str:
+    """One-line workplace summary rich enough for tunnel/SSH targeting."""
+    kind = (w.get("kind") or "").strip().lower() or "unknown"
+    name = w.get("name") or w.get("id") or "workplace"
+    wid = w.get("id") or ""
+    parts = [f"- **{name}** `id={wid}` kind={kind}"]
+
+    if kind == "tunnel":
+        online = w.get("online")
+        if online is True:
+            parts.append("online")
+        elif online is False:
+            parts.append("offline")
+        status = (w.get("status") or "").strip()
+        if status and status not in ("connected", "offline"):
+            parts.append(f"status={status}")
+        hostname = (
+            w.get("connector_hostname") or w.get("host") or ""
+        ).strip()
+        if " (" in hostname and hostname.endswith(")"):
+            hostname = hostname.split(" (", 1)[0].strip()
+        ip = (w.get("connector_remote_ip") or "").strip()
+        if hostname:
+            parts.append(f"hostname={hostname}")
+        if ip and ip not in ("127.0.0.1", "::1"):
+            parts.append(f"device_ip={ip}")
+        plat = (w.get("connector_platform") or "").strip()
+        ver = (w.get("connector_version") or "").strip()
+        if "/" in ver and not plat:
+            ver, plat = ver.split("/", 1)
+        if plat:
+            parts.append(f"platform={plat}")
+        if ver:
+            parts.append(f"connector={ver}")
+        detail = (w.get("host_detail") or "").strip()
+        if detail and detail not in (hostname, ip, "tunnel"):
+            parts.append(f"detail={detail}")
+    elif kind == "ssh":
+        user = (w.get("ssh_user") or "").strip()
+        host = (w.get("ssh_host") or "").strip()
+        port = int(w.get("ssh_port") or 22)
+        if user and host:
+            target = f"{user}@{host}"
+        else:
+            target = host or user or ""
+        if target:
+            if port and port != 22 and host:
+                target = f"{target}:{port}"
+            parts.append(f"ssh={target}")
+        root = (w.get("root_path") or "").strip()
+        if root:
+            parts.append(f"root={root}")
+        status = (w.get("status") or "").strip()
+        if status:
+            parts.append(f"status={status}")
+        if w.get("password_set"):
+            parts.append("auth=password")
+        elif w.get("key_set"):
+            parts.append("auth=key")
+    elif kind == "local":
+        root = (w.get("root_path") or w.get("host") or "").strip()
+        if root:
+            parts.append(f"path={root}")
+    else:
+        detail = (w.get("host_detail") or w.get("host") or "").strip()
+        if detail:
+            parts.append(detail)
+
+    return " ".join(parts)
+
+
 def _workplace_prompt_section(agent_id: str) -> str:
-    """Describe assigned workplaces so the model can target hosts / register paths."""
+    """Describe assigned workplaces so the model can target hosts / register paths.
+
+    Tunnel and SSH entries include hostname, device IP, online state, and
+    ssh user@host so tools can use ``workplace=<id|name|hostname>``.
+    """
     try:
         from app.services import store
 
@@ -143,29 +277,23 @@ def _workplace_prompt_section(agent_id: str) -> str:
         lines = [
             "## Workplaces",
             f"Scope: {scope} ({label}).",
-            "Use register_workplace(kind=local, path=...) when the user names a local "
-            "project path to debug (auto-registers and binds it for this turn).",
-            "When the user names a host (e.g. aio-serv), run tools against that "
-            "workplace — pass workplace= in bash if needed.",
+            "Target a workplace with bash (and other remote tools) via "
+            "`workplace=<id|name|hostname|ip>` — e.g. `workplace=aio-serv` or "
+            "`workplace=tun_dev_serv`.",
+            "Tunnel = Tomo Connector on a remote host (prefer **online**). "
+            "SSH = Paramiko to ssh_user@ssh_host. Local = path on the Tomo server.",
+            "Use register_workplace(kind=local, path=...) when the user names a "
+            "local project path to debug.",
         ]
         if allowed:
             lines.append("Available:")
             for w in allowed[:40]:
-                host = (
-                    w.get("host")
-                    or w.get("host_detail")
-                    or w.get("connector_hostname")
-                    or w.get("ssh_host")
-                    or w.get("root_path")
-                    or ""
-                )
-                status = w.get("status") or ""
-                bit = f"- {w.get('name')} id={w.get('id')} kind={w.get('kind')}"
-                if host:
-                    bit += f" host={host}"
-                if status:
-                    bit += f" status={status}"
-                lines.append(bit)
+                lines.append(_format_workplace_for_prompt(w))
+        else:
+            lines.append(
+                "No workplaces assigned — tools use the agent work/ sandbox "
+                "unless you register one."
+            )
         return "\n".join(lines)
     except Exception:
         return ""

@@ -72,3 +72,65 @@ def test_empty_agent_system_falls_back_to_default(tmp_path: Path, monkeypatch) -
     text = build_system_prompt("ops", home_root=tmp_path)
     # blank agent SYSTEM.md -> repo default base is used
     assert "Tomo" in text
+
+
+def test_system_prompt_includes_live_swarm_roster(tmp_path: Path, monkeypatch) -> None:
+    """Enabled agents are registered in the system prompt for delegate routing."""
+    from app.services import store
+
+    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
+    home.ensure_tomo_home(tmp_path)
+    store.rebind(tmp_path / "roster.db")
+
+    text = build_system_prompt("main", home_root=tmp_path)
+    assert "## Swarm agents (live)" in text
+    assert "id=`main`" in text or "id=main" in text
+    assert "ops" in text.lower()
+    assert "delegate" in text.lower()
+
+
+def test_system_prompt_includes_tunnel_and_ssh_workplace_details(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.services import store
+
+    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
+    home.ensure_tomo_home(tmp_path)
+    store.rebind(tmp_path / "wp_prompt.db")
+
+    store.create_workplace({"id": "tun_aio", "name": "aio-serv", "kind": "tunnel"})
+    # Connector metadata is written via the hub path, not public workplace update.
+    store.touch_connector(
+        "tun_aio",
+        hostname="aio-serv",
+        remote_ip="192.168.109.45",
+        platform="linux",
+        version="0.2.0",
+    )
+    store.create_workplace(
+        {
+            "id": "ssh_db",
+            "name": "db-box",
+            "kind": "ssh",
+            "ssh_host": "10.0.0.9",
+            "ssh_user": "ubuntu",
+            "ssh_port": 22,
+            "ssh_password": "x",
+            "root_path": "/var/app",
+        }
+    )
+    store.update_agent(
+        "ops",
+        {
+            "workplace_scope": "list",
+            "workplace_ids": ["tun_aio", "ssh_db"],
+            "workplace_id": "tun_aio",
+        },
+    )
+
+    text = build_system_prompt("ops", home_root=tmp_path)
+    assert "## Workplaces" in text
+    assert "tun_aio" in text or "aio-serv" in text
+    assert "192.168.109.45" in text or "hostname=aio-serv" in text
+    assert "ssh=" in text or "ubuntu@10.0.0.9" in text
+    assert "workplace=" in text
