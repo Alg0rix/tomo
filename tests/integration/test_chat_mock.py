@@ -248,25 +248,41 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     assert store.get_agent("main")["busy"] is False
 
 
-async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> None:
-    """Coordinator ``delegate`` tool → SSE delegate → member final in transcript."""
+async def test_delegate_tool_runs_subagent_and_parent_continues(
+    tmp_path, monkeypatch
+) -> None:
+    """Coordinator ``delegate`` → subagent runs in-loop → output fed back as
+    tool result → parent *continues* to its own final answer."""
     from app.runtime.llm.base import LLMResponse, ToolCall
 
     store.rebind(tmp_path / "chat_delegate.db")
     sid = store.create_swarm_session(["main", "ops"], user_id="web")
 
-    class _CoordDelegate:
+    class _CoordDelegateThenFinal:
+        """First call: delegate to ops. Second call: final text."""
+        def __init__(self) -> None:
+            self._call = 0
+
         async def complete(self, messages, tools=None):
-            return LLMResponse(
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id="call_d",
-                        name="delegate",
-                        arguments={"agent_id": "ops", "reason": "ops work"},
-                    )
-                ],
-            )
+            self._call += 1
+            if self._call == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_d",
+                            name="delegate",
+                            arguments={"agent_id": "ops", "reason": "ops work"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="Thanks Ops — disk looks fine.", tool_calls=[])
+
+        async def stream_complete(self, messages, tools=None):
+            resp = await self.complete(messages, tools)
+            if resp.content and not resp.has_tool_calls:
+                yield {"type": "delta", "content": resp.content}
+            yield {"type": "done", "response": resp}
 
     class _OpsReply:
         async def complete(self, messages, tools=None):
@@ -281,7 +297,7 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     def _llm(agent_id=None):
         if agent_id == "ops":
             return _OpsReply()
-        return _CoordDelegate()
+        return _CoordDelegateThenFinal()
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
 
@@ -291,28 +307,28 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     handoff = _data(events, "delegate")[0]
     assert handoff["from"] == "main"
     assert handoff["to"] == "ops"
-    assert handoff.get("reason") in ("ops work", "delegate", "tool")
+    assert handoff.get("reason") in ("ops work", "delegate")
 
-    # Nested member must get its own turn.start so the UI switches to Ops.
-    starts = _data(events, "turn.start")
-    assert any(s.get("agent_id") == "ops" for s in starts)
+    # The subagent's answer appears as deltas attributed to ops.
+    deltas = _data(events, "delta")
+    ops_deltas = [d for d in deltas if d.get("agent_id") == "ops"]
+    assert ops_deltas, "subagent deltas should be attributed to ops"
+    assert "disk" in "".join(d.get("content", "") for d in ops_deltas).lower()
 
+    # The parent continues and its final is the terminal ``done``.
     dones = _data(events, "done")
-    assert dones and dones[-1]["agent_id"] == "ops"
+    assert dones, "expected at least one done event"
+    assert dones[-1]["agent_id"] == "main"
     assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
         dones[-1].get("content") or ""
     )
-    # Coordinator must not emit a final after a successful tool handoff.
-    assert not any(
-        d.get("agent_id") == "main" for d in dones
-    ), "coordinator final after handoff steals the UI from Ops"
 
     history = store.get_session_history(sid)
     types = [h["type"] for h in history]
     assert "delegate" in types
     assert types.count("tool_call") >= 1
     finals = [h for h in history if h["type"] == "final"]
-    assert finals and finals[-1]["agent_id"] == "ops"
+    assert finals and finals[-1]["agent_id"] == "main"
     assert store.get_agent("main")["busy"] is False
     assert store.get_agent("ops")["busy"] is False
 

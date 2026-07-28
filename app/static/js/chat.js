@@ -328,6 +328,10 @@
     }
 
     function streamTurn(text) {
+      // Clean up any leftover detail panel from a previous turn.
+      var oldPanel = wrap.querySelector('.detail-panel');
+      if (oldPanel) oldPanel.remove();
+
       const turn = document.createElement('div');
       turn.className = 'turn';
       scroll.appendChild(turn);
@@ -378,6 +382,7 @@
       [
         'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
         'delta', 'done', 'delegate', 'error', 'heartbeat', 'turn.end', 'auth_expired',
+        'subagent_start', 'subagent_done',
       ].forEach(function (name) {
         es.addEventListener(name, function (e) {
           var payload = e && e.data;
@@ -439,6 +444,7 @@
         clearWatchdogs();
         clearPending();
         dropEmptyAssistant();
+        closeDetailPanel();
         closed = true;
         closeStream();
         finishTurn();
@@ -460,6 +466,242 @@
         }
       }
 
+      // ── Subagent tracking ──────────────────────────────────────────
+      // Buffers accumulate events from delegated subagents so the detail
+      // panel can replay them on demand.  subagentSet is a quick lookup
+      // to decide whether an incoming event belongs to a subagent (skip
+      // main-turn rendering) or to the parent (render normally).
+      var subagentBuffers = new Map();
+      var subagentSet = new Set();
+      var swarmCard = null;
+      var detailPanel = null;
+      var activeDetailAgent = null;
+
+      function getBuffer(aid) {
+        if (!subagentBuffers.has(aid)) {
+          subagentBuffers.set(aid, {
+            events: [], status: 'running', task: '', name: '',
+            index: 0, total: 1, row: null,
+          });
+        }
+        return subagentBuffers.get(aid);
+      }
+
+      function bufferEvent(aid, kind, data) {
+        var buf = getBuffer(aid);
+        buf.events.push({ kind: kind, data: data });
+        if (activeDetailAgent === aid && detailPanel) renderEventInDetail(kind, data, aid);
+      }
+
+      function isSubagentEvent(d) {
+        var aid = d.agent_id || '';
+        return aid && subagentSet.has(aid) && aid !== agentId;
+      }
+
+      function createSwarmCard() {
+        clearPending();
+        dropEmptyAssistant();
+        if (swarmCard) return swarmCard;
+        swarmCard = document.createElement('div');
+        swarmCard.className = 'swarm-card';
+        turn.appendChild(swarmCard);
+        atBottom();
+        return swarmCard;
+      }
+
+      function addSwarmRow(aid, name, task, idx, total) {
+        var card = swarmCard || createSwarmCard();
+        var row = document.createElement('div');
+        row.className = 'swarm-row';
+        row.dataset.agentId = aid;
+        var color = agentColor(aid);
+        var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
+        var idxStr = String(idx).padStart(2, '0');
+        var totalStr = String(total).padStart(2, '0');
+        row.innerHTML =
+          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+          '<div class="swarm-meta">' +
+            '<div class="swarm-row-head">' +
+              '<span class="name">' + esc(name || aid) + '</span>' +
+              '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
+            '</div>' +
+            '<div class="task">' + esc(task || '') + '</div>' +
+            '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
+          '</div>';
+        row.addEventListener('click', function () { openDetailPanel(aid); });
+        card.appendChild(row);
+        var buf = getBuffer(aid);
+        buf.row = row;
+        buf.name = name || aid;
+        buf.task = task || '';
+        buf.index = idx;
+        buf.total = total;
+        atBottom();
+        return row;
+      }
+
+      function bumpSwarmProgress(aid) {
+        var buf = subagentBuffers.get(aid);
+        if (!buf || !buf.row) return;
+        buf.row.classList.add('active');
+        var bar = buf.row.querySelector('.swarm-progress-bar');
+        if (bar) {
+          var w = parseFloat(bar.style.width) || 0;
+          bar.style.width = Math.min(92, w + 7) + '%';
+        }
+      }
+
+      function markSwarmDone(aid, status) {
+        var buf = subagentBuffers.get(aid);
+        if (!buf) return;
+        buf.status = status === 'error' ? 'error' : 'done';
+        if (!buf.row) return;
+        buf.row.classList.remove('active');
+        buf.row.classList.add(buf.status);
+        var bar = buf.row.querySelector('.swarm-progress-bar');
+        if (bar) bar.style.width = '100%';
+      }
+
+      function openDetailPanel(aid) {
+        activeDetailAgent = aid;
+        if (!detailPanel) {
+          detailPanel = document.createElement('div');
+          detailPanel.className = 'detail-panel';
+          wrap.appendChild(detailPanel);
+        }
+        detailPanel.innerHTML = '';
+        var buf = subagentBuffers.get(aid) || getBuffer(aid);
+        var name = buf.name || aid;
+        var color = agentColor(aid);
+        var letter = esc((name || '?').slice(0, 1).toUpperCase());
+
+        var header = document.createElement('div');
+        header.className = 'detail-header';
+        header.innerHTML =
+          '<button class="detail-close" type="button" title="Close">\u2715</button>' +
+          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+          '<div class="detail-meta">' +
+            '<div class="name">' + esc(name) + '</div>' +
+            '<div class="id mono">@' + esc(aid) + '</div>' +
+          '</div>';
+        detailPanel.appendChild(header);
+
+        var body = document.createElement('div');
+        body.className = 'detail-body';
+        detailPanel.appendChild(body);
+
+        // Footer with all agent chips.
+        if (subagentBuffers.size > 0) {
+          var footer = document.createElement('div');
+          footer.className = 'detail-footer';
+          subagentBuffers.forEach(function (b, id) {
+            var chip = document.createElement('button');
+            chip.className = 'detail-agent-chip' + (id === aid ? ' active' : '');
+            chip.type = 'button';
+            var cColor = agentColor(id);
+            var cLetter = esc((b.name || id || '?').slice(0, 1).toUpperCase());
+            chip.innerHTML =
+              '<div class="av" style="background:' + cColor + '">' + cLetter + '</div>' +
+              '<div class="label">' + esc(b.name || id) + '</div>';
+            chip.addEventListener('click', function () { openDetailPanel(id); });
+            footer.appendChild(chip);
+          });
+          detailPanel.appendChild(footer);
+        }
+
+        // Replay buffered events.
+        buf.events.forEach(function (ev) {
+          renderEventInDetail(ev.kind, ev.data, aid);
+        });
+
+        header.querySelector('.detail-close').addEventListener('click', closeDetailPanel);
+        detailPanel.classList.add('open');
+        requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
+      }
+
+      function closeDetailPanel() {
+        activeDetailAgent = null;
+        if (!detailPanel) return;
+        detailPanel.classList.remove('open');
+        var panel = detailPanel;
+        detailPanel = null;
+        setTimeout(function () { if (panel) panel.remove(); }, 220);
+      }
+
+      function renderEventInDetail(kind, data, aid) {
+        if (!detailPanel) return;
+        var body = detailPanel.querySelector('.detail-body');
+        if (!body) return;
+
+        if (kind === 'thinking') {
+          var el = document.createElement('div');
+          el.className = 'thinking';
+          el.textContent = data.content || '';
+          body.appendChild(el);
+        } else if (kind === 'tool') {
+          var card = document.createElement('div');
+          card.className = 'tool';
+          card.innerHTML =
+            '<div class="tool-head">' +
+              '<span class="chevron">\u25B6</span>' +
+              '<span class="tname">' + esc(data.tool || 'tool') + '</span> ' +
+              '<span class="targs">' + esc(JSON.stringify(data.args || {})) + '</span>' +
+            '</div>' +
+            '<div class="tres" style="display:none"></div>';
+          body.appendChild(card);
+          card._res = card.querySelector('.tres');
+          var head = card.querySelector('.tool-head');
+          head.addEventListener('click', function () {
+            card.classList.toggle('expanded');
+            var ch = head.querySelector('.chevron');
+            if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
+            if (card.classList.contains('expanded')) card._res.style.display = '';
+          });
+        } else if (kind === 'tool_result') {
+          var cards = body.querySelectorAll('.tool');
+          var last = cards[cards.length - 1];
+          if (last && last._res) {
+            last._res.textContent = (data.error ? '\u2717 ' : '\u2192 ') +
+              (typeof data.result === 'string' ? data.result : JSON.stringify(data.result));
+          }
+        } else if (kind === 'delta' || kind === 'subagent_final') {
+          var bubble = body.querySelector('.detail-assistant .bubble-body');
+          if (!bubble) {
+            var wrap2 = document.createElement('div');
+            wrap2.className = 'msg assistant detail-assistant';
+            var dColor = agentColor(aid);
+            var dLetter = esc((subagentBuffers.get(aid) && subagentBuffers.get(aid).name || aid || '?').slice(0, 1).toUpperCase());
+            wrap2.innerHTML =
+              '<div class="av" style="background:' + dColor + '">' + dLetter + '</div>' +
+              '<div class="bubble"><div class="bubble-body prose chat-prose"></div></div>';
+            body.appendChild(wrap2);
+            bubble = wrap2.querySelector('.bubble-body');
+            wrap2._raw = '';
+          }
+          wrap2 = bubble.closest('.detail-assistant');
+          wrap2._raw = (wrap2._raw || '') + (data.content || '');
+          setMarkdown(bubble, wrap2._raw);
+        }
+        body.scrollTop = body.scrollHeight;
+      }
+
+      function makeToolCollapsible(card, d) {
+        var head = card.querySelector(':scope > div:first-child') || card.firstElementChild;
+        if (head) {
+          head.classList.add('tool-head');
+          head.style.cursor = 'pointer';
+          var chevron = document.createElement('span');
+          chevron.className = 'chevron';
+          chevron.textContent = '\u25B6';
+          head.insertBefore(chevron, head.firstChild);
+          head.addEventListener('click', function (e) {
+            if (e.target.closest('.targs')) return;
+            card.classList.toggle('expanded');
+            chevron.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
+          });
+        }
+      }
+
       es.addEventListener('state', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
@@ -473,14 +715,39 @@
       es.addEventListener('delegate', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
-        clearPending();
-        dropEmptyAssistant();
-        const row = document.createElement('div');
-        row.className = 'delegate-line';
-        row.textContent = d.content || ('Handing off to ' + (d.agent || d.to || d.agent_id));
-        turn.appendChild(row);
-        adoptAgent(d.to || d.agent_id, d.agent);
-        setStatus('amber', 'busy · ' + (d.agent || d.to || 'agent'));
+        var target = d.to || d.agent_id || '';
+        var name = d.agent || target;
+        var task = d.task || d.reason || '';
+        var idx = d.parallel_index || 1;
+        var total = d.parallel_total || 1;
+        if (target) subagentSet.add(target);
+        createSwarmCard();
+        var buf = getBuffer(target);
+        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
+        if (!buf.row) addSwarmRow(target, name, task, idx, total);
+        setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
+        atBottom();
+      });
+      es.addEventListener('subagent_start', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        var aid = d.agent_id || '';
+        var name = d.agent || aid;
+        var task = d.task || '';
+        var idx = d.parallel_index || 1;
+        var total = d.parallel_total || 1;
+        if (aid) subagentSet.add(aid);
+        var buf = getBuffer(aid);
+        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
+        if (!buf.row) addSwarmRow(aid, name, task, idx, total);
+        buf.row.classList.add('active');
+        atBottom();
+      });
+      es.addEventListener('subagent_done', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        var aid = d.agent_id || '';
+        markSwarmDone(aid, d.status || 'ok');
         atBottom();
       });
       es.addEventListener('turn.start', function (e) {
@@ -502,6 +769,11 @@
       es.addEventListener('thinking', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) {
+          bufferEvent(d.agent_id, 'thinking', d);
+          bumpSwarmProgress(d.agent_id);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         clearPending();
         if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; turn.appendChild(thinkEl); }
@@ -511,6 +783,11 @@
       es.addEventListener('tool', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) {
+          bufferEvent(d.agent_id, 'tool', d);
+          bumpSwarmProgress(d.agent_id);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         clearPending();
         dropEmptyAssistant();
@@ -519,16 +796,29 @@
         card.innerHTML = '<div><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tres" style="display:none"></div>';
         turn.appendChild(card);
         card._res = card.querySelector('.tres');
+        makeToolCollapsible(card, d);
         atBottom();
       });
       es.addEventListener('tool_result', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) {
+          bufferEvent(d.agent_id, 'tool_result', d);
+          bumpSwarmProgress(d.agent_id);
+          return;
+        }
         const cards = turn.querySelectorAll('.tool');
         const last = cards[cards.length - 1];
         if (last && last._res) {
+          var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
+          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
+          last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
           last._res.style.display = '';
-          last._res.textContent = (d.error ? '✗ ' : '→ ') + (typeof d.result === 'string' ? d.result : JSON.stringify(d.result));
+          if (d.error) {
+            last.classList.add('expanded');
+            var ch = last.querySelector('.chevron');
+            if (ch) ch.textContent = '\u25BC';
+          }
         }
         // Keep typing indicator after tool so UI does not look frozen mid-turn.
         if (!asstEl && !pendingEl) showPending();
@@ -537,6 +827,11 @@
       es.addEventListener('delta', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) {
+          bufferEvent(d.agent_id, 'delta', d);
+          bumpSwarmProgress(d.agent_id);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         const piece = d.content || '';
         // Drop internal swarm bookkeeping if a model echoes it mid-stream.
@@ -558,6 +853,7 @@
         sawDone = true;
         armIdle(POST_DONE_MS);
         const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) return;
         adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
         let content = (d.content != null ? String(d.content) : '').trim();
@@ -584,11 +880,19 @@
         if (e && e.data) {
           let msg = 'Agent error';
           let code = '';
+          let errAgentId = '';
           try {
             const payload = JSON.parse(e.data);
             msg = payload.message || msg;
             code = payload.code || '';
+            errAgentId = payload.agent_id || '';
           } catch (_) {}
+          // Subagent errors don't end the parent turn.
+          if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== agentId) {
+            bufferEvent(errAgentId, 'error', { message: msg });
+            markSwarmDone(errAgentId, 'error');
+            return;
+          }
           if (code === 'session_busy' && text) {
             clearWatchdogs();
             closed = true;

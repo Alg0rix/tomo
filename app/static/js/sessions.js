@@ -144,38 +144,348 @@
       scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
       return;
     }
+
+    // ── Per-turn state ──────────────────────────────────────────────
+    var turn = null;
+    var subagentSet = new Set();
+    var subagentBuffers = new Map();
+    var swarmCard = null;
+    var detailPanel = null;
+
+    function getBuffer(aid) {
+      if (!subagentBuffers.has(aid)) {
+        subagentBuffers.set(aid, { events: [], name: '', task: '', status: 'running', row: null });
+      }
+      return subagentBuffers.get(aid);
+    }
+
+    function startTurn() {
+      turn = document.createElement('div');
+      turn.className = 'turn';
+      scroll.appendChild(turn);
+      swarmCard = null;
+      var oldPanel = chatWrap.querySelector('.detail-panel');
+      if (oldPanel) oldPanel.remove();
+      detailPanel = null;
+    }
+
+    function ensureSwarmCard() {
+      if (swarmCard) return swarmCard;
+      swarmCard = document.createElement('div');
+      swarmCard.className = 'swarm-card';
+      turn.appendChild(swarmCard);
+      return swarmCard;
+    }
+
+    function addSwarmRow(aid, name, task, idx, total) {
+      var card = ensureSwarmCard();
+      var row = document.createElement('div');
+      row.className = 'swarm-row';
+      row.dataset.agentId = aid;
+      var color = agentColor(aid);
+      var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
+      var idxStr = String(idx || 1).padStart(2, '0');
+      var totalStr = String(total || 1).padStart(2, '0');
+      row.innerHTML =
+        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+        '<div class="swarm-meta">' +
+          '<div class="swarm-row-head">' +
+            '<span class="name">' + esc(name || aid) + '</span>' +
+            '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
+          '</div>' +
+          '<div class="task">' + esc(task || '') + '</div>' +
+          '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
+        '</div>';
+      row.addEventListener('click', function () { openDetailPanel(aid); });
+      card.appendChild(row);
+      var buf = getBuffer(aid);
+      buf.row = row;
+      buf.name = name || aid;
+      buf.task = task || '';
+      return row;
+    }
+
+    function markSwarmDone(aid, status) {
+      var buf = subagentBuffers.get(aid);
+      if (!buf) return;
+      buf.status = status === 'error' ? 'error' : 'done';
+      if (!buf.row) return;
+      buf.row.classList.remove('active');
+      buf.row.classList.add(buf.status);
+      var bar = buf.row.querySelector('.swarm-progress-bar');
+      if (bar) bar.style.width = '100%';
+    }
+
+    function bumpSwarmProgress(aid) {
+      var buf = subagentBuffers.get(aid);
+      if (!buf || !buf.row) return;
+      buf.row.classList.add('active');
+      var bar = buf.row.querySelector('.swarm-progress-bar');
+      if (bar) {
+        var w = parseFloat(bar.style.width) || 0;
+        bar.style.width = Math.min(92, w + 7) + '%';
+      }
+    }
+
+    function bufferEvent(aid, kind, data) {
+      var buf = getBuffer(aid);
+      buf.events.push({ kind: kind, data: data });
+    }
+
+    function makeToolCollapsible(card) {
+      var head = card.querySelector('.tool-head');
+      if (!head) return;
+      head.style.cursor = 'pointer';
+      head.addEventListener('click', function (e) {
+        if (e.target.closest('.targs')) return;
+        card.classList.toggle('expanded');
+        var ch = head.querySelector('.chevron');
+        if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
+        var res = card.querySelector('.tres');
+        if (res && card.classList.contains('expanded')) res.style.display = '';
+      });
+    }
+
+    function renderEventInDetail(kind, data, body) {
+      if (kind === 'thinking') {
+        var el = document.createElement('div');
+        el.className = 'thinking';
+        el.textContent = data.content || '';
+        body.appendChild(el);
+      } else if (kind === 'tool') {
+        var card = document.createElement('div');
+        card.className = 'tool';
+        card.innerHTML =
+          '<div class="tool-head">' +
+            '<span class="chevron">\u25B6</span>' +
+            '<span class="tname">' + esc(data.tool || 'tool') + '</span> ' +
+            '<span class="targs">' + esc(JSON.stringify(data.args || {})) + '</span>' +
+          '</div>' +
+          '<div class="tres" style="display:none"></div>';
+        body.appendChild(card);
+        card._res = card.querySelector('.tres');
+        makeToolCollapsible(card);
+      } else if (kind === 'tool_result') {
+        var cards = body.querySelectorAll('.tool');
+        var last = cards[cards.length - 1];
+        if (last && last._res) {
+          var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
+          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
+          last._res.textContent = (data.error ? '\u2717 ' : '\u2192 ') + truncated;
+          last._res.style.display = '';
+        }
+      } else if (kind === 'delta' || kind === 'final') {
+        var el = document.createElement('div');
+        el.className = 'detail-response prose chat-prose';
+        if (window.TomoChat && TomoChat.setMarkdown) {
+          TomoChat.setMarkdown(el, data.content || '');
+        } else {
+          el.textContent = data.content || '';
+        }
+        body.appendChild(el);
+      }
+    }
+
+    function openDetailPanel(aid) {
+      if (detailPanel) { detailPanel.remove(); }
+      detailPanel = document.createElement('div');
+      detailPanel.className = 'detail-panel';
+      chatWrap.appendChild(detailPanel);
+
+      var buf = subagentBuffers.get(aid) || getBuffer(aid);
+      var name = buf.name || aid;
+      var color = agentColor(aid);
+      var letter = esc((name || '?').slice(0, 1).toUpperCase());
+
+      var header = document.createElement('div');
+      header.className = 'detail-header';
+      header.innerHTML =
+        '<button class="detail-close" type="button" title="Close">\u2715</button>' +
+        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+        '<div class="detail-meta">' +
+          '<div class="name">' + esc(name) + '</div>' +
+          '<div class="id mono">@' + esc(aid) + '</div>' +
+        '</div>';
+      detailPanel.appendChild(header);
+
+      var body = document.createElement('div');
+      body.className = 'detail-body';
+      detailPanel.appendChild(body);
+
+      // Footer with all agent chips.
+      if (subagentBuffers.size > 0) {
+        var footer = document.createElement('div');
+        footer.className = 'detail-footer';
+        subagentBuffers.forEach(function (b, id) {
+          var chip = document.createElement('button');
+          chip.className = 'detail-agent-chip' + (id === aid ? ' active' : '');
+          chip.type = 'button';
+          var cColor = agentColor(id);
+          var cLetter = esc((b.name || id || '?').slice(0, 1).toUpperCase());
+          chip.innerHTML =
+            '<div class="av" style="background:' + cColor + '">' + cLetter + '</div>' +
+            '<div class="label">' + esc(b.name || id) + '</div>';
+          chip.addEventListener('click', function () { openDetailPanel(id); });
+          footer.appendChild(chip);
+        });
+        detailPanel.appendChild(footer);
+      }
+
+      // Replay buffered events.
+      buf.events.forEach(function (ev) {
+        renderEventInDetail(ev.kind, ev.data, body);
+      });
+
+      header.querySelector('.detail-close').addEventListener('click', closeDetailPanel);
+      detailPanel.classList.add('open');
+      requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
+    }
+
+    function closeDetailPanel() {
+      if (!detailPanel) return;
+      detailPanel.classList.remove('open');
+      var panel = detailPanel;
+      detailPanel = null;
+      setTimeout(function () { if (panel) panel.remove(); }, 220);
+    }
+
+    // ── Process entries ─────────────────────────────────────────────
     entries.forEach(function (e) {
-      if (e.type === 'delegate') {
-        const row = document.createElement('div');
-        row.className = 'delegate-line';
-        row.textContent = e.content || ('Handing off to ' + agentName(e.agent_id));
-        scroll.appendChild(row);
+      if (e.type === 'user') {
+        startTurn();
+        var row = document.createElement('div');
+        row.className = 'msg user';
+        row.innerHTML = '<div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body"></div></div>';
+        row.querySelector('.bubble-body').textContent = e.content || '';
+        turn.appendChild(row);
         return;
       }
-      if (e.type !== 'user' && e.type !== 'final') return;
+
+      if (!turn) startTurn();
+
+      if (e.type === 'delegate') {
+        var p = e.params || {};
+        var aid = e.agent_id || p.to || '';
+        var name = p.to_name || agentName(aid);
+        var task = p.task || p.reason || '';
+        var idx = p.parallel_index || 1;
+        var total = p.parallel_total || 1;
+        if (aid) subagentSet.add(aid);
+        var buf = getBuffer(aid);
+        buf.name = name; buf.task = task;
+        addSwarmRow(aid, name, task, idx, total);
+        return;
+      }
+
+      if (e.type === 'subagent_start') {
+        var p = e.params || {};
+        var aid = e.agent_id || '';
+        var name = p.name || agentName(aid);
+        var task = p.task || '';
+        var idx = p.parallel_index || 1;
+        var total = p.parallel_total || 1;
+        if (aid) subagentSet.add(aid);
+        var buf = getBuffer(aid);
+        buf.name = name; buf.task = task;
+        if (!buf.row) addSwarmRow(aid, name, task, idx, total);
+        if (buf.row) buf.row.classList.add('active');
+        return;
+      }
+
+      if (e.type === 'subagent_done') {
+        var p = e.params || {};
+        markSwarmDone(e.agent_id || '', p.status || 'ok');
+        return;
+      }
+
+      if (e.type === 'tool_call') {
+        var aid = e.agent_id || '';
+        if (subagentSet.has(aid)) {
+          bufferEvent(aid, 'tool', { tool: e.function, args: e.params });
+          bumpSwarmProgress(aid);
+        } else {
+          var card = document.createElement('div');
+          card.className = 'tool';
+          card.innerHTML =
+            '<div class="tool-head">' +
+              '<span class="chevron">\u25B6</span>' +
+              '<span class="tname">' + esc(e.function || 'tool') + '</span> ' +
+              '<span class="targs">' + esc(JSON.stringify(e.params || {})) + '</span>' +
+            '</div>' +
+            '<div class="tres" style="display:none"></div>';
+          turn.appendChild(card);
+          card._res = card.querySelector('.tres');
+          makeToolCollapsible(card);
+        }
+        return;
+      }
+
+      if (e.type === 'tool_output') {
+        var aid = e.agent_id || '';
+        if (subagentSet.has(aid)) {
+          bufferEvent(aid, 'tool_result', { result: e.content, error: e.error });
+          bumpSwarmProgress(aid);
+        } else {
+          var cards = turn.querySelectorAll('.tool');
+          var last = cards[cards.length - 1];
+          if (last && last._res) {
+            var resultText = e.content || '';
+            var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
+            last._res.textContent = (e.error ? '\u2717 ' : '\u2192 ') + truncated;
+            last._res.style.display = '';
+          }
+        }
+        return;
+      }
+
+      if (e.type === 'thinking') {
+        var aid = e.agent_id || '';
+        if (subagentSet.has(aid)) {
+          bufferEvent(aid, 'thinking', { content: e.content });
+          bumpSwarmProgress(aid);
+        }
+        return;
+      }
+
       if (e.type === 'final') {
-        const text = (e.content || '').trim();
+        var aid = e.agent_id || '';
+        var text = (e.content || '').trim();
         if (!text || text.indexOf('[Swarm]') === 0) return;
+        if (subagentSet.has(aid)) {
+          bufferEvent(aid, 'final', { content: text });
+        } else {
+          var who = agentName(aid);
+          var row = document.createElement('div');
+          row.className = 'msg assistant';
+          var avStyle = ' style="background:' + agentColor(aid) + '"';
+          row.innerHTML = '<div class="av"' + avStyle + '>' + esc(who.slice(0, 1).toUpperCase()) + '</div>' +
+            '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose chat-prose"></div></div>';
+          var body = row.querySelector('.bubble-body');
+          if (window.TomoChat && TomoChat.setMarkdown) {
+            TomoChat.setMarkdown(body, text);
+          } else {
+            body.textContent = text;
+          }
+          turn.appendChild(row);
+        }
+        return;
       }
-      const role = e.type === 'user' ? 'user' : 'assistant';
-      const who = role === 'user' ? 'You' : agentName(e.agent_id);
-      const row = document.createElement('div');
-      row.className = 'msg ' + role;
-      const avStyle = role === 'assistant' && e.agent_id ? ' style="background:' + agentColor(e.agent_id) + '"' : '';
-      const proseClass = role === 'assistant' ? 'bubble-body prose chat-prose' : 'bubble-body';
-      row.innerHTML = '<div class="av"' + avStyle + '>' + esc(role === 'user' ? 'You' : who.slice(0, 1).toUpperCase()) + '</div>' +
-        '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="' + proseClass + '"></div></div>';
-      const body = row.querySelector('.bubble-body');
-      if (role === 'assistant' && window.TomoChat && TomoChat.setMarkdown) {
-        TomoChat.setMarkdown(body, e.content || '');
-      } else if (role === 'assistant' && window.TomoChat && TomoChat.renderMarkdown) {
-        body.textContent = e.content || '';
-        TomoChat.renderMarkdown(body);
-      } else {
-        body.textContent = e.content || '';
+
+      if (e.type === 'error') {
+        var aid = e.agent_id || '';
+        if (subagentSet.has(aid)) {
+          markSwarmDone(aid, 'error');
+        } else {
+          var row = document.createElement('div');
+          row.className = 'msg error';
+          row.innerHTML = '<div class="bubble"><div class="bubble-body" style="color:var(--danger)">' + esc(e.content || 'Error') + '</div></div>';
+          turn.appendChild(row);
+        }
+        return;
       }
-      scroll.appendChild(row);
     });
+
+    scroll.scrollTop = scroll.scrollHeight;
   }
 
   async function selectSession(sessionId, opts) {

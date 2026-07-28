@@ -50,7 +50,19 @@ def sse_summary(name: str, data: dict[str, Any]) -> str:
         return (
             f"from={data.get('from')!r} to={data.get('to')!r} "
             f"reason={data.get('reason')!r} "
-            f"content={str(data.get('content') or '')[:_PREVIEW]!r}"
+            f"task={str(data.get('task') or '')[:_PREVIEW]!r} "
+            f"parallel={data.get('parallel_index')}/{data.get('parallel_total')}"
+        )
+    if name == "subagent_start":
+        return (
+            f"agent_id={data.get('agent_id')} task={str(data.get('task') or '')[:_PREVIEW]!r} "
+            f"parallel={data.get('parallel_index')}/{data.get('parallel_total')}"
+        )
+    if name == "subagent_done":
+        content = data.get("content") or ""
+        return (
+            f"agent_id={data.get('agent_id')} status={data.get('status')} "
+            f"chars={len(content)} preview={content[:_PREVIEW]!r}"
         )
     if name == "heartbeat":
         return "ok"
@@ -93,7 +105,9 @@ def map_loop_event(
 ) -> tuple[list[str], list[dict[str, Any]], int]:
     """Map one loop event to ``(sse_chunks, history_entries, next_seq)``.
 
-    ``delegate`` kind is ignored here — the turn orchestrator handles handoff.
+    Handles the full event vocabulary including subagent delegation
+    (``delegate``, ``subagent_final``) and ATG meta-events. Nested subagent
+    events carry their own ``agent_id``; the caller resolves attribution.
     """
     kind = ev["kind"]
     chunks: list[str] = []
@@ -258,6 +272,160 @@ def map_loop_event(
                 "ts": now(),
             }
         )
+    elif kind == "delegate":
+        from_id = ev.get("from") or ""
+        to_id = ev.get("to") or ""
+        reason = ev.get("reason") or "delegate"
+        task = ev.get("task") or reason
+        to_name = ev.get("to_name") or to_id
+        parallel_index = ev.get("parallel_index", 1)
+        parallel_total = ev.get("parallel_total", 1)
+        data = {
+            "from": from_id,
+            "to": to_id,
+            "reason": reason,
+            "task": task,
+            "agent_id": to_id,
+            "agent": to_name,
+            "parallel_index": parallel_index,
+            "parallel_total": parallel_total,
+            "content": f"Handing off to {to_name}",
+        }
+        seq += 1
+        chunks.append(
+            fmt_sse({"event": "delegate", "data": data, "seq": seq})
+        )
+        entries.append(
+            {
+                "type": "delegate",
+                "content": data["content"],
+                "agent_id": to_id,
+                "params": {
+                    "from": from_id,
+                    "to": to_id,
+                    "reason": reason,
+                    "task": task,
+                    "to_name": to_name,
+                    "parallel_index": parallel_index,
+                    "parallel_total": parallel_total,
+                },
+                "ts": now(),
+            }
+        )
+    elif kind == "subagent_start":
+        sa_id = ev.get("agent_id") or agent_id
+        sa_name = agent_name
+        task = ev.get("task") or ""
+        parallel_index = ev.get("parallel_index", 1)
+        parallel_total = ev.get("parallel_total", 1)
+        seq += 1
+        chunks.append(
+            fmt_sse(
+                {
+                    "event": "subagent_start",
+                    "data": {
+                        "agent_id": sa_id,
+                        "agent": sa_name,
+                        "task": task,
+                        "parallel_index": parallel_index,
+                        "parallel_total": parallel_total,
+                    },
+                    "seq": seq,
+                }
+            )
+        )
+        entries.append(
+            {
+                "type": "subagent_start",
+                "content": "",
+                "agent_id": sa_id,
+                "params": {
+                    "name": sa_name,
+                    "task": task,
+                    "parallel_index": parallel_index,
+                    "parallel_total": parallel_total,
+                },
+                "ts": now(),
+            }
+        )
+    elif kind == "subagent_done":
+        sa_id = ev.get("agent_id") or agent_id
+        sa_name = agent_name
+        content = ev.get("content") or ""
+        status = ev.get("status", "ok")
+        seq += 1
+        chunks.append(
+            fmt_sse(
+                {
+                    "event": "subagent_done",
+                    "data": {
+                        "agent_id": sa_id,
+                        "agent": sa_name,
+                        "content": content[:200],
+                        "status": status,
+                    },
+                    "seq": seq,
+                }
+            )
+        )
+        entries.append(
+            {
+                "type": "subagent_done",
+                "content": content[:200],
+                "agent_id": sa_id,
+                "params": {
+                    "name": sa_name,
+                    "status": status,
+                },
+                "ts": now(),
+            }
+        )
+    elif kind == "subagent_final":
+        content = ev.get("content") or ""
+        if content:
+            seq += 1
+            chunks.append(
+                fmt_sse(
+                    {
+                        "event": "delta",
+                        "data": {
+                            "content": content,
+                            "agent_id": agent_id,
+                            "agent": agent_name,
+                        },
+                        "seq": seq,
+                    }
+                )
+            )
+        if content.strip():
+            entries.append(
+                {
+                    "type": "final",
+                    "content": content,
+                    "agent_id": agent_id,
+                    "ts": now(),
+                }
+            )
+    elif kind == "subagent_error":
+        msg = ev.get("message", "subagent error")
+        seq += 1
+        chunks.append(
+            fmt_sse(
+                {
+                    "event": "error",
+                    "data": {
+                        "message": msg,
+                        "agent_id": agent_id,
+                        "agent": agent_name,
+                    },
+                    "seq": seq,
+                }
+            )
+        )
+    elif kind in ("atg_wave", "atg_summary"):
+        # Meta-events: ATG tool/tool_result events map normally via the
+        # tool/tool_result branches above; wave/summary are internal.
+        pass
 
     return chunks, entries, seq
 

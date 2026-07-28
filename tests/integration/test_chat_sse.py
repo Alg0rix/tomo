@@ -249,8 +249,11 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     assert store.get_agent("main")["busy"] is False
 
 
-async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> None:
-    """Coordinator ``delegate`` tool → SSE delegate → member final in transcript."""
+async def test_delegate_tool_runs_subagent_and_parent_continues(
+    tmp_path, monkeypatch
+) -> None:
+    """Coordinator ``delegate`` → subagent runs in-loop → output fed back →
+    parent *continues* to its own final answer."""
     store.rebind(tmp_path / "chat_delegate.db")
     sid = store.create_swarm_session(["main", "ops"], user_id="web")
 
@@ -265,7 +268,8 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
                         arguments={"agent_id": "ops", "reason": "ops work"},
                     )
                 ],
-            )
+            ),
+            text_reply("Thanks Ops — disk looks fine."),
         ]
     )
     ops = ScriptedLLM([text_reply("Ops reporting: disk looks fine.")])
@@ -283,13 +287,31 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     handoff = _data(events, "delegate")[0]
     assert handoff["from"] == "main"
     assert handoff["to"] == "ops"
-    assert handoff.get("reason") in ("ops work", "delegate", "tool")
+    assert handoff.get("reason") in ("ops work", "delegate")
+    assert handoff.get("task") in ("ops work", "delegate")
+    assert handoff.get("parallel_index") == 1
+    assert handoff.get("parallel_total") == 1
 
-    starts = _data(events, "turn.start")
-    assert any(s.get("agent_id") == "ops" for s in starts)
+    # New: subagent_start and subagent_done lifecycle events.
+    assert "subagent_start" in _names(events)
+    sa_start = _data(events, "subagent_start")[0]
+    assert sa_start["agent_id"] == "ops"
+    assert sa_start.get("task") in ("ops work", "delegate")
+    assert "subagent_done" in _names(events)
+    sa_done = _data(events, "subagent_done")[0]
+    assert sa_done["agent_id"] == "ops"
+    assert sa_done["status"] == "ok"
+
+    # The subagent's answer appears as deltas attributed to ops.
+    deltas = _data(events, "delta")
+    ops_deltas = [d for d in deltas if d.get("agent_id") == "ops"]
+    assert ops_deltas, "subagent deltas should be attributed to ops"
+    assert "disk" in "".join(d.get("content", "") for d in ops_deltas).lower()
+
+    # The parent continues and its final is the terminal ``done``.
     dones = _data(events, "done")
-    assert dones and dones[-1]["agent_id"] == "ops"
-    assert not any(d.get("agent_id") == "main" for d in dones)
+    assert dones, "expected at least one done event"
+    assert dones[-1]["agent_id"] == "main"
     assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
         dones[-1].get("content") or ""
     )
@@ -297,11 +319,109 @@ async def test_delegate_tool_handoff_runs_member_turn(tmp_path, monkeypatch) -> 
     history = store.get_session_history(sid)
     types = [h["type"] for h in history]
     assert "delegate" in types
+    assert "subagent_start" in types
+    assert "subagent_done" in types
     assert types.count("tool_call") >= 1
+    # Delegate entry stores metadata in params (not loose keys).
+    del_entry = next(h for h in history if h["type"] == "delegate")
+    assert del_entry["agent_id"] == "ops"
+    assert del_entry["params"]["from"] == "main"
+    assert del_entry["params"]["to"] == "ops"
+    assert del_entry["params"]["task"] in ("ops work", "delegate")
+    # subagent_start entry persists name/task/parallel fields.
+    sa_start_h = next(h for h in history if h["type"] == "subagent_start")
+    assert sa_start_h["agent_id"] == "ops"
+    assert sa_start_h["params"]["name"] == "Ops"
+    assert sa_start_h["params"]["task"] in ("ops work", "delegate")
+    assert sa_start_h["params"]["parallel_index"] == 1
+    assert sa_start_h["params"]["parallel_total"] == 1
+    # subagent_done entry persists status.
+    sa_done_h = next(h for h in history if h["type"] == "subagent_done")
+    assert sa_done_h["agent_id"] == "ops"
+    assert sa_done_h["params"]["status"] == "ok"
     finals = [h for h in history if h["type"] == "final"]
-    assert finals and finals[-1]["agent_id"] == "ops"
+    assert finals and finals[-1]["agent_id"] == "main"
     assert store.get_agent("main")["busy"] is False
     assert store.get_agent("ops")["busy"] is False
+
+
+async def test_parallel_delegation_emits_swarm_events(
+    tmp_path, monkeypatch
+) -> None:
+    """Two ``delegate`` calls in one round → 2 delegate events, 2
+    subagent_start, 2 subagent_done, correct parallel_index/total."""
+    store.rebind(tmp_path / "chat_parallel.db")
+    sid = store.create_swarm_session(
+        ["main", "ops", "research"], user_id="web"
+    )
+
+    coord = ScriptedLLM(
+        [
+            LLMResponse(
+                content="Dispatching ops and research in parallel.",
+                tool_calls=[
+                    ToolCall(
+                        id="call_d1",
+                        name="delegate",
+                        arguments={"agent_id": "ops", "reason": "check disk"},
+                    ),
+                    ToolCall(
+                        id="call_d2",
+                        name="delegate",
+                        arguments={"agent_id": "research", "reason": "find docs"},
+                    ),
+                ],
+            ),
+            text_reply("Both done — disk fine, docs found."),
+        ]
+    )
+    ops = ScriptedLLM([text_reply("Ops: disk is fine.")])
+    research = ScriptedLLM([text_reply("Research: docs at /help.")])
+
+    def _llm(agent_id=None):
+        if agent_id == "ops":
+            return ops
+        if agent_id == "research":
+            return research
+        return coord
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
+
+    events = await _collect(sid, "check disk and find docs")
+
+    # Two delegate events with parallel fields.
+    delegates = _data(events, "delegate")
+    assert len(delegates) == 2
+    for d in delegates:
+        assert d["parallel_total"] == 2
+        assert d["parallel_index"] in (1, 2)
+        assert d.get("task")
+    targets = {d["to"] for d in delegates}
+    assert targets == {"ops", "research"}
+
+    # Two subagent_start events.
+    starts = _data(events, "subagent_start")
+    assert len(starts) == 2
+    sa_ids = {s["agent_id"] for s in starts}
+    assert sa_ids == {"ops", "research"}
+    for s in starts:
+        assert s["parallel_total"] == 2
+        assert s.get("task")
+
+    # Two subagent_done events with ok status.
+    dones = _data(events, "subagent_done")
+    assert len(dones) == 2
+    done_ids = {d["agent_id"] for d in dones}
+    assert done_ids == {"ops", "research"}
+    for d in dones:
+        assert d["status"] == "ok"
+
+    # Parent continues to its own final.
+    parent_dones = [
+        d for d in _data(events, "done") if d.get("agent_id") == "main"
+    ]
+    assert parent_dones
+    assert "disk" in parent_dones[-1].get("content", "").lower()
 
 
 async def test_mention_forces_ops_without_coordinator_tools(

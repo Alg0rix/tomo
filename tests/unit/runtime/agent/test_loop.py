@@ -326,7 +326,7 @@ async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
     assert result_ev["result"] == "Errorless computation succeeded"
 
 
-# --- swarm delegation ---------------------------------------------------
+# --- swarm delegation (subagent model: parent continues) ---------------
 
 
 def _delegate_tools() -> list[dict[str, Any]]:
@@ -348,26 +348,40 @@ def _delegate_call(
     )
 
 
-async def test_successful_delegate_yields_delegate_event_and_stops(
-    monkeypatch,
+async def test_successful_delegate_runs_subagent_and_parent_continues(
+    monkeypatch, tmp_path
 ) -> None:
-    """After a successful delegate tool, loop emits ``delegate`` and returns."""
+    """After a successful delegate, the subagent runs and its output becomes
+    the delegate tool result; the parent loop *continues* to a final answer."""
+    store.rebind(tmp_path / "delegate_sub.db")
     monkeypatch.setattr(
         "app.runtime.agent.loop.execute",
         lambda name, args: "Delegated to ops",
     )
+    # Parent: call delegate, then give a final answer.
+    parent_llm = ScriptedLLM([_delegate_call(), text_reply("Done with ops help.")])
+    # Subagent: single text reply (its final output).
+    subagent_llm = ScriptedLLM([text_reply("ops handled it")])
+    monkeypatch.setattr(
+        "app.runtime.agent.loop.get_llm", lambda agent_id=None: subagent_llm
+    )
     events = await _collect(
         "ask ops to help",
-        llm=ScriptedLLM([_delegate_call()]),
+        llm=parent_llm,
         tools=_delegate_tools(),
         agent_id="main",
     )
-    assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "delegate"]
-    handoff = next(e for e in events if e["kind"] == "delegate")
-    assert handoff["from"] == "main"
-    assert handoff["to"] == "ops"
-    assert handoff["reason"] == "ops task"
-    assert not any(e["kind"] == "final" for e in events)
+    kinds = _kinds(events, drop_delta=True)
+    # delegate marker present, parent reaches a final (does NOT stop).
+    assert "delegate" in kinds
+    assert kinds[-1] == "final"
+    assert _final(events)["content"] == "Done with ops help."
+    # The delegate tool result carries the subagent's output.
+    result_ev = next(
+        e for e in events if e["kind"] == "tool_result" and e["tool"] == "delegate"
+    )
+    assert "ops handled it" in result_ev["result"]
+    assert result_ev["error"] is False
 
 
 async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:

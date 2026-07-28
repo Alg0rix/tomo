@@ -218,8 +218,11 @@ async def _drain_agent_turn(
 ) -> AsyncIterator[tuple[str, int]]:
     """Run ``run_turn`` for ``agent_id``, mapping/persisting events.
 
-    On a loop ``delegate`` kind, emits the handoff SSE then recursively drains
-    the target agent (nested member turn). Yields ``(sse_chunk, seq)``.
+    The loop handles subagent delegation internally: when the model calls
+    ``delegate``, a nested ``run_turn`` runs for the target and its events
+    are re-emitted tagged with the target ``agent_id``. This function just
+    maps every event (resolving per-event attribution) and persists history.
+    Yields ``(sse_chunk, seq)``.
     """
     agent_name = _agent_label(agent_id)
     store.set_busy(agent_id, True)
@@ -234,51 +237,24 @@ async def _drain_agent_turn(
         agent_id=agent_id,
         session_id=session_id,
     ):
-        if ev["kind"] == "delegate":
-            to_id = ev["to"]
-            reason = ev.get("reason") or "delegate"
-            from_id = ev.get("from") or agent_id
-            async for chunk, seq in _emit_delegate(
-                session_id,
-                from_id=from_id,
-                to_id=to_id,
-                reason=reason,
-                seq=seq,
-            ):
-                yield chunk, seq
-            store.set_busy(agent_id, False)
-            # Nested member: clean context + turn.start so UI/LLM both switch.
-            full_hist = store.get_session_history(session_id)
-            user_req = _last_user_content(full_hist)
-            member_hist = _history_before_last_user(full_hist)
-            member_prompt = _handoff_member_prompt(
-                from_id=from_id, reason=reason, user_request=user_req
-            )
-            async for chunk, seq in _emit_member_turn_start(
-                to_id=to_id, turn_id=turn_id, seq=seq
-            ):
-                yield chunk, seq
-            logger.info(
-                "tool handoff session_id=%s from=%s to=%s reason=%r",
-                session_id,
-                from_id,
-                to_id,
-                reason,
-            )
-            async for chunk, seq in _drain_agent_turn(
-                session_id,
-                to_id,
-                user_message=member_prompt,
-                history=member_hist,
-                seq=seq,
-                turn_id=turn_id,
-                busy_ids=busy_ids,
-            ):
-                yield chunk, seq
-            return
+        # Nested subagent events carry their own agent_id for attribution.
+        ev_agent_id = ev.get("agent_id") or agent_id
+        if ev_agent_id != agent_id:
+            ev_agent_name = _agent_label(ev_agent_id)
+            if ev_agent_id not in busy_ids:
+                store.set_busy(ev_agent_id, True)
+                busy_ids.add(ev_agent_id)
+        else:
+            ev_agent_name = agent_name
+
+        # Delegate events need the target agent's name, not the parent's.
+        if ev.get("kind") == "delegate":
+            to_id = ev.get("to") or ""
+            if to_id:
+                ev["to_name"] = _agent_label(to_id)
 
         chunks, entries, seq = map_loop_event(
-            ev, agent_id, agent_name, seq, turn_id
+            ev, ev_agent_id, ev_agent_name, seq, turn_id
         )
         for entry in entries:
             store.append_session_history(session_id, entry)

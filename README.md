@@ -1,6 +1,6 @@
 # Tomo (友達)
 
-> **Alpha kitchen-sink is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → Telegram → schedule. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
+> **Alpha is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → Telegram → schedule. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
 
 **Tomodachi** — a general-purpose agent swarm that learns, coordinates, and acts on your behalf.
 
@@ -8,7 +8,7 @@ Tomo starts broad: a **coordinator** plus a team of agents that can talk to you,
 
 ---
 
-## Alpha (kitchen-sink)
+## Alpha
 
 What ships in Alpha (slices 0→H):
 
@@ -421,10 +421,10 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 
 ## Getting started
 
-Tomo's **Alpha kitchen-sink is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on workplaces, KB recall, Telegram, and interval scheduler. Configure models in System → Models; chat over SSE from the dashboard or Chat page.
+Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on workplaces, KB recall, Telegram, and interval scheduler. Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Alg0rix/tomo.git
 cd tomo
 uv sync                    # create .venv and install dependencies
 uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
@@ -491,13 +491,13 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 uv run pytest
 ```
 
-> **Note:** Alpha kitchen-sink (slices 0→H) is complete. **Tomo Connector** (Go tunnel agent) is implemented — see `connector/README.md`. Next: deeper learning loop, more channels — see Roadmap.
+> **Note:** Alpha (slices 0→H) is complete. **Tomo Connector** (Go tunnel agent) is implemented — see `connector/README.md`. Next: deeper learning loop, more channels — see Roadmap.
 
 ---
 
 ## Roadmap
 
-- [x] Alpha kitchen-sink — home, models, swarm handoff, tools, workplaces, KB, Telegram, scheduler
+- [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Telegram, scheduler
 - [ ] Learning loop — observe → distill → reuse → refine; autonomous skill creation
 - [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)

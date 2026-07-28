@@ -16,6 +16,7 @@ from app.runtime.llm.openai_compat import (
     LLMConfigError,
     LLMRequestError,
     OpenAICompatClient,
+    _repair_json,
 )
 
 _BASE = "https://example.test/v1"
@@ -260,4 +261,148 @@ async def test_aclose_releases_client() -> None:
 
     client = _client(httpx.MockTransport(handler))
     await client.complete([{"role": "user", "content": "hi"}])
+    await client.aclose()
+
+
+# ── JSON auto-repair tests ──────────────────────────────────────
+
+
+def test_repair_valid_json_passes_through() -> None:
+    assert _repair_json('{"command": "ls"}') == {"command": "ls"}
+
+
+def test_repair_concatenated_duplicates_takes_first_valid() -> None:
+    """The most common LLM malformation: the JSON object is emitted twice,
+    the first copy broken, the second valid."""
+    raw = '{"command": "ls", "timeout": 5, "workplace": "dev"}{"command": "ls", "timeout": 5, "workplace": "dev"}'
+    result = _repair_json(raw)
+    assert result is not None
+    assert result.get("command") == "ls"
+    assert result.get("timeout") == 5
+
+
+def test_repair_missing_closing_quote_salvages_second_block() -> None:
+    """Missing closing quote in the first block → scan finds the valid
+    second block."""
+    raw = '{"command": "ls, "timeout": 5}{"command": "ls", "timeout": 5}'
+    result = _repair_json(raw)
+    assert result is not None
+    assert result.get("command") == "ls"
+    assert result.get("timeout") == 5
+
+
+def test_repair_trailing_comma_removed() -> None:
+    assert _repair_json('{"command": "ls",}') == {"command": "ls"}
+
+
+def test_repair_markdown_fences_stripped() -> None:
+    raw = '```json\n{"command": "ls"}\n```'
+    assert _repair_json(raw) == {"command": "ls"}
+
+
+def test_repair_double_encoded_string() -> None:
+    """When json.loads returns a string that is itself JSON."""
+    raw = '"{\\"command\\": \\"ls\\"}"'
+    assert _repair_json(raw) == {"command": "ls"}
+
+
+def test_repair_returns_none_for_total_garbage() -> None:
+    assert _repair_json("not json at all") is None
+
+
+def test_repair_empty_string_returns_empty_dict() -> None:
+    assert _repair_json("") == {}
+    assert _repair_json("   ") == {}
+
+
+def test_repair_user_real_world_example() -> None:
+    """The exact malformed JSON the user reported — missing quote, doubled
+    fields, concatenated duplicate."""
+    raw = (
+        '{"command": "ping -c 5 8.8.8.8, "timeout": 10, "workplace": ""local_dev", '
+        '"timeout": 10, "workplace": "local_dev"}'
+        '{"command": "ping -c 5 8.8.8.8", "timeout": 10, "workplace": "local_dev"}'
+    )
+    result = _repair_json(raw)
+    assert result is not None
+    assert result.get("command") == "ping -c 5 8.8.8.8"
+    assert result.get("timeout") == 10
+    assert result.get("workplace") == "local_dev"
+
+
+# ── Parallel tool call streaming tests ──────────────────────────
+
+
+async def test_parallel_tool_calls_streamed_correctly() -> None:
+    """Two tool calls streamed with proper ``index`` → arguments are NOT
+    concatenated into one buffer."""
+    # Argument fragments for tool 0 (accumulates to {"command": "ls", "workplace": "dev"})
+    f0a = json.dumps({"command": "ls"})[:-1]  # {"command": "ls"  (drop closing })
+    f0b = ', "workplace": "dev"}'
+    f0c = "}"
+    # Argument fragments for tool 1 (accumulates to {"path": "/tmp"})
+    f1a = json.dumps({"path": "/tmp"})[:-1]  # {"path": "/tmp"  (drop closing })
+    f1c = "}"
+
+    chunks = [
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "type": "function", "function": {"name": "bash", "arguments": ""}},
+            {"index": 1, "id": "c2", "type": "function", "function": {"name": "read_file", "arguments": ""}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": f0a}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 1, "function": {"arguments": f1a}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": f0b}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 1, "function": {"arguments": f1c}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": f0c}},
+        ]}}]},
+    ]
+    sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+
+    client = _client(httpx.MockTransport(handler))
+    events = [ev async for ev in client.stream_complete([])]
+    assert events[-1]["type"] == "done"
+    resp = events[-1]["response"]
+    assert len(resp.tool_calls) == 2
+    assert resp.tool_calls[0].name == "bash"
+    assert resp.tool_calls[1].name == "read_file"
+    assert resp.tool_calls[0].arguments == {"command": "ls", "workplace": "dev"}
+    assert resp.tool_calls[1].arguments == {"path": "/tmp"}
+    await client.aclose()
+
+
+async def test_malformed_arguments_repaired_via_stream() -> None:
+    """Tool call arguments with concatenated duplicate JSON are repaired
+    via _repair_json when streaming."""
+    args = json.dumps({"command": "ls"})
+    chunks = [
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "type": "function", "function": {"name": "bash", "arguments": args}},
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": args}},
+        ]}}]},
+        {"choices": [{"delta": {}}]},
+    ]
+    sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+
+    client = _client(httpx.MockTransport(handler))
+    events = [ev async for ev in client.stream_complete([])]
+    resp = events[-1]["response"]
+    assert len(resp.tool_calls) == 1
+    assert resp.tool_calls[0].arguments == {"command": "ls"}
     await client.aclose()
