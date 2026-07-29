@@ -1,6 +1,6 @@
 # Tomo (友達)
 
-> **Alpha is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → Telegram → schedule. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
+> **Alpha is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → schedule. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
 
 **Tomodachi** — a general-purpose agent swarm that learns, coordinates, and acts on your behalf.
 
@@ -20,8 +20,8 @@ What ships in Alpha (slices 0→H):
 | **Tools** | `bash`, `read_file`, `write_file`, `str_replace`, `search_files`, `delete_file`, `web_fetch`, `web_search`, `process`, `todo`, `session_search`, `list_skills`, `use_skill`, `clarify`, `forget_memory`, `recall`, `remember`, `delegate` |
 | **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) |
 | **Memory / KB** | SQLite knowledge entries + recall/remember tools |
-| **Channels** | Web UI + Telegram long-poll bot |
-| **Scheduler** | Interval schedules fire agent turns in-process |
+| **Channels** | Web UI (ready); Telegram/WhatsApp planned |
+| **Scheduler** | Not ready — design in progress; interval schedules not wired |
 | **Platform** | Skills/plugins/schedules in SQLite |
 | **Eval** | Hidden by default (`TOMO_EVAL_UI`) |
 
@@ -40,7 +40,7 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 | **General first** | One platform for any task — automate workflows, answer questions, run commands, manage files. Specialize later with skills and agent roles |
 | **Agents that learn** | Memory, knowledge base, and a learning loop — agents observe tasks, distill reusable skills, and improve from feedback across sessions |
 | **Swarm coordination** | Multiple specialized agents delegate to each other; the coordinator routes work without a single bottleneck |
-| **Talk from anywhere** | WhatsApp, Telegram, web UI — message your swarm from your phone while it works on a server |
+| **Talk from anywhere** | Web UI today; Telegram and WhatsApp planned — message your swarm from your phone while it works on a server |
 | **Reach any machine** | Workplaces over WebSocket tunnel, SSH, or local sandbox — same tools everywhere |
 | **Easy to extend** | Tools and skills are declarative — drop in JSON definitions, assign to agents, done |
 
@@ -497,11 +497,11 @@ uv run pytest
 
 ## Roadmap
 
-- [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Telegram, scheduler
+- [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Web UI
 - [ ] Learning loop — observe → distill → reuse → refine; autonomous skill creation
 - [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
-- [ ] Channel adapters — WhatsApp; Discord, Slack, CLI
+- [ ] Channel adapters — Telegram, WhatsApp, Discord, Slack, CLI
 - [ ] Skill registry — install and share community skills
 - [ ] Observability — traces, artifact browser, cost tracking per agent
 - [ ] Eval / evaluator UI (gated today via `TOMO_EVAL_UI`)
