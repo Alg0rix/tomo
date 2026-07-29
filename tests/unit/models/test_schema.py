@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "schedule_runs",
     "users",
     "llm_profiles",
+    "api_keys",
 }
 
 

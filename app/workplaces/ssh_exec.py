@@ -278,7 +278,11 @@ def search_files(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str,
     # Fall back to bash grep for simplicity.
     root = _remote_root(workplace)
     glob_pat = params.get("glob") or ""
-    use_regex = bool(params.get("regex"))
+    # Match local search_files: regex by default; regex=false → fixed-string.
+    if "regex" in params:
+        use_regex = bool(params.get("regex"))
+    else:
+        use_regex = True
     # Safe-ish: pattern via env on remote.
     if use_regex:
         grep = f"grep -RInE -- {shlex.quote(pattern)} . 2>/dev/null | head -50"

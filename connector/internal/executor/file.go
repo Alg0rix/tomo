@@ -243,7 +243,8 @@ func searchFiles(params map[string]any) (any, error) {
 		return nil, fmt.Errorf("'pattern' argument must be a non-empty string")
 	}
 	globPat := paramString(params, "glob")
-	useRegex := false
+	// Match Tomo/Hermes: content patterns are regex by default.
+	useRegex := true
 	if b, ok := params["regex"].(bool); ok {
 		useRegex = b
 	}

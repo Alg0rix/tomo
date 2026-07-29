@@ -277,7 +277,10 @@
   async function loadUsers() {
     try {
       var d = await Tomo.api('/api/users');
-      if (d) renderUsers(d.users || []);
+      if (d) {
+        renderUsers(d.users || []);
+        fillApiKeyUserSelect(d.users || []);
+      }
     } catch (e) { if (userList) userList.innerHTML = '<div class="empty">Could not load accounts.</div>'; }
   }
 
@@ -309,7 +312,7 @@
         try { var u = await Tomo.api('/api/users/' + encodeURIComponent(uid)); if (u) openUserForm('edit', u); } catch (er) { Tomo.toast('Could not load account', 'err'); }
       } else if (act === 'delete') {
         if (!confirm('Delete account "' + uid + '"?')) return;
-        try { await Tomo.api('/api/users/' + encodeURIComponent(uid), { method: 'DELETE' }); Tomo.toast('Account deleted', 'ok'); loadUsers(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        try { await Tomo.api('/api/users/' + encodeURIComponent(uid), { method: 'DELETE' }); Tomo.toast('Account deleted', 'ok'); loadUsers(); loadApiKeys(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
       }
     });
   }
@@ -352,5 +355,108 @@
     });
   }
 
+  // ---- API keys ----
+  var apiKeyList = document.getElementById('apiKeyList');
+  var apiKeyFormCard = document.getElementById('apiKeyFormCard');
+  var apiKeyRevealCard = document.getElementById('apiKeyRevealCard');
+  var apiKeyUserSel = document.getElementById('apiKeyUserId');
+  var apiKeyName = document.getElementById('apiKeyName');
+  var apiKeyRevealToken = document.getElementById('apiKeyRevealToken');
+  var cachedUsers = [];
+
+  function fillApiKeyUserSelect(users) {
+    cachedUsers = (users || []).filter(function (u) { return u.enabled; });
+    if (!apiKeyUserSel) return;
+    apiKeyUserSel.innerHTML = cachedUsers.map(function (u) {
+      return '<option value="' + esc(u.id) + '">' + esc(u.username) + '</option>';
+    }).join('');
+  }
+
+  function apiKeyRowHtml(k) {
+    var meta = esc(k.name || 'API key') + ' · <span class="mono">' + esc(k.key_prefix) + '</span>';
+    if (k.user_id) meta += ' · <span class="mono">' + esc(k.user_id) + '</span>';
+    return '<div class="row" data-id="' + esc(k.id) + '"><div class="meta"><div class="title">' + meta + '</div></div><div><button class="btn ghost sm" type="button" data-act="revoke">Revoke</button></div></div>';
+  }
+
+  function renderApiKeys(keys) {
+    if (!apiKeyList) return;
+    if (!keys.length) { apiKeyList.innerHTML = '<div class="empty">No API keys yet.</div>'; return; }
+    apiKeyList.innerHTML = keys.map(apiKeyRowHtml).join('');
+  }
+
+  async function loadApiKeys() {
+    try {
+      var d = await Tomo.api('/api/api-keys');
+      if (d) renderApiKeys(d.keys || []);
+    } catch (e) { if (apiKeyList) apiKeyList.innerHTML = '<div class="empty">Could not load API keys.</div>'; }
+  }
+
+  var addApiKey = document.getElementById('addApiKeyBtn');
+  if (addApiKey) {
+    addApiKey.addEventListener('click', function () {
+      if (!cachedUsers.length) { Tomo.toast('Create an account first', 'err'); return; }
+      if (apiKeyName) apiKeyName.value = '';
+      if (apiKeyFormCard) apiKeyFormCard.classList.remove('hidden');
+      if (apiKeyRevealCard) apiKeyRevealCard.classList.add('hidden');
+    });
+  }
+  var apiKeyCancel = document.getElementById('apiKeyCancel');
+  if (apiKeyCancel) apiKeyCancel.addEventListener('click', function () { if (apiKeyFormCard) apiKeyFormCard.classList.add('hidden'); });
+
+  var apiKeySave = document.getElementById('apiKeySave');
+  if (apiKeySave) {
+    apiKeySave.addEventListener('click', async function () {
+      var uid = apiKeyUserSel ? apiKeyUserSel.value : '';
+      if (!uid) { Tomo.toast('Pick an account', 'err'); return; }
+      try {
+        var created = await Tomo.api('/api/api-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: uid, name: (apiKeyName && apiKeyName.value.trim()) || '' }),
+        });
+        if (apiKeyFormCard) apiKeyFormCard.classList.add('hidden');
+        if (created && created.token && apiKeyRevealToken && apiKeyRevealCard) {
+          apiKeyRevealToken.textContent = created.token;
+          apiKeyRevealCard.classList.remove('hidden');
+        }
+        Tomo.toast('API key created', 'ok');
+        loadApiKeys();
+      } catch (err) { Tomo.toast((err && err.message) || 'Could not create key', 'err'); }
+    });
+  }
+
+  if (apiKeyList) {
+    apiKeyList.addEventListener('click', async function (e) {
+      var btn = e.target.closest('button[data-act="revoke"]'); if (!btn) return;
+      var row = btn.closest('[data-id]'); var kid = row ? row.dataset.id : '';
+      if (!kid || !confirm('Revoke this API key?')) return;
+      try {
+        await Tomo.api('/api/api-keys/' + encodeURIComponent(kid), { method: 'DELETE' });
+        Tomo.toast('API key revoked', 'ok');
+        loadApiKeys();
+      } catch (er) { Tomo.toast((er && er.message) || 'Could not revoke', 'err'); }
+    });
+  }
+
+  var copyBtn = document.getElementById('apiKeyCopyBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async function () {
+      var t = apiKeyRevealToken ? apiKeyRevealToken.textContent : '';
+      if (!t) return;
+      try {
+        await navigator.clipboard.writeText(t);
+        Tomo.toast('Copied', 'ok');
+      } catch (e) { Tomo.toast('Could not copy', 'err'); }
+    });
+  }
+  var revealDone = document.getElementById('apiKeyRevealDone');
+  if (revealDone) {
+    revealDone.addEventListener('click', function () {
+      if (apiKeyRevealCard) apiKeyRevealCard.classList.add('hidden');
+      if (apiKeyRevealToken) apiKeyRevealToken.textContent = '';
+    });
+  }
+
   loadUsers();
+  loadApiKeys();
 })();

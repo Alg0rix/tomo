@@ -50,8 +50,40 @@ def test_search_files_no_match() -> None:
 
 def test_search_files_bad_regex_is_error() -> None:
     sandbox.bind_agent("ops")
-    result = execute("search_files", {"pattern": "[", "regex": True})
+    # regex is default true (Hermes-aligned)
+    result = execute("search_files", {"pattern": "["})
     assert result.startswith("Error")
+
+
+def test_search_files_regex_alternation_by_default() -> None:
+    work = home.agent_work_dir("ops")
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "wa.txt").write_text("hello WhatsApp world\n", encoding="utf-8")
+    sandbox.bind_agent("ops")
+    result = execute(
+        "search_files",
+        {"pattern": "WhatsApp|whatsapp", "path": ".", "output_mode": "content"},
+    )
+    assert "wa.txt" in result
+    assert "WhatsApp" in result
+
+
+def test_search_files_fixed_string_opt_out() -> None:
+    work = home.agent_work_dir("ops")
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "wa.txt").write_text("hello WhatsApp world\n", encoding="utf-8")
+    (work / "lit.txt").write_text("literal WhatsApp|whatsapp here\n", encoding="utf-8")
+    sandbox.bind_agent("ops")
+    result = execute(
+        "search_files",
+        {
+            "pattern": "WhatsApp|whatsapp",
+            "regex": False,
+            "output_mode": "content",
+        },
+    )
+    assert "lit.txt" in result
+    assert "wa.txt" not in result
 
 
 def test_search_files_by_filename() -> None:

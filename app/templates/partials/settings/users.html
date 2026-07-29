@@ -1,7 +1,7 @@
 {% from 'partials/page_head.html' import section_head %}
 
 <section id="sec-users" class="sys-section" style="display:none">
-  {{ section_head('Accounts', 'Login accounts for the Tomo web UI. Every account is a full admin.') }}
+  {{ section_head('Accounts', 'Login accounts and API keys for programmatic access. Every account is a full admin.') }}
   <div class="card" style="margin-bottom:16px">
     <div class="card-head"><h3>Users</h3>
       <button class="btn primary sm" type="button" id="addUserBtn">+ Add account</button>
@@ -53,6 +53,46 @@
           <button class="btn primary sm" type="button" id="userSave">Save account</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>API keys</h3>
+      <button class="btn primary sm" type="button" id="addApiKeyBtn">+ Create key</button>
+    </div>
+    <div class="card-body" style="padding:12px 18px 8px">
+      <p class="faint" style="font-size:12.5px;margin-bottom:10px">Use <span class="mono">Authorization: Bearer tomo_…</span> or <span class="mono">X-API-Key</span> on <span class="mono">/api/*</span>. The full token is shown once.</p>
+      <div id="apiKeyList"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="apiKeyFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3>Create API key</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="apiKeyForm" autocomplete="off" onsubmit="return false;">
+        <div class="config-row"><div class="lbl">Account</div>
+          <select class="input" id="apiKeyUserId" style="max-width:240px"></select>
+        </div>
+        <div class="config-row"><div class="lbl">Label</div>
+          <input class="input" id="apiKeyName" placeholder="CI / script" style="max-width:240px">
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="apiKeyCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="apiKeySave">Create key</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card hidden" id="apiKeyRevealCard" style="margin-bottom:16px;border-color:var(--border-accent)">
+    <div class="card-head"><h3>Copy your API key</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <p class="faint" style="font-size:12.5px;margin-bottom:10px">This token won’t be shown again. Store it somewhere safe.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <code class="mono" id="apiKeyRevealToken" style="flex:1;min-width:0;word-break:break-all;padding:10px 12px;background:var(--surface-2);border-radius:var(--r-sm);font-size:12px"></code>
+        <button class="btn ghost sm" type="button" id="apiKeyCopyBtn">Copy</button>
+        <button class="btn primary sm" type="button" id="apiKeyRevealDone">Done</button>
+      </div>
     </div>
   </div>
 </section>

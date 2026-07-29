@@ -491,7 +491,7 @@ async def delete_user(user_id: str, request: Request, _: AuthDep):
 
 
 @router.get("/api-keys")
-async def list_api_keys(user_id: str | None = None, _: AuthDep = None):
+async def list_api_keys(_: AuthDep, user_id: str | None = None):
     return {"keys": store.list_api_keys(user_id)}
 
 

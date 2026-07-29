@@ -4,8 +4,9 @@ Cascade (local workplace / sandbox):
   content:  ``rg`` → ``grep -rn`` → pure Python walk
   files:    ``rg --files`` → ``find`` → pure Python walk
 
-Better than Hermes: always has a Python last resort (no hard fail if tools
-missing); fixed-string mode uses ``rg -F`` unless ``regex=true``.
+Content patterns are regex by default (Hermes-aligned). Pass ``regex=false``
+for fixed-string (``rg -F`` / ``grep -F``). Always has a Python last resort
+when rg/grep/find are missing.
 """
 
 from __future__ import annotations
@@ -54,7 +55,13 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(path_arg, str) or not path_arg.strip():
         path_arg = "."
 
-    use_regex = bool(arguments.get("regex", False))
+    # Hermes: content patterns are regex; filename search is glob.
+    # Opt out of regex content with regex=false (-F). Opt into regex
+    # filenames with regex=true.
+    if "regex" in arguments:
+        use_regex = bool(arguments.get("regex"))
+    else:
+        use_regex = target_mode == "content"
 
     output_mode = str(arguments.get("output_mode") or "content").strip().lower()
     if output_mode not in ("content", "files_only", "count"):
