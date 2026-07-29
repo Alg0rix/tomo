@@ -303,6 +303,13 @@
       return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
     }
 
+    function listenUrl() {
+      const sid = currentSessionId();
+      if (!sid) return '';
+      // No message → join active turn (replay + live) or idle heartbeats.
+      return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&after=0';
+    }
+
     function clearUrl() {
       const sid = currentSessionId();
       if (sid) {
@@ -1113,13 +1120,381 @@
       TomoContextUsage.init(wrap);
     }
 
+    /**
+     * Re-attach to an in-flight session turn after page refresh.
+     * History already rendered the past; this joins listen-mode SSE so
+     * status stays busy and unpaired tool cards keep updating live.
+     * @returns {boolean} true if a resume stream was opened
+     */
+    function resumeActiveTurn() {
+      const sid = currentSessionId();
+      const url = listenUrl();
+      if (!sid || !url || sending || es) return false;
+
+      const turns = scroll.querySelectorAll('.turn');
+      const turn = turns[turns.length - 1];
+      if (!turn) return false;
+
+      let closed = false;
+      let sawTurnEvent = false;
+      let turnAgentName = defaultAgentName;
+      let turnAgentId = agentId || '';
+      let thinkEl = null;
+      let asstEl = null;
+      let asstBody = null;
+      let pendingEl = null;
+      let raw = '';
+      let idleTimer = null;
+      let hardTimer = null;
+      const IDLE_MS = 180000;
+      const HARD_MS = 720000;
+
+      // Skip replayed tool/tool_result events already represented in history.
+      let skipTools = turn.querySelectorAll('.tool').length;
+      let skipResults = 0;
+      turn.querySelectorAll('.tool').forEach(function (c) {
+        if (c._res && c._res.textContent) skipResults++;
+      });
+      let toolSeen = 0;
+      let resultSeen = 0;
+
+      const subagentSet = new Set();
+      turn.querySelectorAll('.swarm-row[data-agent-id]').forEach(function (row) {
+        if (row.dataset.agentId) subagentSet.add(row.dataset.agentId);
+      });
+
+      function clearWatchdogs() {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
+      }
+
+      function armIdle(ms) {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(function () {
+          if (closed) return;
+          endResume();
+        }, ms || IDLE_MS);
+      }
+
+      function bumpActivity() {
+        armIdle(IDLE_MS);
+      }
+
+      function clearPending() {
+        if (pendingEl) { pendingEl.remove(); pendingEl = null; }
+      }
+
+      function showPending() {
+        clearPending();
+        pendingEl = document.createElement('div');
+        pendingEl.className = 'turn-pending';
+        const style = turnAgentId ? ' style="background:' + agentColor(turnAgentId) + '"' : '';
+        pendingEl.innerHTML =
+          '<div class="av"' + style + '>' + esc((turnAgentName || 'A').slice(0, 1).toUpperCase()) + '</div>' +
+          '<div class="meta"><span class="name">' + esc(turnAgentName || 'Agent') + '</span>' +
+          '<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span></div>';
+        turn.appendChild(pendingEl);
+      }
+
+      function ensureAssistantBubble() {
+        clearPending();
+        if (asstEl) return asstEl;
+        // Prefer an existing assistant bubble from history (partial refresh).
+        const existing = turn.querySelector('.msg.assistant');
+        if (existing) {
+          asstEl = existing;
+          asstBody = existing.querySelector('.bubble-body');
+          raw = (asstBody && asstBody.textContent) || '';
+          return asstEl;
+        }
+        const tmp = document.createElement('div');
+        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
+        asstEl = tmp.firstElementChild;
+        turn.appendChild(asstEl);
+        asstBody = asstEl.querySelector('.bubble-body');
+        return asstEl;
+      }
+
+      function dropEmptyAssistant() {
+        if (!asstEl) return;
+        const body = (asstBody && asstBody.textContent || '').trim();
+        if (body) return;
+        asstEl.remove();
+        asstEl = null;
+        asstBody = null;
+        raw = '';
+      }
+
+      function adoptAgent(id, name) {
+        if (id) turnAgentId = id;
+        if (name) turnAgentName = name;
+      }
+
+      function clearToolLoading() {
+        turn.querySelectorAll('.tool.loading').forEach(function (c) {
+          c.classList.remove('loading');
+        });
+      }
+
+      function makeToolCollapsible(card) {
+        var head = card.querySelector('.tool-head');
+        if (!head) return;
+        head.style.cursor = 'pointer';
+        head.addEventListener('click', function (e) {
+          if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
+          card.classList.toggle('expanded');
+          var ch = head.querySelector('.chevron');
+          if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
+        });
+      }
+
+      function buildToolCard(d) {
+        var tool = d.tool || 'tool';
+        var args = d.args || {};
+        var presented = (window.Tomo && Tomo.presentToolArgs)
+          ? Tomo.presentToolArgs(tool, args)
+          : { summary: JSON.stringify(args), detailHtml: '', isEdit: false, autoExpand: false };
+        var card = document.createElement('div');
+        card.className = 'tool loading' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+        card.innerHTML =
+          '<div class="tool-head">' +
+            '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
+            '<span class="tname">' + esc(tool) + '</span> ' +
+            '<span class="targs">' + esc(presented.summary || '') + '</span>' +
+          '</div>' +
+          (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
+          '<div class="tloading">running\u2026</div>' +
+          '<div class="tres" style="display:none"></div>';
+        card._res = card.querySelector('.tres');
+        makeToolCollapsible(card);
+        return card;
+      }
+
+      function applyToolResult(d) {
+        const cards = turn.querySelectorAll('.tool');
+        const last = cards[cards.length - 1];
+        if (last && last._res) {
+          var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
+          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
+          last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
+          last._res.style.display = '';
+          last.classList.remove('loading');
+          if (d.error || last.classList.contains('is-edit')) {
+            last.classList.add('expanded');
+            var ch = last.querySelector('.chevron');
+            if (ch) ch.textContent = '\u25BC';
+          }
+        }
+        if (!asstEl && !pendingEl) showPending();
+        atBottom();
+      }
+
+      function endResume() {
+        if (closed) return;
+        clearWatchdogs();
+        clearPending();
+        dropEmptyAssistant();
+        closed = true;
+        closeStream();
+        delete wrap.dataset.liveStream;
+        wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
+        finishTurn();
+      }
+
+      function endIdleResume() {
+        // Listen mode hit idle heartbeats — turn already finished (or never ran).
+        if (closed) return;
+        clearWatchdogs();
+        clearToolLoading();
+        closed = true;
+        closeStream();
+        delete wrap.dataset.liveStream;
+        sending = false;
+        setStatus('ok', 'online');
+        refreshSendBtn();
+      }
+
+      sending = true;
+      wrap.dataset.liveStream = '1';
+      setStatus('amber', busyStatusLabel());
+      wrap.dispatchEvent(new CustomEvent('tomo:turn-start', { bubbles: true }));
+      refreshSendBtn();
+
+      es = new EventSource(url);
+      hardTimer = setTimeout(function () {
+        if (closed) return;
+        endResume();
+      }, HARD_MS);
+      armIdle(IDLE_MS);
+
+      // If listen mode is only idle heartbeats (turn already finished), stop
+      // looking busy once replay would have arrived.
+      setTimeout(function () {
+        if (!closed && !sawTurnEvent) endIdleResume();
+      }, 1000);
+
+      es.addEventListener('state', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        if (d.busy) setStatus('amber', busyStatusLabel());
+      });
+
+      es.addEventListener('turn.start', function () {
+        sawTurnEvent = true;
+        bumpActivity();
+        setStatus('amber', busyStatusLabel());
+      });
+
+      es.addEventListener('tool', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        const aid = d.agent_id || '';
+        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        toolSeen++;
+        if (toolSeen <= skipTools) {
+          // Replay of a history tool — keep unpaired card in loading state.
+          const cards = turn.querySelectorAll('.tool');
+          const card = cards[toolSeen - 1];
+          if (card && !(card._res && card._res.textContent)) {
+            card.classList.add('loading');
+            if (!card.querySelector('.tloading')) {
+              const tip = document.createElement('div');
+              tip.className = 'tloading';
+              tip.textContent = 'running\u2026';
+              card.insertBefore(tip, card._res || null);
+            }
+          }
+          return;
+        }
+        adoptAgent(d.agent_id, d.agent);
+        clearPending();
+        dropEmptyAssistant();
+        turn.appendChild(buildToolCard(d));
+        atBottom();
+      });
+
+      es.addEventListener('tool_result', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        const aid = d.agent_id || '';
+        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        resultSeen++;
+        if (resultSeen <= skipResults) return;
+        applyToolResult(d);
+      });
+
+      es.addEventListener('thinking', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        const aid = d.agent_id || '';
+        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        adoptAgent(d.agent_id, d.agent);
+        clearPending();
+        if (!thinkEl) {
+          thinkEl = document.createElement('div');
+          thinkEl.className = 'thinking';
+          turn.appendChild(thinkEl);
+        }
+        thinkEl.textContent += d.content || '';
+        atBottom();
+      });
+
+      es.addEventListener('delta', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        const aid = d.agent_id || '';
+        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        adoptAgent(d.agent_id, d.agent);
+        const piece = d.content || '';
+        if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
+        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+        ensureAssistantBubble();
+        asstEl.classList.add('streaming');
+        raw += piece;
+        if (/^\s*\[Swarm\]/.test(raw)) {
+          dropEmptyAssistant();
+          raw = '';
+          return;
+        }
+        setMarkdown(asstBody, raw);
+        atBottom();
+      });
+
+      es.addEventListener('done', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        const aid = d.agent_id || '';
+        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        adoptAgent(d.agent_id, d.agent);
+        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+        let content = (d.content != null ? String(d.content) : '').trim();
+        if (content.indexOf('[Swarm]') === 0) content = '';
+        if (content) {
+          ensureAssistantBubble();
+          raw = content;
+          setMarkdown(asstBody, raw);
+          asstEl.classList.remove('streaming');
+        } else {
+          clearPending();
+          dropEmptyAssistant();
+        }
+        atBottom();
+        setStatus('amber', busyStatusLabel());
+      });
+
+      es.addEventListener('turn.end', function () {
+        endResume();
+      });
+
+      es.addEventListener('heartbeat', function () {
+        bumpActivity();
+        // Heartbeat with no turn events ⇒ idle listen stream (stale busy, etc.).
+        if (!sawTurnEvent) endIdleResume();
+      });
+
+      es.addEventListener('error', function (e) {
+        if (closed) return;
+        if (e && e.data) {
+          let msg = 'Agent error';
+          try {
+            const payload = JSON.parse(e.data);
+            msg = payload.message || msg;
+            const errAgentId = payload.agent_id || '';
+            if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== agentId) return;
+          } catch (_) {}
+          clearPending();
+          const tmp = document.createElement('div');
+          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
+          const b = tmp.firstElementChild;
+          turn.appendChild(b);
+          b.querySelector('.bubble-body').innerHTML =
+            '<span style="color:var(--danger)">' + esc(msg) + '</span>';
+          endResume();
+          return;
+        }
+        // Transport error: EventSource will retry; don't tear down yet if turn active.
+        if (sawTurnEvent) return;
+        endIdleResume();
+      });
+
+      es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
+      return true;
+    }
+
     return {
       destroy: function () {
         messageQueue = [];
         if (es) { es.close(); es = null; }
         sending = false;
+        delete wrap.dataset.liveStream;
       },
       send: send,
+      resume: resumeActiveTurn,
     };
   }
 

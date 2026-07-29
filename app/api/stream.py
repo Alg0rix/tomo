@@ -8,13 +8,20 @@ import contextlib
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.core.deps import AuthDep
+from app.core.deps import AuthDep, session_user_id
 from app.services import heartbeat_stream, run_turn, session_heartbeat_stream, store
 from app.services.chat import get_active_session_turn, start_session_turn
 
 router = APIRouter(prefix="/api")
 
 _HEARTBEAT_S = 8.0
+
+
+def _resolve_user_id(request: Request, user_id: str | None) -> str:
+    uid = (user_id or "").strip()
+    if uid and uid != "web":
+        return uid
+    return session_user_id(request)
 
 
 async def _drain_queue_with_heartbeats(
@@ -55,6 +62,7 @@ async def session_chat_stream(
     if not store.get_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     message = (message or "").strip()
+    uid = _resolve_user_id(request, user_id)
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
@@ -69,7 +77,7 @@ async def session_chat_stream(
             else:
                 try:
                     queue = await start_session_turn(
-                        session_id, message, user_id, start_seq=0
+                        session_id, message, uid, start_seq=0
                     )
                 except ValueError as exc:
                     yield fmt_sse(
@@ -136,6 +144,7 @@ async def chat_stream(
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     message = (message or "").strip()
+    uid = _resolve_user_id(request, user_id)
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
@@ -143,7 +152,7 @@ async def chat_stream(
         yield "retry: 4000\n\n"
         if message:
             async with contextlib.aclosing(
-                run_turn(agent_id, message, user_id, start_seq=0)
+                run_turn(agent_id, message, uid, start_seq=0)
             ) as agen:
                 async for chunk in agen:
                     if await request.is_disconnected():

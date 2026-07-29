@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Form, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
 
-from .config import ADMIN_PASSWORD, EVAL_UI_ENABLED, TEMPLATE_DIR
+from .config import EVAL_UI_ENABLED, TEMPLATE_DIR
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -58,6 +58,15 @@ def _is_authenticated(request: Request) -> bool:
     return bool(request.session.get("auth"))
 
 
+def session_user_id(request: Request) -> str:
+    """Logged-in account id, or ``web`` when anonymous/legacy."""
+    return str(request.session.get("user_id") or "web")
+
+
+def session_username(request: Request) -> str:
+    return str(request.session.get("user") or "")
+
+
 def require_auth(request: Request) -> None:
     """Dependency for routes that need a logged-in admin."""
     if _is_authenticated(request):
@@ -73,12 +82,20 @@ def require_auth(request: Request) -> None:
 AuthDep = Annotated[None, Depends(require_auth)]
 
 
-def verify_password(password: str) -> bool:
-    return password == ADMIN_PASSWORD
+def authenticate(username: str, password: str) -> dict[str, Any] | None:
+    """Verify username+password against SQLite login accounts."""
+    from app.services import store
+
+    return store.authenticate(username, password)
 
 
 def login_form_data(
-    password: Annotated[str, Form()],
+    username: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
     next_url: Annotated[str, Form()] = "/",
 ) -> dict[str, str]:
-    return {"password": password, "next": next_url or "/"}
+    return {
+        "username": username,
+        "password": password,
+        "next": next_url or "/",
+    }

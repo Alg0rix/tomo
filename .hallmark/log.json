@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-07-30",
+    "macrostructure": "Letter",
+    "theme": "Darkroom",
+    "enrichment": "none",
+    "brief": "Login gate redesign — letter form, edge nav, no card",
+    "scope": "login",
+    "nav": "N9",
+    "footer": "Ft2"
+  },
+  {
     "date": "2026-07-26",
     "macrostructure": "Split Studio",
     "theme": "Darkroom",

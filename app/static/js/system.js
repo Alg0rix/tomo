@@ -16,7 +16,7 @@
 
   function fromHash() {
     var h = (location.hash || '#general').replace('#', '');
-    show(h in { general: 1, models: 1, memory: 1, tools: 1, plugins: 1, shared_channel: 1 } ? h : 'general');
+    show(h in { general: 1, models: 1, memory: 1, tools: 1, plugins: 1, shared_channel: 1, users: 1 } ? h : 'general');
   }
 
   nav.querySelectorAll('a').forEach(function (a) {
@@ -251,4 +251,106 @@
   }
 
   loadKnowledge();
+
+  // ---- Login accounts (System → Accounts) ----
+  var userList = document.getElementById('userList');
+  var userFormCard = document.getElementById('userFormCard');
+  var uMode = document.getElementById('userFormMode');
+  var uId = document.getElementById('userId');
+  var uUsername = document.getElementById('userUsername');
+  var uDisplay = document.getElementById('userDisplayName');
+  var uPass = document.getElementById('userPassword');
+  var uEnabled = document.getElementById('userEnabled');
+  var uEnabledRow = document.getElementById('userEnabledRow');
+
+  function userRowHtml(u) {
+    var badge = u.enabled ? '<span class="badge ok sm">enabled</span>' : '<span class="badge muted sm">disabled</span>';
+    return '<div class="row" data-id="' + esc(u.id) + '"><div class="meta"><div class="title">' + esc(u.display_name || u.username) + ' <span class="faint mono">' + esc(u.username) + '</span></div><div class="desc mono" style="font-size:11px">' + esc(u.id) + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + badge + ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button> <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+  }
+
+  function renderUsers(users) {
+    if (!userList) return;
+    if (!users.length) { userList.innerHTML = '<div class="empty">No accounts yet.</div>'; return; }
+    userList.innerHTML = users.map(userRowHtml).join('');
+  }
+
+  async function loadUsers() {
+    try {
+      var d = await Tomo.api('/api/users');
+      if (d) renderUsers(d.users || []);
+    } catch (e) { if (userList) userList.innerHTML = '<div class="empty">Could not load accounts.</div>'; }
+  }
+
+  function openUserForm(mode, u) {
+    uMode.value = mode;
+    document.getElementById('userFormTitle').textContent = mode === 'add' ? 'Add account' : 'Edit account';
+    if (mode === 'add') {
+      uId.value = ''; uUsername.value = ''; uDisplay.value = ''; uPass.value = '';
+      uUsername.disabled = false; uEnabled.checked = true;
+      if (uEnabledRow) uEnabledRow.style.display = 'none';
+    } else {
+      uId.value = u.id; uUsername.value = u.username || ''; uDisplay.value = u.display_name || '';
+      uPass.value = ''; uUsername.disabled = true; uEnabled.checked = !!u.enabled;
+      if (uEnabledRow) uEnabledRow.style.display = '';
+    }
+    userFormCard.classList.remove('hidden');
+  }
+
+  var addUser = document.getElementById('addUserBtn');
+  if (addUser) addUser.addEventListener('click', function () { openUserForm('add'); });
+  var cancelUser = document.getElementById('userCancel');
+  if (cancelUser) cancelUser.addEventListener('click', function () { userFormCard.classList.add('hidden'); });
+
+  if (userList) {
+    userList.addEventListener('click', async function (e) {
+      var btn = e.target.closest('button[data-act]'); if (!btn) return;
+      var row = btn.closest('[data-id]'); var uid = row ? row.dataset.id : ''; var act = btn.dataset.act;
+      if (act === 'edit') {
+        try { var u = await Tomo.api('/api/users/' + encodeURIComponent(uid)); if (u) openUserForm('edit', u); } catch (er) { Tomo.toast('Could not load account', 'err'); }
+      } else if (act === 'delete') {
+        if (!confirm('Delete account "' + uid + '"?')) return;
+        try { await Tomo.api('/api/users/' + encodeURIComponent(uid), { method: 'DELETE' }); Tomo.toast('Account deleted', 'ok'); loadUsers(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+      }
+    });
+  }
+
+  var saveUser = document.getElementById('userSave');
+  if (saveUser) {
+    saveUser.addEventListener('click', async function () {
+      try {
+        if (uMode.value === 'add') {
+          var username = uUsername.value.trim();
+          var password = uPass.value;
+          if (!username) { Tomo.toast('Username is required', 'err'); return; }
+          if (!password || password.length < 4) { Tomo.toast('Password must be at least 4 characters', 'err'); return; }
+          await Tomo.api('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: username,
+              password: password,
+              display_name: uDisplay.value.trim(),
+            }),
+          });
+          Tomo.toast('Account created', 'ok');
+        } else {
+          var body = {
+            display_name: uDisplay.value.trim(),
+            enabled: !!uEnabled.checked,
+          };
+          if (uPass.value) body.password = uPass.value;
+          await Tomo.api('/api/users/' + encodeURIComponent(uId.value), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          Tomo.toast('Account saved', 'ok');
+        }
+        userFormCard.classList.add('hidden');
+        loadUsers();
+      } catch (err) { Tomo.toast((err && err.message) || 'Could not save account', 'err'); }
+    });
+  }
+
+  loadUsers();
 })();

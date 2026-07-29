@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED
-from app.core.deps import AuthDep
+from app.core.deps import AuthDep, session_user_id
 from app.schemas import (
     KnowledgeEntryCreate,
     KnowledgeEntryUpdate,
@@ -16,6 +16,8 @@ from app.schemas import (
     LLMProfileUpdate,
     ScheduleCreate,
     ScheduleUpdate,
+    UserCreate,
+    UserUpdate,
     WorkplaceCreate,
     WorkplaceUpdate,
 )
@@ -437,6 +439,54 @@ async def set_default_llm_profile(profile_id: str, _: AuthDep):
         raise HTTPException(status_code=404, detail="Profile not found")
     store.set_default_llm_profile(profile_id)
     return {"success": True, "default_id": profile_id}
+
+
+@router.get("/users")
+async def list_users(_: AuthDep):
+    return {"users": store.list_users()}
+
+
+@router.post("/users")
+async def create_user(body: UserCreate, _: AuthDep):
+    try:
+        return store.create_user(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/users/{user_id}")
+async def get_user(user_id: str, _: AuthDep):
+    user = store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.put("/users/{user_id}")
+async def update_user(user_id: str, body: UserUpdate, _: AuthDep):
+    data = body.model_dump(exclude_unset=True)
+    if "password" in data and not data["password"]:
+        data.pop("password", None)
+    try:
+        user = store.update_user(user_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str, request: Request, _: AuthDep):
+    if user_id == session_user_id(request):
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    try:
+        ok = store.delete_user(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"success": True}
 
 
 @router.get("/settings")

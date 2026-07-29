@@ -6,14 +6,20 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import BRAND, EVAL_UI_ENABLED
-from app.core.deps import AuthDep, templates
+from app.core.deps import AuthDep, session_user_id, session_username, templates
 from app.services import store
 
 router = APIRouter()
 
 
 def _ctx(request: Request, page: str, **extra):
-    return {"page": page, "brand": BRAND, **extra}
+    return {
+        "page": page,
+        "brand": BRAND,
+        "current_user_id": session_user_id(request),
+        "current_username": session_username(request),
+        **extra,
+    }
 
 
 def _eval_disabled_redirect() -> RedirectResponse | None:
@@ -44,8 +50,9 @@ async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
         return templates.TemplateResponse(request, "error.html", _ctx(
             request, "error", code=404, message=f"Agent “{agent_id}” not found.",
         ), status_code=404)
-    history = store.get_history(agent_id, "web")
-    session_id = store.get_or_create_session(agent_id, "web")
+    uid = session_user_id(request)
+    history = store.get_history(agent_id, uid)
+    session_id = store.get_or_create_session(agent_id, uid)
     return templates.TemplateResponse(request, "agent_detail.html", _ctx(
         request, "agent", agent=agent, history=history, session_id=session_id,
         tools=store.get_agent_tools(agent_id),
@@ -133,6 +140,7 @@ async def system_page(request: Request, _: AuthDep):
         default_model_id=store.get_default_llm_profile_id(),
         plugins=store.list_plugins(),
         shared_channels=store.list_shared_channels(),
+        users=store.list_users(),
     ))
 
 

@@ -1,35 +1,58 @@
 {% from 'partials/page_head.html' import section_head %}
 
 <section id="sec-users" class="sys-section" style="display:none">
-  {{ section_head('Users', 'Registered channel users — block, approve, and audit.') }}
-  <div class="pane-toolbar">
-    <select class="input input-sm" id="usersStatusFilter" disabled>
-      <option value="all">All users</option>
-      <option value="approved">Approved</option>
-      <option value="blocked">Blocked</option>
-      <option value="pending">Pending</option>
-    </select>
-  </div>
-  <div class="card">
-    <table class="data-table">
-      <thead>
-        <tr><th>User</th><th>Channel</th><th>Status</th><th>Last active</th><th></th></tr>
-      </thead>
-      <tbody>
+  {{ section_head('Accounts', 'Login accounts for the Tomo web UI. Every account is a full admin.') }}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>Users</h3>
+      <button class="btn primary sm" type="button" id="addUserBtn">+ Add account</button>
+    </div>
+    <div class="card-body" id="userList" style="padding:8px 18px">
+      {% if users %}
         {% for u in users %}
-        <tr>
-          <td><strong>{{ u.name }}</strong><div class="faint mono" style="font-size:11px">{{ u.id }}</div></td>
-          <td><span class="badge muted sm">{{ u.channel }}</span></td>
-          <td>
-            {% if u.status == 'approved' %}<span class="badge ok sm">approved</span>
-            {% elif u.status == 'blocked' %}<span class="badge rose sm">blocked</span>
-            {% else %}<span class="badge amber sm">pending</span>{% endif %}
-          </td>
-          <td class="faint mono" style="font-size:12px">{{ ts(u.last_active) }}</td>
-          <td><button class="btn ghost sm" type="button" disabled>Audit</button></td>
-        </tr>
+        <div class="row" data-id="{{ u.id }}">
+          <div class="meta">
+            <div class="title">{{ u.display_name or u.username }} <span class="faint mono">{{ u.username }}</span></div>
+            <div class="desc mono" style="font-size:11px">{{ u.id }} · {{ ts(u.created_at) }}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            {% if u.enabled %}<span class="badge ok sm">enabled</span>{% else %}<span class="badge muted sm">disabled</span>{% endif %}
+            <button class="btn ghost sm" type="button" data-act="edit">Edit</button>
+            <button class="btn ghost sm" type="button" data-act="delete">Delete</button>
+          </div>
+        </div>
         {% endfor %}
-      </tbody>
-    </table>
+      {% else %}
+        <div class="empty">No accounts yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card hidden" id="userFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3 id="userFormTitle">Add account</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="userForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="userFormMode" value="add">
+        <input type="hidden" id="userId" value="">
+        <div class="config-row"><div class="lbl">Username</div>
+          <input class="input" id="userUsername" required placeholder="alice" style="max-width:220px" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="config-row"><div class="lbl">Display name</div>
+          <input class="input" id="userDisplayName" placeholder="Alice" style="max-width:220px">
+        </div>
+        <div class="config-row"><div class="lbl">Password</div>
+          <div style="flex:1;max-width:280px">
+            <input class="input" type="password" id="userPassword" placeholder="Min 4 characters" style="width:100%" autocomplete="new-password">
+            <p class="faint" id="userPassHint" style="margin:6px 0 0;font-size:12px">Required for new accounts. Leave blank on edit to keep.</p>
+          </div>
+        </div>
+        <div class="config-row" id="userEnabledRow" style="display:none"><div class="lbl">Enabled</div>
+          <label class="toggle"><input type="checkbox" id="userEnabled" checked><span class="track"></span></label>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn ghost" type="button" id="userCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="userSave">Save account</button>
+        </div>
+      </form>
+    </div>
   </div>
 </section>

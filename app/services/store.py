@@ -1,6 +1,6 @@
 """Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
-workplaces/knowledge_entries/skills/plugins/schedules and ``platform_data``
-for remaining stub lists (models, providers, safety rules, users, shared
+workplaces/knowledge_entries/skills/plugins/schedules/users and ``platform_data``
+for remaining stub lists (models, providers, safety rules, channel users, shared
 channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from app.core.config import DB_PATH
+from app.core.config import ADMIN_PASSWORD, DB_PATH
 from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
 from app.models.mixins import knowledge_entries as knowledge_store
@@ -26,6 +26,8 @@ from app.models.mixins import skills as skills_store
 from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import settings as settings_store
 from app.models.mixins import tools as tools_store
+from app.models.mixins import users as users_store
+from app.models.mixins import api_keys as api_keys_store
 from app.models.mixins import workplaces as workplaces_store
 from app.models.mixins.busy import BusyState
 from app.models.schema import migrate
@@ -60,6 +62,7 @@ class Store:
         self._conn = get_connection(path)
         migrate(self._conn)
         seed_if_empty(self._conn)
+        users_store.ensure_bootstrap_admin(self._conn, ADMIN_PASSWORD)
 
     def rebind(self, path: str | Path | None) -> None:
         """Reopen against ``path`` (temp DB in tests); re-migrate + re-seed."""
@@ -78,7 +81,7 @@ class Store:
             "providers": seed_providers(),
             "models": seed_models(),
             "safety_rules": seed_safety_rules(),
-            "users": seed_users(),
+            "channel_users": seed_users(),
             "shared_channels": seed_shared_channels(),
             "eval_domains": seed_eval_domains(),
             "evaluators": seed_evaluators(),
@@ -673,8 +676,63 @@ class Store:
     def list_safety_rules(self) -> list[dict[str, Any]]:
         return self._plat("safety_rules")
 
+    # -- login accounts (SQLite) -----------------------------------------
     def list_users(self) -> list[dict[str, Any]]:
-        return self._plat("users")
+        with self._lock:
+            return users_store.list_users(self._conn)
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return users_store.get_user(self._conn, user_id)
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        with self._lock:
+            return users_store.get_user_by_username(self._conn, username)
+
+    def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
+        with self._lock:
+            return users_store.authenticate(self._conn, username, password)
+
+    def create_user(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return users_store.create_user(self._conn, data)
+
+    def update_user(self, user_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return users_store.update_user(self._conn, user_id, data)
+
+    def delete_user(self, user_id: str) -> bool:
+        with self._lock:
+            return users_store.delete_user(self._conn, user_id)
+
+    def count_enabled_users(self) -> int:
+        with self._lock:
+            return users_store.count_enabled(self._conn)
+
+    # -- API keys (SQLite) -----------------------------------------------
+    def list_api_keys(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            return api_keys_store.list_api_keys(self._conn, user_id)
+
+    def get_api_key(self, key_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return api_keys_store.get_api_key(self._conn, key_id)
+
+    def create_api_key(self, user_id: str, name: str = "") -> dict[str, Any]:
+        with self._lock:
+            return api_keys_store.create_api_key(self._conn, user_id, name)
+
+    def delete_api_key(self, key_id: str) -> bool:
+        with self._lock:
+            return api_keys_store.delete_api_key(self._conn, key_id)
+
+    def authenticate_api_key(self, token: str) -> dict[str, Any] | None:
+        with self._lock:
+            return api_keys_store.authenticate_api_key(self._conn, token)
+
+    def list_channel_users(self) -> list[dict[str, Any]]:
+        """In-memory channel allowlist stub (not login accounts)."""
+        return self._plat("channel_users")
 
     def list_shared_channels(self) -> list[dict[str, Any]]:
         from app.channels.telegram import telegram_status

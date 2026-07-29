@@ -7,7 +7,7 @@
   </div>
 
   <div id="sessionChat" class="chat-wrap sessions-chat" style="display:none"
-       data-session-id="" data-user-id="web" data-agent-name="" data-agent-ids="">
+       data-session-id="" data-user-id="{{ current_user_id | default('web') }}" data-agent-name="" data-agent-ids="">
     <div class="chat-main">
       <div class="sessions-chat-head">
         <div class="swarm-avatars" id="chatAvatars"></div>

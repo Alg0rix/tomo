@@ -25,6 +25,12 @@
   var lastHistLen = -1;
   var inspectorOpenKey = null;
   var draftWorkplaceId = '';
+  // Account id from the server-rendered page (login session).
+  var loginUserId = chatWrap.dataset.userId || 'web';
+
+  function currentUserId() {
+    return loginUserId || 'web';
+  }
 
   function stopHistoryPoll() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -56,7 +62,7 @@
 
     // SSE-driven poll: open a monitor connection to the active turn.
     // Heartbeats and turn.end trigger history re-fetches.
-    var url = '/api/sessions/' + encodeURIComponent(sessionId) + '/chat/stream?user_id=web&after=0';
+    var url = '/api/sessions/' + encodeURIComponent(sessionId) + '/chat/stream?user_id=' + encodeURIComponent(currentUserId()) + '&after=0';
     try {
       monitorEs = new EventSource(url);
       monitorEs.addEventListener('heartbeat', function () {
@@ -68,6 +74,11 @@
       });
       monitorEs.addEventListener('turn.end', function () {
         if (monitorEs) { try { monitorEs.close(); } catch (e) {} monitorEs = null; }
+        var statusEl = chatWrap.querySelector('.chat-status');
+        if (statusEl) {
+          statusEl.className = 'badge ok';
+          statusEl.innerHTML = '<span class="pulse"></span>online';
+        }
         refetchHistory(sessionId);
       });
       monitorEs.addEventListener('error', function () {
@@ -83,6 +94,11 @@
         var last = entries[entries.length - 1];
         if (last && (last.type === 'final' || last.type === 'error')) {
           stopHistoryPoll();
+          var statusEl = chatWrap.querySelector('.chat-status');
+          if (statusEl) {
+            statusEl.className = 'badge ok';
+            statusEl.innerHTML = '<span class="pulse"></span>online';
+          }
         }
         if (entries.length !== lastCount) {
           lastCount = entries.length;
@@ -469,12 +485,29 @@
       });
     }
 
-    function buildHistoryToolCard(fn, params) {
+    function toolCallStillRunning(entries, index) {
+      // Unpaired tool_call (no later tool_output for same agent) while the
+      // turn has not finished — still executing after a mid-turn refresh.
+      var e = entries[index];
+      if (!e || e.type !== 'tool_call') return false;
+      var last = entries[entries.length - 1];
+      if (!last || last.type === 'final' || last.type === 'error') return false;
+      var aid = e.agent_id || '';
+      for (var i = index + 1; i < entries.length; i++) {
+        var n = entries[i];
+        if (n.type === 'tool_output' && (n.agent_id || '') === aid) return false;
+        if (n.type === 'user' || n.type === 'final' || n.type === 'error') return false;
+      }
+      return true;
+    }
+
+    function buildHistoryToolCard(fn, params, running) {
       var presented = (window.Tomo && Tomo.presentToolArgs)
         ? Tomo.presentToolArgs(fn || 'tool', params || {})
         : { summary: JSON.stringify(params || {}), detailHtml: '', isEdit: false, autoExpand: false };
       var card = document.createElement('div');
-      card.className = 'tool' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+      card.className = 'tool' + (running ? ' loading' : '') +
+        (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
       card.innerHTML =
         '<div class="tool-head">' +
           '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
@@ -482,6 +515,7 @@
           '<span class="targs">' + esc(presented.summary || '') + '</span>' +
         '</div>' +
         (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
+        (running ? '<div class="tloading">running\u2026</div>' : '') +
         '<div class="tres" style="display:none"></div>';
       card._res = card.querySelector('.tres');
       makeToolCollapsible(card);
@@ -614,7 +648,7 @@
     }
 
     // ── Process entries ─────────────────────────────────────────────
-    entries.forEach(function (e) {
+    entries.forEach(function (e, entryIdx) {
       if (e.type === 'user') {
         startTurn();
         var row = document.createElement('div');
@@ -679,7 +713,9 @@
           bufferEvent(key, 'tool', { tool: e.function, args: e.params });
           bumpSwarmProgress(key);
         } else {
-          turn.appendChild(buildHistoryToolCard(e.function, e.params));
+          turn.appendChild(buildHistoryToolCard(
+            e.function, e.params, toolCallStillRunning(entries, entryIdx)
+          ));
         }
         return;
       }
@@ -783,7 +819,7 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
-    chatWrap.dataset.userId = s.user_id || 'web';
+    chatWrap.dataset.userId = s.user_id || currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.agentName = label;
@@ -805,12 +841,18 @@
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
 
-      // If the turn might still be active (no final/error entry yet),
-      // poll for updates so a refreshed client sees the remaining work.
+      // Mid-turn refresh: history shows unpaired tools as running; re-attach
+      // to the live session stream so status stays busy and results update.
       var entries = hist.entries || [];
       var last = entries[entries.length - 1];
       if (last && last.type !== 'final' && last.type !== 'error' && !pending) {
-        startHistoryPoll(sessionId);
+        var statusEl = chatWrap.querySelector('.chat-status');
+        if (statusEl) {
+          statusEl.className = 'badge amber';
+          statusEl.innerHTML = '<span class="pulse"></span>busy';
+        }
+        var resumed = chatHandle && chatHandle.resume && chatHandle.resume();
+        if (!resumed) startHistoryPoll(sessionId);
       }
 
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
@@ -891,7 +933,7 @@
     delete chatWrap.dataset.sessionId;
     delete chatWrap.dataset.agentId;
     chatWrap.dataset.pendingAgents = ids.join(',');
-    chatWrap.dataset.userId = 'web';
+    chatWrap.dataset.userId = currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.workplaceId = draftWorkplaceId;
@@ -903,7 +945,7 @@
       title: ids.length > 1 ? 'New swarm chat' : 'New conversation',
       agent_ids: ids,
       agent_id: ids[0],
-      user_id: 'web',
+      user_id: currentUserId(),
       message_count: 0,
       workplace_id: draftWorkplaceId,
     };
@@ -1076,7 +1118,7 @@
         await Tomo.api('/api/sessions/' + encodeURIComponent(activeId) + '/agents', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_ids: ids, user_id: 'web' }),
+          body: JSON.stringify({ agent_ids: ids, user_id: currentUserId() }),
         });
         editModal.classList.add('hidden');
         await refreshSessions();

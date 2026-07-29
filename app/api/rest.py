@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.core.deps import AuthDep
+from app.core.deps import AuthDep, session_user_id
 from app.schemas import (
     AgentCreate,
     AgentDraft,
@@ -20,6 +20,12 @@ from app.services import store
 
 router = APIRouter(prefix="/api")
 
+
+def _uid(request: Request, explicit: str | None = None) -> str:
+    uid = (explicit or "").strip()
+    if uid and uid != "web":
+        return uid
+    return session_user_id(request)
 
 @router.get("/dashboard/data")
 async def dashboard_data(_: AuthDep):
@@ -133,11 +139,11 @@ async def get_session_api(session_id: str, _: AuthDep):
 
 
 @router.post("/sessions")
-async def create_session(body: SessionCreate, _: AuthDep):
+async def create_session(body: SessionCreate, request: Request, _: AuthDep):
     try:
         session_id = store.create_swarm_session(
             body.agent_ids,
-            body.user_id,
+            _uid(request, body.user_id),
             body.coordinator_id,
             workplace_id=body.workplace_id,
         )
@@ -173,7 +179,7 @@ async def prune_draft_sessions(_: AuthDep, keep_id: str | None = None):
 
 
 @router.post("/sessions/home")
-async def create_home_session(body: HomeSessionIn, _: AuthDep):
+async def create_home_session(body: HomeSessionIn, request: Request, _: AuthDep):
     """Start a coordinator-only chat from the dashboard home composer.
 
     No agent picker — always routes to the swarm coordinator (``is_super``).
@@ -181,7 +187,7 @@ async def create_home_session(body: HomeSessionIn, _: AuthDep):
     ``/sessions?s=<id>&q=...`` and auto-send once.
     """
     try:
-        created = store.create_home_session(body.user_id)
+        created = store.create_home_session(_uid(request, body.user_id))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {**created, "message": (body.message or "").strip()}
@@ -237,7 +243,7 @@ async def session_chat_clear(session_id: str, _: AuthDep):
 async def chat_history(agent_id: str, request: Request, _: AuthDep):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-    user_id = request.query_params.get("user_id", "web")
+    user_id = _uid(request, request.query_params.get("user_id"))
     entries = store.get_history(agent_id, user_id)
     return {"entries": entries, "has_more": False}
 
@@ -248,18 +254,18 @@ async def agent_context_usage(agent_id: str, request: Request, _: AuthDep):
 
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-    user_id = request.query_params.get("user_id", "web")
+    user_id = _uid(request, request.query_params.get("user_id"))
     history = store.get_history(agent_id, user_id)
     return compute_context_usage(agent_id, history)
 
 
 @router.post("/agents/{agent_id}/chat")
-async def chat_send(agent_id: str, body: ChatMessageIn, _: AuthDep):
+async def chat_send(agent_id: str, body: ChatMessageIn, request: Request, _: AuthDep):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message is required")
-    session_id = store.get_or_create_session(agent_id, body.user_id)
+    session_id = store.get_or_create_session(agent_id, _uid(request, body.user_id))
     return {"success": True, "session_id": session_id, "streaming": True}
 
 
@@ -267,6 +273,6 @@ async def chat_send(agent_id: str, body: ChatMessageIn, _: AuthDep):
 async def chat_clear(agent_id: str, request: Request, _: AuthDep):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-    user_id = request.query_params.get("user_id", "web")
+    user_id = _uid(request, request.query_params.get("user_id"))
     store.clear_session(agent_id, user_id)
     return {"success": True}

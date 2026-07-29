@@ -18,6 +18,8 @@ EXPECTED_TABLES = {
     "plugins",
     "schedules",
     "schedule_runs",
+    "users",
+    "llm_profiles",
 }
 
 

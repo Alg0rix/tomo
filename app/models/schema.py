@@ -13,6 +13,8 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``skills`` / ``agent_skills`` — skill catalog + per-agent links (Slice G)
 * ``plugins``        — plugin metadata enable/disable (Slice G)
 * ``schedules`` / ``schedule_runs`` — cron/interval jobs + run log (Slice G)
+* ``users``           — login accounts (username + scrypt password hash)
+* ``api_keys``        — per-account Bearer tokens for ``/api/*`` access
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -171,6 +173,27 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
     error        TEXT NOT NULL DEFAULT '',
     started_at   REAL NOT NULL DEFAULT 0,
     finished_at  REAL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    display_name  TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT 'admin',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    created_at    REAL NOT NULL DEFAULT 0,
+    updated_at    REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL DEFAULT '',
+    key_prefix   TEXT NOT NULL,
+    key_hash     TEXT NOT NULL UNIQUE,
+    created_at   REAL NOT NULL DEFAULT 0,
+    last_used_at REAL
 );
 """
 

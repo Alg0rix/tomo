@@ -78,6 +78,8 @@ RELOAD = _env_bool("TOMO_RELOAD", default=False)
 # TOMO_SESSION_SECRET to a stable value in any real deploy; the dev default is
 # single-user only.
 SESSION_SECRET = os.environ.get("TOMO_SESSION_SECRET", "tomo-dev-secret-change-me")
+# Seed password for the bootstrap ``admin`` account when the users table is empty.
+# After bootstrap, change passwords via System → Accounts (env is seed-only).
 ADMIN_PASSWORD = os.environ.get("TOMO_ADMIN_PASSWORD", "tomo")
 SESSION_COOKIE_NAME = "tomo_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days

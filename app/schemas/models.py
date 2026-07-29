@@ -154,6 +154,22 @@ class LLMProfileUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class UserCreate(BaseModel):
+    """Create a login account."""
+
+    username: str = Field(min_length=2, max_length=32, pattern=r"^[a-zA-Z0-9_]+$")
+    password: str = Field(min_length=4, max_length=128)
+    display_name: str = Field(default="", max_length=80)
+
+
+class UserUpdate(BaseModel):
+    """Update a login account. Blank ``password`` keeps the existing hash."""
+
+    display_name: str | None = Field(default=None, max_length=80)
+    enabled: bool | None = None
+    password: str | None = Field(default=None, max_length=128)
+
+
 class WorkplaceCreate(BaseModel):
     """Create a workplace (local / ssh / tunnel). ``id`` optional — auto from ``name``."""
 
