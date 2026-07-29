@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id        TEXT NOT NULL DEFAULT 'web',
     title          TEXT NOT NULL DEFAULT '',
     message_count  INTEGER NOT NULL DEFAULT 0,
+    workplace_id   TEXT NOT NULL DEFAULT '',
     created_at     REAL NOT NULL DEFAULT 0,
     updated_at     REAL NOT NULL DEFAULT 0
 );
@@ -197,6 +198,11 @@ def migrate(conn: sqlite3.Connection) -> None:
     if "workplace_ids_json" not in cols:
         conn.execute(
             "ALTER TABLE agents ADD COLUMN workplace_ids_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    sess_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if "workplace_id" not in sess_cols:
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"
         )
     # Connector tunnel columns (idempotent ALTER for pre-connector DBs).
     wp_cols = {r[1] for r in conn.execute("PRAGMA table_info(workplaces)")}

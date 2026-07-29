@@ -20,9 +20,12 @@ from typing import Any, Callable, Iterable
 from app.core import config
 from app.runtime.tools import bash as _bash_backend
 from app.runtime.tools import clarify as _clarify_backend
+from app.runtime.tools import create_agent as _create_agent_backend
 from app.runtime.tools import delete_file as _delete_file_backend
 from app.runtime.tools import delegate as _delegate_backend
 from app.runtime.tools import forget_memory as _forget_memory_backend
+from app.runtime.tools import list_dir as _list_dir_backend
+from app.runtime.tools import patch as _patch_backend
 from app.runtime.tools import process as _process_backend
 from app.runtime.tools import read_file as _read_file_backend
 from app.runtime.tools import recall as _recall_backend
@@ -45,12 +48,15 @@ ToolRunner = Callable[[dict[str, Any]], str]
 # for documentation and a future dynamic-import task.
 _BACKENDS: dict[str, ToolRunner] = {
     "delegate": _delegate_backend.run,
+    "create_agent": _create_agent_backend.run,
     "bash": _bash_backend.run,
     "runpy": _runpy_backend.run,
     "register_workplace": _register_workplace_backend.run,
     "read_file": _read_file_backend.run,
     "write_file": _write_file_backend.run,
     "str_replace": _str_replace_backend.run,
+    "patch": _patch_backend.run,
+    "list_dir": _list_dir_backend.run,
     "search_files": _search_files_backend.run,
     "delete_file": _delete_file_backend.run,
     "web_fetch": _web_fetch_backend.run,

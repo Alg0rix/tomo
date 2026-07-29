@@ -42,11 +42,21 @@ func writeFile(params map[string]any) (any, error) {
 			return nil, fmt.Errorf("'content' argument must be a string")
 		}
 	}
-	mode := paramString(params, "mode")
+	mode := strings.ToLower(strings.TrimSpace(paramString(params, "mode")))
+	if mode == "" {
+		mode = "overwrite"
+	}
 	root := WorkRoot()
 	target, err := resolvePath(pathArg, root)
 	if err != nil {
 		return nil, fmt.Errorf("write_file error: %w", err)
+	}
+	if mode == "create" {
+		if _, err := os.Stat(target); err == nil {
+			return nil, fmt.Errorf("file already exists: %s. Use mode=overwrite to replace, or str_replace/patch for edits", pathArg)
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat error: %w", err)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir error: %w", err)
@@ -63,7 +73,7 @@ func writeFile(params map[string]any) (any, error) {
 	if _, err := f.WriteString(content); err != nil {
 		return nil, fmt.Errorf("write error: %w", err)
 	}
-	return map[string]any{"ok": true, "path": target}, nil
+	return map[string]any{"ok": true, "path": target, "mode": mode}, nil
 }
 
 func strReplace(params map[string]any) (any, error) {
@@ -75,6 +85,13 @@ func strReplace(params map[string]any) (any, error) {
 	}
 	if old == "" {
 		return nil, fmt.Errorf("'old_string' argument must be a non-empty string")
+	}
+	wantCount := 1
+	if f, ok := asFloat(params["count"]); ok {
+		wantCount = int(f)
+	}
+	if wantCount < 1 && wantCount != -1 {
+		return nil, fmt.Errorf("'count' must be >= 1, or -1 to replace all")
 	}
 	root := WorkRoot()
 	target, err := resolvePath(pathArg, root)
@@ -89,18 +106,112 @@ func strReplace(params map[string]any) (any, error) {
 		return nil, fmt.Errorf("could not read file: %w", err)
 	}
 	text := string(data)
-	count := strings.Count(text, old)
-	if count == 0 {
-		return nil, fmt.Errorf("old_string not found in file")
+	effOld, effNew, occ := matchReplace(text, old, newS)
+	if occ == 0 {
+		return nil, fmt.Errorf("old_string not found in file. Action: call read_file and copy the exact text to replace")
 	}
-	if count > 1 {
-		return nil, fmt.Errorf("old_string matched %d times; must be unique", count)
+	limit := wantCount
+	if wantCount == -1 {
+		limit = occ
+	} else if occ != wantCount {
+		return nil, fmt.Errorf("old_string found %d time(s), but count=%d. Add more context or set count=%d (or -1 for all)", occ, wantCount, occ)
 	}
-	updated := strings.Replace(text, old, newS, 1)
+	updated := strings.Replace(text, effOld, effNew, limit)
 	if err := os.WriteFile(target, []byte(updated), 0o644); err != nil {
 		return nil, fmt.Errorf("could not write file: %w", err)
 	}
-	return map[string]any{"ok": true, "path": target, "replacements": 1}, nil
+	return map[string]any{"ok": true, "path": target, "replacements": limit}, nil
+}
+
+// matchReplace: exact, then unescape, then smart-quote normalize.
+func matchReplace(content, old, newS string) (effOld, effNew string, occ int) {
+	if n := strings.Count(content, old); n > 0 {
+		return old, newS, n
+	}
+	uOld := unescapeLLM(old)
+	if uOld != old {
+		if n := strings.Count(content, uOld); n > 0 {
+			return uOld, unescapeLLM(newS), n
+		}
+	}
+	nOld := normalizeQuotes(old)
+	nContent := normalizeQuotes(content)
+	if idx := strings.Index(nContent, nOld); idx >= 0 {
+		// Best-effort: use equal-length slice from original when lengths align.
+		end := idx + len(old)
+		if end > len(content) {
+			end = idx + len(nOld)
+		}
+		if end > len(content) {
+			end = len(content)
+		}
+		slice := content[idx:end]
+		if normalizeQuotes(slice) == nOld {
+			if n := strings.Count(content, slice); n > 0 {
+				return slice, normalizeQuotes(newS), n
+			}
+		}
+		if n := strings.Count(content, nOld); n > 0 {
+			return nOld, normalizeQuotes(newS), n
+		}
+	}
+	return old, newS, 0
+}
+
+func unescapeLLM(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\'`, `'`)
+	return s
+}
+
+func normalizeQuotes(s string) string {
+	replacer := strings.NewReplacer(
+		"\u2018", "'", "\u2019", "'", "\u201a", "'", "\u201b", "'",
+		"\u201c", `"`, "\u201d", `"`, "\u201e", `"`,
+		"\u2032", "'", "\u2033", `"`,
+	)
+	return replacer.Replace(s)
+}
+
+func applyPatch(params map[string]any) (any, error) {
+	pathArg := paramString(params, "path")
+	patchText, ok := params["patch"].(string)
+	if !ok || strings.TrimSpace(patchText) == "" {
+		return nil, fmt.Errorf("'patch' argument must be a non-empty string")
+	}
+	root := WorkRoot()
+	target, err := resolvePath(pathArg, root)
+	if err != nil {
+		return nil, err
+	}
+	creating := isCreateNewFilePatch(patchText)
+	var raw string
+	if _, err := os.Stat(target); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("could not stat file: %w", err)
+		}
+		if !creating {
+			return nil, fmt.Errorf("file not found: %s", pathArg)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir error: %w", err)
+		}
+		raw = ""
+	} else {
+		data, err := os.ReadFile(target)
+		if err != nil {
+			return nil, fmt.Errorf("could not read file: %w", err)
+		}
+		raw = string(data)
+	}
+	out, n, err := applyPatchToContent(raw, patchText)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(target, []byte(out), 0o644); err != nil {
+		return nil, fmt.Errorf("could not write file: %w", err)
+	}
+	return map[string]any{"ok": true, "path": target, "hunks_applied": n}, nil
 }
 
 func deleteFile(params map[string]any) (any, error) {

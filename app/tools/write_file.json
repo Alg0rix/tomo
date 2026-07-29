@@ -1,23 +1,32 @@
 {
   "id": "write_file",
   "name": "Write File",
-  "description": "Write a text file in the agent work-dir sandbox.",
+  "description": "Create, overwrite, or append a text file under the workplace root.",
   "backend": "app.runtime.tools.write_file",
   "schema": {
     "type": "function",
     "function": {
       "name": "write_file",
-      "description": "Create or overwrite a UTF-8 text file relative to the agent's work directory. Absolute paths and .. escapes are rejected.",
+      "description": "Write UTF-8 content to a file. mode=overwrite (default) replaces the whole file; mode=create fails if the file exists (safe new files); mode=append adds to the end. Prefer str_replace or patch for surgical edits. Creates parent directories.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "Relative path under the sandbox cwd."
+            "description": "File path relative to workplace root (or absolute under that root)."
           },
           "content": {
             "type": "string",
-            "description": "Full file contents to write."
+            "description": "Full content to write (or to append)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["create", "overwrite", "append"],
+            "description": "create = fail if exists; overwrite = replace (default); append = add to end."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Legacy: false forces mode=create. Prefer mode."
           }
         },
         "required": ["path", "content"]

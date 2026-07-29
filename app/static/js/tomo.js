@@ -85,9 +85,194 @@
     return 'hsl(' + Tomo.avatarHues[Math.abs(h) % Tomo.avatarHues.length] + ',62%,42%)';
   };
   Tomo.truncate = function (s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
+
+  /** Line-level LCS ops for synthetic str_replace diffs. */
+  Tomo._computeLineDiff = function (oldLines, newLines) {
+    var m = oldLines.length, n = newLines.length;
+    if (m * n > 80000) {
+      return oldLines.map(function (l) { return { type: 'remove', line: l }; })
+        .concat(newLines.map(function (l) { return { type: 'add', line: l }; }));
+    }
+    var dp = [];
+    var i, j;
+    for (i = 0; i <= m; i++) {
+      dp[i] = new Int32Array(n + 1);
+    }
+    for (i = 1; i <= m; i++) {
+      for (j = 1; j <= n; j++) {
+        dp[i][j] = oldLines[i - 1] === newLines[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    var ops = [];
+    i = m; j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+        ops.push({ type: 'context', line: oldLines[i - 1] }); i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ type: 'add', line: newLines[j - 1] }); j--;
+      } else {
+        ops.push({ type: 'remove', line: oldLines[i - 1] }); i--;
+      }
+    }
+    return ops.reverse();
+  };
+
+  Tomo.highlightDiffHtml = function (patch) {
+    var esc = Tomo.escapeHtml;
+    if (!patch) return '';
+    return String(patch).split('\n').map(function (line) {
+      if (line.indexOf('@@') === 0) return '<span class="hl-diff-header">' + esc(line) + '</span>';
+      if (line.indexOf('--- ') === 0 || line.indexOf('+++ ') === 0) {
+        return '<span class="hl-diff-filename">' + esc(line) + '</span>';
+      }
+      if (line.charAt(0) === '+') return '<span class="hl-diff-add">' + esc(line) + '</span>';
+      if (line.charAt(0) === '-') return '<span class="hl-diff-remove">' + esc(line) + '</span>';
+      if (line.charAt(0) === '\\') return '<span class="hl-diff-meta">' + esc(line) + '</span>';
+      return '<span class="hl-diff-context">' + esc(line) + '</span>';
+    }).join('\n');
+  };
+
+  /** Build highlighted unified-diff HTML from old/new strings. */
+  Tomo.strReplaceDiffHtml = function (oldStr, newStr, filePath) {
+    var esc = Tomo.escapeHtml;
+    var oldLines = String(oldStr == null ? '' : oldStr).split('\n');
+    var newLines = String(newStr == null ? '' : newStr).split('\n');
+    var ops = Tomo._computeLineDiff(oldLines, newLines);
+    var changed = [];
+    for (var i = 0; i < ops.length; i++) {
+      if (ops[i].type !== 'context') changed.push(i);
+    }
+    if (!changed.length) {
+      return '<div class="diff-empty">No changes detected</div>';
+    }
+    var CTX = 3;
+    var hunks = [];
+    var hs = -1, he = -1, idx, lo, hi, k;
+    for (k = 0; k < changed.length; k++) {
+      idx = changed[k];
+      lo = Math.max(0, idx - CTX);
+      hi = Math.min(ops.length - 1, idx + CTX);
+      if (hs === -1 || lo > he + 1) {
+        if (hs !== -1) hunks.push([hs, he]);
+        hs = lo; he = hi;
+      } else {
+        he = Math.max(he, hi);
+      }
+    }
+    if (hs !== -1) hunks.push([hs, he]);
+
+    var html = '';
+    var adds = 0, dels = 0;
+    if (filePath) {
+      html += '<span class="hl-diff-filename">--- ' + esc(String(filePath)) + '</span>\n';
+      html += '<span class="hl-diff-filename">+++ ' + esc(String(filePath)) + '</span>\n';
+    }
+    for (var h = 0; h < hunks.length; h++) {
+      lo = hunks[h][0]; hi = hunks[h][1];
+      var oldLn = 1, newLn = 1, oldC = 0, newC = 0;
+      for (k = 0; k < lo; k++) {
+        if (ops[k].type !== 'add') oldLn++;
+        if (ops[k].type !== 'remove') newLn++;
+      }
+      for (k = lo; k <= hi; k++) {
+        if (ops[k].type !== 'add') oldC++;
+        if (ops[k].type !== 'remove') newC++;
+      }
+      html += '<span class="hl-diff-header">@@ -' + oldLn + ',' + oldC + ' +' + newLn + ',' + newC + ' @@</span>\n';
+      for (k = lo; k <= hi; k++) {
+        var type = ops[k].type, line = ops[k].line, e = esc(line);
+        if (type === 'add') { html += '<span class="hl-diff-add">+' + e + '</span>\n'; adds++; }
+        else if (type === 'remove') { html += '<span class="hl-diff-remove">-' + e + '</span>\n'; dels++; }
+        else html += '<span class="hl-diff-context"> ' + e + '</span>\n';
+      }
+    }
+    return { html: html, adds: adds, dels: dels };
+  };
+
+  /** Count +/− lines in a unified diff string. */
+  Tomo.diffStat = function (patch) {
+    var adds = 0, dels = 0;
+    String(patch || '').split('\n').forEach(function (line) {
+      if (line.charAt(0) === '+' && line.indexOf('+++') !== 0) adds++;
+      else if (line.charAt(0) === '-' && line.indexOf('---') !== 0) dels++;
+    });
+    return { adds: adds, dels: dels };
+  };
+
+  /**
+   * Present tool args for chat cards / inspector.
+   * @returns {{ summary: string, detailHtml: string, isEdit: boolean, autoExpand: boolean }}
+   */
+  Tomo.presentToolArgs = function (tool, args) {
+    args = args || {};
+    var path = args.path || args.file_path || '';
+    var oldKey = ('old_string' in args) ? 'old_string' : (('old_str' in args) ? 'old_str' : null);
+    var newKey = ('new_string' in args) ? 'new_string' : (('new_str' in args) ? 'new_str' : null);
+
+    // str_replace-style: show synthetic line diff (never when unified patch body present)
+    if (oldKey && newKey && !(args.patch && tool === 'patch')) {
+      var diff = Tomo.strReplaceDiffHtml(args[oldKey], args[newKey], path);
+      var dhtml = typeof diff === 'string' ? diff : diff.html;
+      var adds = typeof diff === 'object' ? diff.adds : 0;
+      var dels = typeof diff === 'object' ? diff.dels : 0;
+      var stat = (adds || dels) ? (' +' + adds + '/-' + dels) : '';
+      var summary = (path || 'edit') + stat;
+      if (args.count != null && args.count !== 1) summary += ' ×' + args.count;
+      return {
+        summary: summary,
+        detailHtml: '<div class="diff-code-block">' + dhtml + '</div>',
+        isEdit: true,
+        autoExpand: true,
+      };
+    }
+
+    if (tool === 'patch' && args.patch) {
+      var st = Tomo.diffStat(args.patch);
+      var psum = (path || 'patch') + ' +' + st.adds + '/-' + st.dels;
+      var body = '';
+      if (path) {
+        body += '<div class="tool-meta-row"><span class="k">path</span><span class="v">' +
+          Tomo.escapeHtml(String(path)) + '</span></div>';
+      }
+      body += '<div class="diff-code-block">' + Tomo.highlightDiffHtml(args.patch) + '</div>';
+      return { summary: psum, detailHtml: body, isEdit: true, autoExpand: true };
+    }
+
+    if (tool === 'write_file' && args.content != null) {
+      var lines = String(args.content).split('\n').length;
+      var wsum = (path || 'write') + ' · ' + lines + ' lines';
+      var wbody = '';
+      if (path) {
+        wbody += '<div class="tool-meta-row"><span class="k">path</span><span class="v">' +
+          Tomo.escapeHtml(String(path)) + '</span></div>';
+      }
+      wbody += '<pre class="tool-code-block">' + Tomo.escapeHtml(String(args.content)) + '</pre>';
+      return { summary: wsum, detailHtml: wbody, isEdit: true, autoExpand: false };
+    }
+
+    var sum = Tomo.formatToolSummary(tool, args);
+    var json;
+    try { json = JSON.stringify(args, null, 2); } catch (_) { json = String(args); }
+    return {
+      summary: sum,
+      detailHtml: '<pre class="tool-code-block">' + Tomo.escapeHtml(json) + '</pre>',
+      isEdit: false,
+      autoExpand: false,
+    };
+  };
+
   Tomo.formatToolSummary = function (tool, args) {
     args = args || {};
     if (tool === 'bash' && args.command) return String(args.command);
+    if (tool === 'patch' && (args.path || args.patch)) {
+      var st = Tomo.diffStat(args.patch || '');
+      return (args.path || 'patch') + (args.patch ? (' +' + st.adds + '/-' + st.dels) : '');
+    }
+    if (tool === 'str_replace' && args.path) {
+      return String(args.path);
+    }
     if (args.path) return String(args.path);
     if (args.query) return String(args.query);
     if (args.url) return String(args.url);
@@ -147,9 +332,10 @@
 
     if (kind === 'tool') {
       var toolName = data.tool || 'tool';
-      var cmd = fmt(toolName, data.args || {});
+      var presented = Tomo.presentToolArgs(toolName, data.args || {});
+      var cmd = presented.summary || fmt(toolName, data.args || {});
       var card = document.createElement('div');
-      card.className = 'si-item si-tool running';
+      card.className = 'si-item si-tool running' + (presented.autoExpand ? ' expanded' : '');
       card.innerHTML =
         '<span class="si-node" aria-hidden="true"></span>' +
         '<div class="si-card">' +
@@ -161,12 +347,14 @@
             (cmd ? '<div class="si-hd-preview mono">' + esc(Tomo.truncate(cmd, 140)) + '</div>' : '') +
           '</button>' +
           '<div class="si-card-bd">' +
-            (cmd ? '<div class="si-block"><span class="si-block-label">Command</span><pre class="si-cmd-full"></pre></div>' : '') +
+            (presented.detailHtml
+              ? '<div class="si-block"><span class="si-block-label">Changes</span><div class="si-tool-detail"></div></div>'
+              : '') +
             '<div class="si-block"><span class="si-block-label">Output</span><pre class="si-tres"></pre></div>' +
           '</div>' +
         '</div>';
-      var cmdFull = card.querySelector('.si-cmd-full');
-      if (cmdFull) cmdFull.textContent = cmd;
+      var detailEl = card.querySelector('.si-tool-detail');
+      if (detailEl && presented.detailHtml) detailEl.innerHTML = presented.detailHtml;
       card._res = card.querySelector('.si-tres');
       card._meta = card.querySelector('.si-hd-meta');
       card.querySelector('.si-card-hd').addEventListener('click', function () {

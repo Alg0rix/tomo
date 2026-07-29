@@ -1,13 +1,13 @@
 {
   "id": "str_replace",
   "name": "String Replace",
-  "description": "Replace a unique substring in a file under the agent work-dir sandbox.",
+  "description": "Replace exact text in a sandbox file. Prefer this over patch for simple unique edits.",
   "backend": "app.runtime.tools.str_replace",
   "schema": {
     "type": "function",
     "function": {
       "name": "str_replace",
-      "description": "Replace old_string with new_string in a file. Fails if old_string is missing or not unique.",
+      "description": "Replace old_string with new_string in a file. Prefer over patch for simple unique edits; prefer over write_file for surgical changes. Always read_file first and copy exact text. Fuzzy match handles smart quotes / escapes. count defaults to 1; use count=-1 to replace all. Fails if occurrence count does not match.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -17,11 +17,15 @@
           },
           "old_string": {
             "type": "string",
-            "description": "Exact text to find (must occur exactly once)."
+            "description": "Exact text to find. Include 1–2 lines of context so the match is unique."
           },
           "new_string": {
             "type": "string",
-            "description": "Replacement text."
+            "description": "Replacement text. Empty string deletes old_string."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many occurrences to replace (default 1). File must contain exactly this many matches unless count is -1 (replace all)."
           }
         },
         "required": ["path", "old_string", "new_string"]

@@ -124,3 +124,28 @@ def test_setup_creates_default_profile(tmp_path) -> None:
         assert store.is_setup_complete() is True
     finally:
         _cleanup()
+
+
+def test_agent_generate_via_api(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        async def _fake(brief, *, llm=None, existing_agents=None):
+            return {
+                "name": "NetOps",
+                "role": "ops",
+                "description": "Network operations specialist.",
+                "suggested_id": "netops",
+            }
+
+        monkeypatch.setattr(
+            "app.runtime.agent_generate.generate_agent_draft",
+            _fake,
+        )
+
+        res = client.post("/api/agents/generate", json={"brief": "network ops"})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["name"] == "NetOps"
+        assert body["suggested_id"] == "netops"
+    finally:
+        _cleanup()

@@ -1,0 +1,43 @@
+{
+  "id": "create_agent",
+  "name": "Create Agent",
+  "description": "Create a new swarm agent (member) that can be delegated to or @mentioned.",
+  "backend": "app.runtime.tools.create_agent",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "create_agent",
+      "description": "Create a new agent in the swarm. Use when the user asks for a new specialist (coder, netops, reviewer, …). The new agent joins multi-agent (swarm) sessions automatically. Prefer a clear name + role + short description. Optional workplace_id binds a local/tunnel/SSH workplace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name (e.g. NetOps, Coder)."
+          },
+          "role": {
+            "type": "string",
+            "description": "Short role tag (ops, research, coding, support, …)."
+          },
+          "description": {
+            "type": "string",
+            "description": "What this agent does (one sentence)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Optional stable id (lowercase letters, numbers, underscore). Auto-slugged from name if omitted."
+          },
+          "model_id": {
+            "type": "string",
+            "description": "Optional LLM profile id (default profile if omitted)."
+          },
+          "workplace_id": {
+            "type": "string",
+            "description": "Optional workplace id to assign (local/ssh/tunnel)."
+          }
+        },
+        "required": ["name"]
+      }
+    }
+  }
+}

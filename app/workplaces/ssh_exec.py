@@ -172,10 +172,21 @@ def write_file(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, A
     if not isinstance(content, str):
         raise ValueError("'content' must be a string")
     mode = (params.get("mode") or "overwrite").strip().lower()
+    if mode not in ("create", "overwrite", "append"):
+        raise ValueError("'mode' must be create, overwrite, or append")
     client = connect(workplace)
     try:
         sftp = client.open_sftp()
         try:
+            if mode == "create":
+                try:
+                    sftp.stat(path)
+                    raise ValueError(
+                        f"file already exists: {params.get('path')}. "
+                        "Use mode='overwrite' to replace, or str_replace/patch for edits."
+                    )
+                except OSError:
+                    pass  # missing → ok for create
             # Ensure parent dirs.
             parent = path.rsplit("/", 1)[0] if "/" in path else ""
             if parent:
@@ -187,10 +198,12 @@ def write_file(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, A
             sftp.close()
     finally:
         client.close()
-    return {"ok": True, "path": path}
+    return {"ok": True, "path": path, "mode": mode}
 
 
 def str_replace(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    from app.runtime.tools.text_edit import apply_str_replace
+
     path = str(params.get("path") or "")
     old = params.get("old_string")
     new = params.get("new_string")
@@ -198,16 +211,49 @@ def str_replace(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, 
         raise ValueError("'old_string' must be a non-empty string")
     if not isinstance(new, str):
         raise ValueError("'new_string' must be a string")
+    count = params.get("count", 1)
+    try:
+        count_i = int(count) if count is not None else 1
+    except (TypeError, ValueError) as exc:
+        raise ValueError("'count' must be an integer") from exc
     got = read_file(workplace, {"path": path})
-    text = got["content"]
-    count = text.count(old)
-    if count == 0:
-        raise ValueError("old_string not found in file")
-    if count > 1:
-        raise ValueError(f"old_string matched {count} times; must be unique")
-    updated = text.replace(old, new, 1)
+    applied = apply_str_replace(got["content"], old, new, count=count_i)
+    if isinstance(applied, str):
+        raise ValueError(applied.removeprefix("Error: ").strip() or applied)
+    updated, n = applied
     write_file(workplace, {"path": path, "content": updated, "mode": "overwrite"})
-    return {"ok": True, "path": got["path"], "replacements": 1}
+    return {"ok": True, "path": got["path"], "replacements": n}
+
+
+def patch_file(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    from app.runtime.tools.text_edit import apply_patch_to_content, is_create_new_file_patch
+
+    path = str(params.get("path") or "")
+    patch_text = params.get("patch")
+    if not isinstance(patch_text, str) or not patch_text.strip():
+        raise ValueError("'patch' must be a non-empty string")
+    creating = is_create_new_file_patch(patch_text)
+    try:
+        got = read_file(workplace, {"path": path})
+        raw = got["content"]
+        out_path = got["path"]
+    except Exception:
+        if not creating:
+            raise
+        raw = ""
+        out_path = path
+    result = apply_patch_to_content(raw, patch_text)
+    if "error" in result:
+        raise ValueError(str(result["error"]))
+    write_file(
+        workplace,
+        {"path": path, "content": str(result["content"]), "mode": "overwrite"},
+    )
+    return {
+        "ok": True,
+        "path": out_path,
+        "hunks_applied": int(result.get("hunks_applied") or 0),
+    }
 
 
 def delete_file(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -366,6 +412,7 @@ _HANDLERS = {
     "read_file": read_file,
     "write_file": write_file,
     "str_replace": str_replace,
+    "patch": patch_file,
     "delete_file": delete_file,
     "search_files": search_files,
     "process_start": process_start,

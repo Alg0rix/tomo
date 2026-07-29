@@ -3,6 +3,8 @@
 from .models import (
     Agent,
     AgentCreate,
+    AgentDraft,
+    AgentGenerateIn,
     AgentUpdate,
     ChatEntry,
     ChatMessageIn,
@@ -15,6 +17,7 @@ from .models import (
     ScheduleUpdate,
     SessionChatIn,
     SessionCreate,
+    SessionWorkplaceIn,
     Stats,
     WorkplaceCreate,
     WorkplaceUpdate,
@@ -23,6 +26,8 @@ from .models import (
 __all__ = [
     "Agent",
     "AgentCreate",
+    "AgentDraft",
+    "AgentGenerateIn",
     "AgentUpdate",
     "ChatEntry",
     "ChatMessageIn",
@@ -35,6 +40,7 @@ __all__ = [
     "ScheduleUpdate",
     "SessionChatIn",
     "SessionCreate",
+    "SessionWorkplaceIn",
     "Stats",
     "WorkplaceCreate",
     "WorkplaceUpdate",

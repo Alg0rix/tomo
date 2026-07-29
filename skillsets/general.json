@@ -10,6 +10,8 @@
     "read_file",
     "write_file",
     "str_replace",
+    "patch",
+    "list_dir",
     "search_files",
     "delete_file",
     "web_fetch",
@@ -23,6 +25,7 @@
     "forget_memory",
     "recall",
     "remember",
-    "delegate"
+    "delegate",
+    "create_agent"
   ]
 }

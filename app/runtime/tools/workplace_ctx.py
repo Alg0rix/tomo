@@ -1,4 +1,4 @@
-"""Per-turn workplace override for tools (mention host / register_workplace)."""
+"""Per-turn workplace override for tools (mention host / register_workplace / session folder)."""
 
 from __future__ import annotations
 
@@ -9,35 +9,48 @@ _workplace_hint: ContextVar[str | None] = ContextVar(
     "tool_workplace_hint", default=None
 )
 _workplace_id: ContextVar[str | None] = ContextVar("tool_workplace_id", default=None)
+# When True, ignore the agent's permanently assigned *local* workplace and use
+# $TOMO_WORK/<agent> (chat chose "Tomo work dir"). Tunnel/SSH still work via
+# explicit workplace_id / hint / workplace= on bash.
+_force_work_dir: ContextVar[bool] = ContextVar("tool_force_work_dir", default=False)
 
 
 def bind_workplace(
-    *, workplace_id: str | None = None, hint: str | None = None
-) -> tuple[Token, Token]:
+    *,
+    workplace_id: str | None = None,
+    hint: str | None = None,
+    force_work_dir: bool = False,
+) -> tuple[Token, Token, Token]:
+    """Bind turn workplace context.
+
+    * ``workplace_id`` / ``hint`` — use that workplace (session folder or host name).
+    * ``force_work_dir=True`` — chat has no folder: use ``~/tomo/<agent>``, not
+      the agent's default local workplace (avoids UI saying work-dir while tools
+      land on /tmp because main is assigned tmp-work).
+    """
     t1 = _workplace_id.set(workplace_id if workplace_id else None)
     t2 = _workplace_hint.set(hint if hint else None)
-    return t1, t2
+    t3 = _force_work_dir.set(bool(force_work_dir) and not workplace_id and not hint)
+    return t1, t2, t3
 
 
-def reset_workplace(tokens: tuple[Token, Token] | None = None) -> None:
+def reset_workplace(tokens: tuple[Token, ...] | None = None) -> None:
     if tokens is None:
         _workplace_id.set(None)
         _workplace_hint.set(None)
+        _force_work_dir.set(False)
         return
-    for tok in tokens:
+    vars_ = (_workplace_id, _workplace_hint, _force_work_dir)
+    for i, tok in enumerate(tokens):
+        if i >= len(vars_):
+            break
         try:
-            # We don't know which var each token belongs to — reset both carefully.
-            pass
-        except Exception:
-            pass
-    try:
-        _workplace_id.reset(tokens[0])
-    except ValueError:
-        _workplace_id.set(None)
-    try:
-        _workplace_hint.reset(tokens[1])
-    except ValueError:
-        _workplace_hint.set(None)
+            vars_[i].reset(tok)
+        except ValueError:
+            if i == 2:
+                vars_[i].set(False)
+            else:
+                vars_[i].set(None)
 
 
 def current_workplace_id() -> str | None:
@@ -46,6 +59,11 @@ def current_workplace_id() -> str | None:
 
 def current_workplace_hint() -> str | None:
     return _workplace_hint.get()
+
+
+def force_work_dir() -> bool:
+    """True when this turn should use $TOMO_WORK/<agent>, not agent local WP."""
+    return bool(_force_work_dir.get())
 
 
 def match_workplace(
@@ -124,6 +142,7 @@ __all__ = [
     "reset_workplace",
     "current_workplace_id",
     "current_workplace_hint",
+    "force_work_dir",
     "match_workplace",
     "strip_workplace_hint",
 ]

@@ -118,6 +118,11 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         conn, row["id"], coordinator_id=row["coordinator_id"]
     )
     coord = row["coordinator_id"] or (ids[0] if ids else None)
+    # workplace_id may be missing on very old rows before migrate runs.
+    try:
+        workplace_id = (row["workplace_id"] or "").strip()
+    except (IndexError, KeyError):
+        workplace_id = ""
     return {
         "id": row["id"],
         "agent_id": coord,
@@ -127,6 +132,7 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "user_id": row["user_id"],
         "title": row["title"],
         "message_count": row["message_count"],
+        "workplace_id": workplace_id,
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }
@@ -157,11 +163,16 @@ def create_swarm_session(
     agent_ids: list[str] | None = None,
     user_id: str = "web",
     coordinator_id: str | None = None,
+    workplace_id: str | None = None,
 ) -> str:
     """Create a session.
 
     Empty / omitted ``agent_ids`` means **full swarm** (all enabled agents).
     Pass a single id for intentional one-agent chat.
+
+    ``workplace_id`` is the chat's default workplace (prefer **local** for
+    folder context). Tunnel/SSH remain reachable via agents that own them
+    or ``workplace=`` on tools.
     """
     from app.models.mixins.agents import list_enabled_agent_ids
 
@@ -182,13 +193,20 @@ def create_swarm_session(
     # Coordinator first in membership for stable UI ordering.
     if coord in ids:
         ids = [coord] + [a for a in ids if a != coord]
+    wid = (workplace_id or "").strip()
+    if wid:
+        row = conn.execute(
+            "SELECT id FROM workplaces WHERE id=?", (wid,)
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Workplace not found: {wid}")
     sid = _new_sid()
     now = _now()
     title = "New swarm chat" if len(ids) > 1 else "New conversation"
     conn.execute(
         "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
-        "created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-        (sid, coord, user_id, title, 0, now, now),
+        "workplace_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (sid, coord, user_id, title, 0, wid, now, now),
     )
     conn.executemany(
         "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",
@@ -196,6 +214,28 @@ def create_swarm_session(
     )
     conn.commit()
     return sid
+
+
+def set_session_workplace(
+    conn: sqlite3.Connection, session_id: str, workplace_id: str | None
+) -> dict[str, Any] | None:
+    """Set or clear the session's default workplace."""
+    row = conn.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
+    if not row:
+        return None
+    wid = (workplace_id or "").strip()
+    if wid:
+        wp = conn.execute(
+            "SELECT id FROM workplaces WHERE id=?", (wid,)
+        ).fetchone()
+        if not wp:
+            raise ValueError(f"Workplace not found: {wid}")
+    conn.execute(
+        "UPDATE sessions SET workplace_id=?, updated_at=? WHERE id=?",
+        (wid, _now(), session_id),
+    )
+    conn.commit()
+    return get_session(conn, session_id)
 
 
 def update_session_agents(
@@ -268,8 +308,8 @@ def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str)
     now = _now()
     conn.execute(
         "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
-        "created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-        (sid, agent_id, user_id, "New conversation", 0, now, now),
+        "workplace_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (sid, agent_id, user_id, "New conversation", 0, "", now, now),
     )
     conn.execute(
         "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",

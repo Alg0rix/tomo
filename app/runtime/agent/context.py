@@ -119,11 +119,97 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
+def _agent_workplace_summary(agent: dict[str, Any], workplaces_by_id: dict[str, dict]) -> str:
+    """Compact workplace binding for one agent (roster line)."""
+    scope = (agent.get("workplace_scope") or "single").strip().lower()
+    if scope == "all":
+        return "workplaces=all(local+tunnel+ssh)"
+    if scope == "all_tunnels":
+        return "workplaces=all_tunnels"
+    ids: list[str] = list(agent.get("workplace_ids") or [])
+    primary = (agent.get("workplace_id") or "").strip()
+    if primary and primary not in ids:
+        ids = [primary] + ids
+    if not ids:
+        return "workplace=none"
+    labels: list[str] = []
+    for wid in ids[:6]:
+        w = workplaces_by_id.get(wid)
+        if not w:
+            labels.append(wid)
+            continue
+        name = w.get("name") or wid
+        kind = (w.get("kind") or "?").strip().lower()
+        if kind == "tunnel":
+            state = "online" if w.get("online") else "offline"
+            labels.append(f"{name}/{kind}/{state}")
+        else:
+            labels.append(f"{name}/{kind}")
+    more = f"+{len(ids) - 6}" if len(ids) > 6 else ""
+    return "workplace=" + ",".join(labels) + more
+
+
+def _agent_local_workplaces(
+    agent: dict[str, Any], workplaces_by_id: dict[str, dict]
+) -> list[dict[str, Any]]:
+    """Local workplaces bound to this agent (not tunnel/ssh)."""
+    scope = (agent.get("workplace_scope") or "single").strip().lower()
+    if scope == "all":
+        return [
+            w
+            for w in workplaces_by_id.values()
+            if (w.get("kind") or "").strip().lower() == "local"
+        ]
+    if scope == "all_tunnels":
+        return []
+    ids: list[str] = list(agent.get("workplace_ids") or [])
+    primary = (agent.get("workplace_id") or "").strip()
+    if primary and primary not in ids:
+        ids = [primary] + ids
+    out: list[dict[str, Any]] = []
+    for wid in ids:
+        w = workplaces_by_id.get(wid)
+        if w and (w.get("kind") or "").strip().lower() == "local":
+            out.append(w)
+    return out
+
+
+def _agent_remote_workplaces(
+    agent: dict[str, Any], workplaces_by_id: dict[str, dict]
+) -> list[dict[str, Any]]:
+    """Tunnel/SSH workplaces this agent can reach."""
+    scope = (agent.get("workplace_scope") or "single").strip().lower()
+    if scope == "all":
+        return [
+            w
+            for w in workplaces_by_id.values()
+            if (w.get("kind") or "").strip().lower() in ("tunnel", "ssh")
+        ]
+    if scope == "all_tunnels":
+        return [
+            w
+            for w in workplaces_by_id.values()
+            if (w.get("kind") or "").strip().lower() == "tunnel"
+        ]
+    ids: list[str] = list(agent.get("workplace_ids") or [])
+    primary = (agent.get("workplace_id") or "").strip()
+    if primary and primary not in ids:
+        ids = [primary] + ids
+    out: list[dict[str, Any]] = []
+    for wid in ids:
+        w = workplaces_by_id.get(wid)
+        if w and (w.get("kind") or "").strip().lower() in ("tunnel", "ssh"):
+            out.append(w)
+    return out
+
+
 def _swarm_agents_prompt_section(agent_id: str) -> str:
     """List enabled swarm members so the model can ``delegate`` by id/name.
 
     Injected for every agent turn that has a store (not only is_super):
     specialists still need to know peers exist if they re-delegate.
+    Includes each member's workplace binding so the coordinator routes
+    tunnel/SSH and specialty work to the right agents.
     """
     try:
         from app.services import store
@@ -138,13 +224,51 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
         ]
         if not agents:
             return ""
+        workplaces_by_id = {w["id"]: w for w in store.list_workplaces()}
+        is_coord = bool(me.get("is_super"))
+        my_wp = _agent_workplace_summary(me, workplaces_by_id)
+        local_wps = _agent_local_workplaces(me, workplaces_by_id)
+        remote_wps = _agent_remote_workplaces(me, workplaces_by_id)
+
+        if is_coord:
+            if local_wps:
+                names = ", ".join(
+                    (w.get("name") or w.get("id") or "?") for w in local_wps[:5]
+                )
+                access = (
+                    f"Coordinator on this install. **Local** workplaces you may "
+                    f"use yourself: {names} ({my_wp}). "
+                    "**Tunnel/SSH work → delegate** to agents that own those "
+                    "workplaces. Specialty implementation (ops/research/coding) "
+                    "→ also delegate when their role fits."
+                )
+            else:
+                access = (
+                    "Coordinator on this install. **No local workplace** bound — "
+                    "pure chat/planning yourself; host/file work goes to agents "
+                    "with workplaces (see roster). "
+                    "**Tunnel/SSH and specialty work → always delegate.**"
+                )
+        elif remote_wps or local_wps:
+            access = (
+                f"Your workplaces: {my_wp}. Run tools on those hosts yourself "
+                "when the task is for you; re-delegate peers only if needed."
+            )
+        else:
+            access = (
+                f"No workplace ({my_wp}). Use tools only for non-host work, or "
+                "delegate to someone who has the right workplace."
+            )
+
         lines = [
             "## Swarm agents (live)",
-            "You are **{}** (id=`{}`). Use the `delegate` tool with "
-            "`agent_id` or `name` from this list — do not invent agents.".format(
-                me.get("name") or agent_id, agent_id
+            "You are **{}** (id=`{}`). {}".format(
+                me.get("name") or agent_id, agent_id, access
             ),
-            "Prefer handing work to a specialist over doing their domain yourself.",
+            "Routing: **local** (this install) → Tomo/coordinator when bound; "
+            "**tunnel/ssh** → agent that has that workplace; **specialty** → "
+            "matching role; **swarm** → parallel `delegate` for multi-agent. "
+            "Do not invent agents. Use `agent_id` or `name` from this list.",
             "",
             "Members:",
         ]
@@ -153,11 +277,12 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
             name = a.get("name") or aid
             role = (a.get("role") or "").strip()
             desc = (a.get("description") or "").strip()
-            bits = [f"- **{name}** `id={aid}`"]
+            wp = _agent_workplace_summary(a, workplaces_by_id)
+            bits = [f"- **{name}** `id={aid}`", wp]
             if role:
                 bits.append(f"role={role}")
             if a.get("is_super"):
-                bits.append("coordinator")
+                bits.append("coordinator/local")
             if aid == agent_id:
                 bits.append("← you")
             line = " ".join(bits)
@@ -167,7 +292,10 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
                 line += f" — {short}"
             lines.append(line)
         lines.append(
-            "\nExample: delegate(agent_id=\"ops\", reason=\"ping google from all tunnels\")"
+            "\nExamples: "
+            'delegate(agent_id="ops", reason="On tunnel aio-serv, ping 8.8.8.8 -c 5"); '
+            'delegate(agent_id="ops", reason="As Ops on local workplace sandbox-root, '
+            'write /tmp/hello.txt …").'
         )
         return "\n".join(lines)
     except Exception:
@@ -252,6 +380,7 @@ def _workplace_prompt_section(agent_id: str) -> str:
     ssh user@host so tools can use ``workplace=<id|name|hostname>``.
     """
     try:
+        from app.core import home
         from app.services import store
 
         agent = store.get_agent(agent_id)
@@ -272,28 +401,104 @@ def _workplace_prompt_section(agent_id: str) -> str:
                 ids = [primary] + ids
             by_id = {w["id"]: w for w in all_wps}
             allowed = [by_id[i] for i in ids if i in by_id]
-            label = "assigned workplaces" if allowed else "none (local sandbox work/)"
+            label = "assigned workplaces" if allowed else "none"
+
+        # Live tool cwd for this turn (session folder or ~/tomo/<agent>).
+        try:
+            from app.runtime.tools.sandbox import resolve_work_root
+            from app.runtime.tools.workplace_ctx import (
+                current_workplace_id,
+                force_work_dir,
+            )
+
+            cwd = str(resolve_work_root(agent_id))
+            if force_work_dir():
+                cwd_line = (
+                    f"**This turn's tool cwd:** `{cwd}` "
+                    f"(chat = Tomo work dir `~/tomo/{agent_id}` — "
+                    "not your permanently assigned local workplace)."
+                )
+            elif current_workplace_id():
+                cwd_line = (
+                    f"**This turn's tool cwd:** `{cwd}` "
+                    f"(session workplace `{current_workplace_id()}`)."
+                )
+            else:
+                cwd_line = f"**This turn's tool cwd:** `{cwd}`."
+        except Exception:
+            cwd_line = (
+                f"**Default tool cwd (no workplace):** "
+                f"`{home.agent_work_dir(agent_id)}`."
+            )
+
+        is_coord = bool(agent.get("is_super"))
+        locals_ = [
+            w for w in allowed if (w.get("kind") or "").strip().lower() == "local"
+        ]
+        remotes = [
+            w
+            for w in allowed
+            if (w.get("kind") or "").strip().lower() in ("tunnel", "ssh")
+        ]
+
+        if is_coord:
+            if locals_ and not remotes:
+                status = (
+                    f"**Local only** — scope={scope} ({label}). "
+                    "You run tools on **local** workplaces (this Tomo install) "
+                    "when the chat selects one; otherwise use Tomo work dir. "
+                    "Tunnel/SSH hosts are owned by other agents — **delegate**."
+                )
+            elif locals_ and remotes:
+                status = (
+                    f"**Mixed binding** — scope={scope} ({label}). "
+                    "As coordinator prefer **local** yourself; for tunnel/SSH "
+                    "prefer **delegate** to specialists that own those hosts."
+                )
+            elif remotes and not locals_:
+                status = (
+                    f"**Remote binding only** — scope={scope} ({label}). "
+                    "Unusual for Tomo coordinator; prefer delegating tunnel/SSH "
+                    "ops to dedicated agents when possible."
+                )
+            else:
+                status = (
+                    "**No permanent workplace** — this turn uses Tomo work dir "
+                    f"(`~/tomo/{agent_id}`) unless the chat picks a folder. "
+                    "Host/file on other machines: **delegate**."
+                )
+        else:
+            if allowed:
+                status = (
+                    f"**Connected** — scope={scope} ({label}). "
+                    "Host/file/shell tools run on these workplaces; do that work "
+                    "yourself when the task is for you."
+                )
+            else:
+                status = (
+                    "**No workplace** — non-host tools only, or ask coordinator "
+                    "to route to an agent that has the host."
+                )
 
         lines = [
             "## Workplaces",
-            f"Scope: {scope} ({label}).",
-            "Target a workplace with bash (and other remote tools) via "
-            "`workplace=<id|name|hostname|ip>` — e.g. `workplace=aio-serv` or "
-            "`workplace=tun_dev_serv`.",
-            "Tunnel = Tomo Connector on a remote host (prefer **online**). "
-            "SSH = Paramiko to ssh_user@ssh_host. Local = path on the Tomo server.",
-            "Use register_workplace(kind=local, path=...) when the user names a "
-            "local project path to debug.",
+            cwd_line,
+            status,
+            "Kinds: **local** = path on this Tomo install; **tunnel** = remote "
+            "Connector (prefer online); **ssh** = Paramiko user@host.",
+            "Chat folder (UI): empty = `$TOMO_WORK/<agent>` (default `~/tomo/<agent>`); "
+            "picked workplace = that root for this thread. "
+            "Relative paths resolve under **this turn's tool cwd**; absolute paths "
+            "OK only under that root. Use list_dir to explore.",
+            "Tunnel/SSH remain reachable via agents that own them, or "
+            "`workplace=<id|name|hostname|ip>` on bash.",
+            "register_workplace(kind=local, path=...) binds a new **local** "
+            "project path on this install.",
         ]
         if allowed:
             lines.append("Available:")
             for w in allowed[:40]:
                 lines.append(_format_workplace_for_prompt(w))
-        else:
-            lines.append(
-                "No workplaces assigned — tools use the agent work/ sandbox "
-                "unless you register one."
-            )
         return "\n".join(lines)
     except Exception:
         return ""

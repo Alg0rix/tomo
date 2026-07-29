@@ -191,10 +191,28 @@ class Store:
             return sessions_store.list_sessions(self._conn)
 
     def create_swarm_session(
-        self, agent_ids: list[str], user_id: str = "web", coordinator_id: str | None = None
+        self,
+        agent_ids: list[str],
+        user_id: str = "web",
+        coordinator_id: str | None = None,
+        workplace_id: str | None = None,
     ) -> str:
         with self._lock:
-            return sessions_store.create_swarm_session(self._conn, agent_ids, user_id, coordinator_id)
+            return sessions_store.create_swarm_session(
+                self._conn,
+                agent_ids,
+                user_id,
+                coordinator_id,
+                workplace_id=workplace_id,
+            )
+
+    def set_session_workplace(
+        self, session_id: str, workplace_id: str | None
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return sessions_store.set_session_workplace(
+                self._conn, session_id, workplace_id
+            )
 
     def update_session_agents(self, session_id: str, agent_ids: list[str]) -> dict[str, Any] | None:
         with self._lock:

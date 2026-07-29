@@ -28,7 +28,7 @@ from app.workplaces.pairing import (
 )
 
 _KINDS = frozenset({"local", "ssh", "tunnel"})
-_STATUSES = frozenset({"offline", "connected", "later", "pairing"})
+_STATUSES = frozenset({"offline", "connected", "later", "pairing", "ready"})
 
 
 def _now() -> float:
@@ -126,7 +126,7 @@ def public_workplace(row: dict[str, Any]) -> dict[str, Any]:
         out["pairing_expired"] = bool(code and exp and exp < _now())
     out["pairing_ttl_seconds"] = pairing_ttl_seconds()
 
-    # Live hub metadata for tunnel workplaces (not persisted).
+    # Live connectivity — kind-specific (local is not tunnel "online/offline").
     kind = (out.get("kind") or "").strip().lower()
     if kind == "tunnel":
         try:
@@ -156,8 +156,25 @@ def public_workplace(row: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             out["online"] = False
             out["connector_connected_at"] = 0.0
+    elif kind == "local":
+        # Local path on this install — always "ready" when path is set.
+        # Never show tunnel-style offline (confusing for sandbox-root /tmp).
+        from pathlib import Path as _Path
+
+        root = (out.get("root_path") or out.get("host") or "").strip()
+        exists = False
+        if root:
+            try:
+                exists = _Path(root).expanduser().exists()
+            except OSError:
+                exists = False
+        out["status"] = "ready" if root else "offline"
+        out["online"] = bool(root and exists)
+        out["connector_connected_at"] = 0.0
     else:
-        out["online"] = (out.get("status") or "") == "connected"
+        # SSH: connected only after a successful connect probe.
+        st = (out.get("status") or "").strip().lower()
+        out["online"] = st == "connected"
         out["connector_connected_at"] = 0.0
 
     # Rich host line for tiles / page subtitle.
@@ -276,8 +293,14 @@ def create_workplace(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str
         prefix=prefix,
         explicit=(data.get("id") or None),
     )
-    # Tunnel starts offline until a connector pairs; local/ssh offline until Connect.
-    status = "offline" if kind == "tunnel" else "offline"
+    # Tunnel: pairing until connector live. Local: ready (path on this host).
+    # SSH: offline until Connect probe succeeds.
+    if kind == "local":
+        status = "ready"
+    elif kind == "tunnel":
+        status = "pairing"
+    else:
+        status = "offline"
     now = _now()
     host = _display_host(data, kind)
     pairing_code = ""
@@ -285,7 +308,6 @@ def create_workplace(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str
     if kind == "tunnel":
         pairing_code = generate_pairing_code()
         pairing_exp = pairing_expires_at(now)
-        status = "pairing"
     conn.execute(
         "INSERT INTO workplaces (id, name, kind, status, host, root_path, "
         "ssh_host, ssh_port, ssh_user, ssh_password, ssh_key, "

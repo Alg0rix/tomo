@@ -60,7 +60,7 @@ Headers: `Authorization: Bearer <token>`, `X-Device-Name`, `X-Platform`,
 | `exec_bash` | `{script, timeout, env, cwd}` | `{stdout, stderr, exit_code, …}` |
 | `exec_python` | `{code, …}` | same |
 | `read_file` / `write_file` | path/content | structured |
-| `str_replace` / `delete_file` / `search_files` | … | structured |
+| `str_replace` / `patch` / `delete_file` / `search_files` | … | structured |
 | `process_start` / `list` / `status` / `kill` | jobs | job records |
 | `read_file_b64` / `write_file_b64` | binary chunks | portal-ready |
 

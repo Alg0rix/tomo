@@ -141,6 +141,27 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         _add_agent_to_swarm_sessions(conn, aid)
     except Exception:
         pass
+    # Seed agent home files (SYSTEM.md) under $TOMO_HOME/agents/<id>/
+    try:
+        from app.core import home
+
+        adir = home.agent_dir(aid)
+        adir.mkdir(parents=True, exist_ok=True)
+        home.agent_knowledge_dir(aid).mkdir(parents=True, exist_ok=True)
+        home.agent_work_dir(aid).mkdir(parents=True, exist_ok=True)
+        sys_path = home.agent_system_path(aid)
+        if not sys_path.exists():
+            role = (data.get("role") or "").strip() or "specialist"
+            desc = (data.get("description") or "").strip() or name
+            sys_path.write_text(
+                f"# {name}\n\n"
+                f"You are **{name}**, a swarm agent (role: {role}).\n\n"
+                f"{desc}\n\n"
+                "Use your tools to complete tasks. Prefer clear, actionable results.\n",
+                encoding="utf-8",
+            )
+    except Exception:
+        pass
     return get_agent(conn, aid, set())  # type: ignore[return-value]
 
 

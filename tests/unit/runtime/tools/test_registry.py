@@ -35,8 +35,10 @@ def test_registry_names_include_core_tools_not_calculator() -> None:
     names = ToolRegistry().names()
     assert "bash" in names
     assert "str_replace" in names
+    assert "patch" in names
     assert "web_fetch" in names
     assert "calculator" not in names
+
 
 
 # --- dispatch (real bash backend) ---------------------------------

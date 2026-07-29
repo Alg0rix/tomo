@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep
@@ -19,6 +22,43 @@ from app.schemas import (
 from app.services import store
 
 router = APIRouter(prefix="/api")
+
+
+class EnsureLocalWorkplaceIn(BaseModel):
+    """Open-folder style: register (or reuse) a local path as a workplace."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    name: str | None = Field(default=None, max_length=80)
+
+
+_SKIP_DIR_NAMES = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "proc",
+        "sys",
+        "dev",
+    }
+)
+
+
+def _resolve_browse_path(raw: str | None) -> Path:
+    text = (raw or "").strip() or str(Path.home())
+    try:
+        p = Path(text).expanduser().resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"path not found: {p}")
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"not a directory: {p}")
+    return p
 
 
 def _require_eval_ui() -> None:
@@ -111,6 +151,85 @@ async def update_skill(skill_id: str, body: dict, _: AuthDep):
 @router.get("/workplaces")
 async def list_workplaces(_: AuthDep):
     return {"workplaces": store.list_workplaces()}
+
+
+@router.get("/fs/browse")
+async def browse_filesystem(
+    _: AuthDep,
+    path: str | None = Query(default=None, description="Directory to list"),
+    q: str | None = Query(default=None, description="Filter/search dir names"),
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """List subdirectories for the Open Folder picker (server filesystem)."""
+    root = _resolve_browse_path(path)
+    needle = (q or "").strip().casefold()
+    entries: list[dict] = []
+    try:
+        children = sorted(root.iterdir(), key=lambda p: p.name.casefold())
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"permission denied: {root}")
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    for child in children:
+        if len(entries) >= limit:
+            break
+        name = child.name
+        if name in _SKIP_DIR_NAMES:
+            continue
+        # Hide most dot dirs except common project roots
+        if name.startswith(".") and name not in {".config", ".local", ".tomo"}:
+            if not needle or needle not in name.casefold():
+                continue
+        if not child.is_dir():
+            continue
+        if needle and needle not in name.casefold():
+            continue
+        try:
+            resolved = str(child.resolve())
+        except OSError:
+            continue
+        entries.append({"name": name, "path": resolved, "type": "dir"})
+
+    parent = None
+    if root.parent != root:
+        try:
+            parent = str(root.parent.resolve())
+        except OSError:
+            parent = str(root.parent)
+
+    return {
+        "path": str(root),
+        "parent": parent,
+        "home": str(Path.home().resolve()),
+        "entries": entries,
+        "capped": len(entries) >= limit,
+        "query": needle or "",
+    }
+
+
+@router.post("/workplaces/ensure-local")
+async def ensure_local_workplace(body: EnsureLocalWorkplaceIn, _: AuthDep):
+    """Create or reuse a local workplace for an absolute path (VS Code open-folder)."""
+    try:
+        p = Path(body.path).expanduser().resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"not a directory: {p}")
+    path = str(p)
+    name = (body.name or "").strip() or (p.name or "local")
+    # Reuse existing local with same root_path.
+    for w in store.list_workplaces():
+        if (w.get("kind") or "") == "local" and (w.get("root_path") or "") == path:
+            return {"workplace": w, "created": False}
+    try:
+        wp = store.create_workplace(
+            {"name": name, "kind": "local", "root_path": path}
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"workplace": wp, "created": True}
 
 
 @router.post("/workplaces")

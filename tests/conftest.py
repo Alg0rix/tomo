@@ -11,5 +11,7 @@ import os
 import tempfile
 
 _TEST_HOME = tempfile.mkdtemp(prefix="tomo-home-pytest-")
+_TEST_WORK = tempfile.mkdtemp(prefix="tomo-work-pytest-")
 os.environ["TOMO_HOME"] = _TEST_HOME
+os.environ["TOMO_WORK"] = _TEST_WORK
 os.environ.setdefault("TOMO_DB_PATH", os.path.join(_TEST_HOME, "state", "tomo.db"))

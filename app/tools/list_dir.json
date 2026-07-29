@@ -1,0 +1,31 @@
+{
+  "id": "list_dir",
+  "name": "List Directory",
+  "description": "List files and folders under the current workplace / sandbox root (folder walking).",
+  "backend": "app.runtime.tools.list_dir",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "list_dir",
+      "description": "List directory entries relative to the workplace root (or absolute paths under that root). Use to explore a local workplace. For tunnel/SSH hosts, pass workplace= on bash or use an agent that owns that host.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory to list (default '.' = workplace root)."
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Walk subdirectories (default false)."
+          },
+          "max_depth": {
+            "type": "integer",
+            "description": "Max depth when recursive (default 2, max 6)."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

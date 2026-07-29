@@ -317,16 +317,26 @@
       if (agentId) return '';
       const agents = pendingAgentIds();
       if (!agents.length) throw new Error('No agents');
+      var workplaceId = (wrap.dataset.workplaceId || '').trim();
       const data = await Tomo.api('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_ids: agents, user_id: userId }),
+        body: JSON.stringify({
+          agent_ids: agents,
+          user_id: userId,
+          workplace_id: workplaceId || null,
+        }),
       });
       if (!data || !data.session_id) throw new Error('No session');
       wrap.dataset.sessionId = data.session_id;
+      if (data.workplace_id) wrap.dataset.workplaceId = data.workplace_id;
       delete wrap.dataset.pendingAgents;
       wrap.dispatchEvent(new CustomEvent('tomo:session-created', {
-        detail: { session_id: data.session_id, agent_ids: agents },
+        detail: {
+          session_id: data.session_id,
+          agent_ids: agents,
+          workplace_id: data.workplace_id || workplaceId || '',
+        },
       }));
       return data.session_id;
     }
@@ -707,21 +717,45 @@
         }
       }
 
-      function makeToolCollapsible(card, d) {
-        var head = card.querySelector(':scope > div:first-child') || card.firstElementChild;
-        if (head) {
-          head.classList.add('tool-head');
-          head.style.cursor = 'pointer';
-          var chevron = document.createElement('span');
+      function makeToolCollapsible(card) {
+        var head = card.querySelector('.tool-head') || card.querySelector(':scope > div:first-child') || card.firstElementChild;
+        if (!head) return;
+        head.classList.add('tool-head');
+        head.style.cursor = 'pointer';
+        var chevron = head.querySelector('.chevron');
+        if (!chevron) {
+          chevron = document.createElement('span');
           chevron.className = 'chevron';
           chevron.textContent = '\u25B6';
           head.insertBefore(chevron, head.firstChild);
-          head.addEventListener('click', function (e) {
-            if (e.target.closest('.targs')) return;
-            card.classList.toggle('expanded');
-            chevron.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
-          });
         }
+        head.addEventListener('click', function (e) {
+          if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
+          card.classList.toggle('expanded');
+          chevron.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
+        });
+      }
+
+      function buildToolCard(d) {
+        var tool = d.tool || 'tool';
+        var args = d.args || {};
+        var presented = (window.Tomo && Tomo.presentToolArgs)
+          ? Tomo.presentToolArgs(tool, args)
+          : { summary: JSON.stringify(args), detailHtml: '', isEdit: false, autoExpand: false };
+        var card = document.createElement('div');
+        card.className = 'tool loading' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+        card.innerHTML =
+          '<div class="tool-head">' +
+            '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
+            '<span class="tname">' + esc(tool) + '</span> ' +
+            '<span class="targs">' + esc(presented.summary || '') + '</span>' +
+          '</div>' +
+          (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
+          '<div class="tloading">running\u2026</div>' +
+          '<div class="tres" style="display:none"></div>';
+        card._res = card.querySelector('.tres');
+        makeToolCollapsible(card);
+        return card;
       }
 
       es.addEventListener('state', function (e) {
@@ -815,12 +849,7 @@
         adoptAgent(d.agent_id, d.agent);
         clearPending();
         dropEmptyAssistant();
-        const card = document.createElement('div');
-        card.className = 'tool loading';
-        card.innerHTML = '<div class="tool-head"><span class="chevron">\u25B6</span><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tloading">running\u2026</div><div class="tres" style="display:none"></div>';
-        turn.appendChild(card);
-        card._res = card.querySelector('.tres');
-        makeToolCollapsible(card, d);
+        turn.appendChild(buildToolCard(d));
         atBottom();
       });
       es.addEventListener('tool_result', function (e) {
@@ -839,7 +868,7 @@
           last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
           last._res.style.display = '';
           last.classList.remove('loading');
-          if (d.error) {
+          if (d.error || last.classList.contains('is-edit')) {
             last.classList.add('expanded');
             var ch = last.querySelector('.chevron');
             if (ch) ch.textContent = '\u25BC';
@@ -1079,6 +1108,10 @@
         if (det) det.style.display = isChat ? 'none' : 'block';
       });
     });
+
+    if (window.TomoContextUsage && TomoContextUsage.init) {
+      TomoContextUsage.init(wrap);
+    }
 
     return {
       destroy: function () {

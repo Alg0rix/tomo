@@ -21,11 +21,18 @@ def _rebind(tmp_path: Path) -> None:
 
 def test_format_str_replace_delete() -> None:
     assert "Replaced" in format_rpc_result(
-        "str_replace", {"ok": True, "path": "a.txt"}
+        "str_replace", {"ok": True, "path": "a.txt", "replacements": 2}
+    )
+    assert "2" in format_rpc_result(
+        "str_replace", {"ok": True, "path": "a.txt", "replacements": 2}
     )
     assert "Deleted" in format_rpc_result(
         "delete_file", {"ok": True, "path": "a.txt"}
     )
+    assert "hunk" in format_rpc_result(
+        "patch", {"ok": True, "path": "a.txt", "hunks_applied": 3}
+    ).lower()
+
 
 
 def test_local_returns_none(tmp_path: Path) -> None:

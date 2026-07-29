@@ -378,7 +378,9 @@ async def stream_turn_sse(
                 agent_ids=member_ids, agents=member_agents, query=mention
             )
 
-        # Trailing workplace token: "@ops check disk aio-serv" → hint aio-serv
+        # Workplace for this turn: message token wins, else session default.
+        # Session default is usually a **local** workplace (chat folder context).
+        # Tunnel/SSH stay reachable via agents that own them or workplace= on tools.
         wp_tokens = None
         try:
             from app.runtime.tools.workplace_ctx import (
@@ -390,6 +392,7 @@ async def stream_turn_sse(
             wps = store.list_workplaces()
             body_for_wp = mention_rest if force_target else message
             stripped, wp_hint = strip_workplace_hint(body_for_wp, wps)
+            session_wp = (session.get("workplace_id") or "").strip()
             if wp_hint:
                 if force_target:
                     mention_rest = stripped
@@ -401,6 +404,20 @@ async def stream_turn_sse(
                     "workplace hint session_id=%s hint=%r",
                     session_id,
                     wp_hint,
+                )
+            elif session_wp:
+                wp_tokens = bind_workplace(workplace_id=session_wp)
+                logger.info(
+                    "workplace session default session_id=%s workplace_id=%s",
+                    session_id,
+                    session_wp,
+                )
+            else:
+                # Chat chose Tomo work dir (~/tomo/<agent>) — ignore agent local WP.
+                wp_tokens = bind_workplace(force_work_dir=True)
+                logger.info(
+                    "workplace session force_work_dir session_id=%s",
+                    session_id,
                 )
         except Exception:
             wp_tokens = None

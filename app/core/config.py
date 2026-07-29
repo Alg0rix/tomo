@@ -51,14 +51,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 # --- Tomo Home ($TOMO_HOME) ---
-# Writable user root (default ~/.tomo). The DB defaults to $TOMO_HOME/state;
-# set TOMO_DB_PATH / TOMO_VAR_DIR to override (e.g. keep a legacy var/tomo.db).
+# Config / state only (default ~/.tomo): SOUL, secrets, DB, library.
+# Agent *work* directories live separately under $TOMO_WORK (default ~/tomo).
 TOMO_HOME = Path(
     os.environ.get("TOMO_HOME", str(Path.home() / ".tomo"))
 ).expanduser()
 # Optional bootstrap .env is loaded before the config lines below so it can
 # supply e.g. TOMO_DB_PATH / TOMO_ADMIN_PASSWORD (process env still wins).
 _load_home_env(TOMO_HOME)
+# Sandbox / tool cwd when no local workplace is bound (default ~/tomo/<agent_id>).
+TOMO_WORK = Path(
+    os.environ.get("TOMO_WORK", str(Path.home() / "tomo"))
+).expanduser()
 VAR_DIR = Path(os.environ.get("TOMO_VAR_DIR", str(TOMO_HOME / "state")))
 DB_PATH = Path(os.environ.get("TOMO_DB_PATH", str(VAR_DIR / "tomo.db")))
 

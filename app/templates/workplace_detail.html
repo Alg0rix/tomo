@@ -10,10 +10,12 @@
       <p class="page-sub"><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span> · {{ workplace.host_detail or workplace.host }}</p>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      {{ workplace_status(workplace.status) }}
+      {{ workplace_status(workplace.status, workplace.kind) }}
+      {% if workplace.kind != 'local' %}
       <button class="btn primary sm" type="button" id="wpConnectBtn" data-id="{{ workplace.id }}">
         {% if workplace.kind == 'tunnel' %}Refresh status{% else %}Connect{% endif %}
       </button>
+      {% endif %}
       <button class="btn ghost sm" type="button" id="wpEditBtn" data-id="{{ workplace.id }}">Edit</button>
     </div>
   </div>
@@ -88,10 +90,10 @@
       <div class="card-body card-body-pad">
         <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ workplace.id }}</div></div>
         <div class="config-row"><div class="lbl">Type</div><div><span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span></div></div>
-        <div class="config-row"><div class="lbl">Status</div><div>{{ workplace_status(workplace.status) }}{% if workplace.kind == 'tunnel' %} · {% if workplace.online %}<span class="badge ok">live socket</span>{% else %}<span class="badge muted">no live socket</span>{% endif %}{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Status</div><div>{{ workplace_status(workplace.status, workplace.kind) }}{% if workplace.kind == 'tunnel' %} · {% if workplace.online %}<span class="badge ok">live socket</span>{% else %}<span class="badge muted">no live socket</span>{% endif %}{% elif workplace.kind == 'local' %} · path on this install{% endif %}</div></div>
         <div class="config-row"><div class="lbl">Host</div><div class="mono">{{ workplace.host_detail or workplace.host or '—' }}</div></div>
         {% if workplace.kind == 'local' %}
-        <div class="config-row"><div class="lbl">Root path</div><div class="mono">{{ workplace.root_path or '—' }}</div></div>
+        <div class="config-row"><div class="lbl">Full path</div><div class="mono" style="word-break:break-all">{{ workplace.root_path or '—' }}</div></div>
         {% endif %}
         {% if workplace.kind == 'ssh' %}
         <div class="config-row"><div class="lbl">SSH host</div><div class="mono">{{ workplace.ssh_host or '—' }}</div></div>

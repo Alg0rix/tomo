@@ -27,7 +27,7 @@ What ships in Alpha (slices 0→H):
 
 **Demo path:** Dashboard home chat → session with Main+Ops handoff → tools on a workplace → ask a KB fact → Telegram ping → create a short-interval schedule.
 
-Progress: [`docs/superpowers/progress/alpha.md`](docs/superpowers/progress/alpha.md) · Spec: [`docs/superpowers/specs/2026-07-26-alpha-kitchen-sink-design.md`](docs/superpowers/specs/2026-07-26-alpha-kitchen-sink-design.md)
+
 
 ---
 

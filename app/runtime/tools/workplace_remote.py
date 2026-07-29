@@ -66,7 +66,7 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
     if not agent:
         return None
 
-    # Explicit per-turn bind (register_workplace / tool arg).
+    # Explicit per-turn bind (register_workplace / tool arg / session folder).
     override = current_workplace_id()
     if override:
         try:
@@ -84,8 +84,27 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
         hit = match_workplace(allowed, hint)
         if hit:
             return hit
+
+    # Chat chose "Tomo work dir": do not auto-bind the agent's permanent local
+    # workplace (e.g. main → tmp-work → /tmp). Still allow tunnels/SSH via
+    # explicit workplace= or hint.
+    try:
+        from app.runtime.tools.workplace_ctx import force_work_dir
+
+        if force_work_dir():
+            remote_only = [
+                w
+                for w in allowed
+                if (w.get("kind") or "").strip().lower() in ("tunnel", "ssh")
+            ]
+            if not remote_only:
+                return None
+            allowed = remote_only
+    except Exception:
+        pass
+
     if not allowed:
-        # single empty → local sandbox
+        # single empty → local sandbox ($TOMO_WORK/<agent>)
         return None
 
     scope = (agent.get("workplace_scope") or "single").strip().lower()
@@ -147,7 +166,7 @@ def format_rpc_result(method: str, result: Any) -> str:
         if result.get("error"):
             return f"Error: {result['error']}"
 
-    if method in ("write_file", "str_replace", "delete_file") and isinstance(
+    if method in ("write_file", "str_replace", "delete_file", "patch") and isinstance(
         result, dict
     ):
         if result.get("ok"):
@@ -155,11 +174,21 @@ def format_rpc_result(method: str, result: Any) -> str:
             if method == "delete_file":
                 return f"Deleted {path}" if path else "Deleted file"
             if method == "str_replace":
-                return (
-                    f"Replaced 1 occurrence in {path}"
-                    if path
-                    else "Replaced 1 occurrence"
-                )
+                n = result.get("replacements", 1)
+                try:
+                    n = int(n)
+                except (TypeError, ValueError):
+                    n = 1
+                base = f"Replaced {n} occurrence(s)"
+                return f"{base} in {path}" if path else base
+            if method == "patch":
+                n = result.get("hunks_applied", 0)
+                try:
+                    n = int(n)
+                except (TypeError, ValueError):
+                    n = 0
+                base = f"Applied {n} hunk(s)"
+                return f"{base} to {path}" if path else base
             return f"Wrote file to {path}" if path else "Wrote file"
         if result.get("error"):
             return f"Error: {result['error']}"

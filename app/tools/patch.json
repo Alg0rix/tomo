@@ -1,0 +1,27 @@
+{
+  "id": "patch",
+  "name": "Patch File",
+  "description": "Apply a unified diff patch for multi-hunk or insert-only edits. Prefer str_replace for simple unique substitutions.",
+  "backend": "app.runtime.tools.patch",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "patch",
+      "description": "Apply a unified diff (@@ hunks) for multi-site or insert-only edits. Always read_file immediately before building the patch (line numbers shift after each apply). Prefer str_replace for simple unique substitutions. Supports create-new-file with @@ -0,0 +1,N @@.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path under the sandbox cwd."
+          },
+          "patch": {
+            "type": "string",
+            "description": "Unified diff body with @@ hunk headers. Example:\n@@ -3,4 +3,4 @@\n context line\n-old line\n+new line\n context line\nInsertion-only: @@ -2,0 +2,1 @@\\n+new line. Create file: @@ -0,0 +1,N @@ with only + lines."
+          }
+        },
+        "required": ["path", "patch"]
+      }
+    }
+  }
+}

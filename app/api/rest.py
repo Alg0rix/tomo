@@ -7,11 +7,14 @@ from fastapi import APIRouter, HTTPException, Request
 from app.core.deps import AuthDep
 from app.schemas import (
     AgentCreate,
+    AgentDraft,
+    AgentGenerateIn,
     AgentUpdate,
     ChatMessageIn,
     HomeSessionIn,
     SessionChatIn,
     SessionCreate,
+    SessionWorkplaceIn,
 )
 from app.services import store
 
@@ -44,6 +47,26 @@ async def get_agent(agent_id: str, _: AuthDep):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
+
+
+@router.post("/agents/generate", response_model=AgentDraft)
+async def generate_agent(body: AgentGenerateIn, _: AuthDep):
+    from app.runtime.agent_generate import generate_agent_draft
+    from app.runtime.llm import LLMConfigError
+
+    try:
+        draft = await generate_agent_draft(
+            body.brief,
+            existing_agents=store.list_agents(),
+        )
+    except LLMConfigError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    if not draft:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not generate agent from brief. Try again or use Advanced.",
+        )
+    return AgentDraft(**draft)
 
 
 @router.post("/agents")
@@ -112,10 +135,27 @@ async def get_session_api(session_id: str, _: AuthDep):
 @router.post("/sessions")
 async def create_session(body: SessionCreate, _: AuthDep):
     try:
-        session_id = store.create_swarm_session(body.agent_ids, body.user_id, body.coordinator_id)
+        session_id = store.create_swarm_session(
+            body.agent_ids,
+            body.user_id,
+            body.coordinator_id,
+            workplace_id=body.workplace_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"session_id": session_id}
+    return {"session_id": session_id, "workplace_id": (body.workplace_id or "")}
+
+
+@router.put("/sessions/{session_id}/workplace")
+async def set_session_workplace_api(session_id: str, body: SessionWorkplaceIn, _: AuthDep):
+    """Set or clear this chat's default workplace (prefer local for folder context)."""
+    try:
+        session = store.set_session_workplace(session_id, body.workplace_id or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @router.delete("/sessions/{session_id}")
@@ -167,6 +207,24 @@ async def session_chat_history(session_id: str, _: AuthDep):
     return {"entries": entries, "has_more": False, "session": session}
 
 
+@router.get("/sessions/{session_id}/context")
+async def session_context_usage(session_id: str, _: AuthDep):
+    from app.runtime.agent.context_usage import compute_context_usage
+
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    agent_id = (
+        session.get("coordinator_id")
+        or session.get("agent_id")
+        or (session.get("agent_ids") or [None])[0]
+    )
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="Session has no coordinator")
+    history = store.get_session_history(session_id)
+    return compute_context_usage(agent_id, history)
+
+
 @router.post("/sessions/{session_id}/chat/clear")
 async def session_chat_clear(session_id: str, _: AuthDep):
     if not store.get_session(session_id):
@@ -182,6 +240,17 @@ async def chat_history(agent_id: str, request: Request, _: AuthDep):
     user_id = request.query_params.get("user_id", "web")
     entries = store.get_history(agent_id, user_id)
     return {"entries": entries, "has_more": False}
+
+
+@router.get("/agents/{agent_id}/context")
+async def agent_context_usage(agent_id: str, request: Request, _: AuthDep):
+    from app.runtime.agent.context_usage import compute_context_usage
+
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    user_id = request.query_params.get("user_id", "web")
+    history = store.get_history(agent_id, user_id)
+    return compute_context_usage(agent_id, history)
 
 
 @router.post("/agents/{agent_id}/chat")

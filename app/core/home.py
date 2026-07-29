@@ -1,17 +1,20 @@
 """Tomo Home ($TOMO_HOME) — path helpers and bootstrap.
 
-Owns the writable user root (default ``~/.tomo``) and its locked tree (Alpha
-spec §2.1)::
+Owns the **config** root (default ``~/.tomo``), not agent workspaces::
 
-    $TOMO_HOME/
-    ├── tomo.yaml          # non-secret prefs only (never API keys / master key)
-    ├── .env               # optional bootstrap secrets (dotfile; never auto-created)
-    ├── .secret_key        # master key for at-rest encryption (dotfile; chmod 600)
-    ├── SOUL.md            # global default persona
+    $TOMO_HOME/                 # config / state only
+    ├── tomo.yaml
+    ├── .env / .secret_key
+    ├── SOUL.md
     ├── library/{skills,memory}
-    ├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge,work}
+    ├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge}
     ├── workplaces/
-    └── state/tomo.db      # SQLite (secret settings encrypted at rest)
+    └── state/tomo.db
+
+Agent tool cwd (when no local workplace is bound) lives under
+``$TOMO_WORK`` (default ``~/tomo``)::
+
+    $TOMO_WORK/<agent_id>/      # e.g. ~/tomo/ops
 
 :func:`ensure_tomo_home` creates the tree on first run and seeds ``SOUL.md`` /
 ``tomo.yaml`` from the shipped ``defaults/`` (copy, never bind-mount the repo as
@@ -68,8 +71,26 @@ def agent_knowledge_dir(agent_id: str, root: Path | None = None) -> Path:
     return agent_dir(agent_id, root) / "knowledge"
 
 
+def work_root(root: Path | None = None) -> Path:
+    """Agent workspace root (``$TOMO_WORK``, default ``~/tomo``).
+
+    Separate from ``$TOMO_HOME`` config. ``root`` overrides for tests.
+    """
+    if root is not None:
+        return Path(root)
+    return config.TOMO_WORK
+
+
 def agent_work_dir(agent_id: str, root: Path | None = None) -> Path:
-    return agent_dir(agent_id, root) / "work"
+    """Per-agent tool cwd: ``$TOMO_WORK/<agent_id>`` (not under ``~/.tomo``).
+
+    Note: ``root`` here is an optional **work** root override (tests), not
+    ``$TOMO_HOME``. Config paths still use ``agent_dir(..., root=TOMO_HOME)``.
+    """
+    aid = (agent_id or "").strip() or "_default"
+    if "/" in aid or "\\" in aid or ".." in aid or aid in {".", ".."}:
+        aid = "_default"
+    return work_root(root) / aid
 
 
 def library_skills_dir(root: Path | None = None) -> Path:
@@ -139,6 +160,12 @@ def ensure_tomo_home(root: Path | None = None) -> Path:
     ):
         d.mkdir(parents=True, exist_ok=True)
 
+    # Work root is separate from config (default ~/tomo).
+    try:
+        work_root().mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
     _seed_file(soul_path(home_root), _DEFAULTS_DIR / "SOUL.md")
     _seed_file(tomo_yaml_path(home_root), _DEFAULTS_DIR / "tomo.yaml")
     _ensure_secret_key(home_root)
@@ -154,6 +181,7 @@ __all__ = [
     "agent_system_path",
     "agent_soul_path",
     "agent_knowledge_dir",
+    "work_root",
     "agent_work_dir",
     "library_skills_dir",
     "library_memory_dir",

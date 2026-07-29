@@ -32,4 +32,7 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/dashboard.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='js/folder_picker.js') }}?v=1"></script>
+<script src="{{ url_for('static', path='js/dashboard.js') }}?v=wp1"></script>
+{% endblock %}

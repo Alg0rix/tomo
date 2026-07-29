@@ -141,8 +141,8 @@ def test_tunnel_rpc_files_via_mock_hub() -> None:
             {"path": "note.txt", "old_string": "hi", "new_string": "yo"}
         )
         d = delete_file.run({"path": "note.txt"})
-    assert "Wrote" in w or "ok" in w.lower()
-    assert r == "hi"
+    assert "Wrote" in w or "ok" in w.lower() or "Created" in w
+    assert "1|hi" in r  # line-numbered read format
     assert "Replaced" in s
     assert "Deleted" in d
 

@@ -5,8 +5,15 @@
     <div class="tile-title">{{ workplace.name }}</div>
     <span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span>
   </div>
-  <div class="tile-desc">{{ workplace.host_detail or workplace.host }}{% if show_agent_count | default(true) %} · {{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}{% endif %}</div>
+  {% if workplace.kind == 'local' %}
+  <div class="tile-desc mono workplace-path" title="{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}">{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}</div>
+  {% else %}
+  <div class="tile-desc mono workplace-path" title="{{ workplace.host_detail or workplace.host or '—' }}">{{ workplace.host_detail or workplace.host or '—' }}{% if workplace.root_path and workplace.kind == 'ssh' %}<br><span class="faint">root {{ workplace.root_path }}</span>{% endif %}</div>
+  {% endif %}
   <div class="tile-foot">
-    {{ workplace_status(workplace.status) }}
+    {{ workplace_status(workplace.status, workplace.kind) }}
+    {% if show_agent_count | default(true) %}
+    <span class="faint" style="margin-left:auto">{{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}</span>
+    {% endif %}
   </div>
 </a>

@@ -1,27 +1,57 @@
 {
   "id": "search_files",
   "name": "Search Files",
-  "description": "Search for a pattern in files under the agent work-dir sandbox.",
+  "description": "Search file contents or find files by name under the workplace root.",
   "backend": "app.runtime.tools.search_files",
   "schema": {
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Walk the sandbox and return path:line:snippet matches (capped). Supports substring or regex.",
+      "description": "Prefer this over shell grep/find. Uses ripgrep (rg) when available, then grep/find, then a pure-Python fallback. target=content (default): search inside files (substring or regex=true). target=files: find by filename/glob (e.g. '*.py' or 'config'). output_mode: content | files_only | count. Optional path, glob, context, limit, offset.",
       "parameters": {
         "type": "object",
         "properties": {
           "pattern": {
             "type": "string",
-            "description": "Substring or regex pattern to find."
+            "description": "For content: substring or regex. For files: glob or name substring."
+          },
+          "target": {
+            "type": "string",
+            "enum": ["content", "files"],
+            "description": "content = search inside files; files = find by name/glob."
+          },
+          "path": {
+            "type": "string",
+            "description": "Subdirectory to search (default '.' = workplace root)."
           },
           "glob": {
             "type": "string",
-            "description": "Optional filename glob (e.g. *.py)."
+            "description": "Optional filename glob filter for content search (e.g. *.py)."
+          },
+          "file_glob": {
+            "type": "string",
+            "description": "Alias of glob."
           },
           "regex": {
             "type": "boolean",
-            "description": "When true, treat pattern as a regex."
+            "description": "Treat pattern as regex (default false)."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": ["content", "files_only", "count"],
+            "description": "content = path:line:snippet; files_only = paths; count = per-file counts."
+          },
+          "context": {
+            "type": "integer",
+            "description": "Context lines around each content match (0–5)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (default 50, max 200)."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip first N results for pagination."
           }
         },
         "required": ["pattern"]

@@ -1,13 +1,13 @@
 {
   "id": "delegate",
   "name": "Delegate",
-  "description": "Hand the current task to another agent in this session's swarm.",
+  "description": "Hand work to a swarm agent for tunnel/SSH hosts, specialty implementation, or parallel swarm tasks.",
   "backend": "app.runtime.tools.delegate",
   "schema": {
     "type": "function",
     "function": {
       "name": "delegate",
-      "description": "Hand off the current turn to another session member. Call this tool instead of only saying you will delegate — after a successful call the target agent runs immediately and answers the user.",
+      "description": "Hand off to another session member. Use when (1) work is on a tunnel/SSH workplace owned by them, (2) implementation matches their role (ops/research/coding/…), (3) you want a parallel swarm, or (4) the user @mentioned them. Coordinator Tomo handles local-install work; remote/specialty → delegate. After success the target runs immediately.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -21,7 +21,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "What the target should do (include enough detail for them to act without more context)."
+            "description": "Full brief: goal, workplace id/name/host, paths, constraints, prior findings. Never a one-word reason."
           }
         },
         "required": ["reason"]
@@ -29,3 +29,6 @@
     }
   }
 }
+
+
+

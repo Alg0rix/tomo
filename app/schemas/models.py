@@ -44,6 +44,21 @@ class AgentCreate(BaseModel):
     workplace_scope: str = "single"  # single | list | all_tunnels | all
 
 
+class AgentGenerateIn(BaseModel):
+    """Brief for LLM-assisted agent draft (not persisted until create)."""
+
+    brief: str = Field(min_length=3, max_length=2000)
+
+
+class AgentDraft(BaseModel):
+    """Generated agent preview before save."""
+
+    name: str
+    role: str = ""
+    description: str = ""
+    suggested_id: str = ""
+
+
 class AgentUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=80)
     description: str | None = None
@@ -65,11 +80,19 @@ class SessionCreate(BaseModel):
     """Create/update session membership.
 
     Empty ``agent_ids`` means full swarm (all enabled agents).
+    ``workplace_id`` is the chat default workplace (prefer local).
     """
 
     agent_ids: list[str] = Field(default_factory=list)
     user_id: str = "web"
     coordinator_id: str | None = None
+    workplace_id: str | None = None
+
+
+class SessionWorkplaceIn(BaseModel):
+    """Set or clear a chat's default workplace."""
+
+    workplace_id: str = ""
 
 
 class HomeSessionIn(BaseModel):

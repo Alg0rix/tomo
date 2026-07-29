@@ -17,9 +17,18 @@
             aria-label="Message Tomo"
           ></textarea>
           <div class="chat-home-composer-bar">
-            <p class="chat-home-route" id="homeChatRoute">
-              via <strong id="homeCoordName">Tomo</strong>
-            </p>
+            <div class="chat-home-route-wrap">
+              <p class="chat-home-route" id="homeChatRoute">
+                via <strong id="homeCoordName">Tomo</strong>
+              </p>
+              <label class="chat-home-wp">
+                <span class="faint">Folder</span>
+                <select id="homeWorkplace" class="input sm" title="Default: Tomo work dir. Pick a local workplace for a fixed root path.">
+                  <option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>
+                </select>
+                <button type="button" class="btn ghost sm" id="homeBrowseFolder" title="Browse server folders">Browse…</button>
+              </label>
+            </div>
             <button type="submit" class="btn primary chat-home-send" id="homeChatSend" disabled>
               Send
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

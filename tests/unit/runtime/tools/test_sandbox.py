@@ -18,7 +18,7 @@ def test_resolve_work_root_creates_dir(tmp_path: Path) -> None:
     try:
         root = resolve_work_root()
         assert root.is_dir()
-        assert root.name == "work"
+        assert root.name == "ops"  # $TOMO_WORK/<agent>
         assert "ops" in str(root)
     finally:
         reset_agent()
@@ -34,6 +34,7 @@ def test_resolve_work_root_uses_local_workplace(tmp_path: Path) -> None:
     )
     store.update_agent("ops", {"workplace_id": "wp_cwd"})
     reset_agent()
+    reset_workplace()
     bind_agent("ops")
     try:
         root = resolve_work_root()
@@ -41,16 +42,43 @@ def test_resolve_work_root_uses_local_workplace(tmp_path: Path) -> None:
         assert root != home.agent_work_dir("ops").resolve()
     finally:
         reset_agent()
+        reset_workplace()
 
 
 def test_resolve_work_root_falls_back_without_workplace(tmp_path: Path) -> None:
     store.rebind(tmp_path / "sandbox-fallback.db")
     reset_agent()
+    reset_workplace()
     bind_agent("ops")
     try:
         root = resolve_work_root()
         assert root == home.agent_work_dir("ops").resolve()
     finally:
+        reset_agent()
+        reset_workplace()
+
+
+def test_force_work_dir_ignores_agent_local_workplace(tmp_path: Path) -> None:
+    """Chat 'Tomo work dir' must not use agent permanent local WP (/tmp, etc.)."""
+    from app.runtime.tools.workplace_ctx import bind_workplace
+
+    store.rebind(tmp_path / "sandbox-force.db")
+    wp_root = tmp_path / "tmp-like"
+    wp_root.mkdir()
+    store.create_workplace(
+        {"id": "wp_tmp", "name": "tmp-work", "kind": "local", "root_path": str(wp_root)}
+    )
+    store.update_agent("ops", {"workplace_id": "wp_tmp"})
+    reset_agent()
+    reset_workplace()
+    bind_agent("ops")
+    toks = bind_workplace(force_work_dir=True)
+    try:
+        root = resolve_work_root()
+        assert root == home.agent_work_dir("ops").resolve()
+        assert root != wp_root.resolve()
+    finally:
+        reset_workplace(toks)
         reset_agent()
 
 

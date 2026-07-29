@@ -7,6 +7,12 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>
   </div>
-  <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Messages sent while busy are queued and run next.</div>
+  <div class="composer-footer">
+    <button type="button" class="ctx-usage-trigger" aria-label="Context usage" aria-haspopup="dialog" aria-expanded="false" title="Context usage">
+      <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
+      <span class="ctx-usage-label">Context</span>
+    </button>
+    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Messages sent while busy are queued and run next.</div>
+  </div>
 </div>
 {% endmacro %}

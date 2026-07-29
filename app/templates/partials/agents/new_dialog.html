@@ -1,22 +1,101 @@
-<dialog id="newDlg" class="card agent-new-dialog">
+<dialog id="newDlg" class="agent-new-dialog" aria-labelledby="newDlgTitle">
   <form id="newForm" class="agent-new-form">
-    <h3>New agent</h3>
-    <div class="field"><label>Name</label><input class="input" name="name" required placeholder="Research Bot"></div>
-    <div class="field"><label>Role</label><input class="input" name="role" placeholder="e.g. research, ops, support"></div>
-    <div class="field"><label>Description</label><input class="input" name="description" placeholder="What this agent does"></div>
-    <div class="field"><label>Model</label>
-      <select class="input" name="model_id">
-        <option value="">Use default</option>
-        {% for p in llm_profiles %}
-        {% if p.enabled %}
-        <option value="{{ p.id }}">{{ p.name }} ({{ p.model }})</option>
-        {% endif %}
-        {% endfor %}
-      </select>
+    <header class="agent-new-head">
+      <h3 id="newDlgTitle">New agent</h3>
+      <p class="agent-new-lead">
+        Creates a swarm member you can <code>@mention</code> or <code>delegate</code> to.
+        They join live multi-agent chats automatically.
+      </p>
+      <div class="pill-tabs agent-new-modes" role="tablist" aria-label="Creation mode">
+        <button type="button" class="pill-tab active" data-mode="llm" role="tab" aria-selected="true">LLM</button>
+        <button type="button" class="pill-tab" data-mode="advanced" role="tab" aria-selected="false">Advanced</button>
+      </div>
+    </header>
+
+    <div class="agent-new-body">
+      <div id="newAgentLlm" class="agent-new-panel" data-mode-panel="llm">
+        <div id="newAgentLlmInput" class="agent-new-step">
+          <div class="field">
+            <label for="newAgentBrief">What should this agent do?</label>
+            <textarea class="input agent-new-brief" id="newAgentBrief" name="brief" rows="4" placeholder="e.g. Network operations specialist that monitors infra, triages alerts, and suggests remediation steps."></textarea>
+          </div>
+          <p class="agent-new-hint">Uses your <strong>default model</strong> to draft name, role, and description. You’ll preview before saving.</p>
+        </div>
+        <div id="newAgentLlmPreview" class="agent-new-step hidden" aria-live="polite">
+          <p class="agent-new-hint" style="margin-top:0">Review the draft below. You can go back to edit the brief or switch to Advanced.</p>
+          <div class="agent-new-preview-card">
+            <div class="agent-new-preview-row">
+              <span class="k">Name</span>
+              <span class="v" id="previewName">—</span>
+            </div>
+            <div class="agent-new-preview-row">
+              <span class="k">Role</span>
+              <span class="v" id="previewRole">—</span>
+            </div>
+            <div class="agent-new-preview-row">
+              <span class="k">Id</span>
+              <span class="v mono faint" id="previewId">—</span>
+            </div>
+            <div class="agent-new-preview-row agent-new-preview-desc">
+              <span class="k">Description</span>
+              <p class="v" id="previewDesc">—</p>
+            </div>
+            <div class="agent-new-preview-row">
+              <span class="k">Model</span>
+              <span class="v faint">Default</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="newAgentAdvanced" class="agent-new-panel hidden" data-mode-panel="advanced">
+        <div class="field">
+          <label for="newAgentName">Name</label>
+          <input class="input" id="newAgentName" name="name" placeholder="NetOps" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="newAgentRole">Role</label>
+          <input class="input" id="newAgentRole" name="role" placeholder="ops, coding, research, support…" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="newAgentDesc">Description</label>
+          <input class="input" id="newAgentDesc" name="description" placeholder="What this agent specializes in" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="newAgentId">Id <span class="opt">(optional)</span></label>
+          <input class="input" id="newAgentId" name="id" placeholder="auto from name" pattern="[a-z0-9_]*" title="lowercase letters, numbers, underscore" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="newAgentModel">Model</label>
+          <select class="input" id="newAgentModel" name="model_id">
+            <option value="">Use default</option>
+            {% for p in llm_profiles %}
+            {% if p.enabled %}
+            <option value="{{ p.id }}">{{ p.name }} ({{ p.model }})</option>
+            {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="newAgentWorkplace">Workplace <span class="opt">(optional)</span></label>
+          <select class="input" id="newAgentWorkplace" name="workplace_id">
+            <option value="">None — use ~/tomo/&lt;id&gt;</option>
+            {% for w in workplaces %}
+            <option value="{{ w.id }}">{{ w.name }} · {{ w.kind }}{% if w.root_path %} · {{ w.root_path }}{% elif w.host_detail %} · {{ w.host_detail }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
     </div>
-    <div class="agent-new-actions">
+
+    <footer class="agent-new-actions">
       <button type="button" class="btn ghost" id="newCancel">Cancel</button>
-      <button type="submit" class="btn primary">Create</button>
-    </div>
+      <button type="button" class="btn ghost hidden" id="newBack">Back</button>
+      <button type="button" class="btn primary" id="newGenerate" aria-live="polite">
+        <span class="btn-spinner" aria-hidden="true"></span>
+        <span class="btn-label">Generate</span>
+      </button>
+      <button type="submit" class="btn primary hidden" id="newCreate">Create</button>
+    </footer>
   </form>
 </dialog>

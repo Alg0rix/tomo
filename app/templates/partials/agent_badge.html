@@ -8,14 +8,20 @@
 {% endif %}
 {% endmacro %}
 
-{% macro workplace_status(status) %}
-{% if status == 'connected' %}
+{% macro workplace_status(status, kind='') %}
+{% set st = (status or '')|string %}
+{% set k = (kind or '')|string %}
+{% if k == 'local' or st == 'ready' %}
+<span class="badge ok"><span class="status-dot on"></span>ready</span>
+{% elif st == 'connected' %}
 <span class="badge ok"><span class="status-dot on"></span>connected</span>
-{% elif status == 'pairing' %}
+{% elif st == 'pairing' %}
 <span class="badge amber"><span class="status-dot off"></span>pairing</span>
-{% elif status == 'later' %}
+{% elif st == 'later' %}
 <span class="badge muted"><span class="status-dot off"></span>later</span>
+{% elif k == 'tunnel' %}
+<span class="badge muted"><span class="status-dot off"></span>{{ st or 'offline' }}</span>
 {% else %}
-<span class="badge muted"><span class="status-dot off"></span>{{ status or 'offline' }}</span>
+<span class="badge muted"><span class="status-dot off"></span>{{ st or 'offline' }}</span>
 {% endif %}
 {% endmacro %}

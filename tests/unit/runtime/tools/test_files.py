@@ -34,8 +34,9 @@ def test_read_write_schemas_loaded() -> None:
 
 def test_write_then_read_roundtrip(work_bound) -> None:
     wrote = execute("write_file", {"path": "notes/hello.txt", "content": "hi from tomo"})
-    assert wrote.startswith("Wrote")
-    assert execute("read_file", {"path": "notes/hello.txt"}) == "hi from tomo"
+    assert "bytes to notes/hello.txt" in wrote
+    read = execute("read_file", {"path": "notes/hello.txt"})
+    assert "1|hi from tomo" in read
     assert (work_bound / "notes" / "hello.txt").read_text(encoding="utf-8") == "hi from tomo"
 
 
@@ -54,7 +55,7 @@ def test_read_rejects_path_escape(work_bound) -> None:
 def test_write_rejects_absolute_path(work_bound) -> None:
     result = execute("write_file", {"path": "/etc/passwd", "content": "nope"})
     assert result.startswith("Error")
-    assert "absolute" in result.lower()
+    assert "escape" in result.lower() or "absolute" in result.lower()
 
 
 def test_write_rejects_dotdot_escape(work_bound) -> None:

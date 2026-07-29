@@ -1,6 +1,6 @@
 // Package executor implements connector JSON-RPC methods.
 //
-//	exec_bash / exec_python / read_file / write_file / str_replace /
+//	exec_bash / exec_python / read_file / write_file / str_replace / patch /
 //	delete_file / search_files / process_* / read_file_b64 / write_file_b64
 package executor
 
@@ -43,6 +43,8 @@ func Handle(method string, params map[string]any) (any, error) {
 		result, err = writeFileB64(params)
 	case "str_replace":
 		result, err = strReplace(params)
+	case "patch":
+		result, err = applyPatch(params)
 	case "delete_file":
 		result, err = deleteFile(params)
 	case "search_files":

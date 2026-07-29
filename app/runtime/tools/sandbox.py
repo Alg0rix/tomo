@@ -1,13 +1,12 @@
 """Agent work-dir sandbox for file/bash tools.
 
-Default cwd is ``$TOMO_HOME/agents/<id>/work`` (created on demand). When the
-agent has a **local** workplace with an existing ``root_path``, that path is
-used instead. **Tunnel** workplaces route bash/file tools over the connector
-hub (see :mod:`app.runtime.tools.tunnel_rpc`) — local cwd is not used.
-SSH workplaces still use the local ``work/`` fallback for bash/file.
+Default cwd is ``$TOMO_WORK/<agent_id>`` (e.g. ``~/tomo/ops``), created on
+demand. When the chat/session binds a **local** workplace (or the agent has
+one and the chat did not choose “Tomo work dir”), that ``root_path`` is used
+instead. **Tunnel** workplaces route tools over the connector hub.
 
-Path arguments must stay under that root — absolute paths and ``..`` escapes
-are rejected as error strings (never raise to the caller).
+Path arguments must stay under that root (absolute paths OK only if inside
+the root). Escapes return error strings (never raise to the caller).
 """
 
 from __future__ import annotations
@@ -61,9 +60,23 @@ def _safe_agent_id(agent_id: str | None) -> str:
 def _workplace_local_root(agent_id: str) -> Path | None:
     """Resolve a local workplace root for ``agent_id``, or ``None`` to fall back.
 
-    Prefers the turn-aware resolver (multi-workplace + mention/register bind)
-    so ``register_workplace`` and trailing host tokens affect bash/file cwd.
+    Prefers turn-aware bind (session folder / mention / register_workplace).
+    When the chat chose **Tomo work dir** (``force_work_dir``), ignores the
+    agent's permanently assigned local workplace so UI and tools match.
     """
+    try:
+        from app.runtime.tools.workplace_ctx import (
+            current_workplace_hint,
+            current_workplace_id,
+            force_work_dir,
+        )
+
+        # Explicit session/turn workplace always wins (even force_work_dir off).
+        if force_work_dir() and not current_workplace_id() and not current_workplace_hint():
+            return None
+    except Exception:
+        pass
+
     raw: str | None = None
     try:
         from app.runtime.tools.workplace_remote import resolve_agent_workplace
@@ -74,6 +87,14 @@ def _workplace_local_root(agent_id: str) -> Path | None:
     except Exception:
         raw = None
     if not raw:
+        # Skip agent permanent local WP when chat wants Tomo work dir.
+        try:
+            from app.runtime.tools.workplace_ctx import force_work_dir
+
+            if force_work_dir():
+                return None
+        except Exception:
+            pass
         try:
             from app.services import store
 
@@ -94,9 +115,8 @@ def _workplace_local_root(agent_id: str) -> Path | None:
 def resolve_work_root(agent_id: str | None = None) -> Path:
     """Return the absolute sandbox root for ``agent_id`` (creates if missing).
 
-    Uses the bound ContextVar when ``agent_id`` is omitted. Prefers a local
-    workplace root when assigned and the path exists; otherwise creates the
-    agent ``work/`` directory so bash/file tools have a real cwd.
+    Order: session/turn local workplace → else ``$TOMO_WORK/<agent>``
+    (``~/tomo/<agent>`` by default).
     """
     aid = _safe_agent_id(agent_id if agent_id is not None else current_agent_id())
     wp_root = _workplace_local_root(aid)
@@ -108,10 +128,12 @@ def resolve_work_root(agent_id: str | None = None) -> Path:
 
 
 def jail_path(root: Path, relative: str) -> Path | str:
-    """Resolve ``relative`` under ``root``, or return an ``Error: ...`` string.
+    """Resolve a path under ``root``, or return an ``Error: ...`` string.
 
-    Rejects absolute paths and any path that escapes ``root`` after resolve
-    (including ``..`` components). Never raises.
+    Relative paths join under ``root``. Absolute paths are allowed only when
+    they resolve *inside* ``root`` (so a local workplace rooted at ``/`` can
+    use ``/tmp/foo``; a work-dir root still rejects ``/etc/passwd``).
+    ``..`` escapes outside ``root`` are rejected. Never raises.
     """
     if not isinstance(relative, str):
         return "Error: path must be a string"
@@ -120,15 +142,19 @@ def jail_path(root: Path, relative: str) -> Path | str:
         return "Error: path must not be empty"
     if "\x00" in text:
         return "Error: path contains null byte"
-    candidate = Path(text)
-    if candidate.is_absolute():
-        return "Error: absolute paths are not allowed"
     try:
         root_resolved = root.resolve()
-        target = (root_resolved / text).resolve()
+        candidate = Path(text)
+        if candidate.is_absolute():
+            target = candidate.resolve()
+        else:
+            target = (root_resolved / text).resolve()
         target.relative_to(root_resolved)
     except ValueError:
-        return "Error: path escapes sandbox cwd"
+        return (
+            f"Error: path escapes workplace root ({root}). "
+            "Use a path relative to the workplace, or an absolute path under it."
+        )
     except OSError as exc:
         return f"Error: invalid path: {exc}"
     return target

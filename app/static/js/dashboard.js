@@ -31,7 +31,79 @@
     const p = new URLSearchParams();
     p.set('swarm', '1');
     p.set('q', text);
+    // Always pass wp (may be empty = Tomo work dir / no folder).
+    var wpSel = document.getElementById('homeWorkplace');
+    var wp = wpSel ? (wpSel.value || '') : '';
+    p.set('wp', wp);
     window.location.href = '/sessions?' + p.toString();
+  }
+
+  function fillHomeWorkplaceSelect(list, selectedId) {
+    var sel = document.getElementById('homeWorkplace');
+    if (!sel) return;
+    var keep = selectedId != null ? selectedId : (sel.value || '');
+    var opts = ['<option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>'];
+    var sorted = (list || []).slice().sort(function (a, b) {
+      var ka = a.kind === 'local' ? 0 : 1;
+      var kb = b.kind === 'local' ? 0 : 1;
+      if (ka !== kb) return ka - kb;
+      return String(a.name || a.id).localeCompare(String(b.name || b.id));
+    });
+    sorted.forEach(function (w) {
+      var id = w.id || '';
+      var kind = w.kind || '?';
+      var name = w.name || id;
+      var path = '';
+      if (kind === 'local') path = (w.root_path || '').trim();
+      else if (kind === 'ssh') {
+        path = ((w.ssh_user || '') + '@' + (w.ssh_host || '')).replace(/^@/, '');
+        if (w.root_path) path += ' · ' + w.root_path;
+      } else if (kind === 'tunnel') {
+        path = (w.connector_hostname || w.host_detail || '') +
+          (w.online ? ' · online' : ' · offline');
+      }
+      opts.push(
+        '<option value="' + esc(id) + '" title="' + esc(path || name) + '">' +
+        esc(name) + ' · ' + esc(kind) + (path ? (' · ' + esc(path)) : '') +
+        '</option>'
+      );
+    });
+    sel.innerHTML = opts.join('');
+    // Keep selection when refreshing after browse; default empty on first fill.
+    if (keep && sorted.some(function (w) { return w.id === keep; })) {
+      sel.value = keep;
+    } else if (selectedId != null) {
+      sel.value = selectedId || '';
+    } else {
+      sel.value = '';
+    }
+  }
+
+  var homeBrowse = document.getElementById('homeBrowseFolder');
+  if (homeBrowse) {
+    homeBrowse.addEventListener('click', function () {
+      if (!Tomo.pickLocalFolder) {
+        Tomo.toast('Folder picker not loaded', 'err');
+        return;
+      }
+      Tomo.pickLocalFolder({ title: 'Open folder for new chat' })
+        .then(async function (res) {
+          var list = [];
+          try {
+            var wpAll = await Tomo.api('/api/workplaces');
+            list = (wpAll && wpAll.workplaces) || [];
+          } catch (e) {}
+          fillHomeWorkplaceSelect(list, res.workplace_id);
+          Tomo.toast(
+            (res.created ? 'Registered ' : 'Using ') + (res.path || res.workplace_id),
+            'ok'
+          );
+        })
+        .catch(function (err) {
+          if (err && err.message === 'cancelled') return;
+          Tomo.toast((err && err.message) || 'Browse failed', 'err');
+        });
+    });
   }
 
   if (form && input && sendBtn) {
@@ -78,6 +150,13 @@
       if (input) input.placeholder = 'Message ' + (d.coordinator.name || 'Tomo') + '…';
     }
     renderHomeRecent(d.recent_sessions || []);
+    // Full workplace list for folder picker (dashboard snapshot is truncated).
+    try {
+      var wpAll = await Tomo.api('/api/workplaces');
+      fillHomeWorkplaceSelect((wpAll && wpAll.workplaces) || d.workplaces || []);
+    } catch (eWp) {
+      fillHomeWorkplaceSelect(d.workplaces || []);
+    }
     const s = d.stats || {};
     set('s-agents', s.enabled_agent_count, s.agent_count, 'agents');
     set('s-sessions', s.session_count, null, 'sessions');

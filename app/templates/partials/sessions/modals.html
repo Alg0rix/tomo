@@ -1,9 +1,18 @@
 <div id="newChatModal" class="modal hidden" aria-hidden="true">
   <div class="modal-backdrop" data-close="1"></div>
   <div class="modal-card modal-wide">
-    <div class="modal-head"><h3>Custom chat</h3></div>
+    <div class="modal-head"><h3>New chat</h3></div>
     <div class="modal-body">
-      <p class="modal-lead">Default chats use the live swarm (every enabled agent, including ones you add later). Use this only for a fixed solo or limited set.</p>
+      <p class="modal-lead">Starts with the live swarm. <strong>Folder</strong> defaults to each agent’s work dir under <code>~/tomo/&lt;agent&gt;</code> (config stays in <code>~/.tomo</code>). Pick a local workplace to root tools on a project path instead. Tunnel/SSH stay reachable via agents that own them.</p>
+      <label class="field" style="margin-bottom:12px;display:block">
+        <span class="faint" style="display:block;margin-bottom:4px">Workplace / folder</span>
+        <div class="folder-pick-row">
+          <select id="newChatWorkplace" class="input">
+            <option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>
+          </select>
+          <button type="button" class="btn ghost sm" id="newChatBrowseFolder" title="Browse server folders (like VS Code Open Folder)">Browse…</button>
+        </div>
+      </label>
       <div class="agent-pick-list" id="newChatAgents">
         {% for a in agents_list %}
         {% with agent=a, pick_checked=true %}{% include 'partials/agent_pick.html' %}{% endwith %}

@@ -17,12 +17,14 @@
 
   let sessions = [];
   let agents = {};
+  let workplaces = [];
   let activeId = null;
   let chatHandle = null;
   var pollTimer = null;
   var monitorEs = null;
   var lastHistLen = -1;
   var inspectorOpenKey = null;
+  var draftWorkplaceId = '';
 
   function stopHistoryPoll() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -114,13 +116,102 @@
     return agentName(ids[0] || s.agent_id) || 'Chat';
   }
 
+  function workplaceFullPath(w) {
+    if (!w) return '';
+    var kind = (w.kind || '').toLowerCase();
+    if (kind === 'local') {
+      return (w.root_path || w.host_detail || w.host || '').trim();
+    }
+    if (kind === 'ssh') {
+      var user = (w.ssh_user || '').trim();
+      var host = (w.ssh_host || '').trim();
+      var port = w.ssh_port || 22;
+      var base = user && host ? (user + '@' + host) : (host || user || '');
+      if (port && port !== 22 && host) base += ':' + port;
+      var root = (w.root_path || '').trim();
+      return root ? (base + ' · ' + root) : base;
+    }
+    // tunnel
+    var hn = (w.connector_hostname || w.host_detail || w.name || '').trim();
+    var ip = (w.connector_remote_ip || '').trim();
+    if (hn && ip) return hn + ' (' + ip + ')';
+    return hn || ip || (w.name || w.id || '');
+  }
+
+  function workplaceLabel(wid, opts) {
+    if (!wid) return 'Tomo work dir (~/tomo/<agent>)';
+    var w = workplaces.find(function (x) { return x.id === wid; });
+    if (!w) return wid;
+    var kind = w.kind || '?';
+    var name = w.name || wid;
+    var path = workplaceFullPath(w);
+    var full = !!opts && opts.full;
+    if (kind === 'tunnel') {
+      var state = w.online ? 'online' : 'offline';
+      return full
+        ? (name + ' · tunnel · ' + state + (path ? ' · ' + path : ''))
+        : (name + ' · tunnel · ' + state + (path ? ' · ' + path : ''));
+    }
+    if (kind === 'local') {
+      // Always include full absolute path when known.
+      return path ? (name + ' · ' + path) : (name + ' · local');
+    }
+    if (kind === 'ssh') {
+      return path ? (name + ' · ' + path) : (name + ' · ssh');
+    }
+    return path ? (name + ' · ' + path) : (name + ' · ' + kind);
+  }
+
+  function fillWorkplaceSelect(selectEl, selectedId) {
+    if (!selectEl) return;
+    var sel = selectedId || '';
+    var opts = ['<option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>'];
+    // Prefer local first for chat folder context.
+    var sorted = workplaces.slice().sort(function (a, b) {
+      var ka = (a.kind === 'local') ? 0 : 1;
+      var kb = (b.kind === 'local') ? 0 : 1;
+      if (ka !== kb) return ka - kb;
+      return String(a.name || a.id).localeCompare(String(b.name || b.id));
+    });
+    sorted.forEach(function (w) {
+      var id = w.id || '';
+      var kind = w.kind || '?';
+      var name = w.name || id;
+      var path = workplaceFullPath(w);
+      var extra = '';
+      if (kind === 'tunnel') {
+        extra = (w.online ? ' · online' : ' · offline') + (path ? ' · ' + path : '');
+      } else if (path) {
+        extra = ' · ' + path;
+      }
+      opts.push(
+        '<option value="' + esc(id) + '"' + (id === sel ? ' selected' : '') +
+        ' title="' + esc(path || name) + '">' +
+        esc(name) + ' · ' + esc(kind) + esc(extra) +
+        '</option>'
+      );
+    });
+    selectEl.innerHTML = opts.join('');
+    selectEl.value = sel;
+  }
+
   function applyChatHeader(s) {
     const label = sessionLabel(s);
     const title = (s.title || '').trim() || label;
     document.getElementById('chatAgentName').textContent = title;
+    var wid = (s && s.workplace_id) || chatWrap.dataset.workplaceId || '';
     document.getElementById('chatSessionMeta').textContent =
       isSwarmSession(s) ? 'swarm · live agents' : (label + ' · solo');
     chatWrap.dataset.agentName = label;
+    chatWrap.dataset.workplaceId = wid;
+    // Read-only badge — workplace is fixed for the thread; show full path.
+    var badge = document.getElementById('chatWorkplaceBadge');
+    if (badge) {
+      var text = workplaceLabel(wid, { full: true });
+      badge.textContent = text;
+      badge.title = text;
+      badge.className = 'badge sm chat-wp-badge mono ' + (wid ? 'ok' : 'muted');
+    }
   }
 
   function applySessionTitle(sessionId, title) {
@@ -174,8 +265,10 @@
     const rows = sessions.filter(function (s) {
       if (!q) return true;
       const label = sessionLabel(s);
+      const wp = workplaceLabel(s.workplace_id || '');
       return (s.title || '').toLowerCase().includes(q) ||
         label.toLowerCase().includes(q) ||
+        wp.toLowerCase().includes(q) ||
         s.id.toLowerCase().includes(q);
     });
 
@@ -184,7 +277,31 @@
       return;
     }
 
-    listEl.innerHTML = rows.map(function (s) {
+    // Group by workplace (local folder context for the thread).
+    var groups = {};
+    var order = [];
+    rows.forEach(function (s) {
+      var key = (s.workplace_id || '').trim() || '__none__';
+      if (!groups[key]) {
+        groups[key] = [];
+        order.push(key);
+      }
+      groups[key].push(s);
+    });
+    // Local workplaces first, then tunnels, then none.
+    order.sort(function (a, b) {
+      if (a === '__none__') return 1;
+      if (b === '__none__') return -1;
+      var wa = workplaces.find(function (w) { return w.id === a; }) || {};
+      var wb = workplaces.find(function (w) { return w.id === b; }) || {};
+      var ka = wa.kind === 'local' ? 0 : (wa.kind === 'tunnel' ? 1 : 2);
+      var kb = wb.kind === 'local' ? 0 : (wb.kind === 'tunnel' ? 1 : 2);
+      if (ka !== kb) return ka - kb;
+      return workplaceLabel(a === '__none__' ? '' : a)
+        .localeCompare(workplaceLabel(b === '__none__' ? '' : b));
+    });
+
+    function sessionButton(s) {
       const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
       const label = sessionLabel(s);
       const sel = s.id === activeId ? ' selected' : '';
@@ -199,7 +316,23 @@
         (swarm ? ' <span class="badge accent sm">swarm</span>' : '') + '</div>' +
         '<div class="desc">' + esc(label) + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
         '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></button>';
-    }).join('');
+    }
+
+    var html = '';
+    order.forEach(function (key) {
+      var list = groups[key] || [];
+      // Newest first within group.
+      list.sort(function (a, b) {
+        return (b.updated_at || 0) - (a.updated_at || 0);
+      });
+      var head = key === '__none__' ? 'Tomo work dir (~/tomo/<agent>)' : workplaceLabel(key, { full: true });
+      html += '<div class="session-group">' +
+        '<div class="session-group-head mono" title="' + esc(head) + '">' + esc(head) +
+        ' <span class="faint">(' + list.length + ')</span></div>' +
+        list.map(sessionButton).join('') +
+        '</div>';
+    });
+    listEl.innerHTML = html;
 
     listEl.querySelectorAll('.session-item').forEach(function (btn) {
       btn.addEventListener('click', function () { selectSession(btn.dataset.id); });
@@ -327,13 +460,32 @@
       if (!head) return;
       head.style.cursor = 'pointer';
       head.addEventListener('click', function (e) {
-        if (e.target.closest('.targs')) return;
+        if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
         card.classList.toggle('expanded');
         var ch = head.querySelector('.chevron');
         if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
         var res = card.querySelector('.tres');
         if (res && card.classList.contains('expanded')) res.style.display = '';
       });
+    }
+
+    function buildHistoryToolCard(fn, params) {
+      var presented = (window.Tomo && Tomo.presentToolArgs)
+        ? Tomo.presentToolArgs(fn || 'tool', params || {})
+        : { summary: JSON.stringify(params || {}), detailHtml: '', isEdit: false, autoExpand: false };
+      var card = document.createElement('div');
+      card.className = 'tool' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+      card.innerHTML =
+        '<div class="tool-head">' +
+          '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
+          '<span class="tname">' + esc(fn || 'tool') + '</span> ' +
+          '<span class="targs">' + esc(presented.summary || '') + '</span>' +
+        '</div>' +
+        (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
+        '<div class="tres" style="display:none"></div>';
+      card._res = card.querySelector('.tres');
+      makeToolCollapsible(card);
+      return card;
     }
 
     function renderEventInDetail(kind, data, body) {
@@ -527,18 +679,7 @@
           bufferEvent(key, 'tool', { tool: e.function, args: e.params });
           bumpSwarmProgress(key);
         } else {
-          var card = document.createElement('div');
-          card.className = 'tool';
-          card.innerHTML =
-            '<div class="tool-head">' +
-              '<span class="chevron">\u25B6</span>' +
-              '<span class="tname">' + esc(e.function || 'tool') + '</span> ' +
-              '<span class="targs">' + esc(JSON.stringify(e.params || {})) + '</span>' +
-            '</div>' +
-            '<div class="tres" style="display:none"></div>';
-          turn.appendChild(card);
-          card._res = card.querySelector('.tres');
-          makeToolCollapsible(card);
+          turn.appendChild(buildHistoryToolCard(e.function, e.params));
         }
         return;
       }
@@ -557,6 +698,11 @@
             var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
             last._res.textContent = (e.error ? '\u2717 ' : '\u2192 ') + truncated;
             last._res.style.display = '';
+            if (e.error || last.classList.contains('is-edit')) {
+              last.classList.add('expanded');
+              var ch = last.querySelector('.chevron');
+              if (ch) ch.textContent = '\u25BC';
+            }
           }
         }
         return;
@@ -642,6 +788,7 @@
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.agentName = label;
     chatWrap.dataset.chatInit = '0';
+    delete chatWrap.dataset.ctxInit;
     delete chatWrap.dataset.agentId;
 
     applyChatHeader(s);
@@ -683,6 +830,20 @@
       sessions = data.sessions || [];
       agents = {};
       (data.agents || []).forEach(function (a) { agents[a.id] = a; });
+      try {
+        var wpData = await Tomo.api('/api/workplaces');
+        workplaces = (wpData && wpData.workplaces) || [];
+      } catch (e2) {
+        workplaces = [];
+      }
+      fillWorkplaceSelect(
+        document.getElementById('newChatWorkplace'),
+        draftWorkplaceId
+      );
+      if (activeId) {
+        var cur = sessions.find(function (s) { return s.id === activeId; });
+        if (cur) applyChatHeader(cur);
+      }
       renderList(searchEl ? searchEl.value : '');
       if (activeId && !sessions.find(function (s) { return s.id === activeId; })) {
         activeId = null;
@@ -714,6 +875,12 @@
   function openDraft(agentIds, opts) {
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
+    // Default: no workplace folder → agent Tomo work dir. Only when opts.workplaceId set.
+    var wpId = '';
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'workplaceId')) {
+      wpId = opts.workplaceId || '';
+    }
+    draftWorkplaceId = wpId || '';
     activeId = null;
     setUrl(null);
     renderList(searchEl ? searchEl.value : '');
@@ -727,7 +894,9 @@
     chatWrap.dataset.userId = 'web';
     chatWrap.dataset.agentIds = ids.join(',');
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
+    chatWrap.dataset.workplaceId = draftWorkplaceId;
     chatWrap.dataset.chatInit = '0';
+    delete chatWrap.dataset.ctxInit;
 
     const draft = {
       id: '',
@@ -736,6 +905,7 @@
       agent_id: ids[0],
       user_id: 'web',
       message_count: 0,
+      workplace_id: draftWorkplaceId,
     };
     applyChatHeader(draft);
     renderAvatars(ids);
@@ -821,28 +991,73 @@
   bindModal(modal, '1');
   bindModal(editModal, '2');
 
-  if (newBtn) {
-    // Default: full swarm immediately. Hold Alt/Option for the picker (subset/solo).
-    newBtn.addEventListener('click', function (e) {
-      if (e.altKey && modal) {
-        // Pre-check all enabled for the modal.
-        document.querySelectorAll('#newChatAgents input[name="agent"]').forEach(function (el) {
-          if (!el.disabled) el.checked = true;
-        });
-        modal.classList.remove('hidden');
-        modal.setAttribute('aria-hidden', 'false');
+  async function refreshWorkplacesAndSelect(selectedId) {
+    try {
+      var wpData = await Tomo.api('/api/workplaces');
+      workplaces = (wpData && wpData.workplaces) || workplaces;
+    } catch (e) { /* keep cache */ }
+    fillWorkplaceSelect(document.getElementById('newChatWorkplace'), selectedId || '');
+    draftWorkplaceId = selectedId || '';
+  }
+
+  function openNewChatModal() {
+    if (!modal) {
+      startDefaultSwarm({ workplaceId: '' });
+      return;
+    }
+    document.querySelectorAll('#newChatAgents input[name="agent"]').forEach(function (el) {
+      if (!el.disabled) el.checked = true;
+    });
+    draftWorkplaceId = '';
+    fillWorkplaceSelect(document.getElementById('newChatWorkplace'), '');
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  var browseBtn = document.getElementById('newChatBrowseFolder');
+  if (browseBtn) {
+    browseBtn.addEventListener('click', function () {
+      if (!Tomo.pickLocalFolder) {
+        Tomo.toast('Folder picker not loaded', 'err');
         return;
       }
-      startDefaultSwarm();
+      Tomo.pickLocalFolder({ title: 'Open folder for this chat' })
+        .then(function (res) {
+          return refreshWorkplacesAndSelect(res.workplace_id).then(function () {
+            Tomo.toast(
+              (res.created ? 'Registered ' : 'Using ') +
+                (res.path || res.workplace_id),
+              'ok'
+            );
+          });
+        })
+        .catch(function (err) {
+          if (err && err.message === 'cancelled') return;
+          Tomo.toast((err && err.message) || 'Browse failed', 'err');
+        });
+    });
+  }
+
+  if (newBtn) {
+    // Always open picker so user can choose workplace (default: Tomo work dir).
+    newBtn.addEventListener('click', function () {
+      openNewChatModal();
     });
   }
   if (newConfirm) {
     newConfirm.addEventListener('click', function () {
       const ids = pickedAgentIds(document.getElementById('newChatAgents'));
+      var wpSel = document.getElementById('newChatWorkplace');
+      draftWorkplaceId = wpSel ? (wpSel.value || '') : '';
       modal.classList.add('hidden');
-      startNewChat(ids.length ? ids : allEnabledAgentIds());
+      modal.setAttribute('aria-hidden', 'true');
+      startNewChat(ids.length ? ids : allEnabledAgentIds(), {
+        workplaceId: draftWorkplaceId,
+      });
     });
   }
+
+  // Workplace is fixed at chat create — no mid-thread switcher.
 
   if (editBtn && editModal) {
     editBtn.addEventListener('click', function () {
@@ -877,11 +1092,17 @@
     const agent = params().get('agent');
     const swarm = params().get('swarm');
     const firstMessage = params().get('q') || '';
-    // Strip q before auto-send so refresh cannot resend the home composer message.
+    // Dashboard may pass wp= (empty = Tomo work dir).
+    var wpParam = params().has('wp') ? (params().get('wp') || '') : null;
+    // Strip one-shot query params before auto-send.
     if (params().has('q')) stripQueryParam('q');
+    if (params().has('wp')) stripQueryParam('wp');
+    if (params().has('swarm')) stripQueryParam('swarm');
+    var draftOpts = { pendingMessage: firstMessage };
+    if (wpParam !== null) draftOpts.workplaceId = wpParam;
     if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
-    else if (swarm === '1' || swarm === 'true') startDefaultSwarm({ pendingMessage: firstMessage });
-    else if (agent) startNewChat([agent], { pendingMessage: firstMessage }); // intentional solo
+    else if (swarm === '1' || swarm === 'true') startDefaultSwarm(draftOpts);
+    else if (agent) startNewChat([agent], draftOpts); // intentional solo
     else if (sessions.length) selectSession(sessions[0].id);
   });
 })();

@@ -80,7 +80,10 @@ def test_agent_paths(tmp_path: Path, monkeypatch) -> None:
     assert home.agent_system_path("main", root).name == "SYSTEM.md"
     assert home.agent_soul_path("main", root).name == "SOUL.md"
     assert home.agent_knowledge_dir("main", root).name == "knowledge"
-    assert home.agent_work_dir("main", root).name == "work"
+    # Work dirs live under $TOMO_WORK/<agent>, not $TOMO_HOME/agents/.../work
+    work = tmp_path / "workroot"
+    assert home.agent_work_dir("main", work) == work / "main"
+    assert home.agent_work_dir("ops", work).name == "ops"
     assert home.agent_dir("main", root).parent.name == "agents"
     assert home.library_skills_dir(root).name == "skills"
     assert home.library_memory_dir(root).name == "memory"
