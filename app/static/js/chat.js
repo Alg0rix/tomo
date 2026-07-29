@@ -333,7 +333,7 @@
 
     function streamTurn(text, turnEl) {
       // Clean up any leftover detail panel from a previous turn.
-      var oldPanel = wrap.querySelector('.detail-panel');
+      var oldPanel = wrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
 
       // Reuse the turn that already holds this user bubble (matches history layout).
@@ -535,7 +535,8 @@
             '</div>' +
             '<div class="task">' + esc(task || '') + '</div>' +
             '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
-          '</div>';
+          '</div>' +
+          '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
         row.addEventListener('click', function () { openDetailPanel(aid); });
         card.appendChild(row);
         var buf = getBuffer(aid);
@@ -568,127 +569,190 @@
         buf.row.classList.add(buf.status);
         var bar = buf.row.querySelector('.swarm-progress-bar');
         if (bar) bar.style.width = '100%';
+        if (activeDetailAgent === aid && detailPanel) {
+          var badge = detailPanel.querySelector('.si-status');
+          if (badge) {
+            badge.className = 'si-status ' + buf.status;
+            badge.textContent = buf.status;
+          }
+          detailPanel.querySelectorAll('.si-pill').forEach(function (pill) {
+            var dot = pill.querySelector('.dot');
+            if (dot && pill.classList.contains('active')) {
+              dot.className = 'dot ' + buf.status;
+            }
+          });
+        }
       }
 
       function openDetailPanel(aid) {
         activeDetailAgent = aid;
-        if (!detailPanel) {
-          detailPanel = document.createElement('div');
-          detailPanel.className = 'detail-panel';
-          wrap.appendChild(detailPanel);
-        }
-        detailPanel.innerHTML = '';
         var buf = subagentBuffers.get(aid) || getBuffer(aid);
         var name = buf.name || aid;
         var color = agentColor(aid);
         var letter = esc((name || '?').slice(0, 1).toUpperCase());
+        var status = buf.status || 'running';
 
-        var header = document.createElement('div');
-        header.className = 'detail-header';
-        header.innerHTML =
-          '<button class="detail-close" type="button" title="Close">\u2715</button>' +
-          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-          '<div class="detail-meta">' +
-            '<div class="name">' + esc(name) + '</div>' +
-            '<div class="id mono">@' + esc(aid) + '</div>' +
-          '</div>';
-        detailPanel.appendChild(header);
+        var panel = wrap.querySelector('.subagent-inspector');
+        if (!panel) {
+          panel = document.createElement('aside');
+          panel.className = 'subagent-inspector';
+          panel.setAttribute('role', 'complementary');
+          panel.setAttribute('aria-label', 'Subagent inspector');
+          wrap.appendChild(panel);
+        }
+        detailPanel = panel;
+        panel.innerHTML = '';
 
-        var body = document.createElement('div');
-        body.className = 'detail-body';
-        detailPanel.appendChild(body);
+        var head = document.createElement('div');
+        head.className = 'si-head';
+        head.innerHTML =
+          '<div class="si-agent">' +
+            '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+            '<div class="si-meta">' +
+              '<div class="si-name-row">' +
+                '<span class="si-name">' + esc(name) + '</span>' +
+                '<span class="si-status ' + esc(status) + '">' + esc(status) + '</span>' +
+              '</div>' +
+              '<div class="si-id">@' + esc(aid) + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<button class="si-close" type="button" title="Close" aria-label="Close inspector">\u2715</button>';
+        panel.appendChild(head);
 
-        // Footer with all agent chips.
-        if (subagentBuffers.size > 0) {
-          var footer = document.createElement('div');
-          footer.className = 'detail-footer';
-          subagentBuffers.forEach(function (b, id) {
-            var chip = document.createElement('button');
-            chip.className = 'detail-agent-chip' + (id === aid ? ' active' : '');
-            chip.type = 'button';
+        var taskEl = document.createElement('div');
+        taskEl.className = 'si-task';
+        if (buf.task) {
+          taskEl.innerHTML = '<span class="si-task-label">Task</span>' + esc(buf.task);
+        }
+        panel.appendChild(taskEl);
+
+        var bufferList = [];
+        subagentBuffers.forEach(function (b, id) { bufferList.push({ id: id, buf: b }); });
+        if (bufferList.length > 1) {
+          var nameCounts = {};
+          bufferList.forEach(function (item) {
+            var base = item.buf.name || item.id;
+            nameCounts[base] = (nameCounts[base] || 0) + 1;
+          });
+          var nameSeen = {};
+          var switcher = document.createElement('nav');
+          switcher.className = 'si-switcher';
+          switcher.setAttribute('aria-label', 'Subagents in this turn');
+          bufferList.forEach(function (item) {
+            var id = item.id;
+            var b = item.buf;
+            var base = b.name || id;
+            nameSeen[base] = (nameSeen[base] || 0) + 1;
+            var pill = document.createElement('button');
+            pill.type = 'button';
+            pill.className = 'si-pill' + (id === aid ? ' active' : '');
+            var st = b.status || 'running';
             var cColor = agentColor(id);
             var cLetter = esc((b.name || id || '?').slice(0, 1).toUpperCase());
-            chip.innerHTML =
-              '<div class="av" style="background:' + cColor + '">' + cLetter + '</div>' +
-              '<div class="label">' + esc(b.name || id) + '</div>';
-            chip.addEventListener('click', function () { openDetailPanel(id); });
-            footer.appendChild(chip);
+            var label = base;
+            if (nameCounts[base] > 1) label += ' #' + nameSeen[base];
+            pill.innerHTML =
+              '<span class="av" style="background:' + cColor + '">' + cLetter + '</span>' +
+              '<span>' + esc(label) + '</span>' +
+              '<span class="dot ' + esc(st) + '"></span>';
+            pill.addEventListener('click', function () { openDetailPanel(id); });
+            switcher.appendChild(pill);
           });
-          detailPanel.appendChild(footer);
+          panel.appendChild(switcher);
         }
 
-        // Replay buffered events.
-        buf.events.forEach(function (ev) {
-          renderEventInDetail(ev.kind, ev.data, aid);
-        });
+        var body = document.createElement('div');
+        body.className = 'si-body';
+        panel.appendChild(body);
 
-        header.querySelector('.detail-close').addEventListener('click', closeDetailPanel);
-        detailPanel.classList.add('open');
+        if (!buf.events.length) {
+          body.innerHTML = '<div class="si-empty">No steps yet — waiting for this agent to run.</div>';
+        } else {
+          buf.events.forEach(function (ev) {
+            renderEventInDetail(ev.kind, ev.data, aid);
+          });
+        }
+
+        head.querySelector('.si-close').addEventListener('click', closeDetailPanel);
+        wrap.querySelectorAll('.swarm-row').forEach(function (r) {
+          r.classList.toggle('selected', r.dataset.agentId === aid);
+        });
         requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
       }
 
       function closeDetailPanel() {
         activeDetailAgent = null;
-        if (!detailPanel) return;
-        detailPanel.classList.remove('open');
-        var panel = detailPanel;
+        wrap.querySelectorAll('.swarm-row.selected').forEach(function (r) {
+          r.classList.remove('selected');
+        });
+        var panel = wrap.querySelector('.subagent-inspector');
         detailPanel = null;
-        setTimeout(function () { if (panel) panel.remove(); }, 220);
+        if (panel) panel.remove();
       }
 
       function renderEventInDetail(kind, data, aid) {
         if (!detailPanel) return;
-        var body = detailPanel.querySelector('.detail-body');
+        var body = detailPanel.querySelector('.si-body');
         if (!body) return;
+        var empty = body.querySelector('.si-empty');
+        if (empty) empty.remove();
+        var fmt = (window.Tomo && Tomo.formatToolSummary) || function (t, a) { return JSON.stringify(a || {}); };
+        var preview = (window.Tomo && Tomo.toolResultPreview) || function (t) { return ''; };
 
         if (kind === 'thinking') {
-          var el = document.createElement('div');
-          el.className = 'thinking';
-          el.textContent = data.content || '';
-          body.appendChild(el);
+          var details = document.createElement('details');
+          details.className = 'si-step si-think';
+          details.innerHTML =
+            '<summary><span class="si-kind">Thought</span></summary>' +
+            '<pre class="si-think-body"></pre>';
+          details.querySelector('pre').textContent = data.content || '';
+          body.appendChild(details);
         } else if (kind === 'tool') {
+          var toolName = data.tool || 'tool';
+          var cmd = fmt(toolName, data.args || {});
           var card = document.createElement('div');
-          card.className = 'tool';
+          card.className = 'si-step si-tool';
           card.innerHTML =
-            '<div class="tool-head">' +
-              '<span class="chevron">\u25B6</span>' +
-              '<span class="tname">' + esc(data.tool || 'tool') + '</span> ' +
-              '<span class="targs">' + esc(JSON.stringify(data.args || {})) + '</span>' +
+            '<div class="si-tool-head">' +
+              '<span class="chevron"></span>' +
+              '<div class="si-tool-meta">' +
+                '<span class="si-tname">' + esc(toolName) + '</span>' +
+                (cmd ? '<code class="si-cmd">' + esc(cmd) + '</code>' : '') +
+              '</div>' +
+              '<span class="si-out-badge"></span>' +
             '</div>' +
-            '<div class="tres" style="display:none"></div>';
+            '<pre class="si-tres"></pre>';
           body.appendChild(card);
-          card._res = card.querySelector('.tres');
-          var head = card.querySelector('.tool-head');
-          head.addEventListener('click', function () {
+          card._res = card.querySelector('.si-tres');
+          card._badge = card.querySelector('.si-out-badge');
+          card.querySelector('.si-tool-head').addEventListener('click', function () {
             card.classList.toggle('expanded');
-            var ch = head.querySelector('.chevron');
-            if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
-            if (card.classList.contains('expanded')) card._res.style.display = '';
           });
         } else if (kind === 'tool_result') {
-          var cards = body.querySelectorAll('.tool');
+          var cards = body.querySelectorAll('.si-tool');
           var last = cards[cards.length - 1];
           if (last && last._res) {
-            last._res.textContent = (data.error ? '\u2717 ' : '\u2192 ') +
-              (typeof data.result === 'string' ? data.result : JSON.stringify(data.result));
+            var text = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+            last._res.textContent = text || '';
+            if (data.error) last._res.classList.add('err');
+            last.classList.add('has-output');
+            if (last._badge) last._badge.textContent = preview(text);
           }
-        } else if (kind === 'delta' || kind === 'subagent_final') {
-          var bubble = body.querySelector('.detail-assistant .bubble-body');
-          if (!bubble) {
-            var wrap2 = document.createElement('div');
-            wrap2.className = 'msg assistant detail-assistant';
-            var dColor = agentColor(aid);
-            var dLetter = esc((subagentBuffers.get(aid) && subagentBuffers.get(aid).name || aid || '?').slice(0, 1).toUpperCase());
-            wrap2.innerHTML =
-              '<div class="av" style="background:' + dColor + '">' + dLetter + '</div>' +
-              '<div class="bubble"><div class="bubble-body prose chat-prose"></div></div>';
-            body.appendChild(wrap2);
-            bubble = wrap2.querySelector('.bubble-body');
-            wrap2._raw = '';
+        } else if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {
+          var answer = body.querySelector('.si-answer');
+          var bubble;
+          if (!answer) {
+            answer = document.createElement('details');
+            answer.className = 'si-step si-answer';
+            answer.innerHTML =
+              '<summary><span class="si-kind">Answer</span></summary>' +
+              '<div class="si-answer-body prose chat-prose"></div>';
+            body.appendChild(answer);
+            answer._raw = '';
           }
-          wrap2 = bubble.closest('.detail-assistant');
-          wrap2._raw = (wrap2._raw || '') + (data.content || '');
-          setMarkdown(bubble, wrap2._raw);
+          bubble = answer.querySelector('.si-answer-body');
+          answer._raw = (answer._raw || '') + (data.content || '');
+          setMarkdown(bubble, answer._raw);
         }
         body.scrollTop = body.scrollHeight;
       }

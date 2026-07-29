@@ -8,27 +8,29 @@
 
   <div id="sessionChat" class="chat-wrap sessions-chat" style="display:none"
        data-session-id="" data-user-id="web" data-agent-name="" data-agent-ids="">
-    <div class="sessions-chat-head">
-      <div class="swarm-avatars" id="chatAvatars"></div>
-      <div class="sessions-chat-meta">
-        <div class="chat-agent-name" id="chatAgentName">Swarm</div>
-        <div class="faint mono" id="chatSessionMeta">session</div>
+    <div class="chat-main">
+      <div class="sessions-chat-head">
+        <div class="swarm-avatars" id="chatAvatars"></div>
+        <div class="sessions-chat-meta">
+          <div class="chat-agent-name" id="chatAgentName">Swarm</div>
+          <div class="faint mono" id="chatSessionMeta">session</div>
+        </div>
+        <button class="btn ghost sm" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
+        <span class="badge ok chat-status" id="chatStatus"><span class="pulse"></span>online</span>
+        <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Clear
+        </button>
       </div>
-      <button class="btn ghost sm" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
-      <span class="badge ok chat-status" id="chatStatus"><span class="pulse"></span>online</span>
-      <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-        Clear
-      </button>
-    </div>
 
-    <div class="chat-scroll" data-chat-panel="chat">
-      <div class="chat-empty">
-        <div class="big">Start talking</div>
-        <div>Messages stream here with thinking steps and tool calls.</div>
+      <div class="chat-scroll" data-chat-panel="chat">
+        <div class="chat-empty">
+          <div class="big">Start talking</div>
+          <div>Messages stream here with thinking steps and tool calls.</div>
+        </div>
       </div>
-    </div>
 
-    {{ chat_composer('Message…  Type @ to mention an agent', 'Type @name to hand off (e.g. @ops check disk). Coordinator routes everything else.') }}
+      {{ chat_composer('Message…  Type @ to mention an agent', 'Type @name to hand off (e.g. @ops check disk). Coordinator routes everything else.') }}
+    </div>
   </div>
 </section>

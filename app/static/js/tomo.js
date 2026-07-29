@@ -85,6 +85,24 @@
     return 'hsl(' + Tomo.avatarHues[Math.abs(h) % Tomo.avatarHues.length] + ',62%,42%)';
   };
   Tomo.truncate = function (s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
+  Tomo.formatToolSummary = function (tool, args) {
+    args = args || {};
+    if (tool === 'bash' && args.command) return String(args.command);
+    if (args.path) return String(args.path);
+    if (args.query) return String(args.query);
+    if (args.url) return String(args.url);
+    var keys = Object.keys(args);
+    if (keys.length === 1) return String(args[keys[0]]);
+    if (!keys.length) return '';
+    try { return JSON.stringify(args); } catch (_) { return ''; }
+  };
+  Tomo.toolResultPreview = function (text) {
+    text = String(text == null ? '' : text);
+    if (!text) return '';
+    var lines = text.split('\n').length;
+    if (lines > 1) return lines + ' lines';
+    return Tomo.truncate(text.replace(/\s+/g, ' ').trim(), 48);
+  };
   Tomo.ts = function (value) {
     const v = Number(value);
     if (!v) return '';

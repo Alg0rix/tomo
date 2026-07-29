@@ -237,7 +237,7 @@
       turnBuffers = new Map();
       agentToKey = {};
       delegateCounter = 0;
-      var oldPanel = chatWrap.querySelector('.detail-panel');
+      var oldPanel = chatWrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
       detailPanel = null;
     }
@@ -268,7 +268,8 @@
           '</div>' +
           '<div class="task">' + esc(task || '') + '</div>' +
           '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
-        '</div>';
+        '</div>' +
+        '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
       row.addEventListener('click', function () { openDetailPanel(row); });
       card.appendChild(row);
       var key = turnId + ':' + delegateCounter;
@@ -323,53 +324,67 @@
     }
 
     function renderEventInDetail(kind, data, body) {
+      var empty = body.querySelector('.si-empty');
+      if (empty) empty.remove();
+      var fmt = (window.Tomo && Tomo.formatToolSummary) || function (t, a) { return JSON.stringify(a || {}); };
+      var preview = (window.Tomo && Tomo.toolResultPreview) || function (t) { return ''; };
+
       if (kind === 'thinking') {
-        var el = document.createElement('div');
-        el.className = 'thinking';
-        el.textContent = data.content || '';
-        body.appendChild(el);
+        var details = document.createElement('details');
+        details.className = 'si-step si-think';
+        details.innerHTML =
+          '<summary><span class="si-kind">Thought</span></summary>' +
+          '<pre class="si-think-body"></pre>';
+        details.querySelector('pre').textContent = data.content || '';
+        body.appendChild(details);
       } else if (kind === 'tool') {
+        var toolName = data.tool || 'tool';
+        var cmd = fmt(toolName, data.args || {});
         var card = document.createElement('div');
-        card.className = 'tool';
+        card.className = 'si-step si-tool';
         card.innerHTML =
-          '<div class="tool-head">' +
-            '<span class="chevron">\u25B6</span>' +
-            '<span class="tname">' + esc(data.tool || 'tool') + '</span> ' +
-            '<span class="targs">' + esc(JSON.stringify(data.args || {})) + '</span>' +
+          '<div class="si-tool-head">' +
+            '<span class="chevron"></span>' +
+            '<div class="si-tool-meta">' +
+              '<span class="si-tname">' + esc(toolName) + '</span>' +
+              (cmd ? '<code class="si-cmd">' + esc(cmd) + '</code>' : '') +
+            '</div>' +
+            '<span class="si-out-badge"></span>' +
           '</div>' +
-          '<div class="tres" style="display:none"></div>';
+          '<pre class="si-tres"></pre>';
         body.appendChild(card);
-        card._res = card.querySelector('.tres');
-        makeToolCollapsible(card);
+        card._res = card.querySelector('.si-tres');
+        card._badge = card.querySelector('.si-out-badge');
+        card.querySelector('.si-tool-head').addEventListener('click', function () {
+          card.classList.toggle('expanded');
+        });
       } else if (kind === 'tool_result') {
-        var cards = body.querySelectorAll('.tool');
+        var cards = body.querySelectorAll('.si-tool');
         var last = cards[cards.length - 1];
         if (last && last._res) {
           var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
-          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
-          last._res.textContent = (data.error ? '\u2717 ' : '\u2192 ') + truncated;
-          last._res.style.display = '';
+          last._res.textContent = resultText;
+          if (data.error) last._res.classList.add('err');
+          last.classList.add('has-output');
+          if (last._badge) last._badge.textContent = preview(resultText);
         }
       } else if (kind === 'delta' || kind === 'final') {
-        var existing = body.querySelector('.detail-response:last-child');
-        if (existing && existing._accumulating) {
-          existing._accumulated = (existing._accumulated || '') + (data.content || '');
-          if (window.TomoChat && TomoChat.setMarkdown) {
-            TomoChat.setMarkdown(existing, existing._accumulated);
-          } else {
-            existing.textContent = existing._accumulated;
-          }
+        var answer = body.querySelector('.si-answer');
+        if (!answer) {
+          answer = document.createElement('details');
+          answer.className = 'si-step si-answer';
+          answer.innerHTML =
+            '<summary><span class="si-kind">Answer</span></summary>' +
+            '<div class="si-answer-body prose chat-prose"></div>';
+          body.appendChild(answer);
+          answer._accumulated = '';
+        }
+        var target = answer.querySelector('.si-answer-body');
+        answer._accumulated = (answer._accumulated || '') + (data.content || '');
+        if (window.TomoChat && TomoChat.setMarkdown) {
+          TomoChat.setMarkdown(target, answer._accumulated);
         } else {
-          var el = document.createElement('div');
-          el.className = 'detail-response prose chat-prose';
-          el._accumulating = true;
-          el._accumulated = data.content || '';
-          if (window.TomoChat && TomoChat.setMarkdown) {
-            TomoChat.setMarkdown(el, el._accumulated);
-          } else {
-            el.textContent = el._accumulated;
-          }
-          body.appendChild(el);
+          target.textContent = answer._accumulated;
         }
       }
     }
@@ -385,64 +400,106 @@
         buf = getBuffer(aid);
         name = buf.name || aid;
       }
-      if (detailPanel) { detailPanel.remove(); }
-      detailPanel = document.createElement('div');
-      detailPanel.className = 'detail-panel';
-      chatWrap.appendChild(detailPanel);
-
       var color = agentColor(aid);
       var letter = esc((name || '?').slice(0, 1).toUpperCase());
+      var status = buf.status || 'done';
+      if (buf.row && buf.row.classList.contains('done')) status = 'done';
+      if (buf.row && buf.row.classList.contains('error')) status = 'error';
+      if (status === 'running' && buf.events.some(function (e) { return e.kind === 'final'; })) status = 'done';
 
-      var header = document.createElement('div');
-      header.className = 'detail-header';
-      header.innerHTML =
-        '<button class="detail-close" type="button" title="Close">\u2715</button>' +
-        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-        '<div class="detail-meta">' +
-          '<div class="name">' + esc(name) + '</div>' +
-          '<div class="id mono">@' + esc(aid) + '</div>' +
-        '</div>';
-      detailPanel.appendChild(header);
+      var panel = chatWrap.querySelector('.subagent-inspector');
+      if (!panel) {
+        panel = document.createElement('aside');
+        panel.className = 'subagent-inspector';
+        panel.setAttribute('role', 'complementary');
+        panel.setAttribute('aria-label', 'Subagent inspector');
+        chatWrap.appendChild(panel);
+      }
+      detailPanel = panel;
+      panel.innerHTML = '';
 
-      var body = document.createElement('div');
-      body.className = 'detail-body';
-      detailPanel.appendChild(body);
+      var head = document.createElement('div');
+      head.className = 'si-head';
+      head.innerHTML =
+        '<div class="si-agent">' +
+          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+          '<div class="si-meta">' +
+            '<div class="si-name-row">' +
+              '<span class="si-name">' + esc(name) + '</span>' +
+              '<span class="si-status ' + esc(status) + '">' + esc(status) + '</span>' +
+            '</div>' +
+            '<div class="si-id">@' + esc(aid) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<button class="si-close" type="button" title="Close" aria-label="Close inspector">\u2715</button>';
+      panel.appendChild(head);
 
-      // Footer with all agent chips (current turn only).
-      if (turnBuffers.size > 0) {
-        var footer = document.createElement('div');
-        footer.className = 'detail-footer';
-        turnBuffers.forEach(function (b, _key) {
-          var chip = document.createElement('button');
-          chip.className = 'detail-agent-chip' + (b.aid === aid ? ' active' : '');
-          chip.type = 'button';
+      var taskEl = document.createElement('div');
+      taskEl.className = 'si-task';
+      if (buf.task) {
+        taskEl.innerHTML = '<span class="si-task-label">Task</span>' + esc(buf.task);
+      }
+      panel.appendChild(taskEl);
+
+      var bufferList = [];
+      turnBuffers.forEach(function (b) { bufferList.push(b); });
+      if (bufferList.length > 1) {
+        var nameCounts = {};
+        bufferList.forEach(function (b) {
+          var base = b.name || b.aid || '';
+          nameCounts[base] = (nameCounts[base] || 0) + 1;
+        });
+        var nameSeen = {};
+        var switcher = document.createElement('nav');
+        switcher.className = 'si-switcher';
+        switcher.setAttribute('aria-label', 'Subagents in this turn');
+        bufferList.forEach(function (b) {
+          var base = b.name || b.aid || '';
+          nameSeen[base] = (nameSeen[base] || 0) + 1;
+          var pill = document.createElement('button');
+          pill.type = 'button';
+          pill.className = 'si-pill' + (b === buf ? ' active' : '');
+          var st = b.status || 'done';
           var cColor = agentColor(b.aid || '');
           var cLetter = esc((b.name || b.aid || '?').slice(0, 1).toUpperCase());
-          chip.innerHTML =
-            '<div class="av" style="background:' + cColor + '">' + cLetter + '</div>' +
-            '<div class="label">' + esc(b.name || b.aid) + '</div>';
-          chip.addEventListener('click', function () { if (b.row) openDetailPanel(b.row); });
-          footer.appendChild(chip);
+          var label = base;
+          if (nameCounts[base] > 1) label += ' #' + nameSeen[base];
+          pill.innerHTML =
+            '<span class="av" style="background:' + cColor + '">' + cLetter + '</span>' +
+            '<span>' + esc(label) + '</span>' +
+            '<span class="dot ' + esc(st) + '"></span>';
+          pill.addEventListener('click', function () { if (b.row) openDetailPanel(b.row); });
+          switcher.appendChild(pill);
         });
-        detailPanel.appendChild(footer);
+        panel.appendChild(switcher);
       }
 
-      // Replay buffered events.
-      buf.events.forEach(function (ev) {
-        renderEventInDetail(ev.kind, ev.data, body);
-      });
+      var body = document.createElement('div');
+      body.className = 'si-body';
+      panel.appendChild(body);
 
-      header.querySelector('.detail-close').addEventListener('click', closeDetailPanel);
-      detailPanel.classList.add('open');
+      if (!buf.events.length) {
+        body.innerHTML = '<div class="si-empty">No buffered steps for this agent.</div>';
+      } else {
+        buf.events.forEach(function (ev) {
+          renderEventInDetail(ev.kind, ev.data, body);
+        });
+      }
+
+      head.querySelector('.si-close').addEventListener('click', closeDetailPanel);
+      chatWrap.querySelectorAll('.swarm-row').forEach(function (r) {
+        r.classList.toggle('selected', r === (buf.row || rowOrAid) || r.dataset.agentId === aid);
+      });
       requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
     }
 
     function closeDetailPanel() {
-      if (!detailPanel) return;
-      detailPanel.classList.remove('open');
-      var panel = detailPanel;
+      chatWrap.querySelectorAll('.swarm-row.selected').forEach(function (r) {
+        r.classList.remove('selected');
+      });
+      var panel = chatWrap.querySelector('.subagent-inspector');
       detailPanel = null;
-      setTimeout(function () { if (panel) panel.remove(); }, 220);
+      if (panel) panel.remove();
     }
 
     // ── Process entries ─────────────────────────────────────────────

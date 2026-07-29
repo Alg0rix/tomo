@@ -2,19 +2,21 @@
 
 <div class="agent-studio-panel" id="panel-chat" style="padding:0;display:flex;flex-direction:column">
   <div class="chat-wrap" style="height:100%;flex:1" data-agent-id="{{ agent.id }}" data-user-id="web" data-agent-name="{{ agent.name }}">
-    <div class="chat-scroll" data-chat-panel="chat" style="flex:1">
-      {% if not history %}
-      <div class="chat-empty"><div class="big">Talk to {{ agent.name }}</div><div>Direct line — use Chat for swarm conversations.</div></div>
-      {% else %}
-      {% for e in history %}
-        {% if e.type == 'user' %}
-        <div class="msg user"><div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body">{{ e.content|e }}</div></div></div>
-        {% elif e.type == 'final' %}
-        <div class="msg assistant"><div class="av" style="background:{{ avatar_color(agent.id) }}">{{ agent.name[:1]|upper }}</div><div class="bubble"><div class="who">{{ agent.name }}</div><div class="bubble-body prose">{{ e.content|e }}</div></div></div>
+    <div class="chat-main">
+      <div class="chat-scroll" data-chat-panel="chat" style="flex:1">
+        {% if not history %}
+        <div class="chat-empty"><div class="big">Talk to {{ agent.name }}</div><div>Direct line — use Chat for swarm conversations.</div></div>
+        {% else %}
+        {% for e in history %}
+          {% if e.type == 'user' %}
+          <div class="msg user"><div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body">{{ e.content|e }}</div></div></div>
+          {% elif e.type == 'final' %}
+          <div class="msg assistant"><div class="av" style="background:{{ avatar_color(agent.id) }}">{{ agent.name[:1]|upper }}</div><div class="bubble"><div class="who">{{ agent.name }}</div><div class="bubble-body prose">{{ e.content|e }}</div></div></div>
+          {% endif %}
+        {% endfor %}
         {% endif %}
-      {% endfor %}
-      {% endif %}
+      </div>
+      {{ chat_composer('Message ' + agent.name + '…') }}
     </div>
-    {{ chat_composer('Message ' + agent.name + '…') }}
   </div>
 </div>
