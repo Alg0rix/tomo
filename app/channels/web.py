@@ -321,6 +321,7 @@ async def stream_turn_sse(
     coordinator_id: str,
     message: str,
     start_seq: int,
+    attachment_ids: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
@@ -472,8 +473,19 @@ async def stream_turn_sse(
                 }
             )
         else:
+            user_content = message
+            if attachment_ids:
+                info_lines = "\n".join(
+                    f"[Attached: {a.get('original_name') or a.get('filename')} "
+                    f"({a.get('mime_type') or 'application/octet-stream'}, {a.get('size_bytes', 0)}B) "
+                    f"id={a.get('id')} path={a.get('file_path')}]"
+                    for a in (store.get_attachment(aid) for aid in attachment_ids)
+                    if a
+                )
+                if info_lines:
+                    user_content = info_lines + "\n\n" + message
             new_title = store.append_session_history(
-                session_id, {"type": "user", "content": message, "ts": now()}
+                session_id, {"type": "user", "content": user_content, "ts": now()}
             )
             if new_title:
                 logger.info(
@@ -514,6 +526,16 @@ async def stream_turn_sse(
                 hist = store.get_session_history(session_id)
                 hist_for_member = _history_before_last_user(hist)
                 member_prompt = mention_rest.strip() or message
+                if attachment_ids:
+                    info_lines = "\n".join(
+                        f"[Attached: {a.get('original_name') or a.get('filename')} "
+                        f"({a.get('mime_type') or 'application/octet-stream'}, {a.get('size_bytes', 0)}B) "
+                        f"id={a.get('id')} path={a.get('file_path')}]"
+                        for a in (store.get_attachment(aid) for aid in attachment_ids)
+                        if a
+                    )
+                    if info_lines:
+                        member_prompt = info_lines + "\n\n" + member_prompt
                 async for chunk, seq in _emit_member_turn_start(
                     to_id=force_target, turn_id=turn_id, seq=seq
                 ):

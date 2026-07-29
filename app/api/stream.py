@@ -57,12 +57,14 @@ async def session_chat_stream(
     message: str = "",
     user_id: str = "web",
     after: int = 0,
+    attachment_ids: list[str] | None = None,
     _: AuthDep = None,
 ):
     if not store.get_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     message = (message or "").strip()
     uid = _resolve_user_id(request, user_id)
+    attachment_ids = attachment_ids or []
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
@@ -77,7 +79,7 @@ async def session_chat_stream(
             else:
                 try:
                     queue = await start_session_turn(
-                        session_id, message, uid, start_seq=0
+                        session_id, message, uid, start_seq=0, attachment_ids=attachment_ids
                     )
                 except ValueError as exc:
                     yield fmt_sse(

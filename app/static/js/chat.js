@@ -67,7 +67,16 @@
     const clearBtn = wrap.querySelector('.chat-clear');
     const statusEl = wrap.querySelector('.chat-status');
     const mentionMenu = wrap.querySelector('.mention-menu');
+    const attachBtn = wrap.querySelector('.attach-btn');
+    const attachInput = wrap.querySelector('.attachment-input');
+    const attachPreview = wrap.querySelector('.attachment-preview');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
+
+    /** @type {File[]} */
+    let pendingFiles = [];
+    /** @type {{id: string, name: string, size: number}[]} */
+    let uploadedAttachments = [];
+    let uploading = false;
 
     let mentionOpen = false;
     let mentionIndex = 0;
@@ -206,7 +215,73 @@
 
     function refreshSendBtn() {
       // While a turn is running, send is still allowed so messages enqueue.
-      sendBtn.disabled = !input.value.trim();
+      sendBtn.disabled = !input.value.trim() && !uploadedAttachments.length && !pendingFiles.length;
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + 'B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+    }
+
+    function renderAttachmentPreview() {
+      if (!attachPreview) return;
+      attachPreview.innerHTML = '';
+      if (!uploadedAttachments.length) {
+        attachPreview.classList.add('hidden');
+        return;
+      }
+      attachPreview.classList.remove('hidden');
+      uploadedAttachments.forEach(function (att, idx) {
+        var chip = document.createElement('span');
+        chip.className = 'attachment-chip';
+        chip.innerHTML = '<span class="name">' + esc(att.name) + '</span>' +
+          '<span class="size">' + formatSize(att.size) + '</span>' +
+          '<button class="remove" aria-label="Remove attachment" title="Remove">×</button>';
+        chip.querySelector('.remove').addEventListener('click', function (e) {
+          e.preventDefault();
+          uploadedAttachments.splice(idx, 1);
+          renderAttachmentPreview();
+          refreshSendBtn();
+        });
+        attachPreview.appendChild(chip);
+      });
+    }
+
+    async function uploadFiles(files) {
+      if (!files.length) return;
+      const sid = currentSessionId();
+      if (!sid) {
+        Tomo.toast('Start the conversation before uploading files.', 'err');
+        return;
+      }
+      uploading = true;
+      setStatus('amber', 'uploading…');
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const form = new FormData();
+        form.append('file', file);
+        form.append('name', file.name);
+        try {
+          const resp = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/attachments', {
+            method: 'POST',
+            body: form,
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(function () { return {}; });
+            Tomo.toast('Upload failed: ' + (err.detail || resp.statusText), 'err');
+            continue;
+          }
+          const att = await resp.json();
+          uploadedAttachments.push({ id: att.id, name: att.original_name || att.filename, size: att.size_bytes || 0 });
+        } catch (e) {
+          Tomo.toast('Upload error: ' + (e && e.message ? e.message : String(e)), 'err');
+        }
+      }
+      uploading = false;
+      renderAttachmentPreview();
+      refreshSendBtn();
+      syncBusyStatus();
     }
 
     function busyStatusLabel() {
@@ -297,10 +372,16 @@
 
     function streamUrl(text) {
       const sid = currentSessionId();
-      if (sid) {
-        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
+      const params = new URLSearchParams();
+      params.set('user_id', userId);
+      params.set('message', text);
+      if (uploadedAttachments.length) {
+        uploadedAttachments.forEach(function (a) { params.append('attachment_ids', a.id); });
       }
-      return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream?user_id=' + encodeURIComponent(userId) + '&message=' + encodeURIComponent(text);
+      if (sid) {
+        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?' + params.toString();
+      }
+      return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream?' + params.toString();
     }
 
     function listenUrl() {
@@ -1035,21 +1116,50 @@
 
     async function send(text) {
       const value = (text != null ? String(text) : input.value).trim();
-      if (!value) return;
+      if (!value && !uploadedAttachments.length) return;
       input.value = '';
       resize();
+      if (pendingFiles.length) {
+        await uploadFiles(pendingFiles);
+        pendingFiles = [];
+      }
       refreshSendBtn();
       if (sending) {
         enqueueMessage(value);
         return;
       }
       await startTurn(value, {});
+      uploadedAttachments = [];
+      renderAttachmentPreview();
+      refreshSendBtn();
     }
 
     input.addEventListener('input', function () {
       refreshSendBtn();
       resize();
       updateMentions();
+    });
+
+    if (attachBtn && attachInput) {
+      attachBtn.addEventListener('click', function () { attachInput.click(); });
+      attachInput.addEventListener('change', function () {
+        if (attachInput.files && attachInput.files.length) {
+          uploadFiles(Array.from(attachInput.files));
+          attachInput.value = '';
+        }
+      });
+    }
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function (name) {
+      wrap.addEventListener(name, function (e) { e.preventDefault(); e.stopPropagation(); });
+    });
+    wrap.addEventListener('dragenter', function () { wrap.classList.add('dragover'); });
+    wrap.addEventListener('dragover', function () { wrap.classList.add('dragover'); });
+    wrap.addEventListener('dragleave', function (e) { if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('dragover'); });
+    wrap.addEventListener('drop', function (e) {
+      wrap.classList.remove('dragover');
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length) uploadFiles(files);
     });
     input.addEventListener('keydown', function (e) {
       if (mentionOpen && mentionMatches.length) {

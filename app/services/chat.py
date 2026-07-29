@@ -112,7 +112,7 @@ def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
 
 
 async def start_session_turn(
-    session_id: str, message: str, user_id: str, start_seq: int = 0
+    session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
 ) -> asyncio.Queue:
     """Start a background agent turn and return a subscription queue.
 
@@ -131,7 +131,7 @@ async def start_session_turn(
     async def _runner() -> None:
         try:
             async with contextlib.aclosing(
-                stream_turn_sse(session_id, coordinator_id, message, start_seq)
+                stream_turn_sse(session_id, coordinator_id, message, start_seq, attachment_ids=attachment_ids)
             ) as agen:
                 async for chunk in agen:
                     turn._broadcast(chunk)
@@ -165,14 +165,36 @@ def _coordinator_for(session: dict[str, Any]) -> str | None:
     return ids[0] if ids else None
 
 
+def _attachment_info_lines(attachment_ids: list[str]) -> str:
+    """Build [Attached: ...] info lines to prepend to the user message."""
+    if not attachment_ids:
+        return ""
+    lines = []
+    for aid in attachment_ids:
+        att = store.get_attachment(aid)
+        if not att:
+            continue
+        size = att.get("size_bytes") or 0
+        size_str = f"{size}B" if size < 1024 else f"{size / 1024:.1f}KB" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f}MB"
+        lines.append(
+            f"[Attached: {att.get('original_name') or att.get('filename')} "
+            f"({att.get('mime_type') or 'application/octet-stream'}, {size_str}) "
+            f"id={att.get('id')} path={att.get('file_path')}]"
+        )
+    return "\n".join(lines)
+
+
 async def run_session_turn(
-    session_id: str, message: str, user_id: str, start_seq: int = 0
+    session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
 ) -> AsyncIterator[str]:
     """Stream one turn for a session (swarm or single-agent).
 
     Starts on ``coordinator_id``; ``stream_turn_sse`` may hand off to a session
     member via ``delegate`` tool or leading ``@mention``.
     """
+    info = _attachment_info_lines(attachment_ids or [])
+    if info:
+        message = info + ("\n\n" + message if message else "")
     session = store.get_session(session_id)
     if not session:
         # The route validates existence and 404s first; stay defensive so a
@@ -212,7 +234,7 @@ async def run_session_turn(
 
 
 async def run_turn(
-    agent_id: str, message: str, user_id: str, start_seq: int = 0
+    agent_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
 ) -> AsyncIterator[str]:
     """Stream one coordinator turn for an agent's single-agent session.
 

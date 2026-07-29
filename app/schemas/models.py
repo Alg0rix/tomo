@@ -76,6 +76,7 @@ class ChatMessageIn(BaseModel):
     message: str
     user_id: str = "web"
     session_id: str | None = None
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 class SessionCreate(BaseModel):
@@ -107,6 +108,7 @@ class HomeSessionIn(BaseModel):
 class SessionChatIn(BaseModel):
     message: str
     user_id: str = "web"
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 class ChatEntry(BaseModel):

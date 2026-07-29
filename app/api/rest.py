@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+import mimetypes
+import time
+from pathlib import Path
+from uuid import uuid4
 
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+
+from app.core.config import TOMO_HOME
 from app.core.deps import AuthDep, session_user_id
 from app.schemas import (
     AgentCreate,
@@ -210,7 +217,78 @@ async def session_chat_history(session_id: str, _: AuthDep):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     entries = store.get_session_history(session_id)
-    return {"entries": entries, "has_more": False, "session": session}
+    return {"entries": entries}
+
+
+@router.get("/sessions/{session_id}/attachments")
+async def list_session_attachments_api(session_id: str, _: AuthDep):
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"attachments": store.list_session_attachments(session_id)}
+
+
+@router.post("/sessions/{session_id}/attachments")
+async def upload_session_attachment(
+    session_id: str,
+    request: Request,
+    _: AuthDep,
+    file: UploadFile = File(...),
+    name: str | None = Form(None),
+):
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+    safe_name = Path((name or file.filename or "upload")).name[:120] or "upload"
+    attachment_id = f"att_{uuid4().hex[:18]}"
+    storage_dir = Path(TOMO_HOME) / "attachments" / session_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(safe_name).suffix or (Path(file.filename or "").suffix or ".bin")
+    stored_name = f"{attachment_id}{ext}"
+    stored_path = storage_dir / stored_name
+    stored_path.write_bytes(data)
+    mime = file.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    attachment = store.create_attachment(
+        attachment_id=attachment_id,
+        session_id=session_id,
+        filename=stored_name,
+        original_name=safe_name,
+        mime_type=mime,
+        size_bytes=len(data),
+        file_path=str(stored_path),
+    )
+    return attachment
+
+
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(attachment_id: str, _: AuthDep):
+    att = store.get_attachment(attachment_id)
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    path = Path(att["file_path"])
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        path,
+        filename=att["original_name"] or att["filename"],
+        media_type=att["mime_type"] or "application/octet-stream",
+    )
+
+
+@router.delete("/attachments/{attachment_id}")
+async def delete_attachment_api(attachment_id: str, _: AuthDep):
+    att = store.get_attachment(attachment_id)
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        Path(att["file_path"]).unlink(missing_ok=True)
+    except Exception:
+        pass
+    store.delete_attachment(attachment_id)
+    return {"success": True}
 
 
 @router.get("/sessions/{session_id}/context")

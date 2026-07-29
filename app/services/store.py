@@ -17,6 +17,7 @@ from typing import Any
 from app.core.config import ADMIN_PASSWORD, DB_PATH
 from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
+from app.models.mixins import attachments as attachments_store
 from app.models.mixins import knowledge_entries as knowledge_store
 from app.models.mixins import messages as messages_store
 from app.models.mixins import plugins as plugins_store
@@ -250,6 +251,35 @@ class Store:
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
             messages_store.clear_session_history(self._conn, session_id)
+
+    # -- attachments (SQLite) --------------------------------------------
+    def create_attachment(
+        self,
+        attachment_id: str,
+        session_id: str,
+        filename: str,
+        original_name: str,
+        mime_type: str,
+        size_bytes: int,
+        file_path: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            return attachments_store.create_attachment(
+                self._conn, attachment_id, session_id, filename, original_name,
+                mime_type, size_bytes, file_path,
+            )
+
+    def get_attachment(self, attachment_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return attachments_store.get_attachment(self._conn, attachment_id)
+
+    def list_session_attachments(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return attachments_store.list_session_attachments(self._conn, session_id)
+
+    def delete_attachment(self, attachment_id: str) -> bool:
+        with self._lock:
+            return attachments_store.delete_attachment(self._conn, attachment_id)
 
     def search_messages(
         self, query: str, *, limit: int = 10

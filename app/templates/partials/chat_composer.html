@@ -1,7 +1,14 @@
 {% macro chat_composer(placeholder='Message…', hint='') %}
 <div class="composer">
   <div class="composer-inner mention-host">
-    <textarea class="chat-input" placeholder="{{ placeholder }}" rows="1"></textarea>
+    <input type="file" class="attachment-input hidden" multiple aria-label="Attach files">
+    <button class="attach-btn" type="button" aria-label="Attach files" title="Attach files">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+    </button>
+    <div class="composer-field">
+      <div class="attachment-preview hidden"></div>
+      <textarea class="chat-input" placeholder="{{ placeholder }}" rows="1"></textarea>
+    </div>
     <div class="mention-menu hidden" role="listbox" aria-label="Mention agent"></div>
     <button class="send btn primary chat-send" type="button" disabled aria-label="Send">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -12,7 +19,7 @@
       <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
       <span class="ctx-usage-label">Context</span>
     </button>
-    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Messages sent while busy are queued and run next.</div>
+    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Messages sent while busy are queued and run next. Drag files here or click the paperclip.</div>
   </div>
 </div>
 {% endmacro %}
