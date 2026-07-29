@@ -336,6 +336,9 @@
       var oldPanel = wrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
 
+      wrap.dataset.liveStream = '1';
+      wrap.dispatchEvent(new CustomEvent('tomo:turn-start', { bubbles: true }));
+
       // Reuse the turn that already holds this user bubble (matches history layout).
       let turn = turnEl;
       if (!turn || !turn.classList || !turn.classList.contains('turn')) {
@@ -452,9 +455,10 @@
         clearWatchdogs();
         clearPending();
         dropEmptyAssistant();
-        closeDetailPanel();
         closed = true;
         closeStream();
+        delete wrap.dataset.liveStream;
+        wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
         finishTurn();
       }
 
@@ -668,6 +672,9 @@
         if (!buf.events.length) {
           body.innerHTML = '<div class="si-empty">No steps yet — waiting for this agent to run.</div>';
         } else {
+          var tl = document.createElement('div');
+          tl.className = 'si-timeline';
+          body.appendChild(tl);
           buf.events.forEach(function (ev) {
             renderEventInDetail(ev.kind, ev.data, aid);
           });
@@ -694,67 +701,10 @@
         if (!detailPanel) return;
         var body = detailPanel.querySelector('.si-body');
         if (!body) return;
-        var empty = body.querySelector('.si-empty');
-        if (empty) empty.remove();
-        var fmt = (window.Tomo && Tomo.formatToolSummary) || function (t, a) { return JSON.stringify(a || {}); };
-        var preview = (window.Tomo && Tomo.toolResultPreview) || function (t) { return ''; };
-
-        if (kind === 'thinking') {
-          var details = document.createElement('details');
-          details.className = 'si-step si-think';
-          details.innerHTML =
-            '<summary><span class="si-kind">Thought</span></summary>' +
-            '<pre class="si-think-body"></pre>';
-          details.querySelector('pre').textContent = data.content || '';
-          body.appendChild(details);
-        } else if (kind === 'tool') {
-          var toolName = data.tool || 'tool';
-          var cmd = fmt(toolName, data.args || {});
-          var card = document.createElement('div');
-          card.className = 'si-step si-tool';
-          card.innerHTML =
-            '<div class="si-tool-head">' +
-              '<span class="chevron"></span>' +
-              '<div class="si-tool-meta">' +
-                '<span class="si-tname">' + esc(toolName) + '</span>' +
-                (cmd ? '<code class="si-cmd">' + esc(cmd) + '</code>' : '') +
-              '</div>' +
-              '<span class="si-out-badge"></span>' +
-            '</div>' +
-            '<pre class="si-tres"></pre>';
-          body.appendChild(card);
-          card._res = card.querySelector('.si-tres');
-          card._badge = card.querySelector('.si-out-badge');
-          card.querySelector('.si-tool-head').addEventListener('click', function () {
-            card.classList.toggle('expanded');
-          });
-        } else if (kind === 'tool_result') {
-          var cards = body.querySelectorAll('.si-tool');
-          var last = cards[cards.length - 1];
-          if (last && last._res) {
-            var text = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
-            last._res.textContent = text || '';
-            if (data.error) last._res.classList.add('err');
-            last.classList.add('has-output');
-            if (last._badge) last._badge.textContent = preview(text);
-          }
-        } else if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {
-          var answer = body.querySelector('.si-answer');
-          var bubble;
-          if (!answer) {
-            answer = document.createElement('details');
-            answer.className = 'si-step si-answer';
-            answer.innerHTML =
-              '<summary><span class="si-kind">Answer</span></summary>' +
-              '<div class="si-answer-body prose chat-prose"></div>';
-            body.appendChild(answer);
-            answer._raw = '';
-          }
-          bubble = answer.querySelector('.si-answer-body');
-          answer._raw = (answer._raw || '') + (data.content || '');
-          setMarkdown(bubble, answer._raw);
+        if (window.Tomo && Tomo.renderInspectorStep) {
+          Tomo.renderInspectorStep(body, kind, data);
+          body.scrollTop = body.scrollHeight;
         }
-        body.scrollTop = body.scrollHeight;
       }
 
       function makeToolCollapsible(card, d) {
@@ -780,9 +730,11 @@
         if (d.busy) {
           setStatus('amber', busyStatusLabel());
         }
-        // Prefer busy=false to end; turn.end is the hard close from the server.
-        if (!d.busy && turnActive) endTurn();
-        else if (!d.busy && !sending) setStatus('ok', 'online');
+        // End only when the active turn agent signals idle — not other swarm members.
+        if (!d.busy && turnActive) {
+          var who = d.agent_id || '';
+          if (!who || who === turnAgentId || who === agentId) endTurn();
+        } else if (!d.busy && !sending) setStatus('ok', 'online');
       });
       es.addEventListener('delegate', function (e) {
         bumpActivity();

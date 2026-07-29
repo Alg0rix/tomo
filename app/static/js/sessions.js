@@ -21,6 +21,8 @@
   let chatHandle = null;
   var pollTimer = null;
   var monitorEs = null;
+  var lastHistLen = -1;
+  var inspectorOpenKey = null;
 
   function stopHistoryPoll() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -28,11 +30,20 @@
   }
 
   function refetchHistory(sessionId, cb) {
+    // Don't wipe the live stream or inspector while the user is in an active turn.
+    if (chatWrap.dataset.liveStream === '1') {
+      if (cb) cb([]);
+      return;
+    }
     Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat').then(function (hist) {
       var entries = hist.entries || [];
+      if (entries.length === lastHistLen && !inspectorOpenKey) {
+        if (cb) cb(entries);
+        return;
+      }
+      lastHistLen = entries.length;
       renderHistory(entries);
-      if (chatHandle) { chatHandle.destroy(); chatHandle = null; }
-      chatHandle = TomoChat.init(chatWrap);
+      if (!chatHandle) chatHandle = TomoChat.init(chatWrap);
       if (cb) cb(entries);
     }).catch(function () {});
   }
@@ -218,7 +229,7 @@
       if (!turnBuffers.has(key)) {
         var buf = { events: [], name: '', task: '', status: 'running', row: null, aid: '', turnId: turnId };
         turnBuffers.set(key, buf);
-        subagentBuffers.set(turnId + ':' + delegateCounter, buf);
+        subagentBuffers.set(key, buf);
       }
       return turnBuffers.get(key);
     }
@@ -275,7 +286,9 @@
       var key = turnId + ':' + delegateCounter;
       var buf = getBuffer(key);
       buf.row = row;
+      buf.key = key;
       row._buffer = buf;
+      row.dataset.bufferKey = key;
       buf.name = name || aid;
       buf.aid = aid;
       buf.task = task || '';
@@ -324,68 +337,9 @@
     }
 
     function renderEventInDetail(kind, data, body) {
-      var empty = body.querySelector('.si-empty');
-      if (empty) empty.remove();
-      var fmt = (window.Tomo && Tomo.formatToolSummary) || function (t, a) { return JSON.stringify(a || {}); };
-      var preview = (window.Tomo && Tomo.toolResultPreview) || function (t) { return ''; };
-
-      if (kind === 'thinking') {
-        var details = document.createElement('details');
-        details.className = 'si-step si-think';
-        details.innerHTML =
-          '<summary><span class="si-kind">Thought</span></summary>' +
-          '<pre class="si-think-body"></pre>';
-        details.querySelector('pre').textContent = data.content || '';
-        body.appendChild(details);
-      } else if (kind === 'tool') {
-        var toolName = data.tool || 'tool';
-        var cmd = fmt(toolName, data.args || {});
-        var card = document.createElement('div');
-        card.className = 'si-step si-tool';
-        card.innerHTML =
-          '<div class="si-tool-head">' +
-            '<span class="chevron"></span>' +
-            '<div class="si-tool-meta">' +
-              '<span class="si-tname">' + esc(toolName) + '</span>' +
-              (cmd ? '<code class="si-cmd">' + esc(cmd) + '</code>' : '') +
-            '</div>' +
-            '<span class="si-out-badge"></span>' +
-          '</div>' +
-          '<pre class="si-tres"></pre>';
-        body.appendChild(card);
-        card._res = card.querySelector('.si-tres');
-        card._badge = card.querySelector('.si-out-badge');
-        card.querySelector('.si-tool-head').addEventListener('click', function () {
-          card.classList.toggle('expanded');
-        });
-      } else if (kind === 'tool_result') {
-        var cards = body.querySelectorAll('.si-tool');
-        var last = cards[cards.length - 1];
-        if (last && last._res) {
-          var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
-          last._res.textContent = resultText;
-          if (data.error) last._res.classList.add('err');
-          last.classList.add('has-output');
-          if (last._badge) last._badge.textContent = preview(resultText);
-        }
-      } else if (kind === 'delta' || kind === 'final') {
-        var answer = body.querySelector('.si-answer');
-        if (!answer) {
-          answer = document.createElement('details');
-          answer.className = 'si-step si-answer';
-          answer.innerHTML =
-            '<summary><span class="si-kind">Answer</span></summary>' +
-            '<div class="si-answer-body prose chat-prose"></div>';
-          body.appendChild(answer);
-          answer._accumulated = '';
-        }
-        var target = answer.querySelector('.si-answer-body');
-        answer._accumulated = (answer._accumulated || '') + (data.content || '');
-        if (window.TomoChat && TomoChat.setMarkdown) {
-          TomoChat.setMarkdown(target, answer._accumulated);
-        } else {
-          target.textContent = answer._accumulated;
-        }
+      if (window.Tomo && Tomo.renderInspectorStep) {
+        Tomo.renderInspectorStep(body, kind, data);
+        return;
       }
     }
 
@@ -406,6 +360,7 @@
       if (buf.row && buf.row.classList.contains('done')) status = 'done';
       if (buf.row && buf.row.classList.contains('error')) status = 'error';
       if (status === 'running' && buf.events.some(function (e) { return e.kind === 'final'; })) status = 'done';
+      inspectorOpenKey = buf.key || keyForAid(aid) || null;
 
       var panel = chatWrap.querySelector('.subagent-inspector');
       if (!panel) {
@@ -481,6 +436,9 @@
       if (!buf.events.length) {
         body.innerHTML = '<div class="si-empty">No buffered steps for this agent.</div>';
       } else {
+        var tl = document.createElement('div');
+        tl.className = 'si-timeline';
+        body.appendChild(tl);
         buf.events.forEach(function (ev) {
           renderEventInDetail(ev.kind, ev.data, body);
         });
@@ -494,6 +452,7 @@
     }
 
     function closeDetailPanel() {
+      inspectorOpenKey = null;
       chatWrap.querySelectorAll('.swarm-row.selected').forEach(function (r) {
         r.classList.remove('selected');
       });
@@ -540,10 +499,16 @@
         var idx = p.parallel_index || 1;
         var total = p.parallel_total || 1;
         if (aid) subagentSet.add(aid);
-        delegateCounter++;
-        agentToKey[aid] = turnId + ':' + delegateCounter;
-        var buf = getBuffer(agentToKey[aid]);
-        buf.name = name; buf.aid = aid; buf.task = task;
+        // Reuse buffer from a prior delegate entry — both events are persisted
+        // for the same handoff; only create a new slot when none exists yet.
+        var key = agentToKey[aid];
+        if (!key || !turnBuffers.has(key)) {
+          delegateCounter++;
+          key = turnId + ':' + delegateCounter;
+          agentToKey[aid] = key;
+        }
+        var buf = getBuffer(key);
+        buf.name = name; buf.aid = aid; buf.task = task || buf.task;
         if (!buf.row) addSwarmRow(aid, name, task, idx, total);
         if (buf.row) buf.row.classList.add('active');
         return;
@@ -635,7 +600,7 @@
       if (e.type === 'error') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          markSwarmDone(aid, 'error');
+          markSwarmDone(keyForAid(aid), 'error');
         } else {
           var row = document.createElement('div');
           row.className = 'msg error';
@@ -645,6 +610,11 @@
         return;
       }
     });
+
+    if (inspectorOpenKey) {
+      var reopen = scroll.querySelector('.swarm-row[data-buffer-key="' + inspectorOpenKey + '"]');
+      if (reopen) openDetailPanel(reopen);
+    }
 
     scroll.scrollTop = scroll.scrollHeight;
   }
@@ -680,6 +650,8 @@
     if (chatHandle && chatHandle.destroy) chatHandle.destroy();
     chatHandle = null;
     stopHistoryPoll();
+    lastHistLen = -1;
+    inspectorOpenKey = null;
 
     try {
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
@@ -805,6 +777,16 @@
 
   if (searchEl) searchEl.addEventListener('input', function () { renderList(searchEl.value); });
 
+  chatWrap.addEventListener('tomo:turn-start', function () {
+    stopHistoryPoll();
+  });
+  chatWrap.addEventListener('tomo:turn-end', function () {
+    var sid = chatWrap.dataset.sessionId;
+    if (sid) {
+      lastHistLen = -1;
+      refetchHistory(sid);
+    }
+  });
   chatWrap.addEventListener('tomo:session-title', function (ev) {
     const d = ev.detail || {};
     if (d.title) applySessionTitle(d.session_id || activeId, d.title);
