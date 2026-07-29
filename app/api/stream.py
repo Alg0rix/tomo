@@ -2,15 +2,45 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import AuthDep
-from app.services import heartbeat_stream, run_session_turn, run_turn, session_heartbeat_stream, store
+from app.services import heartbeat_stream, run_turn, session_heartbeat_stream, store
+from app.services.chat import get_active_session_turn, start_session_turn
 
 router = APIRouter(prefix="/api")
+
+_HEARTBEAT_S = 8.0
+
+
+async def _drain_queue_with_heartbeats(
+    queue: asyncio.Queue, request: Request
+) -> "AsyncIterator[str]":
+    """Read chunks from *queue*, yielding heartbeats on timeout.
+
+    Returns when the producer signals ``None`` (turn complete) or the
+    client disconnects.  Does NOT cancel the producer — the background
+    turn continues even after the client leaves.
+    """
+    from app.channels.sse_map import fmt_sse
+
+    while True:
+        try:
+            chunk = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+        except asyncio.TimeoutError:
+            if await request.is_disconnected():
+                return
+            yield fmt_sse({"event": "heartbeat", "data": {}})
+            continue
+        if chunk is None:
+            return
+        if await request.is_disconnected():
+            return
+        yield chunk
 
 
 @router.get("/sessions/{session_id}/chat/stream")
@@ -19,6 +49,7 @@ async def session_chat_stream(
     request: Request,
     message: str = "",
     user_id: str = "web",
+    after: int = 0,
     _: AuthDep = None,
 ):
     if not store.get_session(session_id):
@@ -29,21 +60,26 @@ async def session_chat_stream(
         from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
+
         if message:
-            # aclosing guarantees the turn generator is closed on disconnect —
-            # either the early `return` below or Starlette closing this
-            # event_source — which cascades into stream_turn_sse's busy-clearing
-            # `finally` (via the aclosing in app/services/chat.py).
-            async with contextlib.aclosing(
-                run_session_turn(session_id, message, user_id, start_seq=0)
-            ) as agen:
-                async for chunk in agen:
-                    if await request.is_disconnected():
-                        return
-                    yield chunk
-            # End the stream after the turn. Leaving a forever heartbeat left
-            # the browser EventSource open; if busy=false was missed the UI
-            # stayed stuck on "busy" with no further agent text.
+            # Start a new background turn (or join if one is already active).
+            active = get_active_session_turn(session_id)
+            if active:
+                queue = active.subscribe(after_seq=after)
+            else:
+                try:
+                    queue = await start_session_turn(
+                        session_id, message, user_id, start_seq=0
+                    )
+                except ValueError as exc:
+                    yield fmt_sse(
+                        {"event": "error", "data": {"message": str(exc)}}
+                    )
+                    return
+
+            async for chunk in _drain_queue_with_heartbeats(queue, request):
+                yield chunk
+
             yield fmt_sse(
                 {
                     "event": "turn.end",
@@ -52,6 +88,24 @@ async def session_chat_stream(
                 }
             )
             return
+
+        # No message — listen mode.  If there's an active turn, subscribe
+        # to it (reconnect after refresh) with replay of missed events.
+        # Otherwise, heartbeat stream.
+        active = get_active_session_turn(session_id)
+        if active:
+            queue = active.subscribe(after_seq=after)
+            async for chunk in _drain_queue_with_heartbeats(queue, request):
+                yield chunk
+            yield fmt_sse(
+                {
+                    "event": "turn.end",
+                    "data": {"session_id": session_id, "ok": True},
+                    "seq": 9999,
+                }
+            )
+            return
+
         async with contextlib.aclosing(
             session_heartbeat_stream(session_id, start_seq=1000)
         ) as agen:

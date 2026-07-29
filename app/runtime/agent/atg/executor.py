@@ -306,6 +306,7 @@ async def run_dag_execution(
     stats: dict[str, Any] = {"waves_executed": 0, "parallel_peak": 0}
     waves = dag.waves()
 
+    _logger.info("ATG start: nodes=%d waves=%d", len(dag.nodes), len(waves))
     yield {"kind": "atg_wave", "phase": "start", "nodes_total": len(dag.nodes),
            "agent_id": agent_id or ""}
 
@@ -322,6 +323,10 @@ async def run_dag_execution(
         failed_here = [n for n in wave_nodes if n.status == "failed"]
         if failed_here:
             failed_node = failed_here[0]
+            _logger.warning(
+                "ATG fallback: node=%s failed in wave %s",
+                failed_node.id, wave_ids,
+            )
             _mark_skipped(dag)
             yield {"kind": "atg_wave", "phase": "end", "status": "fallback",
                    "agent_id": agent_id or ""}
@@ -336,6 +341,11 @@ async def run_dag_execution(
         ]
         serial_nodes = [n for n in wave_nodes if n not in parallel_nodes]
         stats["waves_executed"] += 1
+        _logger.info(
+            "ATG wave %d: %d nodes (%d parallel, %d serial)",
+            stats["waves_executed"], len(wave_nodes),
+            len(parallel_nodes), len(serial_nodes),
+        )
         yield {"kind": "atg_wave", "phase": "execute", "wave": wave_ids,
                "parallel": [n.id for n in parallel_nodes], "agent_id": agent_id or ""}
 
@@ -362,9 +372,16 @@ async def run_dag_execution(
                        "status": "failed", "stopped": True, "agent_id": agent_id or ""}
                 return
             ev = await _execute_one(node, dag, outputs, llm, tools)
+            _logger.info(
+                "ATG node %s: tool=%s error=%s",
+                node.id, ev.get("tool", "?"), ev["error"],
+            )
             yield _tool_event(ev, agent_id)
             yield _tool_result_event(ev, agent_id)
             if ev["error"]:
+                _logger.warning(
+                    "ATG serial node failed: %s tool=%s", node.id, ev.get("tool"),
+                )
                 _mark_skipped(dag)
                 yield {"kind": "atg_wave", "phase": "end", "status": "fallback",
                        "agent_id": agent_id or ""}
@@ -377,6 +394,10 @@ async def run_dag_execution(
 
     failed = [n for n in dag.nodes.values() if n.status == "failed"]
     status = "fallback" if failed else "done"
+    _logger.info(
+        "ATG done: status=%s waves=%d parallel_peak=%d failed=%d",
+        status, stats["waves_executed"], stats["parallel_peak"], len(failed),
+    )
     yield {"kind": "atg_wave", "phase": "end", "status": status,
            "agent_id": agent_id or ""}
     yield {"kind": "atg_summary",

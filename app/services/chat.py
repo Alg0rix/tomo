@@ -13,13 +13,147 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
+
+import re
 
 from app.channels.web import _fmt_sse, stream_turn_sse
 
 from .store import store
 
 logger = logging.getLogger(__name__)
+
+_REPLAY_MAX = 256
+
+
+def _extract_seq(chunk: str) -> int | None:
+    """Extract the ``id:`` seq from an SSE wire-format chunk."""
+    for line in chunk.split("\n", 4):
+        if line.startswith("id: "):
+            try:
+                return int(line[4:])
+            except ValueError:
+                pass
+    return None
+
+
+# ── Active turn registry ─────────────────────────────────────────────
+# Decouples the agent turn from the SSE connection so that a client
+# disconnect (page refresh) does NOT kill the turn.  The turn runs as a
+# background task; SSE streams subscribe to a broadcast queue.
+#
+# Adapted from evonic's realtime.py: per-connection ring buffer with
+# replay-on-subscribe so a reconnecting client sees events it missed.
+@dataclass
+class _ActiveTurn:
+    session_id: str
+    _consumers: list[asyncio.Queue] = field(default_factory=list)
+    _replay: list[tuple[int | None, str]] = field(default_factory=list)
+    task: asyncio.Task | None = None
+
+    def subscribe(self, after_seq: int = 0) -> asyncio.Queue:
+        """Subscribe to live events.
+
+        If *after_seq* > 0, replay buffered chunks with ``seq > after_seq``
+        into the queue first — so a reconnecting client catches up on
+        events it missed during the disconnect gap (evonic pattern).
+        """
+        q: asyncio.Queue = asyncio.Queue(maxsize=512)
+        # Replay: push past chunks the client hasn't seen yet.
+        if after_seq > 0:
+            for seq, chunk in self._replay:
+                if seq is not None and seq > after_seq:
+                    try:
+                        q.put_nowait(chunk)
+                    except asyncio.QueueFull:
+                        break
+        elif after_seq == 0:
+            # Fresh connect: replay everything (client dedups by seq).
+            for _seq, chunk in self._replay:
+                try:
+                    q.put_nowait(chunk)
+                except asyncio.QueueFull:
+                    break
+        self._consumers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        if q in self._consumers:
+            self._consumers.remove(q)
+
+    def _broadcast(self, chunk: str | None) -> None:
+        if chunk is not None:
+            seq = _extract_seq(chunk)
+            self._replay.append((seq, chunk))
+            if len(self._replay) > _REPLAY_MAX:
+                self._replay = self._replay[-_REPLAY_MAX:]
+        for q in list(self._consumers):
+            try:
+                q.put_nowait(chunk)
+            except asyncio.QueueFull:
+                pass
+
+    def finish(self) -> None:
+        self._broadcast(None)
+        self._consumers.clear()
+
+
+_active_turns: dict[str, _ActiveTurn] = {}
+
+
+def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
+    """Return the active turn for *session_id* if one is running."""
+    turn = _active_turns.get(session_id)
+    if turn and turn.task and not turn.task.done():
+        return turn
+    _active_turns.pop(session_id, None)
+    return None
+
+
+async def start_session_turn(
+    session_id: str, message: str, user_id: str, start_seq: int = 0
+) -> asyncio.Queue:
+    """Start a background agent turn and return a subscription queue.
+
+    The turn runs independently of any SSE connection.  Multiple clients
+    can subscribe to the same turn (e.g. after a page refresh).
+    """
+    session = store.get_session(session_id)
+    if not session:
+        raise ValueError(f"Session not found: {session_id}")
+    coordinator_id = _coordinator_for(session)
+    if not coordinator_id:
+        raise ValueError(f"No coordinator for session: {session_id}")
+
+    turn = _ActiveTurn(session_id=session_id)
+
+    async def _runner() -> None:
+        try:
+            async with contextlib.aclosing(
+                stream_turn_sse(session_id, coordinator_id, message, start_seq)
+            ) as agen:
+                async for chunk in agen:
+                    turn._broadcast(chunk)
+        except Exception as exc:
+            logger.exception("background turn failed session_id=%s", session_id)
+            turn._broadcast(
+                _fmt_sse(
+                    {
+                        "event": "error",
+                        "data": {"message": f"Turn failed: {exc}"},
+                        "seq": 9998,
+                    }
+                )
+            )
+        finally:
+            turn.finish()
+            _active_turns.pop(session_id, None)
+            logger.info("background turn done session_id=%s", session_id)
+
+    turn.task = asyncio.create_task(_runner())
+    _active_turns[session_id] = turn
+    return turn.subscribe()
 
 
 def _coordinator_for(session: dict[str, Any]) -> str | None:
@@ -145,9 +279,11 @@ async def session_heartbeat_stream(
 
 __all__ = [
     "_fmt_sse",
+    "get_active_session_turn",
     "heartbeat_stream",
     "record_session_user_message",
     "run_session_turn",
     "run_turn",
     "session_heartbeat_stream",
+    "start_session_turn",
 ]

@@ -19,6 +19,64 @@
   let agents = {};
   let activeId = null;
   let chatHandle = null;
+  var pollTimer = null;
+  var monitorEs = null;
+
+  function stopHistoryPoll() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (monitorEs) { try { monitorEs.close(); } catch (e) {} monitorEs = null; }
+  }
+
+  function refetchHistory(sessionId, cb) {
+    Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat').then(function (hist) {
+      var entries = hist.entries || [];
+      renderHistory(entries);
+      if (chatHandle) { chatHandle.destroy(); chatHandle = null; }
+      chatHandle = TomoChat.init(chatWrap);
+      if (cb) cb(entries);
+    }).catch(function () {});
+  }
+
+  function startHistoryPoll(sessionId) {
+    stopHistoryPoll();
+    var lastCount = -1;
+
+    // SSE-driven poll: open a monitor connection to the active turn.
+    // Heartbeats and turn.end trigger history re-fetches.
+    var url = '/api/sessions/' + encodeURIComponent(sessionId) + '/chat/stream?user_id=web&after=0';
+    try {
+      monitorEs = new EventSource(url);
+      monitorEs.addEventListener('heartbeat', function () {
+        refetchHistory(sessionId, function (entries) {
+          if (entries.length !== lastCount) {
+            lastCount = entries.length;
+          }
+        });
+      });
+      monitorEs.addEventListener('turn.end', function () {
+        if (monitorEs) { try { monitorEs.close(); } catch (e) {} monitorEs = null; }
+        refetchHistory(sessionId);
+      });
+      monitorEs.addEventListener('error', function () {
+        // EventSource will auto-retry; also keep a timer fallback.
+      });
+    } catch (e) { /* EventSource not available */ }
+
+    // Timer fallback every 3s (in case SSE fails).
+    pollTimer = setInterval(function () {
+      var sid = chatWrap.dataset.sessionId;
+      if (sid !== sessionId) { stopHistoryPoll(); return; }
+      refetchHistory(sessionId, function (entries) {
+        var last = entries[entries.length - 1];
+        if (last && (last.type === 'final' || last.type === 'error')) {
+          stopHistoryPoll();
+        }
+        if (entries.length !== lastCount) {
+          lastCount = entries.length;
+        }
+      });
+    }, 3000);
+  }
 
   function esc(s) { return Tomo.escapeHtml(s); }
 
@@ -147,23 +205,38 @@
 
     // ── Per-turn state ──────────────────────────────────────────────
     var turn = null;
+    var turnId = 0;
+    var delegateCounter = 0;          // unique per delegate call within a turn
+    var agentToKey = {};               // agent_id → current buffer key
     var subagentSet = new Set();
-    var subagentBuffers = new Map();
+    var subagentBuffers = new Map();  // key: turnId + ':' + delegateCounter → buffer
+    var turnBuffers = new Map();      // current turn: key → buffer
     var swarmCard = null;
     var detailPanel = null;
 
-    function getBuffer(aid) {
-      if (!subagentBuffers.has(aid)) {
-        subagentBuffers.set(aid, { events: [], name: '', task: '', status: 'running', row: null });
+    function getBuffer(key) {
+      if (!turnBuffers.has(key)) {
+        var buf = { events: [], name: '', task: '', status: 'running', row: null, aid: '', turnId: turnId };
+        turnBuffers.set(key, buf);
+        subagentBuffers.set(turnId + ':' + delegateCounter, buf);
       }
-      return subagentBuffers.get(aid);
+      return turnBuffers.get(key);
+    }
+
+    function keyForAid(aid) {
+      return agentToKey[aid] || aid;
     }
 
     function startTurn() {
+      turnId++;
       turn = document.createElement('div');
       turn.className = 'turn';
       scroll.appendChild(turn);
       swarmCard = null;
+      subagentSet = new Set();
+      turnBuffers = new Map();
+      agentToKey = {};
+      delegateCounter = 0;
       var oldPanel = chatWrap.querySelector('.detail-panel');
       if (oldPanel) oldPanel.remove();
       detailPanel = null;
@@ -196,17 +269,20 @@
           '<div class="task">' + esc(task || '') + '</div>' +
           '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
         '</div>';
-      row.addEventListener('click', function () { openDetailPanel(aid); });
+      row.addEventListener('click', function () { openDetailPanel(row); });
       card.appendChild(row);
-      var buf = getBuffer(aid);
+      var key = turnId + ':' + delegateCounter;
+      var buf = getBuffer(key);
       buf.row = row;
+      row._buffer = buf;
       buf.name = name || aid;
+      buf.aid = aid;
       buf.task = task || '';
       return row;
     }
 
-    function markSwarmDone(aid, status) {
-      var buf = subagentBuffers.get(aid);
+    function markSwarmDone(key, status) {
+      var buf = turnBuffers.get(key);
       if (!buf) return;
       buf.status = status === 'error' ? 'error' : 'done';
       if (!buf.row) return;
@@ -216,8 +292,8 @@
       if (bar) bar.style.width = '100%';
     }
 
-    function bumpSwarmProgress(aid) {
-      var buf = subagentBuffers.get(aid);
+    function bumpSwarmProgress(key) {
+      var buf = turnBuffers.get(key);
       if (!buf || !buf.row) return;
       buf.row.classList.add('active');
       var bar = buf.row.querySelector('.swarm-progress-bar');
@@ -227,8 +303,8 @@
       }
     }
 
-    function bufferEvent(aid, kind, data) {
-      var buf = getBuffer(aid);
+    function bufferEvent(key, kind, data) {
+      var buf = turnBuffers.get(key) || getBuffer(key);
       buf.events.push({ kind: kind, data: data });
     }
 
@@ -275,25 +351,45 @@
           last._res.style.display = '';
         }
       } else if (kind === 'delta' || kind === 'final') {
-        var el = document.createElement('div');
-        el.className = 'detail-response prose chat-prose';
-        if (window.TomoChat && TomoChat.setMarkdown) {
-          TomoChat.setMarkdown(el, data.content || '');
+        var existing = body.querySelector('.detail-response:last-child');
+        if (existing && existing._accumulating) {
+          existing._accumulated = (existing._accumulated || '') + (data.content || '');
+          if (window.TomoChat && TomoChat.setMarkdown) {
+            TomoChat.setMarkdown(existing, existing._accumulated);
+          } else {
+            existing.textContent = existing._accumulated;
+          }
         } else {
-          el.textContent = data.content || '';
+          var el = document.createElement('div');
+          el.className = 'detail-response prose chat-prose';
+          el._accumulating = true;
+          el._accumulated = data.content || '';
+          if (window.TomoChat && TomoChat.setMarkdown) {
+            TomoChat.setMarkdown(el, el._accumulated);
+          } else {
+            el.textContent = el._accumulated;
+          }
+          body.appendChild(el);
         }
-        body.appendChild(el);
       }
     }
 
-    function openDetailPanel(aid) {
+    function openDetailPanel(rowOrAid) {
+      var buf, aid, name;
+      if (rowOrAid && rowOrAid._buffer) {
+        buf = rowOrAid._buffer;
+        aid = buf.aid || rowOrAid.dataset.agentId || '';
+        name = buf.name || aid;
+      } else {
+        aid = rowOrAid;
+        buf = getBuffer(aid);
+        name = buf.name || aid;
+      }
       if (detailPanel) { detailPanel.remove(); }
       detailPanel = document.createElement('div');
       detailPanel.className = 'detail-panel';
       chatWrap.appendChild(detailPanel);
 
-      var buf = subagentBuffers.get(aid) || getBuffer(aid);
-      var name = buf.name || aid;
       var color = agentColor(aid);
       var letter = esc((name || '?').slice(0, 1).toUpperCase());
 
@@ -312,20 +408,20 @@
       body.className = 'detail-body';
       detailPanel.appendChild(body);
 
-      // Footer with all agent chips.
-      if (subagentBuffers.size > 0) {
+      // Footer with all agent chips (current turn only).
+      if (turnBuffers.size > 0) {
         var footer = document.createElement('div');
         footer.className = 'detail-footer';
-        subagentBuffers.forEach(function (b, id) {
+        turnBuffers.forEach(function (b, _key) {
           var chip = document.createElement('button');
-          chip.className = 'detail-agent-chip' + (id === aid ? ' active' : '');
+          chip.className = 'detail-agent-chip' + (b.aid === aid ? ' active' : '');
           chip.type = 'button';
-          var cColor = agentColor(id);
-          var cLetter = esc((b.name || id || '?').slice(0, 1).toUpperCase());
+          var cColor = agentColor(b.aid || '');
+          var cLetter = esc((b.name || b.aid || '?').slice(0, 1).toUpperCase());
           chip.innerHTML =
             '<div class="av" style="background:' + cColor + '">' + cLetter + '</div>' +
-            '<div class="label">' + esc(b.name || id) + '</div>';
-          chip.addEventListener('click', function () { openDetailPanel(id); });
+            '<div class="label">' + esc(b.name || b.aid) + '</div>';
+          chip.addEventListener('click', function () { if (b.row) openDetailPanel(b.row); });
           footer.appendChild(chip);
         });
         detailPanel.appendChild(footer);
@@ -371,8 +467,10 @@
         var idx = p.parallel_index || 1;
         var total = p.parallel_total || 1;
         if (aid) subagentSet.add(aid);
-        var buf = getBuffer(aid);
-        buf.name = name; buf.task = task;
+        delegateCounter++;
+        agentToKey[aid] = turnId + ':' + delegateCounter;
+        var buf = getBuffer(agentToKey[aid]);
+        buf.name = name; buf.aid = aid; buf.task = task;
         addSwarmRow(aid, name, task, idx, total);
         return;
       }
@@ -385,8 +483,10 @@
         var idx = p.parallel_index || 1;
         var total = p.parallel_total || 1;
         if (aid) subagentSet.add(aid);
-        var buf = getBuffer(aid);
-        buf.name = name; buf.task = task;
+        delegateCounter++;
+        agentToKey[aid] = turnId + ':' + delegateCounter;
+        var buf = getBuffer(agentToKey[aid]);
+        buf.name = name; buf.aid = aid; buf.task = task;
         if (!buf.row) addSwarmRow(aid, name, task, idx, total);
         if (buf.row) buf.row.classList.add('active');
         return;
@@ -394,15 +494,16 @@
 
       if (e.type === 'subagent_done') {
         var p = e.params || {};
-        markSwarmDone(e.agent_id || '', p.status || 'ok');
+        markSwarmDone(keyForAid(e.agent_id || ''), p.status || 'ok');
         return;
       }
 
       if (e.type === 'tool_call') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          bufferEvent(aid, 'tool', { tool: e.function, args: e.params });
-          bumpSwarmProgress(aid);
+          var key = keyForAid(aid);
+          bufferEvent(key, 'tool', { tool: e.function, args: e.params });
+          bumpSwarmProgress(key);
         } else {
           var card = document.createElement('div');
           card.className = 'tool';
@@ -423,8 +524,9 @@
       if (e.type === 'tool_output') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          bufferEvent(aid, 'tool_result', { result: e.content, error: e.error });
-          bumpSwarmProgress(aid);
+          var key = keyForAid(aid);
+          bufferEvent(key, 'tool_result', { result: e.content, error: e.error });
+          bumpSwarmProgress(key);
         } else {
           var cards = turn.querySelectorAll('.tool');
           var last = cards[cards.length - 1];
@@ -441,8 +543,9 @@
       if (e.type === 'thinking') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          bufferEvent(aid, 'thinking', { content: e.content });
-          bumpSwarmProgress(aid);
+          var key = keyForAid(aid);
+          bufferEvent(key, 'thinking', { content: e.content });
+          bumpSwarmProgress(key);
         }
         return;
       }
@@ -452,7 +555,8 @@
         var text = (e.content || '').trim();
         if (!text || text.indexOf('[Swarm]') === 0) return;
         if (subagentSet.has(aid)) {
-          bufferEvent(aid, 'final', { content: text });
+          var key = keyForAid(aid);
+          bufferEvent(key, 'final', { content: text });
         } else {
           var who = agentName(aid);
           var row = document.createElement('div');
@@ -518,11 +622,21 @@
 
     if (chatHandle && chatHandle.destroy) chatHandle.destroy();
     chatHandle = null;
+    stopHistoryPoll();
 
     try {
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
+
+      // If the turn might still be active (no final/error entry yet),
+      // poll for updates so a refreshed client sees the remaining work.
+      var entries = hist.entries || [];
+      var last = entries[entries.length - 1];
+      if (last && last.type !== 'final' && last.type !== 'error' && !pending) {
+        startHistoryPoll(sessionId);
+      }
+
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
       Tomo.toast('Could not load session', 'err');

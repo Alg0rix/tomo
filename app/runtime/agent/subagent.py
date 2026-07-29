@@ -107,8 +107,14 @@ async def drain_subagent_turn(
         from app.runtime.agent.loop import run_turn as run_turn_fn
 
     token = bind_depth(current_depth() + 1)
+    depth = current_depth()
     task_prompt = _subagent_prompt(
         from_id=from_agent_id, reason=reason, user_request=user_request
+    )
+    _logger.info(
+        "subagent begin: target=%s from=%s depth=%d/%d reason=%s",
+        target_agent_id, from_agent_id, depth, MAX_DELEGATE_DEPTH,
+        (reason or "")[:80],
     )
     final_output = ""
     try:
@@ -126,16 +132,25 @@ async def drain_subagent_turn(
             ev["subagent"] = True
             if ev["kind"] == "final":
                 final_output = ev.get("content") or ""
-                # The child's final must NOT end the parent's turn — the
-                # parent continues. Rename so the SSE layer renders it as
-                # attributed chat content, not a terminal ``done``.
+                _logger.info(
+                    "subagent final: target=%s chars=%d",
+                    target_agent_id, len(final_output),
+                )
                 ev["kind"] = "subagent_final"
             elif ev["kind"] == "error":
                 final_output = f"Error: {ev.get('message', 'subagent failed')}"
+                _logger.warning(
+                    "subagent error: target=%s msg=%s",
+                    target_agent_id, ev.get("message", "")[:120],
+                )
                 ev["kind"] = "subagent_error"
             yield ev, final_output
     finally:
         reset_depth(token)
+        _logger.info(
+            "subagent end: target=%s output=%d chars depth=%d",
+            target_agent_id, len(final_output), depth,
+        )
 
 
 __all__ = [

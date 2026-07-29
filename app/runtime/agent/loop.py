@@ -43,6 +43,7 @@ import asyncio
 import collections
 import itertools
 import json
+import logging
 from typing import Any, AsyncIterator
 
 from app.runtime.agent.context import build_messages, build_system_prompt
@@ -56,6 +57,8 @@ from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.tools import sandbox
 from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute, get_openai_tools
+
+_logger = logging.getLogger(__name__)
 
 # Loop-detection tuning (sliding window of tool+args signatures).
 _LOOP_WINDOW = 10
@@ -207,9 +210,7 @@ async def _maybe_run_atg(
 
         dag, _history = await compile_task_graph(goal, tools, llm)
     except Exception as exc:  # CompilationError or any failure → no-ATG fallback
-        import logging
-
-        logging.getLogger(__name__).warning("ATG compile failed: %s", exc)
+        _logger.warning("ATG compile failed: %s", exc)
         return None
     return run_dag_execution(dag, llm=llm, tools=tools, agent_id=agent_id)
 
@@ -270,6 +271,11 @@ async def run_turn(
             yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
             return
 
+        _logger.info(
+            "turn start agent=%s session=%s tools=%d limit=%d atg=%s",
+            agent_id, session_id, len(tool_schemas), limit, enable_atg,
+        )
+
         id_counter = itertools.count()
         user_request = _last_user_text(user_message, history)
 
@@ -303,6 +309,7 @@ async def run_turn(
             iteration += 1
             resp: LLMResponse | None = None
             streamed = False
+            _logger.info("LLM round %d agent=%s …", iteration, agent_id)
             try:
                 async for piece in _llm_round(client, messages, tool_schemas):
                     if piece["kind"] == "delta":
@@ -322,6 +329,7 @@ async def run_turn(
                 yield {"kind": "thinking", "content": resp.content}
 
             if not resp.has_tool_calls:
+                _logger.info("turn end agent=%s final_chars=%d", agent_id, len(resp.content or ""))
                 yield {
                     "kind": "final",
                     "content": resp.content or "",
@@ -332,12 +340,21 @@ async def run_turn(
             paired = _with_ids(resp.tool_calls, id_counter)
             messages.append(_assistant_tool_calls_message(resp, paired))
 
+            tool_names = [c.name for _cid, c in paired]
+            _logger.info(
+                "tool round %d: %s", iteration, tool_names,
+            )
+
             # ── Loop detection: identical (tool, args) repeated too often ──
             for _cid, call in paired:
                 sig = _call_signature(call)
                 call_window.append(sig)
                 if call_window.count(sig) >= _LOOP_THRESHOLD and not force_stopped:
                     force_stopped = True
+                    _logger.warning(
+                        "loop detected agent=%s tool=%s sig=%s — forcing stop",
+                        agent_id, call.name, sig[:80],
+                    )
                     messages.append(
                         {
                             "role": "user",
@@ -365,6 +382,19 @@ async def run_turn(
                 for cid, c in paired
                 if c.name != "delegate" and c.name not in _READ_ONLY_TOOLS
             ]
+            if delegate_calls or len(ro_calls) > 1 or mut_calls:
+                _logger.info(
+                    "exec: delegate=%d readonly=%d (parallel=%s) mutating=%d",
+                    len(delegate_calls), len(ro_calls),
+                    len(ro_calls) > 1, len(mut_calls),
+                )
+
+            # Emit tool events for all non-delegate tools BEFORE executing
+            # so the UI shows a loading state immediately.
+            for cid, call in paired:
+                if call.name == "delegate":
+                    continue
+                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
 
             # Run read-only tools concurrently (no side effects).
             if len(ro_calls) > 1:
@@ -388,20 +418,22 @@ async def run_turn(
                     await asyncio.to_thread(execute, c.name, c.arguments)
                 )
 
-            # Emit events in original call order, feeding results back.
-            ro_iter = list(zip(ro_calls, results_ro))
-            mut_iter = list(zip(mut_calls, results_mut))
+            # Build result map, converting exceptions to error strings.
             by_cid: dict[str, tuple[ToolCall, Any]] = {}
-            for (cid, call), res in ro_iter + mut_iter:
+            for (cid, call), res in zip(ro_calls, results_ro):
+                if isinstance(res, Exception):
+                    res = f"Error: {res}"
+                by_cid[cid] = (call, res)
+            for (cid, call), res in zip(mut_calls, results_mut):
                 by_cid[cid] = (call, res)
 
+            # Emit tool_result events in original call order.
             for cid, call in paired:
                 if call.name == "delegate":
                     continue  # handled below
                 if cid not in by_cid:
                     continue
                 call_obj, result = by_cid[cid]
-                yield {"kind": "tool", "tool": call_obj.name, "args": call_obj.arguments}
                 result = _truncate_result(result)
                 error = _tool_result_is_error(result)
                 yield {
@@ -434,6 +466,10 @@ async def run_turn(
 
                 if target and not delegate_error:
                     if depth_exceeded():
+                        _logger.warning(
+                            "delegate depth exceeded: agent=%s target=%s",
+                            agent_id, target,
+                        )
                         sub_result = (
                             f"Error: delegation depth limit reached — "
                             f"cannot delegate further to {target}."
@@ -451,6 +487,10 @@ async def run_turn(
                             "parallel_total": parallel_total,
                         }
                         # Signal subagent start so the UI can create its card.
+                        _logger.info(
+                            "delegate→ agent=%s target=%s reason=%s parallel=%d/%d",
+                            agent_id, target, reason[:60], parallel_index, parallel_total,
+                        )
                         yield {
                             "kind": "subagent_start",
                             "agent_id": target,
@@ -474,7 +514,17 @@ async def run_turn(
                         except Exception as exc:
                             sub_output = f"Error: subagent {target} failed: {exc}"
                             delegate_error = True
+                            _logger.error(
+                                "subagent error: agent=%s target=%s err=%s",
+                                agent_id, target, exc,
+                            )
                         # Signal subagent completion so the UI can mark it done.
+                        _logger.info(
+                            "subagent done: target=%s status=%s output=%d chars",
+                            target,
+                            "error" if delegate_error else "ok",
+                            len(sub_output),
+                        )
                         yield {
                             "kind": "subagent_done",
                             "agent_id": target,
@@ -500,6 +550,9 @@ async def run_turn(
 
             continue
 
+        _logger.warning(
+            "max iterations exceeded: agent=%s limit=%d", agent_id, limit,
+        )
         yield {
             "kind": "error",
             "message": (

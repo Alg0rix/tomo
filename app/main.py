@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -93,6 +94,25 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+def _configure_logging() -> None:
+    """Set up console logging for the ``app`` namespace at INFO level."""
+    _app_logger = logging.getLogger("app")
+    _app_logger.setLevel(logging.INFO)
+    if not _app_logger.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+        _app_logger.addHandler(_h)
+    _app_logger.propagate = False
+
+
+_configure_logging()
 
 
 def main() -> None:

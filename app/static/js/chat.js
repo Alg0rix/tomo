@@ -243,7 +243,11 @@
           who.innerHTML = 'You <span class="queue-chip">queued</span>';
         }
       }
-      scroll.appendChild(bubble);
+      // Match history layout: user bubble lives inside a centered .turn column.
+      const turn = document.createElement('div');
+      turn.className = 'turn';
+      turn.appendChild(bubble);
+      scroll.appendChild(turn);
       atBottom();
       return bubble;
     }
@@ -271,7 +275,7 @@
         syncBusyStatus();
         // Fire-and-forget next turn (async).
         // Bubble was already shown when enqueued (or on the failed concurrent try).
-        startTurn(next.text, { alreadyBubbled: true });
+        startTurn(next.text, { alreadyBubbled: true, bubbleEl: next.el });
         return;
       }
       setStatus('ok', 'online');
@@ -327,14 +331,18 @@
       return data.session_id;
     }
 
-    function streamTurn(text) {
+    function streamTurn(text, turnEl) {
       // Clean up any leftover detail panel from a previous turn.
       var oldPanel = wrap.querySelector('.detail-panel');
       if (oldPanel) oldPanel.remove();
 
-      const turn = document.createElement('div');
-      turn.className = 'turn';
-      scroll.appendChild(turn);
+      // Reuse the turn that already holds this user bubble (matches history layout).
+      let turn = turnEl;
+      if (!turn || !turn.classList || !turn.classList.contains('turn')) {
+        turn = document.createElement('div');
+        turn.className = 'turn';
+        scroll.appendChild(turn);
+      }
       let thinkEl = null, asstEl = null, asstBody = null, pendingEl = null, raw = '', closed = false;
       let turnAgentName = defaultAgentName;
       let turnAgentId = agentId || '';
@@ -792,8 +800,8 @@
         clearPending();
         dropEmptyAssistant();
         const card = document.createElement('div');
-        card.className = 'tool';
-        card.innerHTML = '<div><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tres" style="display:none"></div>';
+        card.className = 'tool loading';
+        card.innerHTML = '<div class="tool-head"><span class="chevron">\u25B6</span><span class="tname">' + esc(d.tool || 'tool') + '</span> <span class="targs">' + esc(JSON.stringify(d.args || {})) + '</span></div><div class="tloading">running\u2026</div><div class="tres" style="display:none"></div>';
         turn.appendChild(card);
         card._res = card.querySelector('.tres');
         makeToolCollapsible(card, d);
@@ -814,6 +822,7 @@
           var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
           last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
           last._res.style.display = '';
+          last.classList.remove('loading');
           if (d.error) {
             last.classList.add('expanded');
             var ch = last.querySelector('.chevron');
@@ -920,15 +929,16 @@
         endTurn();
       });
       es.addEventListener('heartbeat', function () {
-        // Legacy: heartbeat after a message turn meant the turn generator finished.
-        if (turnActive) endTurn();
+        // Heartbeats are keep-alive signals during long operations
+        // (subagent LLM calls, tool execution). Do NOT end the turn.
+        bumpActivity();
       });
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
     }
 
     /**
      * @param {string} value
-     * @param {{alreadyBubbled?: boolean}} [opts]
+     * @param {{alreadyBubbled?: boolean, bubbleEl?: Element|null}} [opts]
      */
     async function startTurn(value, opts) {
       opts = opts || {};
@@ -952,10 +962,12 @@
         if (messageQueue.length) finishTurn();
         return;
       }
+      var userBubble = opts.bubbleEl || null;
       if (!opts.alreadyBubbled) {
-        appendUserBubble(value, false);
+        userBubble = appendUserBubble(value, false);
       }
-      streamTurn(value);
+      var turnEl = userBubble && userBubble.closest ? userBubble.closest('.turn') : null;
+      streamTurn(value, turnEl);
     }
 
     function enqueueMessage(value) {
