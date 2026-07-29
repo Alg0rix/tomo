@@ -135,6 +135,7 @@ def test_agent_generate_via_api(tmp_path, monkeypatch) -> None:
                 "role": "ops",
                 "description": "Network operations specialist.",
                 "suggested_id": "netops",
+                "system_prompt": "# NetOps\n\n## Responsibilities\n- Monitor infra",
             }
 
         monkeypatch.setattr(
@@ -147,5 +148,6 @@ def test_agent_generate_via_api(tmp_path, monkeypatch) -> None:
         body = res.json()
         assert body["name"] == "NetOps"
         assert body["suggested_id"] == "netops"
+        assert "Responsibilities" in body["system_prompt"]
     finally:
         _cleanup()

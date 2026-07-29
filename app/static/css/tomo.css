@@ -1810,6 +1810,38 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 }
 .agent-new-preview-row .v { color: var(--text); margin: 0; line-height: 1.45; }
 .agent-new-preview-desc .v { color: var(--text-dim); }
+.agent-new-instructions {
+  margin-top: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.agent-new-instructions-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.agent-new-instructions-body {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .agent-new-actions .hidden { display: none; }
 .agent-new-head h3 {
   font-family: var(--font-display);

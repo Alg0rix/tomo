@@ -10,12 +10,16 @@ from app.runtime.llm.openai_compat import LLMConfigError
 
 
 def test_parse_agent_draft_json_plain() -> None:
-    raw = '{"name": "NetOps", "role": "ops", "description": "Monitors infra."}'
-    assert parse_agent_draft_json(raw) == {
-        "name": "NetOps",
-        "role": "ops",
-        "description": "Monitors infra.",
-    }
+    raw = (
+        '{"name": "NetOps", "role": "ops", "description": "Monitors infra.", '
+        '"system_prompt": "# NetOps\\n\\nYou monitor networks."}'
+    )
+    parsed = parse_agent_draft_json(raw)
+    assert parsed is not None
+    assert parsed["name"] == "NetOps"
+    assert parsed["role"] == "ops"
+    assert parsed["description"] == "Monitors infra."
+    assert "NetOps" in parsed["system_prompt"]
 
 
 def test_parse_agent_draft_json_fenced() -> None:
@@ -32,7 +36,10 @@ async def test_generate_agent_draft_uses_llm() -> None:
     class _L:
         async def complete(self, messages, tools=None):
             return LLMResponse(
-                content='{"name": "NetOps", "role": "ops", "description": "Network specialist."}',
+                content=(
+                    '{"name": "NetOps", "role": "ops", "description": "Network specialist.", '
+                    '"system_prompt": "# NetOps\\n\\n## Responsibilities\\n- Monitor alerts"}'
+                ),
                 tool_calls=[],
             )
 
@@ -41,6 +48,21 @@ async def test_generate_agent_draft_uses_llm() -> None:
     assert draft["name"] == "NetOps"
     assert draft["role"] == "ops"
     assert draft["suggested_id"] == "netops"
+    assert "Responsibilities" in draft["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_agent_draft_fallback_system_prompt() -> None:
+    class _L:
+        async def complete(self, messages, tools=None):
+            return LLMResponse(
+                content='{"name": "NetOps", "role": "ops", "description": "Network specialist."}',
+                tool_calls=[],
+            )
+
+    draft = await generate_agent_draft("network ops agent", llm=_L())
+    assert draft is not None
+    assert "## Responsibilities" in draft["system_prompt"]
 
 
 @pytest.mark.asyncio

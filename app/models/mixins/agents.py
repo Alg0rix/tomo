@@ -150,7 +150,10 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         home.agent_knowledge_dir(aid).mkdir(parents=True, exist_ok=True)
         home.agent_work_dir(aid).mkdir(parents=True, exist_ok=True)
         sys_path = home.agent_system_path(aid)
-        if not sys_path.exists():
+        custom_prompt = (data.get("system_prompt") or "").strip()
+        if custom_prompt:
+            sys_path.write_text(custom_prompt, encoding="utf-8")
+        elif not sys_path.exists():
             role = (data.get("role") or "").strip() or "specialist"
             desc = (data.get("description") or "").strip() or name
             sys_path.write_text(

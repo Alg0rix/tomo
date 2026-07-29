@@ -42,6 +42,7 @@ class AgentCreate(BaseModel):
     workplace_id: str = ""
     workplace_ids: list[str] = Field(default_factory=list)
     workplace_scope: str = "single"  # single | list | all_tunnels | all
+    system_prompt: str | None = Field(default=None, max_length=12_000)
 
 
 class AgentGenerateIn(BaseModel):
@@ -57,6 +58,7 @@ class AgentDraft(BaseModel):
     role: str = ""
     description: str = ""
     suggested_id: str = ""
+    system_prompt: str = ""
 
 
 class AgentUpdate(BaseModel):

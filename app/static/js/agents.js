@@ -89,10 +89,12 @@
     var roleEl = document.getElementById("previewRole");
     var idEl = document.getElementById("previewId");
     var descEl = document.getElementById("previewDesc");
+    var sysEl = document.getElementById("previewSystem");
     if (nameEl) nameEl.textContent = data.name || "—";
     if (roleEl) roleEl.textContent = data.role || "—";
     if (idEl) idEl.textContent = data.suggested_id || "auto from name";
     if (descEl) descEl.textContent = data.description || "—";
+    if (sysEl) sysEl.textContent = data.system_prompt || "—";
   }
 
   function applyDraftToAdvanced() {
@@ -124,6 +126,7 @@
         role: String(draft.role || "").trim(),
         description: String(draft.description || "").trim(),
         model_id: null,
+        system_prompt: String(draft.system_prompt || "").trim() || null,
       };
     }
     const fd = new FormData(form);
