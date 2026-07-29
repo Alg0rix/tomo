@@ -21,6 +21,7 @@ from .models import (
     Stats,
     UserCreate,
     UserUpdate,
+    ApiKeyCreate,
     WorkplaceCreate,
     WorkplaceUpdate,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "AgentDraft",
     "AgentGenerateIn",
     "AgentUpdate",
+    "ApiKeyCreate",
     "ChatEntry",
     "ChatMessageIn",
     "HomeSessionIn",

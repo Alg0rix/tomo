@@ -55,24 +55,72 @@ templates.env.globals["eval_ui_enabled"] = EVAL_UI_ENABLED
 
 
 def _is_authenticated(request: Request) -> bool:
-    return bool(request.session.get("auth"))
+    return bool(request.session.get("auth")) or bool(
+        getattr(request.state, "auth_user_id", None)
+    )
+
+
+def _extract_bearer_or_api_key(request: Request) -> str | None:
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if token:
+            return token
+    xkey = (request.headers.get("x-api-key") or "").strip()
+    return xkey or None
+
+
+def _try_api_key_auth(request: Request) -> bool:
+    """If a valid API key is present, attach identity to ``request.state``."""
+    if getattr(request.state, "auth_user_id", None):
+        return True
+    token = _extract_bearer_or_api_key(request)
+    if not token or not token.startswith("tomo_"):
+        return False
+    from app.services import store
+
+    identity = store.authenticate_api_key(token)
+    if not identity:
+        return False
+    request.state.auth_user_id = identity["user_id"]
+    request.state.auth_username = identity["username"]
+    request.state.auth_via = "api_key"
+    request.state.auth_key_id = identity["key_id"]
+    return True
 
 
 def session_user_id(request: Request) -> str:
-    """Logged-in account id, or ``web`` when anonymous/legacy."""
+    """Logged-in account id (session or API key), or ``web`` when anonymous."""
+    api_uid = getattr(request.state, "auth_user_id", None)
+    if api_uid:
+        return str(api_uid)
     return str(request.session.get("user_id") or "web")
 
 
 def session_username(request: Request) -> str:
+    api_name = getattr(request.state, "auth_username", None)
+    if api_name:
+        return str(api_name)
     return str(request.session.get("user") or "")
 
 
 def require_auth(request: Request) -> None:
-    """Dependency for routes that need a logged-in admin."""
+    """Dependency for routes that need a logged-in admin or API key."""
     if _is_authenticated(request):
         return
+    if _try_api_key_auth(request):
+        return
     if request.url.path.startswith("/api/"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        # Invalid Bearer that looks like our key → 401 (don't fall through).
+        token = _extract_bearer_or_api_key(request)
+        if token and token.startswith("tomo_"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+        )
     raise HTTPException(
         status_code=status.HTTP_303_SEE_OTHER,
         headers={"Location": f"/login?next={request.url.path}"},

@@ -170,6 +170,13 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, max_length=128)
 
 
+class ApiKeyCreate(BaseModel):
+    """Create an API key for a login account."""
+
+    user_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=80)
+
+
 class WorkplaceCreate(BaseModel):
     """Create a workplace (local / ssh / tunnel). ``id`` optional — auto from ``name``."""
 

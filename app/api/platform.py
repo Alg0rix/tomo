@@ -18,6 +18,7 @@ from app.schemas import (
     ScheduleUpdate,
     UserCreate,
     UserUpdate,
+    ApiKeyCreate,
     WorkplaceCreate,
     WorkplaceUpdate,
 )
@@ -486,6 +487,26 @@ async def delete_user(user_id: str, request: Request, _: AuthDep):
         raise HTTPException(status_code=400, detail=str(e))
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
+    return {"success": True}
+
+
+@router.get("/api-keys")
+async def list_api_keys(user_id: str | None = None, _: AuthDep = None):
+    return {"keys": store.list_api_keys(user_id)}
+
+
+@router.post("/api-keys")
+async def create_api_key(body: ApiKeyCreate, _: AuthDep):
+    try:
+        return store.create_api_key(body.user_id, body.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/api-keys/{key_id}")
+async def delete_api_key(key_id: str, _: AuthDep):
+    if not store.delete_api_key(key_id):
+        raise HTTPException(status_code=404, detail="API key not found")
     return {"success": True}
 
 
