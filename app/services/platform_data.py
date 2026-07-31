@@ -21,11 +21,11 @@ def seed_tools() -> list[dict[str, Any]]:
 
 
 def seed_skills() -> list[dict[str, Any]]:
+    # Catalog placeholders for the Skills UI — not auto-linked to seeded agents.
     return [
-        {"id": "onboarding", "name": "Vendor Onboarding", "description": "Structured Q3 vendor intake workflow", "version": "1.2", "enabled": True, "tool_count": 4, "agent_count": 1},
-        {"id": "deploy", "name": "Deploy Pipeline", "description": "Staging → production deploy checklist", "version": "2.0", "enabled": True, "tool_count": 6, "agent_count": 1},
-        {"id": "research_brief", "name": "Research Brief", "description": "Competitive research summarization", "version": "1.0", "enabled": True, "tool_count": 3, "agent_count": 1},
-        {"id": "support_faq", "name": "Support FAQ", "description": "Answer from knowledge base with citations", "version": "1.1", "enabled": False, "tool_count": 2, "agent_count": 0},
+        {"id": "onboarding", "name": "Vendor Onboarding", "description": "Structured Q3 vendor intake workflow", "version": "1.2", "enabled": True, "tool_count": 4, "agent_count": 0},
+        {"id": "deploy", "name": "Deploy Pipeline", "description": "Staging → production deploy checklist", "version": "2.0", "enabled": True, "tool_count": 6, "agent_count": 0},
+        {"id": "research_brief", "name": "Research Brief", "description": "Competitive research summarization", "version": "1.0", "enabled": True, "tool_count": 3, "agent_count": 0},
     ]
 
 

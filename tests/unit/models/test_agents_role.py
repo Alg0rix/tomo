@@ -14,6 +14,7 @@ def test_seed_agents_have_roles(tmp_path) -> None:
     agents = {a["id"]: a for a in store.list_agents()}
     assert agents["main"]["role"]  # non-empty
     assert agents["ops"]["role"]
+    assert agents["coder"]["role"]
     assert agents["research"]["role"]
 
 
@@ -23,6 +24,7 @@ def test_seed_agents_use_empty_model_id(tmp_path) -> None:
     agents = {a["id"]: a for a in store.list_agents()}
     assert agents["main"]["model_id"] == ""
     assert agents["ops"]["model_id"] == ""
+    assert agents["coder"]["model_id"] == ""
 
 
 def test_create_agent_with_role(tmp_path) -> None:

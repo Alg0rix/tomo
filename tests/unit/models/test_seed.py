@@ -25,7 +25,7 @@ def test_seed_if_empty_populates_demo_data(tmp_path) -> None:
     conn = _fresh_conn(tmp_path)
     seed_if_empty(conn)
     agent_ids = {r["id"] for r in conn.execute("SELECT id FROM agents")}
-    assert {"main", "ops", "research", "support"} <= agent_ids
+    assert {"main", "ops", "coder", "research"} <= agent_ids
     assert conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"] == 0
     assert conn.execute("SELECT COUNT(*) AS c FROM settings").fetchone()["c"] > 0
     kb_ids = {r["id"] for r in conn.execute("SELECT id FROM knowledge_entries")}
@@ -72,7 +72,7 @@ def test_seed_if_empty_never_seeds_sessions(tmp_path) -> None:
     """Even when required demo agents exist, sessions are not seeded."""
     conn = _fresh_conn(tmp_path)
     base = 0
-    for aid in ("main", "ops", "research", "support"):
+    for aid in ("main", "ops", "coder", "research"):
         conn.execute(
             "INSERT INTO agents (id, name, description, model_id, enabled, is_super, "
             "tool_count, channel_count, skill_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -88,7 +88,7 @@ def test_rebind_with_custom_only_agents_no_crash(tmp_path) -> None:
     """End-to-end P1 repro: delete demo agents, add a custom one, rebind same DB."""
     db = tmp_path / "rebind.db"
     store.rebind(db)
-    for aid in ("main", "ops", "research", "support"):
+    for aid in ("main", "ops", "coder", "research"):
         store.delete_agent(aid)
     store.create_agent({"id": "custom", "name": "Custom"})
 

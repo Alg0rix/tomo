@@ -18,7 +18,7 @@ def test_create_session_append_and_list_history(tmp_path) -> None:
 
     # seeded agents are available through the SQLite-backed facade
     agents = store.list_agents()
-    assert {a["id"] for a in agents} >= {"main", "ops", "research", "support"}
+    assert {a["id"] for a in agents} >= {"main", "ops", "coder", "research"}
 
     sid = store.create_swarm_session(["main", "research"], user_id="web")
     store.append_session_history(sid, {"type": "user", "content": "What is 2+2?", "ts": time.time()})
@@ -35,7 +35,8 @@ def test_create_session_append_and_list_history(tmp_path) -> None:
     session = store.get_session(sid)
     assert session is not None
     assert session["message_count"] == 2
-    assert session["agent_ids"] == ["main", "research"]
+    # Swarm sessions expose all currently enabled agents (live roster).
+    assert set(session["agent_ids"]) >= {"main", "ops", "coder", "research"}
     assert session["coordinator_id"] == "main"
 
 

@@ -14,8 +14,64 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from pathlib import Path
 
 from app.models.mixins.schedules import interval_from_cron
+
+# Default swarm: coordinator + Ops + Coder + Research (no Support).
+_SEED_AGENT_IDS = ("main", "ops", "coder", "research")
+
+# Explicit tool enablement for specialists. Missing agent → no rows → all tools on.
+_AGENT_TOOLS: dict[str, frozenset[str]] = {
+    "ops": frozenset(
+        {
+            "bash",
+            "process",
+            "list_dir",
+            "read_file",
+            "write_file",
+            "search_files",
+            "todo",
+            "clarify",
+            "recall",
+            "remember",
+            "delegate",
+        }
+    ),
+    "coder": frozenset(
+        {
+            "read_file",
+            "write_file",
+            "str_replace",
+            "patch",
+            "list_dir",
+            "search_files",
+            "delete_file",
+            "bash",
+            "runpy",
+            "todo",
+            "session_search",
+            "clarify",
+            "recall",
+            "remember",
+            "delegate",
+        }
+    ),
+    "research": frozenset(
+        {
+            "web_search",
+            "web_fetch",
+            "recall",
+            "remember",
+            "todo",
+            "clarify",
+            "session_search",
+            "read_file",
+            "write_file",
+            "delegate",
+        }
+    ),
+}
 
 
 def _now() -> float:
@@ -30,14 +86,115 @@ def _has_agent(conn: sqlite3.Connection, agent_id: str) -> bool:
     return conn.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone() is not None
 
 
+def _known_tool_ids() -> list[str]:
+    tools_dir = Path(__file__).resolve().parents[1] / "tools"
+    return sorted(p.stem for p in tools_dir.glob("*.json"))
+
+
+def _seed_agent_homes() -> None:
+    """Copy shipped SYSTEM.md into ``$TOMO_HOME/agents/<id>/`` when missing."""
+    try:
+        from app.core import config, home
+    except Exception:
+        return
+    defaults = config.REPO_ROOT / "defaults" / "agents"
+    for aid in ("ops", "coder", "research"):
+        src = defaults / aid / "SYSTEM.md"
+        if not src.is_file():
+            continue
+        try:
+            adir = home.agent_dir(aid)
+            adir.mkdir(parents=True, exist_ok=True)
+            home.agent_knowledge_dir(aid).mkdir(parents=True, exist_ok=True)
+            home.agent_work_dir(aid).mkdir(parents=True, exist_ok=True)
+            dest = home.agent_system_path(aid)
+            if not dest.exists():
+                dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _seed_agent_tools(conn: sqlite3.Connection) -> None:
+    """Persist specialist tool allow-lists; coordinator keeps default (all on)."""
+    known = _known_tool_ids()
+    if not known:
+        return
+    for agent_id, enabled in _AGENT_TOOLS.items():
+        if not _has_agent(conn, agent_id):
+            continue
+        conn.execute("DELETE FROM agent_tools WHERE agent_id=?", (agent_id,))
+        on_count = 0
+        for tool_id in known:
+            is_on = tool_id in enabled
+            conn.execute(
+                "INSERT INTO agent_tools (agent_id, tool_id, enabled) VALUES (?,?,?)",
+                (agent_id, tool_id, 1 if is_on else 0),
+            )
+            if is_on:
+                on_count += 1
+        conn.execute(
+            "UPDATE agents SET tool_count=? WHERE id=?",
+            (on_count, agent_id),
+        )
+
+
 def _seed_agents(conn: sqlite3.Connection) -> None:
     base = _now()
     # model_id is a profile id (empty = use default); roles are free-text labels.
+    # tool_count placeholders are overwritten by ``_seed_agent_tools``.
     rows = [
-        ("main", "Tomo", "Coordinator agent — routes swarm chat and hands off via delegate / @mention.", "", "coordinator", 1, 1, 12, 3, 4, base - 86400 * 14),
-        ("ops", "Ops", "Operations agent — deploys, runs shell tasks, watches workplaces.", "", "ops", 1, 0, 8, 1, 6, base - 86400 * 9),
-        ("research", "Research", "Research agent — fetches, summarizes, and stores artifacts.", "", "research", 1, 0, 6, 1, 3, base - 86400 * 5),
-        ("support", "Support", "Customer support agent — answers from the FAQ knowledge base.", "", "support", 0, 0, 5, 2, 2, base - 86400 * 2),
+        (
+            "main",
+            "Tomo",
+            "Swarm coordinator — local work, routing, and delegate / @mention handoffs.",
+            "",
+            "coordinator",
+            1,
+            1,
+            0,
+            0,
+            0,
+            base - 86400 * 14,
+        ),
+        (
+            "ops",
+            "Ops",
+            "Operations — shell, processes, and tunnel/SSH workplaces; verify with commands.",
+            "",
+            "ops",
+            1,
+            0,
+            0,
+            0,
+            0,
+            base - 86400 * 9,
+        ),
+        (
+            "coder",
+            "Coder",
+            "Software — explore, edit, and verify code with small diffs and tests.",
+            "",
+            "coder",
+            1,
+            0,
+            0,
+            0,
+            0,
+            base - 86400 * 5,
+        ),
+        (
+            "research",
+            "Research",
+            "Research — web search/fetch, synthesize with sources, remember durable facts.",
+            "",
+            "research",
+            1,
+            0,
+            0,
+            0,
+            0,
+            base - 86400 * 2,
+        ),
     ]
     conn.executemany(
         "INSERT INTO agents (id, name, description, model_id, role, enabled, is_super, "
@@ -50,8 +207,9 @@ def _seed_agents(conn: sqlite3.Connection) -> None:
             "UPDATE agents SET workplace_scope='all_tunnels' WHERE id='ops'"
         )
     except sqlite3.OperationalError:
-        # Column may not exist yet if migrate runs after seed in some paths.
         pass
+    _seed_agent_tools(conn)
+    _seed_agent_homes()
 
 
 def _seed_settings(conn: sqlite3.Connection) -> None:
@@ -80,10 +238,10 @@ def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
         ),
         (
             "kb_support_hours",
-            "Support business hours",
-            "Customer support is available Monday–Friday, 09:00–18:00 local time. "
+            "On-call business hours",
+            "Human on-call coverage is Monday–Friday, 09:00–18:00 local time. "
             "Urgent production incidents can page Ops outside those hours.",
-            json.dumps(["support", "hours", "faq"]),
+            json.dumps(["oncall", "hours", "ops"]),
             base - 86400 * 2,
             base - 86400 * 2,
         ),
@@ -105,7 +263,7 @@ def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
 
 
 def _seed_skills(conn: sqlite3.Connection) -> None:
-    """Skill catalog + demo agent_skill links (Slice G)."""
+    """Skill catalog only — no fake agent↔skill demo links."""
     from app.services.platform_data import seed_skills
 
     base = _now()
@@ -123,29 +281,12 @@ def _seed_skills(conn: sqlite3.Connection) -> None:
                 base - 86400 * (4 - i),
             ),
         )
-    # Matches the previous hardcoded get_agent_skills map.
-    links = [
-        ("main", "onboarding"),
-        ("main", "deploy"),
-        ("ops", "deploy"),
-        ("research", "research_brief"),
-    ]
-    for agent_id, skill_id in links:
-        if _has_agent(conn, agent_id):
-            conn.execute(
-                "INSERT OR IGNORE INTO agent_skills (agent_id, skill_id) VALUES (?,?)",
-                (agent_id, skill_id),
-            )
-    for agent_id in ("main", "ops", "research", "support"):
+    for agent_id in _SEED_AGENT_IDS:
         if not _has_agent(conn, agent_id):
             continue
-        count = conn.execute(
-            "SELECT COUNT(*) AS c FROM agent_skills WHERE agent_id=?",
-            (agent_id,),
-        ).fetchone()["c"]
         conn.execute(
             "UPDATE agents SET skill_count=? WHERE id=?",
-            (int(count), agent_id),
+            (0, agent_id),
         )
 
 

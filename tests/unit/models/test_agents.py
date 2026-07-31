@@ -14,7 +14,7 @@ def _rebind(tmp_path) -> None:
 def test_list_agents_seeded(tmp_path) -> None:
     _rebind(tmp_path)
     agents = store.list_agents()
-    assert {a["id"] for a in agents} == {"main", "ops", "research", "support"}
+    assert {a["id"] for a in agents} == {"main", "ops", "coder", "research"}
     main = next(a for a in agents if a["id"] == "main")
     assert main["is_super"] is True
     assert main["busy"] is False
@@ -53,9 +53,9 @@ def test_update_agent(tmp_path) -> None:
 
 def test_delete_agent(tmp_path) -> None:
     _rebind(tmp_path)
-    assert store.delete_agent("support") is True
-    assert store.get_agent("support") is None
-    assert store.delete_agent("support") is False
+    assert store.delete_agent("coder") is True
+    assert store.get_agent("coder") is None
+    assert store.delete_agent("coder") is False
 
 
 def test_set_busy_reflected_in_list(tmp_path) -> None:

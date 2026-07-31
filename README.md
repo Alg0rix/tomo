@@ -386,7 +386,7 @@ tomo/
 │   ├── templates/                # Jinja pages + partials/
 │   └── data/                     # Local JSON persistence (dev)
 │
-├── cli/                          # `tomo` command (start, agent, workplace, …) — stub
+├── cli/                          # `tomo` CLI (update, uninstall, service)
 ├── skills/                       # Installable skill packages
 ├── plugins/                      # Event-driven platform extensions
 ├── skillsets/                    # Preset agent profiles (JSON)
@@ -394,7 +394,7 @@ tomo/
 ├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
 ├── connector/                    # Go tomo-connector (WebSocket tunnel agent)
 ├── tests/                        # unit/ + integration/
-├── scripts/                      # Dev and release helpers
+├── scripts/                      # install.sh + release helpers
 ├── docs/                         # Architecture notes
 ├── seed/                         # Dev database seeds
 ├── tmp/                          # Local scratch (gitignored); e.g. hermes-agent clone
@@ -411,7 +411,7 @@ tomo/
 | **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, built-in tools |
 | **Integrations** | `app/channels/`, `app/workplaces/` | Messaging and execution environments |
 | **Extensions** | `skills/`, `plugins/`, `app/extensions/` | Drop-in packages + loaders |
-| **Ops** | `cli/`, `scripts/`, `var/` | Lifecycle, tooling, local runtime dirs |
+| **Ops** | `cli/`, `scripts/` | Install/update/uninstall, systemd user unit, local tooling |
 
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
 
@@ -423,39 +423,53 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 
 Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on workplaces, KB recall, Telegram, and interval scheduler. Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
-```bash
-git clone https://github.com/Alg0rix/tomo.git
-cd tomo
-uv sync                    # create .venv and install dependencies
-uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
-```
+### Install (Linux, systemd user)
 
-### Install as a user service (Linux)
+Recommended for a lasting install. Requires `git`; installs `uv` if missing.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install.sh | bash
-# or, from a checkout:
-# bash scripts/install.sh
+# from a checkout: bash scripts/install.sh
+# options: --no-start   --branch NAME
 ```
 
-This clones into `~/.local/share/tomo/app`, runs `uv sync`, installs a **systemd user** unit (`tomo.service`) with `TOMO_HOME=~/.tomo` and `TOMO_WORK=~/tomo`, and symlinks `tomo` on `~/.local/bin`.
+| Path | Role |
+|------|------|
+| `~/.local/share/tomo/app` | Managed git checkout + `.venv` (code) |
+| `~/.config/systemd/user/tomo.service` | User unit (`WorkingDirectory` = install tree) |
+| `~/.local/bin/tomo` | CLI symlink |
+| `~/.tomo` (`$TOMO_HOME`) | Config, DB, secrets |
+| `~/tomo` (`$TOMO_WORK`) | Per-agent tool workspaces |
+
+The unit sets `TOMO_HOME` and `TOMO_WORK` explicitly. UI: [http://127.0.0.1:8787](http://127.0.0.1:8787).
 
 ```bash
-tomo update                 # git pull / reset + uv sync + restart
-tomo service status
+tomo update                 # fetch + ff-only (or hard reset) + uv sync + restart
+tomo service status|start|stop|restart
 tomo uninstall              # remove service + code; keep data
-tomo uninstall --purge      # also delete ~/.tomo and ~/tomo
+tomo uninstall --purge -y   # also delete ~/.tomo and ~/tomo
+journalctl --user -u tomo -f
 ```
 
-Headless servers may need lingering so the user unit survives logout: `loginctl enable-linger $USER`.
+Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
-Developer workflow (`uv sync` + `uv run python -m app.main`) is unchanged.
+### Develop from source
+
+```bash
+git clone https://github.com/Alg0rix/tomo.git
+cd tomo
+uv sync
+uv run python -m app.main   # http://127.0.0.1:8787
+```
+
+Do not edit the managed install tree for day-to-day development — use a normal clone. `tomo update` always targets `~/.local/share/tomo/app`.
 
 ### Configuration
 
-**Tomo Home (`$TOMO_HOME`)** — Tomo's writable user root (default `~/.tomo`).
-Set `export TOMO_HOME=/path/to/tomo` to relocate it. On first start the tree is
-created and seeded from the shipped `defaults/`:
+**Tomo Home (`$TOMO_HOME`)** — writable config/state root (default `~/.tomo`).
+**Tomo Work (`$TOMO_WORK`)** — agent tool cwd root (default `~/tomo`; per agent `$TOMO_WORK/<agent_id>`). Separate from Home; the systemd unit sets both. There is no `TOMO_WORKDIR`.
+
+Set `export TOMO_HOME=/path/to/tomo` (and optionally `TOMO_WORK`) to relocate. On first start the Home tree is created and seeded from the shipped `defaults/`:
 
 ```text
 $TOMO_HOME/

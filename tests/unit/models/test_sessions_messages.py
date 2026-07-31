@@ -23,7 +23,9 @@ def test_create_swarm_session_picks_super_coordinator(tmp_path) -> None:
     sid = store.create_swarm_session(["main", "ops"], user_id="web")
     s = store.get_session(sid)
     assert s is not None
-    assert s["agent_ids"] == ["main", "ops"]
+    # Live swarm roster includes all enabled seeded agents.
+    assert s["agent_ids"][0] == "main"
+    assert set(s["agent_ids"]) >= {"main", "ops", "coder", "research"}
     assert s["coordinator_id"] == "main"
     assert s["agent_id"] == "main"
     assert s["title"] == "New swarm chat"
@@ -113,7 +115,8 @@ def test_update_session_agents(tmp_path) -> None:
     sid = store.create_swarm_session(["main"])
     s = store.update_session_agents(sid, ["main", "research"])
     assert s is not None
-    assert s["agent_ids"] == ["main", "research"]
+    assert set(s["agent_ids"]) >= {"main", "research"}
+    assert s["coordinator_id"] == "main"
     with pytest.raises(ValueError):
         store.update_session_agents(sid, ["ghost"])
 

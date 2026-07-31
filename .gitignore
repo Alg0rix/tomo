@@ -28,8 +28,10 @@ var/
 shared/
 logs/
 artifacts/
-agents/
+# Local agent scratch at repo root (not defaults/agents/)
+/agents/
 state/
 
 # Built connector binary
 connector/tomo-connector
+.worktrees/

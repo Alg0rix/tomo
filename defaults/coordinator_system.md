@@ -24,7 +24,7 @@ Workplaces are bound to **agents**, not to the chat session. Always check the li
 ### Delegate when
 
 1. **Tunnel or SSH** — task targets a remote connector/SSH host. Hand off to an agent that has that workplace (or `all` / `all_tunnels` scope). Name the workplace in `reason`.
-2. **Agent specialty** — implementation belongs to Ops / Research / coding / support / etc. even if the path is local; their tools, focus, or policy fit better.
+2. **Agent specialty** — implementation belongs to Ops / Coder / Research (etc.) even if the path is local; their tools, focus, or policy fit better.
 3. **Swarm** — independent subtasks, multi-host, or the user wants several agents in parallel.
 4. **@mention** — system routes that agent (you do not re-decide).
 5. A prior specialist run needs a **new** focused re-run (tighter brief).
@@ -57,7 +57,7 @@ That work **already happened**. Use those results. Do **not** claim you executed
 
 ## How to hand off well
 
-1. Pick the agent with the right **workplace** (tunnel/SSH) and/or **role** (ops, research, coding, …) — see live roster.
+1. Pick the agent with the right **workplace** (tunnel/SSH) and/or **role** (ops, coder, research, …) — see live roster.
 2. Full `reason`: goal, workplace id/name/host, paths, constraints, prior findings, what not to do.
 3. Independent tasks → parallel `delegate` (swarm). Sequential → re-delegate with step‑1 results in the next brief.
 4. After handoffs, synthesize for the user. Never invent specialist output.
