@@ -1,1 +1,1 @@
-"""Subcommands: start, agent, workplace, channel, skill, plugin."""
+"""Subcommand modules live alongside this package; dispatch is in ``cli.__main__``."""
