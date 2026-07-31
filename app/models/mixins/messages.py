@@ -43,7 +43,7 @@ def derive_session_title(content: str, *, max_len: int = _TITLE_MAX_LEN) -> str:
 
 def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     params = json.loads(row["params_json"]) if row["params_json"] else None
-    return {
+    entry = {
         "type": row["type"],
         "content": row["content"],
         "agent_id": row["agent_id"],
@@ -52,6 +52,12 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
         "error": bool(row["error"]),
         "ts": row["ts"],
     }
+    # Surface attachment ids at top level for UI / LLM expansion.
+    if isinstance(params, dict) and params.get("attachment_ids"):
+        entry["attachment_ids"] = list(params["attachment_ids"])
+        if params.get("attachments"):
+            entry["attachments"] = params["attachments"]
+    return entry
 
 
 def get_session_history(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
@@ -68,6 +74,17 @@ def append_session_history(
     """Append a history entry. Returns the new session title when auto-resolved."""
     entry.setdefault("ts", _now())
     params = entry.get("params")
+    if params is None and entry.get("attachment_ids"):
+        params = {
+            "attachment_ids": list(entry["attachment_ids"]),
+            "attachments": list(entry.get("attachments") or []),
+        }
+    elif isinstance(params, dict) and entry.get("attachment_ids") and "attachment_ids" not in params:
+        params = {
+            **params,
+            "attachment_ids": list(entry["attachment_ids"]),
+            "attachments": list(entry.get("attachments") or params.get("attachments") or []),
+        }
     params_json = json.dumps(params) if params is not None else None
     conn.execute(
         "INSERT INTO messages (session_id, type, content, agent_id, function, params_json, error, ts) "

@@ -1,7 +1,7 @@
 {% from 'partials/chat_composer.html' import chat_composer %}
 
 <div class="agent-studio-panel" id="panel-chat" style="padding:0;display:flex;flex-direction:column">
-  <div class="chat-wrap" style="height:100%;flex:1" data-agent-id="{{ agent.id }}" data-user-id="{{ current_user_id | default('web') }}" data-agent-name="{{ agent.name }}">
+  <div class="chat-wrap" style="height:100%;flex:1" data-agent-id="{{ agent.id }}" data-session-id="{{ session_id }}" data-user-id="{{ current_user_id | default('web') }}" data-agent-name="{{ agent.name }}">
     <div class="chat-main">
       <div class="chat-scroll" data-chat-panel="chat" style="flex:1">
         {% if not history %}
@@ -9,9 +9,13 @@
         {% else %}
         {% for e in history %}
           {% if e.type == 'user' %}
-          <div class="msg user"><div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body">{{ e.content|e }}</div></div></div>
+          <div class="turn">
+          <div class="msg user"><div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body">{{ e.content|e }}{% if e.attachments %}<div class="bubble-attachments">{% for a in e.attachments %}<span class="attachment-chip"><span class="name">{{ a.name|e }}</span>{% if a.size is defined %}<span class="size">{% if a.size < 1024 %}{{ a.size }}B{% elif a.size < 1048576 %}{{ '%.1f'|format(a.size / 1024) }}KB{% else %}{{ '%.1f'|format(a.size / 1048576) }}MB{% endif %}</span>{% endif %}</span>{% endfor %}</div>{% endif %}</div></div></div>
+          </div>
           {% elif e.type == 'final' %}
+          <div class="turn">
           <div class="msg assistant"><div class="av" style="background:{{ avatar_color(agent.id) }}">{{ agent.name[:1]|upper }}</div><div class="bubble"><div class="who">{{ agent.name }}</div><div class="bubble-body prose">{{ e.content|e }}</div></div></div>
+          </div>
           {% endif %}
         {% endfor %}
         {% endif %}

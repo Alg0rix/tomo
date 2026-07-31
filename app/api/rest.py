@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import mimetypes
-import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,13 +18,14 @@ from app.schemas import (
     AgentUpdate,
     ChatMessageIn,
     HomeSessionIn,
-    SessionChatIn,
     SessionCreate,
     SessionWorkplaceIn,
 )
 from app.services import store
 
 router = APIRouter(prefix="/api")
+
+_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 
 def _uid(request: Request, explicit: str | None = None) -> str:
@@ -217,7 +217,7 @@ async def session_chat_history(session_id: str, _: AuthDep):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     entries = store.get_session_history(session_id)
-    return {"entries": entries}
+    return {"entries": entries, "has_more": False, "session": session}
 
 
 @router.get("/sessions/{session_id}/attachments")
@@ -231,7 +231,6 @@ async def list_session_attachments_api(session_id: str, _: AuthDep):
 @router.post("/sessions/{session_id}/attachments")
 async def upload_session_attachment(
     session_id: str,
-    request: Request,
     _: AuthDep,
     file: UploadFile = File(...),
     name: str | None = Form(None),
@@ -242,6 +241,8 @@ async def upload_session_attachment(
     data = await file.read()
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > _MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 20MB)")
     safe_name = Path((name or file.filename or "upload")).name[:120] or "upload"
     attachment_id = f"att_{uuid4().hex[:18]}"
     storage_dir = Path(TOMO_HOME) / "attachments" / session_id
@@ -285,7 +286,7 @@ async def delete_attachment_api(attachment_id: str, _: AuthDep):
         raise HTTPException(status_code=404, detail="Attachment not found")
     try:
         Path(att["file_path"]).unlink(missing_ok=True)
-    except Exception:
+    except OSError:
         pass
     store.delete_attachment(attachment_id)
     return {"success": True}

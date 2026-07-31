@@ -70,13 +70,13 @@
     const attachBtn = wrap.querySelector('.attach-btn');
     const attachInput = wrap.querySelector('.attachment-input');
     const attachPreview = wrap.querySelector('.attachment-preview');
+    const composerEl = wrap.querySelector('.composer');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
 
-    /** @type {File[]} */
-    let pendingFiles = [];
     /** @type {{id: string, name: string, size: number}[]} */
     let uploadedAttachments = [];
     let uploading = false;
+    const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
 
     let mentionOpen = false;
     let mentionIndex = 0;
@@ -202,7 +202,7 @@
     if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
 
     let sending = false, es = null;
-    /** @type {{text: string, el: Element|null}[]} */
+    /** @type {{text: string, el: Element|null, attachmentIds: string[]}[]} */
     let messageQueue = [];
     const MAX_QUEUE = 20;
 
@@ -215,13 +215,24 @@
 
     function refreshSendBtn() {
       // While a turn is running, send is still allowed so messages enqueue.
-      sendBtn.disabled = !input.value.trim() && !uploadedAttachments.length && !pendingFiles.length;
+      sendBtn.disabled = uploading || (!input.value.trim() && !uploadedAttachments.length);
     }
 
     function formatSize(bytes) {
       if (bytes < 1024) return bytes + 'B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
       return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+    }
+
+    function attachmentChipsHtml(list, withRemove) {
+      if (!list || !list.length) return '';
+      return '<div class="bubble-attachments">' + list.map(function (att, idx) {
+        return '<span class="attachment-chip" data-idx="' + idx + '">' +
+          '<span class="name">' + esc(att.name || att.original_name || 'file') + '</span>' +
+          (att.size != null ? '<span class="size">' + formatSize(att.size) + '</span>' : '') +
+          (withRemove ? '<button type="button" class="remove" aria-label="Remove attachment" title="Remove">×</button>' : '') +
+          '</span>';
+      }).join('') + '</div>';
     }
 
     function renderAttachmentPreview() {
@@ -232,33 +243,57 @@
         return;
       }
       attachPreview.classList.remove('hidden');
-      uploadedAttachments.forEach(function (att, idx) {
-        var chip = document.createElement('span');
-        chip.className = 'attachment-chip';
-        chip.innerHTML = '<span class="name">' + esc(att.name) + '</span>' +
-          '<span class="size">' + formatSize(att.size) + '</span>' +
-          '<button class="remove" aria-label="Remove attachment" title="Remove">×</button>';
-        chip.querySelector('.remove').addEventListener('click', function (e) {
+      attachPreview.innerHTML = attachmentChipsHtml(uploadedAttachments, true);
+      Array.prototype.forEach.call(attachPreview.querySelectorAll('.attachment-chip .remove'), function (btn) {
+        btn.addEventListener('click', function (e) {
           e.preventDefault();
-          uploadedAttachments.splice(idx, 1);
+          var chip = btn.closest('.attachment-chip');
+          var idx = chip ? parseInt(chip.getAttribute('data-idx'), 10) : -1;
+          if (idx < 0) return;
+          var removed = uploadedAttachments.splice(idx, 1)[0];
           renderAttachmentPreview();
           refreshSendBtn();
+          if (removed && removed.id) {
+            fetch('/api/attachments/' + encodeURIComponent(removed.id), {
+              method: 'DELETE',
+              credentials: 'same-origin',
+            }).catch(function () { /* best-effort */ });
+          }
         });
-        attachPreview.appendChild(chip);
       });
+    }
+
+    async function resolveUploadSessionId() {
+      var sid = currentSessionId();
+      if (sid) return sid;
+      try {
+        sid = await ensureSession();
+      } catch (e) {
+        sid = '';
+      }
+      return sid || currentSessionId() || '';
     }
 
     async function uploadFiles(files) {
       if (!files.length) return;
-      const sid = currentSessionId();
+      const sid = await resolveUploadSessionId();
       if (!sid) {
-        Tomo.toast('Start the conversation before uploading files.', 'err');
+        Tomo.toast('Open or start a chat before uploading files.', 'err');
         return;
       }
       uploading = true;
+      refreshSendBtn();
       setStatus('amber', 'uploading…');
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        if (file.size > MAX_ATTACH_BYTES) {
+          Tomo.toast(file.name + ' is too large (max 20MB)', 'err');
+          continue;
+        }
+        if (file.size === 0) {
+          Tomo.toast(file.name + ' is empty', 'err');
+          continue;
+        }
         const form = new FormData();
         form.append('file', file);
         form.append('name', file.name);
@@ -266,10 +301,13 @@
           const resp = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/attachments', {
             method: 'POST',
             body: form,
+            credentials: 'same-origin',
           });
           if (!resp.ok) {
             const err = await resp.json().catch(function () { return {}; });
-            Tomo.toast('Upload failed: ' + (err.detail || resp.statusText), 'err');
+            var detail = err.detail;
+            if (Array.isArray(detail)) detail = detail.map(function (d) { return d.msg || d; }).join('; ');
+            Tomo.toast('Upload failed: ' + (detail || resp.statusText), 'err');
             continue;
           }
           const att = await resp.json();
@@ -304,13 +342,17 @@
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     }
 
-    function appendUserBubble(value, queued) {
+    function appendUserBubble(value, queued, attachments) {
       const empty = scroll.querySelector('.chat-empty');
       if (empty) empty.remove();
       const u = document.createElement('div');
       u.innerHTML = bubbleHtml('user', defaultAgentName);
       const bubble = u.firstElementChild;
-      bubble.querySelector('.bubble-body').innerHTML = highlightMentions(value);
+      const body = bubble.querySelector('.bubble-body');
+      body.innerHTML = highlightMentions(value || '');
+      if (attachments && attachments.length) {
+        body.insertAdjacentHTML('beforeend', attachmentChipsHtml(attachments, false));
+      }
       if (queued) {
         bubble.classList.add('msg-queued');
         const who = bubble.querySelector('.who');
@@ -350,7 +392,12 @@
         syncBusyStatus();
         // Fire-and-forget next turn (async).
         // Bubble was already shown when enqueued (or on the failed concurrent try).
-        startTurn(next.text, { alreadyBubbled: true, bubbleEl: next.el });
+        startTurn(next.text, {
+          alreadyBubbled: true,
+          bubbleEl: next.el,
+          attachmentIds: next.attachmentIds || [],
+          attachments: next.attachments || [],
+        });
         return;
       }
       setStatus('ok', 'online');
@@ -370,14 +417,12 @@
       }, delayMs || 500);
     }
 
-    function streamUrl(text) {
+    function streamUrl(text, attachmentIds) {
       const sid = currentSessionId();
       const params = new URLSearchParams();
       params.set('user_id', userId);
       params.set('message', text);
-      if (uploadedAttachments.length) {
-        uploadedAttachments.forEach(function (a) { params.append('attachment_ids', a.id); });
-      }
+      (attachmentIds || []).forEach(function (id) { params.append('attachment_ids', id); });
       if (sid) {
         return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?' + params.toString();
       }
@@ -429,7 +474,7 @@
       return data.session_id;
     }
 
-    function streamTurn(text, turnEl) {
+    function streamTurn(text, turnEl, attachmentIds) {
       // Clean up any leftover detail panel from a previous turn.
       var oldPanel = wrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
@@ -455,8 +500,9 @@
       const IDLE_MS = 180000;
       const POST_DONE_MS = 20000;
       const HARD_MS = 720000;
+      const attachIds = attachmentIds || [];
 
-      es = new EventSource(streamUrl(text));
+      es = new EventSource(streamUrl(text, attachIds));
 
       function clearWatchdogs() {
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
@@ -1039,7 +1085,7 @@
             clearWatchdogs();
             closed = true;
             closeStream();
-            messageQueue.unshift({ text: text, el: null });
+            messageQueue.unshift({ text: text, el: null, attachmentIds: attachIds });
             sending = false;
             setStatus('amber', busyStatusLabel());
             if (window.Tomo && Tomo.toast) {
@@ -1071,14 +1117,15 @@
 
     /**
      * @param {string} value
-     * @param {{alreadyBubbled?: boolean, bubbleEl?: Element|null}} [opts]
+     * @param {{alreadyBubbled?: boolean, bubbleEl?: Element|null, attachmentIds?: string[], attachments?: {id:string,name:string,size:number}[]}} [opts]
      */
     async function startTurn(value, opts) {
       opts = opts || {};
-      if (!value) return;
+      var attachIds = opts.attachmentIds || [];
+      var attachMeta = opts.attachments || [];
+      if (!value && !attachIds.length) return;
       if (sending) {
-        // Nested call should not happen; guard for safety.
-        enqueueMessage(value);
+        enqueueMessage(value, attachIds, attachMeta);
         return;
       }
       sending = true;
@@ -1091,47 +1138,51 @@
         refreshSendBtn();
         setStatus('ok', 'online');
         Tomo.toast((e && e.message) || 'Could not start chat', 'err');
-        // If ensure failed for a dequeued item, keep remaining queue usable.
         if (messageQueue.length) finishTurn();
         return;
       }
       var userBubble = opts.bubbleEl || null;
       if (!opts.alreadyBubbled) {
-        userBubble = appendUserBubble(value, false);
+        userBubble = appendUserBubble(value, false, attachMeta);
       }
       var turnEl = userBubble && userBubble.closest ? userBubble.closest('.turn') : null;
-      streamTurn(value, turnEl);
+      streamTurn(value || (attachMeta.length ? 'Please review the attached file(s).' : ''), turnEl, attachIds);
     }
 
-    function enqueueMessage(value) {
+    function enqueueMessage(value, attachmentIds, attachments) {
       if (messageQueue.length >= MAX_QUEUE) {
         Tomo.toast('Queue full (max ' + MAX_QUEUE + ' messages). Wait for the current turn.', 'err');
         return false;
       }
-      const el = appendUserBubble(value, true);
-      messageQueue.push({ text: value, el: el });
+      var attachIds = attachmentIds || [];
+      var attachMeta = attachments || [];
+      const el = appendUserBubble(value, true, attachMeta);
+      messageQueue.push({ text: value, el: el, attachmentIds: attachIds, attachments: attachMeta });
       setStatus('amber', busyStatusLabel());
       return true;
     }
 
     async function send(text) {
       const value = (text != null ? String(text) : input.value).trim();
-      if (!value && !uploadedAttachments.length) return;
-      input.value = '';
-      resize();
-      if (pendingFiles.length) {
-        await uploadFiles(pendingFiles);
-        pendingFiles = [];
-      }
-      refreshSendBtn();
-      if (sending) {
-        enqueueMessage(value);
+      const attachMeta = uploadedAttachments.map(function (a) {
+        return { id: a.id, name: a.name, size: a.size };
+      });
+      const attachIds = attachMeta.map(function (a) { return a.id; });
+      if (!value && !attachIds.length) return;
+      if (uploading) {
+        Tomo.toast('Wait for uploads to finish', 'err');
         return;
       }
-      await startTurn(value, {});
+      input.value = '';
+      resize();
       uploadedAttachments = [];
       renderAttachmentPreview();
       refreshSendBtn();
+      if (sending) {
+        enqueueMessage(value, attachIds, attachMeta);
+        return;
+      }
+      await startTurn(value, { attachmentIds: attachIds, attachments: attachMeta });
     }
 
     input.addEventListener('input', function () {
@@ -1150,14 +1201,17 @@
       });
     }
 
+    var dragTarget = composerEl || wrap;
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function (name) {
-      wrap.addEventListener(name, function (e) { e.preventDefault(); e.stopPropagation(); });
+      dragTarget.addEventListener(name, function (e) { e.preventDefault(); e.stopPropagation(); });
     });
-    wrap.addEventListener('dragenter', function () { wrap.classList.add('dragover'); });
-    wrap.addEventListener('dragover', function () { wrap.classList.add('dragover'); });
-    wrap.addEventListener('dragleave', function (e) { if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('dragover'); });
-    wrap.addEventListener('drop', function (e) {
-      wrap.classList.remove('dragover');
+    dragTarget.addEventListener('dragenter', function () { dragTarget.classList.add('dragover'); });
+    dragTarget.addEventListener('dragover', function () { dragTarget.classList.add('dragover'); });
+    dragTarget.addEventListener('dragleave', function (e) {
+      if (!dragTarget.contains(e.relatedTarget)) dragTarget.classList.remove('dragover');
+    });
+    dragTarget.addEventListener('drop', function (e) {
+      dragTarget.classList.remove('dragover');
       const files = Array.from(e.dataTransfer.files || []);
       if (files.length) uploadFiles(files);
     });

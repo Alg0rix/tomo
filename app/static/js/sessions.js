@@ -653,8 +653,22 @@
         startTurn();
         var row = document.createElement('div');
         row.className = 'msg user';
+        var chips = '';
+        var atts = e.attachments || (e.params && e.params.attachments) || [];
+        if (atts.length) {
+          chips = '<div class="bubble-attachments">' + atts.map(function (a) {
+            var sz = a.size != null ? a.size : a.size_bytes;
+            var sizeHtml = '';
+            if (sz != null) {
+              sizeHtml = '<span class="size">' + (sz < 1024 ? sz + 'B' : sz < 1048576 ? (sz / 1024).toFixed(1) + 'KB' : (sz / 1048576).toFixed(1) + 'MB') + '</span>';
+            }
+            return '<span class="attachment-chip"><span class="name">' + esc(a.name || a.original_name || 'file') + '</span>' + sizeHtml + '</span>';
+          }).join('') + '</div>';
+        }
         row.innerHTML = '<div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body"></div></div>';
-        row.querySelector('.bubble-body').textContent = e.content || '';
+        var body = row.querySelector('.bubble-body');
+        body.textContent = e.content || '';
+        if (chips) body.insertAdjacentHTML('beforeend', chips);
         turn.appendChild(row);
         return;
       }

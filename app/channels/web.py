@@ -473,20 +473,20 @@ async def stream_turn_sse(
                 }
             )
         else:
-            user_content = message
+            from app.services.chat import attachment_meta_for_ids
+
+            # ChatGPT-style: store clean user text + attachment chips metadata.
+            # File contents are expanded only when building the LLM prompt.
+            clean = (message or "").strip()
+            user_entry: dict = {"type": "user", "content": clean, "ts": now()}
             if attachment_ids:
-                info_lines = "\n".join(
-                    f"[Attached: {a.get('original_name') or a.get('filename')} "
-                    f"({a.get('mime_type') or 'application/octet-stream'}, {a.get('size_bytes', 0)}B) "
-                    f"id={a.get('id')} path={a.get('file_path')}]"
-                    for a in (store.get_attachment(aid) for aid in attachment_ids)
-                    if a
-                )
-                if info_lines:
-                    user_content = info_lines + "\n\n" + message
-            new_title = store.append_session_history(
-                session_id, {"type": "user", "content": user_content, "ts": now()}
-            )
+                meta = attachment_meta_for_ids(attachment_ids)
+                user_entry["attachment_ids"] = list(attachment_ids)
+                user_entry["attachments"] = meta
+                if not clean and meta:
+                    # Empty caption — keep content blank; UI shows chips only.
+                    user_entry["content"] = ""
+            new_title = store.append_session_history(session_id, user_entry)
             if new_title:
                 logger.info(
                     "session title provisional session_id=%s title=%r",
@@ -525,17 +525,13 @@ async def stream_turn_sse(
                 # prompt without the user row or the just-written handoff row.
                 hist = store.get_session_history(session_id)
                 hist_for_member = _history_before_last_user(hist)
-                member_prompt = mention_rest.strip() or message
-                if attachment_ids:
-                    info_lines = "\n".join(
-                        f"[Attached: {a.get('original_name') or a.get('filename')} "
-                        f"({a.get('mime_type') or 'application/octet-stream'}, {a.get('size_bytes', 0)}B) "
-                        f"id={a.get('id')} path={a.get('file_path')}]"
-                        for a in (store.get_attachment(aid) for aid in attachment_ids)
-                        if a
-                    )
-                    if info_lines:
-                        member_prompt = info_lines + "\n\n" + member_prompt
+                from app.services.chat import prepend_attachment_info
+
+                # Caption for the member (no @mention); expand files only in
+                # this ephemeral LLM prompt — history UI stays clean.
+                member_prompt = prepend_attachment_info(
+                    mention_rest.strip() or message, attachment_ids
+                )
                 async for chunk, seq in _emit_member_turn_start(
                     to_id=force_target, turn_id=turn_id, seq=seq
                 ):

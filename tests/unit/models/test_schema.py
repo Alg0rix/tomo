@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "sessions",
     "session_agents",
     "messages",
+    "attachments",
     "settings",
     "agent_tools",
     "workplaces",

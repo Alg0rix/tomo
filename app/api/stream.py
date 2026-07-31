@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Annotated, AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import AuthDep, session_user_id
@@ -26,7 +27,7 @@ def _resolve_user_id(request: Request, user_id: str | None) -> str:
 
 async def _drain_queue_with_heartbeats(
     queue: asyncio.Queue, request: Request
-) -> "AsyncIterator[str]":
+) -> AsyncIterator[str]:
     """Read chunks from *queue*, yielding heartbeats on timeout.
 
     Returns when the producer signals ``None`` (turn complete) or the
@@ -57,21 +58,21 @@ async def session_chat_stream(
     message: str = "",
     user_id: str = "web",
     after: int = 0,
-    attachment_ids: list[str] | None = None,
+    attachment_ids: Annotated[list[str], Query()] = [],
     _: AuthDep = None,
 ):
     if not store.get_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     message = (message or "").strip()
     uid = _resolve_user_id(request, user_id)
-    attachment_ids = attachment_ids or []
+    attachment_ids = list(attachment_ids or [])
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
 
-        if message:
+        if message or attachment_ids:
             # Start a new background turn (or join if one is already active).
             active = get_active_session_turn(session_id)
             if active:
@@ -79,7 +80,11 @@ async def session_chat_stream(
             else:
                 try:
                     queue = await start_session_turn(
-                        session_id, message, uid, start_seq=0, attachment_ids=attachment_ids
+                        session_id,
+                        message,
+                        uid,
+                        start_seq=0,
+                        attachment_ids=attachment_ids,
                     )
                 except ValueError as exc:
                     yield fmt_sse(
@@ -141,20 +146,28 @@ async def chat_stream(
     request: Request,
     message: str = "",
     user_id: str = "web",
+    attachment_ids: Annotated[list[str], Query()] = [],
     _: AuthDep = None,
 ):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     message = (message or "").strip()
     uid = _resolve_user_id(request, user_id)
+    attachment_ids = list(attachment_ids or [])
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
-        if message:
+        if message or attachment_ids:
             async with contextlib.aclosing(
-                run_turn(agent_id, message, uid, start_seq=0)
+                run_turn(
+                    agent_id,
+                    message,
+                    uid,
+                    start_seq=0,
+                    attachment_ids=attachment_ids,
+                )
             ) as agen:
                 async for chunk in agen:
                     if await request.is_disconnected():

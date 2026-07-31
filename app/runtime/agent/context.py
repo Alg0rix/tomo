@@ -589,7 +589,11 @@ def history_to_messages(
         etype = entry.get("type")
 
         if etype == "user":
-            messages.append({"role": "user", "content": entry.get("content") or ""})
+            from app.services.chat import expand_user_content_for_llm
+
+            messages.append(
+                {"role": "user", "content": expand_user_content_for_llm(entry)}
+            )
             i += 1
             continue
 

@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 import re
@@ -165,23 +166,140 @@ def _coordinator_for(session: dict[str, Any]) -> str | None:
     return ids[0] if ids else None
 
 
-def _attachment_info_lines(attachment_ids: list[str]) -> str:
-    """Build [Attached: ...] info lines to prepend to the user message."""
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size}B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f}KB"
+    return f"{size / (1024 * 1024):.1f}MB"
+
+
+_MAX_INLINE_CHARS = 80_000
+_TEXT_EXT = {
+    ".txt", ".md", ".markdown", ".html", ".htm", ".css", ".js", ".ts", ".tsx",
+    ".jsx", ".json", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".toml", ".ini",
+    ".py", ".rb", ".go", ".rs", ".java", ".c", ".h", ".cpp", ".hpp", ".sh",
+    ".bash", ".zsh", ".sql", ".log", ".env", ".cfg", ".conf", ".svg",
+}
+_FENCE_LANG = {
+    ".html": "html", ".htm": "html", ".md": "markdown", ".py": "python",
+    ".js": "javascript", ".ts": "typescript", ".json": "json", ".css": "css",
+    ".xml": "xml", ".yaml": "yaml", ".yml": "yaml", ".sh": "bash", ".sql": "sql",
+    ".rs": "rust", ".go": "go", ".svg": "xml",
+}
+
+
+def _looks_text_attachment(att: dict[str, Any]) -> bool:
+    mime = (att.get("mime_type") or "").lower()
+    if mime.startswith("text/") or mime in {
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/x-javascript",
+        "application/xhtml+xml",
+        "image/svg+xml",
+    }:
+        return True
+    name = (att.get("original_name") or att.get("filename") or "").lower()
+    return any(name.endswith(ext) for ext in _TEXT_EXT)
+
+
+def _read_attachment_text(att: dict[str, Any]) -> str | None:
+    """Return UTF-8 text for inlining, or None if binary/unreadable."""
+    path = Path(att.get("file_path") or "")
+    if not path.is_file():
+        return None
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw[:4096]:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+    if len(text) > _MAX_INLINE_CHARS:
+        omitted = len(text) - _MAX_INLINE_CHARS
+        text = (
+            text[:_MAX_INLINE_CHARS]
+            + f"\n\n… [truncated, {omitted} more characters not shown]"
+        )
+    return text
+
+
+def attachment_meta_for_ids(attachment_ids: list[str] | None) -> list[dict[str, Any]]:
+    """Lightweight chip metadata for UI / history (no file bodies)."""
     if not attachment_ids:
-        return ""
-    lines = []
+        return []
+    out: list[dict[str, Any]] = []
     for aid in attachment_ids:
         att = store.get_attachment(aid)
         if not att:
             continue
-        size = att.get("size_bytes") or 0
-        size_str = f"{size}B" if size < 1024 else f"{size / 1024:.1f}KB" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f}MB"
-        lines.append(
-            f"[Attached: {att.get('original_name') or att.get('filename')} "
-            f"({att.get('mime_type') or 'application/octet-stream'}, {size_str}) "
-            f"id={att.get('id')} path={att.get('file_path')}]"
+        out.append(
+            {
+                "id": att.get("id"),
+                "name": att.get("original_name") or att.get("filename") or aid,
+                "size": int(att.get("size_bytes") or 0),
+                "mime": att.get("mime_type") or "application/octet-stream",
+            }
         )
-    return "\n".join(lines)
+    return out
+
+
+def attachment_info_lines(attachment_ids: list[str] | None) -> str:
+    """Build attachment blocks for the LLM only (not for chat UI history).
+
+    Text-like files (html, md, code, …) are inlined so the agent can read them.
+    Absolute filesystem paths are never included.
+    """
+    if not attachment_ids:
+        return ""
+    blocks: list[str] = []
+    for aid in attachment_ids:
+        att = store.get_attachment(aid)
+        if not att:
+            continue
+        size = int(att.get("size_bytes") or 0)
+        name = att.get("original_name") or att.get("filename") or aid
+        mime = att.get("mime_type") or "application/octet-stream"
+        header = f"[Attached: {name} ({mime}, {_format_size(size)}) id={att.get('id')}]"
+        if not _looks_text_attachment(att):
+            blocks.append(
+                header
+                + "\n(Binary file — content not inlined. Ask the user to paste "
+                "text or upload a text/HTML version.)"
+            )
+            continue
+        body = _read_attachment_text(att)
+        if body is None:
+            blocks.append(header + "\n(Could not read file contents.)")
+            continue
+        ext = Path(name).suffix.lower()
+        lang = _FENCE_LANG.get(ext, "")
+        fence = f"```{lang}".rstrip()
+        blocks.append(f"{header}\n{fence}\n{body}\n```")
+    return "\n\n".join(blocks)
+
+
+def prepend_attachment_info(message: str, attachment_ids: list[str] | None) -> str:
+    info = attachment_info_lines(attachment_ids)
+    if not info:
+        return message
+    return info + ("\n\n" + message if message else "")
+
+
+def expand_user_content_for_llm(entry: dict[str, Any]) -> str:
+    """User bubble text for the model — expands attachment_ids when present."""
+    content = entry.get("content") or ""
+    ids = entry.get("attachment_ids")
+    if not ids and isinstance(entry.get("params"), dict):
+        ids = entry["params"].get("attachment_ids")
+    return prepend_attachment_info(content, ids)
 
 
 async def run_session_turn(
@@ -192,9 +310,6 @@ async def run_session_turn(
     Starts on ``coordinator_id``; ``stream_turn_sse`` may hand off to a session
     member via ``delegate`` tool or leading ``@mention``.
     """
-    info = _attachment_info_lines(attachment_ids or [])
-    if info:
-        message = info + ("\n\n" + message if message else "")
     session = store.get_session(session_id)
     if not session:
         # The route validates existence and 404s first; stay defensive so a
@@ -227,7 +342,13 @@ async def run_session_turn(
     # `finally`, which clears the coordinator's busy flag synchronously instead
     # of leaving the inner generator suspended until garbage collection.
     async with contextlib.aclosing(
-        stream_turn_sse(session_id, coordinator_id, message, start_seq)
+        stream_turn_sse(
+            session_id,
+            coordinator_id,
+            message,
+            start_seq,
+            attachment_ids=attachment_ids,
+        )
     ) as agen:
         async for chunk in agen:
             yield chunk
@@ -254,7 +375,13 @@ async def run_turn(
         return
     session_id = store.get_or_create_session(agent_id, user_id)
     async with contextlib.aclosing(
-        stream_turn_sse(session_id, agent_id, message, start_seq)
+        stream_turn_sse(
+            session_id,
+            agent_id,
+            message,
+            start_seq,
+            attachment_ids=attachment_ids,
+        )
     ) as agen:
         async for chunk in agen:
             yield chunk
@@ -301,8 +428,12 @@ async def session_heartbeat_stream(
 
 __all__ = [
     "_fmt_sse",
+    "attachment_info_lines",
+    "attachment_meta_for_ids",
+    "expand_user_content_for_llm",
     "get_active_session_turn",
     "heartbeat_stream",
+    "prepend_attachment_info",
     "record_session_user_message",
     "run_session_turn",
     "run_turn",
