@@ -17,7 +17,8 @@ When tools leave the workplace or look dangerous, Tomo **assesses → (smart) �
 
 | Topic | Choice |
 |-------|--------|
-| Modes | `manual` \| `smart` \| `off` (Hermes); session toggle may force `off` like `/yolo` |
+| Modes | `manual` \| `smart` \| `off` (Hermes internal names) |
+| Chat slash | **`/auto`** sets session mode to `off` (toggle: second `/auto` restores previous non-off mode). Also `/manual`, `/smart`. Handled **before** skill expansion / agent turn — local system reply, no LLM |
 | What requires approval | Workplace **escape** + **dangerous** patterns (not every in-root bash) |
 | File tools outside root | Allowed after approve / in `off` (option B) — via per-call jail grant |
 | Clarify | Blocking; question + ≤4 choices; UI adds free-text Other |
@@ -134,7 +135,7 @@ False negatives possible (obfuscation); hardline/dangerous still apply. V1 accep
 
 - ContextVar: `outside_grant: frozenset[Path] | Literal["*"] | None`
 - Approved escape → grant specific resolved path(s) for that call
-- `mode=off` → grant `*` for the call when any escape would have been needed, or always allow jail bypass while `off` is active for that execute
+- `mode=off` → for that execute only, set grant to `*` so file tools may resolve any path (bash/runpy unchanged aside from hardline/deny still applying before this step)
 - `jail_path`: under root **or** under grant **or** grant is `*`
 - Grant **must** be cleared in `finally` after the tool returns
 
@@ -174,13 +175,28 @@ Args preview is **redacted** for secrets (reuse or add a small redactor). Agent 
 - Default 300s (config `approvals.timeout`)
 - Timeout → deny / empty clarify answer with fail-closed message to the model
 
+### Chat slash commands (required)
+
+Handled in `app/services/chat.py` (or a small `permissions/slash.py` helper) **before** `expand_slash_skill` / `run_turn`:
+
+| Slash | Effect |
+|-------|--------|
+| `/auto` | Toggle session override to `off` (unattended). Second `/auto` clears override back to prior mode (`smart`/`manual`) or settings default. Reply: `⚡ AUTO on — approvals bypassed (hardline still blocks).` / `AUTO off — using {mode}.` |
+| `/smart` | Set session override to `smart` |
+| `/manual` | Set session override to `manual` |
+
+- Persist session override in-memory keyed by `session_id` (same process as HITL); optional: also store on session row if cheap
+- Do **not** forward these messages to the LLM
+- Persist a short `final`/system-style history line so the user sees the mode change in chat
+- Slash picker in `chat.js`: show `/auto`, `/smart`, `/manual` as built-ins above skill matches
+
 ### Web UI (`chat.js`)
 
 - Inline card in the stream (not a toast): tool name, finding reasons, redacted preview
 - Approval buttons: Once / Session / Always / Deny (respect `smart_denied` / persistable flags)
 - Clarify: choice buttons + text Other
 - While waiting: show waiting state; disable conflicting send or clearly queue
-- Surface current mode; allow change via settings and/or slash `/manual` `/smart` `/off`
+- Surface current mode in composer/status (reflects `/auto` immediately)
 
 ### Other channels
 
@@ -262,6 +278,7 @@ Prefer unit tests on `permissions/*` without a live LLM; mock `smart.py`.
 2. Wire `jail_path` + loop gate (block/allow without UI — auto-deny if no waiter in tests)
 3. `hitl.py` + API resolve + SSE events
 4. `chat.js` approval + clarify cards
-5. `smart.py` + mode settings / slash
-6. Clarify tool schema + backend rewrite
-7. Tests for the matrix above
+5. `smart.py` + settings defaults (`approvals.mode`, timeout, deny)
+6. Chat slash `/auto` `/smart` `/manual` (intercept + history notice + picker) — **user-facing name for `off` is AUTO**
+7. Clarify tool schema + backend rewrite
+8. Tests for the matrix above (include slash toggle)

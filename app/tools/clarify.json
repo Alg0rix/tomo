@@ -1,19 +1,25 @@
 {
   "id": "clarify",
   "name": "Clarify",
-  "description": "Ask the user a clarifying question before continuing.",
+  "description": "Ask the user a clarifying question (optional multiple choice) and wait for their answer.",
   "backend": "app.runtime.tools.clarify",
   "schema": {
     "type": "function",
     "function": {
       "name": "clarify",
-      "description": "Return CLARIFY: {question} for the channel to surface to the user.",
+      "description": "Ask the user a clarifying question before continuing. Prefer this over guessing. Do not use for dangerous-command confirmation — the approval gate handles that.",
       "parameters": {
         "type": "object",
         "properties": {
           "question": {
             "type": "string",
             "description": "Question to ask the user."
+          },
+          "choices": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 4,
+            "description": "Optional up to 4 answer choices. User may also type a free-text Other."
           }
         },
         "required": ["question"]

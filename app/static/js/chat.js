@@ -160,11 +160,23 @@
         });
     }
 
+    const APPROVAL_SLASH = [
+      { id: 'auto', name: 'auto', description: 'Toggle AUTO — run tools without approval prompts' },
+      { id: 'smart', name: 'smart', description: 'Smart approvals — aux LLM assesses risky tools' },
+      { id: 'manual', name: 'manual', description: 'Manual approvals — always ask for risky tools' },
+    ];
+
     function filterSkills(query) {
       var q = (query || '').toLowerCase().replace(/^\//, '');
+      var builtins = APPROVAL_SLASH.filter(function (s) {
+        if (!q) return true;
+        return s.id.indexOf(q) === 0 || s.name.indexOf(q) === 0;
+      });
       var all = skillsCache || [];
-      if (!q) return all.slice(0, 14);
-      return all.map(function (s, index) {
+      if (!q) {
+        return builtins.concat(all.slice(0, Math.max(0, 14 - builtins.length)));
+      }
+      var ranked = all.map(function (s, index) {
         var id = String(s.id || '').toLowerCase();
         var name = String(s.name || '').toLowerCase();
         var desc = String(s.description || '').toLowerCase();
@@ -178,8 +190,9 @@
           if (a.score !== b.score) return b.score - a.score;
           return a.index - b.index;
         })
-        .slice(0, 14)
+        .slice(0, Math.max(0, 14 - builtins.length))
         .map(function (x) { return x.s; });
+      return builtins.concat(ranked);
     }
 
     function renderSlashMenu() {
@@ -674,7 +687,7 @@
       [
         'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
         'delta', 'done', 'delegate', 'error', 'heartbeat', 'turn.end', 'auth_expired',
-        'subagent_start', 'subagent_done',
+        'subagent_start', 'subagent_done', 'approval_required', 'clarify_required',
       ].forEach(function (name) {
         es.addEventListener(name, function (e) {
           var payload = e && e.data;
@@ -1011,6 +1024,96 @@
         return card;
       }
 
+      function buildApprovalCard(d) {
+        var card = document.createElement('div');
+        card.className = 'hitl-card approval-card';
+        card.dataset.id = d.id || '';
+        var findings = (d.findings || []).map(function (f) {
+          return '<li>' + esc(f.description || f.kind || '') + '</li>';
+        }).join('');
+        var preview = '';
+        try {
+          preview = typeof d.args_preview === 'string'
+            ? d.args_preview
+            : JSON.stringify(d.args_preview || {}, null, 2);
+        } catch (_) {
+          preview = String(d.args_preview || '');
+        }
+        var choices = d.choices || ['once', 'session', 'always', 'deny'];
+        var labels = { once: 'Once', session: 'Session', always: 'Always', deny: 'Deny' };
+        var btns = choices.map(function (c) {
+          return '<button type="button" class="hitl-btn" data-choice="' + esc(c) + '">' +
+            esc(labels[c] || c) + '</button>';
+        }).join('');
+        card.innerHTML =
+          '<div class="hitl-title">Approval required · ' + esc(d.tool || 'tool') + '</div>' +
+          '<div class="hitl-desc">' + esc(d.description || '') + '</div>' +
+          (findings ? '<ul class="hitl-findings">' + findings + '</ul>' : '') +
+          '<pre class="hitl-preview">' + esc(preview).slice(0, 800) + '</pre>' +
+          '<div class="hitl-actions">' + btns + '</div>';
+        card.querySelectorAll('.hitl-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var choice = btn.getAttribute('data-choice');
+            card.classList.add('resolved');
+            card.querySelectorAll('.hitl-btn').forEach(function (b) { b.disabled = true; });
+            fetch('/api/approvals/' + encodeURIComponent(d.id), {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ choice: choice }),
+            }).catch(function () {});
+          });
+        });
+        return card;
+      }
+
+      function buildClarifyCard(d) {
+        var card = document.createElement('div');
+        card.className = 'hitl-card clarify-card';
+        card.dataset.id = d.id || '';
+        var choices = d.choices || [];
+        var btns = choices.map(function (c, i) {
+          return '<button type="button" class="hitl-btn" data-answer="' + esc(c) + '">' +
+            esc(c) + '</button>';
+        }).join('');
+        card.innerHTML =
+          '<div class="hitl-title">Question</div>' +
+          '<div class="hitl-desc">' + esc(d.question || '') + '</div>' +
+          '<div class="hitl-actions">' + btns + '</div>' +
+          '<div class="hitl-other">' +
+            '<input type="text" class="hitl-input" placeholder="Other…" />' +
+            '<button type="button" class="hitl-btn hitl-send">Send</button>' +
+          '</div>';
+        function submit(answer) {
+          if (!answer) return;
+          card.classList.add('resolved');
+          card.querySelectorAll('button,input').forEach(function (el) { el.disabled = true; });
+          fetch('/api/clarify/' + encodeURIComponent(d.id), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answer: answer }),
+          }).catch(function () {});
+        }
+        card.querySelectorAll('.hitl-btn[data-answer]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            submit(btn.getAttribute('data-answer') || '');
+          });
+        });
+        var sendBtn = card.querySelector('.hitl-send');
+        var inputEl = card.querySelector('.hitl-input');
+        if (sendBtn && inputEl) {
+          sendBtn.addEventListener('click', function () { submit(inputEl.value.trim()); });
+          inputEl.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') {
+              ev.preventDefault();
+              submit(inputEl.value.trim());
+            }
+          });
+        }
+        return card;
+      }
+
       es.addEventListener('state', function (e) {
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
@@ -1126,6 +1229,20 @@
         }
         // Keep typing indicator after tool so UI does not look frozen mid-turn.
         if (!asstEl && !pendingEl) showPending();
+        atBottom();
+      });
+      es.addEventListener('approval_required', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        clearPending();
+        turn.appendChild(buildApprovalCard(d));
+        atBottom();
+      });
+      es.addEventListener('clarify_required', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        clearPending();
+        turn.appendChild(buildClarifyCard(d));
         atBottom();
       });
       es.addEventListener('delta', function (e) {

@@ -366,6 +366,69 @@ async def stream_turn_sse(
         (message or "")[:120],
     )
     try:
+        from app.runtime.permissions.slash import handle_approval_slash
+
+        slash_notice = handle_approval_slash(message or "", session_id)
+        if slash_notice is not None:
+            store.append_session_history(
+                session_id,
+                {
+                    "type": "user",
+                    "content": (message or "").strip(),
+                    "agent_id": coordinator_id,
+                    "ts": now(),
+                },
+            )
+            store.append_session_history(
+                session_id,
+                {
+                    "type": "final",
+                    "content": slash_notice,
+                    "agent_id": coordinator_id,
+                    "ts": now(),
+                },
+            )
+            seq += 1
+            yield fmt_sse(
+                {
+                    "event": "turn.start",
+                    "data": {
+                        "turn_id": "slash",
+                        "agent": _agent_label(coordinator_id),
+                        "agent_id": coordinator_id,
+                    },
+                    "seq": seq,
+                }
+            )
+            seq += 1
+            yield fmt_sse(
+                {
+                    "event": "delta",
+                    "data": {
+                        "content": slash_notice,
+                        "agent_id": coordinator_id,
+                        "agent": _agent_label(coordinator_id),
+                    },
+                    "seq": seq,
+                }
+            )
+            seq += 1
+            yield fmt_sse(
+                {
+                    "event": "done",
+                    "data": {
+                        "content": slash_notice,
+                        "agent_id": coordinator_id,
+                        "agent": _agent_label(coordinator_id),
+                        "turn_id": "slash",
+                    },
+                    "seq": seq,
+                }
+            )
+            seq += 1
+            yield fmt_sse({"event": "turn.end", "data": {}, "seq": seq})
+            return
+
         session = store.get_session(session_id) or {}
         member_ids, member_agents = _session_agents(session)
         ctx_token = delegate_tool.bind_context(

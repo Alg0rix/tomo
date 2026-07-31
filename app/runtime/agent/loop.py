@@ -57,6 +57,8 @@ from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.permissions.gate import apply_choice, evaluate
 from app.runtime.permissions.grants import reset_outside_grant, set_outside_grant
 from app.runtime.permissions import hitl as hitl_mod
+from app.runtime.permissions.modes import get_effective_mode
+from app.runtime.permissions.smart import command_from_args, smart_approve
 from app.runtime.tools import sandbox
 from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute, get_openai_tools
@@ -173,7 +175,7 @@ async def _run_one_gated_tool(
             choices=choices,
             session_id=session_id,
         )
-        yield {"kind": "clarify_required", **payload}
+        yield {"kind": "clarify_required", **{k: v for k, v in payload.items() if k != "kind"}}
         answer = await hitl_mod.await_clarify(payload["id"])
         result = json.dumps(
             {
@@ -195,6 +197,15 @@ async def _run_one_gated_tool(
     decision = evaluate(
         call.name, args, work_root=work_root, session_id=session_id
     )
+    if decision.needs_hitl and get_effective_mode(session_id) == "smart":
+        cmd = command_from_args(call.name, args)
+        verdict = await smart_approve(cmd or decision.description, decision.description)
+        if verdict == "approve":
+            decision = apply_choice(decision, "once", session_id=session_id)
+        elif verdict == "deny":
+            decision.smart_denied = True
+            decision.allow_permanent = False
+
     if decision.needs_hitl:
         payload = hitl_mod.create_approval(
             tool=call.name,
@@ -205,7 +216,10 @@ async def _run_one_gated_tool(
             smart_denied=decision.smart_denied,
             session_id=session_id,
         )
-        yield {"kind": "approval_required", **payload}
+        yield {
+            "kind": "approval_required",
+            **{k: v for k, v in payload.items() if k != "kind"},
+        }
         choice = await hitl_mod.await_approval(payload["id"])
         decision = apply_choice(decision, choice, session_id=session_id)
 

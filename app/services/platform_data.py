@@ -86,6 +86,9 @@ def seed_settings() -> dict[str, Any]:
         "setup_complete": True,
         "eval_parallel_workers": 2,
         "eval_two_pass": False,
+        "approvals_mode": "smart",
+        "approvals_timeout": 300,
+        "approvals_deny": [],
     }
 
 
