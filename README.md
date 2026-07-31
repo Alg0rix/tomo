@@ -430,6 +430,27 @@ uv sync                    # create .venv and install dependencies
 uv run python -m app.main  # start the web UI at http://127.0.0.1:8787
 ```
 
+### Install as a user service (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install.sh | bash
+# or, from a checkout:
+# bash scripts/install.sh
+```
+
+This clones into `~/.local/share/tomo/app`, runs `uv sync`, installs a **systemd user** unit (`tomo.service`) with `TOMO_HOME=~/.tomo` and `TOMO_WORK=~/tomo`, and symlinks `tomo` on `~/.local/bin`.
+
+```bash
+tomo update                 # git pull / reset + uv sync + restart
+tomo service status
+tomo uninstall              # remove service + code; keep data
+tomo uninstall --purge      # also delete ~/.tomo and ~/tomo
+```
+
+Headless servers may need lingering so the user unit survives logout: `loginctl enable-linger $USER`.
+
+Developer workflow (`uv sync` + `uv run python -m app.main`) is unchanged.
+
 ### Configuration
 
 **Tomo Home (`$TOMO_HOME`)** — Tomo's writable user root (default `~/.tomo`).
