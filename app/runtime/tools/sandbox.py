@@ -133,7 +133,9 @@ def jail_path(root: Path, relative: str) -> Path | str:
     Relative paths join under ``root``. Absolute paths are allowed only when
     they resolve *inside* ``root`` (so a local workplace rooted at ``/`` can
     use ``/tmp/foo``; a work-dir root still rejects ``/etc/passwd``).
-    ``..`` escapes outside ``root`` are rejected. Never raises.
+    ``..`` escapes outside ``root`` are rejected — unless an active
+    :mod:`app.runtime.permissions.grants` outside grant covers the target.
+    Never raises.
     """
     if not isinstance(relative, str):
         return "Error: path must be a string"
@@ -149,12 +151,20 @@ def jail_path(root: Path, relative: str) -> Path | str:
             target = candidate.resolve()
         else:
             target = (root_resolved / text).resolve()
-        target.relative_to(root_resolved)
-    except ValueError:
-        return (
-            f"Error: path escapes workplace root ({root}). "
-            "Use a path relative to the workplace, or an absolute path under it."
-        )
+        try:
+            target.relative_to(root_resolved)
+        except ValueError:
+            from app.runtime.permissions.grants import (
+                current_outside_grant,
+                path_allowed_by_grant,
+            )
+
+            if path_allowed_by_grant(target, current_outside_grant()):
+                return target
+            return (
+                f"Error: path escapes workplace root ({root}). "
+                "Use a path relative to the workplace, or an absolute path under it."
+            )
     except OSError as exc:
         return f"Error: invalid path: {exc}"
     return target
