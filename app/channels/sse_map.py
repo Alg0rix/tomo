@@ -14,6 +14,10 @@ _PREVIEW = 80
 
 def sse_summary(name: str, data: dict[str, Any]) -> str:
     """Compact one-line summary for an SSE payload (deltas truncated)."""
+    if name == "approval_required":
+        return f"id={data.get('id')} tool={data.get('tool')!r}"
+    if name == "clarify_required":
+        return f"id={data.get('id')} q={str(data.get('question') or '')[:_PREVIEW]!r}"
     if name == "delta":
         content = data.get("content") or ""
         return f"chars={len(content)} preview={content[:_PREVIEW]!r}"
@@ -421,6 +425,36 @@ def map_loop_event(
                     "seq": seq,
                 }
             )
+        )
+    elif kind == "approval_required":
+        seq += 1
+        data = {
+            "id": ev.get("id"),
+            "tool": ev.get("tool"),
+            "args_preview": ev.get("args_preview"),
+            "findings": ev.get("findings") or [],
+            "description": ev.get("description") or "",
+            "choices": ev.get("choices") or ["once", "session", "always", "deny"],
+            "allow_permanent": ev.get("allow_permanent", True),
+            "allow_session": ev.get("allow_session", True),
+            "smart_denied": ev.get("smart_denied", False),
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
+        chunks.append(
+            fmt_sse({"event": "approval_required", "data": data, "seq": seq})
+        )
+    elif kind == "clarify_required":
+        seq += 1
+        data = {
+            "id": ev.get("id"),
+            "question": ev.get("question") or "",
+            "choices": ev.get("choices") or [],
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
+        chunks.append(
+            fmt_sse({"event": "clarify_required", "data": data, "seq": seq})
         )
     elif kind in ("atg_wave", "atg_summary"):
         # Meta-events: ATG tool/tool_result events map normally via the

@@ -54,6 +54,9 @@ from app.runtime.agent.subagent import (
 )
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
+from app.runtime.permissions.gate import apply_choice, evaluate
+from app.runtime.permissions.grants import reset_outside_grant, set_outside_grant
+from app.runtime.permissions import hitl as hitl_mod
 from app.runtime.tools import sandbox
 from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute, get_openai_tools
@@ -131,7 +134,7 @@ def _last_user_text(
 def _tool_result_is_error(result: Any) -> bool:
     """True when a tool string is a hard failure or non-zero bash exit."""
     text = str(result or "")
-    if text.startswith("Error:"):
+    if text.startswith("Error:") or text.startswith("BLOCKED"):
         return True
     import re
 
@@ -139,6 +142,98 @@ def _tool_result_is_error(result: Any) -> bool:
     if m and int(m.group(1)) != 0:
         return True
     return False
+
+
+async def _run_one_gated_tool(
+    call: ToolCall,
+    *,
+    session_id: str | None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield optional HITL events, then a ``tool_result`` event."""
+    args = call.arguments if isinstance(call.arguments, dict) else {}
+
+    if call.name == "clarify":
+        question = args.get("question")
+        if not isinstance(question, str) or not question.strip():
+            yield {
+                "kind": "tool_result",
+                "tool": call.name,
+                "result": "Error: 'question' argument must be a non-empty string",
+                "error": True,
+            }
+            return
+        raw_choices = args.get("choices")
+        choices: list[str] = []
+        if isinstance(raw_choices, list):
+            for c in raw_choices:
+                if isinstance(c, str) and c.strip() and len(choices) < 4:
+                    choices.append(c.strip())
+        payload = hitl_mod.create_clarify(
+            question=question.strip(),
+            choices=choices,
+            session_id=session_id,
+        )
+        yield {"kind": "clarify_required", **payload}
+        answer = await hitl_mod.await_clarify(payload["id"])
+        result = json.dumps(
+            {
+                "question": question.strip(),
+                "choices_offered": choices,
+                "user_response": answer,
+            },
+            ensure_ascii=False,
+        )
+        yield {
+            "kind": "tool_result",
+            "tool": call.name,
+            "result": result,
+            "error": False,
+        }
+        return
+
+    work_root = sandbox.resolve_work_root()
+    decision = evaluate(
+        call.name, args, work_root=work_root, session_id=session_id
+    )
+    if decision.needs_hitl:
+        payload = hitl_mod.create_approval(
+            tool=call.name,
+            args=args,
+            findings=decision.findings,
+            description=decision.description,
+            allow_permanent=decision.allow_permanent,
+            smart_denied=decision.smart_denied,
+            session_id=session_id,
+        )
+        yield {"kind": "approval_required", **payload}
+        choice = await hitl_mod.await_approval(payload["id"])
+        decision = apply_choice(decision, choice, session_id=session_id)
+
+    if not decision.allowed:
+        result = decision.message or "BLOCKED: denied"
+        yield {
+            "kind": "tool_result",
+            "tool": call.name,
+            "result": result,
+            "error": True,
+        }
+        return
+
+    grant_tok = set_outside_grant(decision.grant)
+    try:
+        result = await asyncio.to_thread(execute, call.name, args)
+    except Exception as exc:
+        result = f"Error: {exc}"
+    finally:
+        reset_outside_grant(grant_tok)
+
+    result = _truncate_result(result)
+    yield {
+        "kind": "tool_result",
+        "tool": call.name,
+        "result": result,
+        "error": _tool_result_is_error(result),
+    }
 
 
 def _truncate_result(result: Any) -> str:
@@ -367,84 +462,41 @@ async def run_turn(
                         }
                     )
 
-            # ── Tool execution ──
-            # Separate delegate calls (subagent), read-only (parallel-safe),
-            # and mutating (serial) for correct scheduling.
+            # ── Tool execution (permission-gated; serial for correct HITL) ──
             delegate_calls = [
                 (cid, c) for cid, c in paired if c.name == "delegate"
             ]
-            ro_calls = [
-                (cid, c)
-                for cid, c in paired
-                if c.name != "delegate" and c.name in _READ_ONLY_TOOLS
+            other_calls = [
+                (cid, c) for cid, c in paired if c.name != "delegate"
             ]
-            mut_calls = [
-                (cid, c)
-                for cid, c in paired
-                if c.name != "delegate" and c.name not in _READ_ONLY_TOOLS
-            ]
-            if delegate_calls or len(ro_calls) > 1 or mut_calls:
+            if delegate_calls or other_calls:
                 _logger.info(
-                    "exec: delegate=%d readonly=%d (parallel=%s) mutating=%d",
-                    len(delegate_calls), len(ro_calls),
-                    len(ro_calls) > 1, len(mut_calls),
+                    "exec: delegate=%d gated=%d",
+                    len(delegate_calls),
+                    len(other_calls),
                 )
 
-            # Emit tool events for all non-delegate tools BEFORE executing
-            # so the UI shows a loading state immediately.
-            for cid, call in paired:
-                if call.name == "delegate":
-                    continue
-                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
-
-            # Run read-only tools concurrently (no side effects).
-            if len(ro_calls) > 1:
-                results_ro = await asyncio.gather(
-                    *(
-                        asyncio.to_thread(execute, c.name, c.arguments)
-                        for _cid, c in ro_calls
-                    ),
-                    return_exceptions=True,
-                )
-            else:
-                results_ro = [
-                    await asyncio.to_thread(execute, c.name, c.arguments)
-                    for _cid, c in ro_calls
-                ]
-
-            # Execute mutating tools serially (safety).
-            results_mut: list[Any] = []
-            for _cid, c in mut_calls:
-                results_mut.append(
-                    await asyncio.to_thread(execute, c.name, c.arguments)
-                )
-
-            # Build result map, converting exceptions to error strings.
             by_cid: dict[str, tuple[ToolCall, Any]] = {}
-            for (cid, call), res in zip(ro_calls, results_ro):
-                if isinstance(res, Exception):
-                    res = f"Error: {res}"
-                by_cid[cid] = (call, res)
-            for (cid, call), res in zip(mut_calls, results_mut):
-                by_cid[cid] = (call, res)
-
-            # Emit tool_result events in original call order.
-            for cid, call in paired:
-                if call.name == "delegate":
-                    continue  # handled below
-                if cid not in by_cid:
-                    continue
-                call_obj, result = by_cid[cid]
-                result = _truncate_result(result)
-                error = _tool_result_is_error(result)
-                yield {
-                    "kind": "tool_result",
-                    "tool": call_obj.name,
-                    "result": result,
-                    "error": error,
-                }
+            for cid, call in other_calls:
+                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
+                result_text = "Error: no tool result"
+                error = True
+                async for ev in _run_one_gated_tool(call, session_id=session_id):
+                    if ev.get("kind") in {"approval_required", "clarify_required"}:
+                        yield ev
+                        continue
+                    if ev.get("kind") == "tool_result":
+                        result_text = _truncate_result(ev.get("result"))
+                        error = bool(ev.get("error"))
+                        yield {
+                            "kind": "tool_result",
+                            "tool": call.name,
+                            "result": result_text,
+                            "error": error,
+                        }
+                by_cid[cid] = (call, result_text)
                 messages.append(
-                    {"role": "tool", "tool_call_id": cid, "content": result}
+                    {"role": "tool", "tool_call_id": cid, "content": result_text}
                 )
 
             # ── Subagent delegation: run the child, capture output, continue ──

@@ -53,6 +53,7 @@ async def test_manual_escape_blocks_without_waiter(tmp_path: Path) -> None:
         session_id="s1",
     )
     assert not d.allowed
+    assert d.needs_hitl
     assert "approval required" in (d.message or "").lower()
 
 
@@ -72,3 +73,4 @@ async def test_manual_hitl_once_allows(tmp_path: Path) -> None:
     )
     assert d.allowed
     assert d.grant is not None
+    assert not d.needs_hitl
