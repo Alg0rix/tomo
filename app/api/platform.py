@@ -111,7 +111,42 @@ async def update_agent_tools(agent_id: str, body: dict, _: AuthDep):
 
 @router.get("/skills")
 async def list_skills(_: AuthDep):
+    try:
+        store.sync_skills()
+    except Exception:
+        pass
     return {"skills": store.list_skills()}
+
+
+@router.post("/skills/sync")
+async def sync_skills(_: AuthDep):
+    skills = store.sync_skills()
+    return {"skills": skills, "count": len(skills)}
+
+
+class SkillInstallIn(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    id: str | None = Field(default=None, max_length=80)
+
+
+@router.post("/skills/install")
+async def install_skill(body: SkillInstallIn, _: AuthDep):
+    try:
+        skill = store.install_skill_from_path(body.path, skill_id=body.id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return skill
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill(skill_id: str, _: AuthDep):
+    if store.uninstall_library_skill(skill_id):
+        return {"ok": True, "removed": "library"}
+    if store.delete_skill(skill_id):
+        return {"ok": True, "removed": "catalog"}
+    raise HTTPException(status_code=404, detail="Skill not found")
 
 
 @router.get("/skills/{skill_id}")
@@ -119,7 +154,10 @@ async def get_skill(skill_id: str, _: AuthDep):
     skill = store.get_skill(skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return skill
+    from app.extensions.skills import read_skill_body
+
+    body = read_skill_body(skill_id)
+    return {**skill, "body": body or skill.get("description") or ""}
 
 
 @router.get("/plugins")

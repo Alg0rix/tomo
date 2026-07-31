@@ -472,17 +472,7 @@
     }
 
     function makeToolCollapsible(card) {
-      var head = card.querySelector('.tool-head');
-      if (!head) return;
-      head.style.cursor = 'pointer';
-      head.addEventListener('click', function (e) {
-        if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
-        card.classList.toggle('expanded');
-        var ch = head.querySelector('.chevron');
-        if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
-        var res = card.querySelector('.tres');
-        if (res && card.classList.contains('expanded')) res.style.display = '';
-      });
+      if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
     }
 
     function toolCallStillRunning(entries, index) {
@@ -502,22 +492,18 @@
     }
 
     function buildHistoryToolCard(fn, params, running) {
-      var presented = (window.Tomo && Tomo.presentToolArgs)
-        ? Tomo.presentToolArgs(fn || 'tool', params || {})
-        : { summary: JSON.stringify(params || {}), detailHtml: '', isEdit: false, autoExpand: false };
+      if (window.Tomo && Tomo.buildToolCard) {
+        return Tomo.buildToolCard({ tool: fn || 'tool', args: params || {}, running: !!running });
+      }
       var card = document.createElement('div');
-      card.className = 'tool' + (running ? ' loading' : '') +
-        (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+      card.className = 'tool' + (running ? ' loading' : ' ok');
       card.innerHTML =
-        '<div class="tool-head">' +
-          '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
-          '<span class="tname">' + esc(fn || 'tool') + '</span> ' +
-          '<span class="targs">' + esc(presented.summary || '') + '</span>' +
-        '</div>' +
-        (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
-        (running ? '<div class="tloading">running\u2026</div>' : '') +
-        '<div class="tres" style="display:none"></div>';
+        '<button type="button" class="tool-head">' +
+          '<span class="tstatus"></span><span class="tname">' + esc(fn || 'tool') + '</span>' +
+          '<span class="targs"></span><span class="tchip"></span><span class="chevron"></span>' +
+        '</button><div class="tool-body"><pre class="tres"></pre></div>';
       card._res = card.querySelector('.tres');
+      card._chip = card.querySelector('.tchip');
       makeToolCollapsible(card);
       return card;
     }
@@ -743,15 +729,13 @@
         } else {
           var cards = turn.querySelectorAll('.tool');
           var last = cards[cards.length - 1];
-          if (last && last._res) {
+          if (last) {
             var resultText = e.content || '';
-            var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
-            last._res.textContent = (e.error ? '\u2717 ' : '\u2192 ') + truncated;
-            last._res.style.display = '';
-            if (e.error || last.classList.contains('is-edit')) {
-              last.classList.add('expanded');
-              var ch = last.querySelector('.chevron');
-              if (ch) ch.textContent = '\u25BC';
+            if (window.Tomo && Tomo.finishToolCard) {
+              Tomo.finishToolCard(last, resultText, !!e.error);
+            } else if (last._res) {
+              last._res.textContent = resultText;
+              last.classList.remove('loading');
             }
           }
         }

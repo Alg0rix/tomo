@@ -19,3 +19,9 @@ def test_service_choices() -> None:
     args = build_parser().parse_args(["service", "status"])
     assert args.cmd == "service"
     assert args.action == "status"
+
+
+def test_skills_list_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["skills", "list", "--help"])
+    assert ei.value.code == 0

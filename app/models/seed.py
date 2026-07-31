@@ -263,24 +263,10 @@ def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
 
 
 def _seed_skills(conn: sqlite3.Connection) -> None:
-    """Skill catalog only — no fake agent↔skill demo links."""
-    from app.services.platform_data import seed_skills
+    """Discover filesystem skills into the catalog (no fake placeholder rows)."""
+    from app.extensions.skills import sync_skills_to_db
 
-    base = _now()
-    for i, s in enumerate(seed_skills()):
-        conn.execute(
-            "INSERT INTO skills (id, name, description, version, enabled, tool_count, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (
-                s["id"],
-                s["name"],
-                s["description"],
-                s.get("version", "1.0"),
-                1 if s.get("enabled", True) else 0,
-                int(s.get("tool_count") or 0),
-                base - 86400 * (4 - i),
-            ),
-        )
+    sync_skills_to_db(conn)
     for agent_id in _SEED_AGENT_IDS:
         if not _has_agent(conn, agent_id):
             continue

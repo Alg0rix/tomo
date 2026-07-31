@@ -15,6 +15,7 @@ def _agent_count(conn: sqlite3.Connection, skill_id: str) -> int:
 
 
 def _row_to_skill(row: sqlite3.Row, agent_count: int) -> dict[str, Any]:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "name": row["name"],
@@ -24,6 +25,8 @@ def _row_to_skill(row: sqlite3.Row, agent_count: int) -> dict[str, Any]:
         "tool_count": int(row["tool_count"] or 0),
         "agent_count": agent_count,
         "created_at": row["created_at"],
+        "path": row["path"] if "path" in keys else "",
+        "source": row["source"] if "source" in keys else "",
     }
 
 
@@ -93,10 +96,21 @@ def update_skill(
     return get_skill(conn, skill_id)
 
 
+def delete_skill(conn: sqlite3.Connection, skill_id: str) -> bool:
+    row = conn.execute("SELECT 1 FROM skills WHERE id=?", (skill_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM agent_skills WHERE skill_id=?", (skill_id,))
+    conn.execute("DELETE FROM skills WHERE id=?", (skill_id,))
+    conn.commit()
+    return True
+
+
 __all__ = [
     "list_skills",
     "get_skill",
     "list_for_agent",
     "set_for_agent",
     "update_skill",
+    "delete_skill",
 ]

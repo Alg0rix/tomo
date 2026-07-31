@@ -27,6 +27,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["status", "start", "stop", "restart"],
         help="systemctl --user action",
     )
+
+    sk = sub.add_parser("skills", help="Discover, install, and sync skill packages")
+    sk_sub = sk.add_subparsers(dest="skills_cmd", required=True)
+    sk_sub.add_parser("list", help="List discovered skills")
+    sk_sub.add_parser("sync", help="Rescan library + ~/.agents/skills into the catalog")
+    sk_inst = sk_sub.add_parser(
+        "install", help="Copy a skill directory into $TOMO_HOME/library/skills"
+    )
+    sk_inst.add_argument("path", help="Path to skill dir (or SKILL.md)")
+    sk_inst.add_argument("--id", dest="skill_id", default=None, help="Override skill id")
+    sk_rm = sk_sub.add_parser("uninstall", help="Remove a managed library skill")
+    sk_rm.add_argument("skill_id", help="Skill id to remove from library")
     return p
 
 
@@ -47,6 +59,17 @@ def _run(argv: list[str] | None = None) -> int:
         from cli.service import service_action
 
         return service_action(args.action)
+    if args.cmd == "skills":
+        from cli import skills_cmd
+
+        if args.skills_cmd == "list":
+            return skills_cmd.cmd_skills_list()
+        if args.skills_cmd == "sync":
+            return skills_cmd.cmd_skills_sync()
+        if args.skills_cmd == "install":
+            return skills_cmd.cmd_skills_install(args.path, skill_id=args.skill_id)
+        if args.skills_cmd == "uninstall":
+            return skills_cmd.cmd_skills_uninstall(args.skill_id)
     parser.error(f"unknown command {args.cmd}")
     return 2
 

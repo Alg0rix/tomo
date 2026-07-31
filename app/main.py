@@ -35,6 +35,12 @@ async def _lifespan(_app: FastAPI):
         ensure_tomo_home()
     except Exception:
         pass
+    try:
+        from app.services import store as _store
+
+        _store.sync_skills()
+    except Exception:
+        pass
     from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
     from app.scheduler import start_scheduler, stop_scheduler
 

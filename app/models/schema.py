@@ -143,7 +143,9 @@ CREATE TABLE IF NOT EXISTS skills (
     version     TEXT NOT NULL DEFAULT '1.0',
     enabled     INTEGER NOT NULL DEFAULT 1,
     tool_count  INTEGER NOT NULL DEFAULT 0,
-    created_at  REAL NOT NULL DEFAULT 0
+    created_at  REAL NOT NULL DEFAULT 0,
+    path        TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS agent_skills (
@@ -253,4 +255,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     for col, ddl in _wp_alters.items():
         if col not in wp_cols:
             conn.execute(ddl)
+    skill_cols = {r[1] for r in conn.execute("PRAGMA table_info(skills)")}
+    if "path" not in skill_cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+    if "source" not in skill_cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN source TEXT NOT NULL DEFAULT ''")
     conn.commit()

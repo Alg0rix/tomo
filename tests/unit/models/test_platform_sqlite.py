@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.core import config, home
 from app.services import store
 
 
@@ -11,8 +12,25 @@ def _rebind(tmp_path: Path) -> None:
     store.rebind(tmp_path / "platform.db")
 
 
+def _install_demo_skills() -> None:
+    lib = home.library_skills_dir(config.TOMO_HOME)
+    for sid, desc in (
+        ("onboarding", "Vendor intake"),
+        ("deploy", "Deploy checklist"),
+        ("research_brief", "Research notes"),
+    ):
+        d = lib / sid
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {sid}\ndescription: {desc}\n---\n\n{desc}.\n",
+            encoding="utf-8",
+        )
+    store.sync_skills()
+
+
 def test_seed_skills_plugins_schedules(tmp_path: Path) -> None:
     _rebind(tmp_path)
+    _install_demo_skills()
     skills = store.list_skills()
     assert {s["id"] for s in skills} >= {"onboarding", "deploy", "research_brief"}
     plugins = store.list_plugins()
@@ -24,6 +42,7 @@ def test_seed_skills_plugins_schedules(tmp_path: Path) -> None:
 def test_skills_plugins_schedules_survive_rebind(tmp_path: Path) -> None:
     db = tmp_path / "persist.db"
     store.rebind(db)
+    _install_demo_skills()
     store.create_schedule(
         {
             "id": "sch_user",
@@ -38,6 +57,7 @@ def test_skills_plugins_schedules_survive_rebind(tmp_path: Path) -> None:
     store.set_agent_skills("ops", ["deploy", "onboarding"])
 
     store.rebind(db)
+    store.sync_skills()
 
     sch = store.get_schedule("sch_user")
     assert sch is not None
@@ -46,7 +66,6 @@ def test_skills_plugins_schedules_survive_rebind(tmp_path: Path) -> None:
     assert store.get_plugin("kanban")["enabled"] is False
     assigned = {s["id"] for s in store.get_agent_skills("ops") if s["assigned"]}
     assert assigned == {"deploy", "onboarding"}
-    # Seeded rows still present (empty-table seed does not wipe)
     assert store.get_skill("onboarding") is not None
     assert store.get_schedule("sch_001") is not None
 
@@ -76,8 +95,9 @@ def test_create_enable_disable_schedule(tmp_path: Path) -> None:
     assert on["next_run"] is not None
 
 
-def test_agent_skills_assigned_from_seed(tmp_path: Path) -> None:
+def test_agent_skills_start_unassigned(tmp_path: Path) -> None:
     _rebind(tmp_path)
+    _install_demo_skills()
     main = store.get_agent_skills("main")
     assigned = {s["id"] for s in main if s["assigned"]}
-    assert assigned == {"onboarding", "deploy"}
+    assert assigned == set()

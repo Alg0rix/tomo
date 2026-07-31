@@ -67,6 +67,7 @@
     const clearBtn = wrap.querySelector('.chat-clear');
     const statusEl = wrap.querySelector('.chat-status');
     const mentionMenu = wrap.querySelector('.mention-menu');
+    const slashMenu = wrap.querySelector('.slash-menu');
     const attachBtn = wrap.querySelector('.attach-btn');
     const attachInput = wrap.querySelector('.attachment-input');
     const attachPreview = wrap.querySelector('.attachment-preview');
@@ -82,6 +83,13 @@
     let mentionIndex = 0;
     let mentionMatches = [];
     let mentionRange = null; // {start, end} of @query in input
+
+    let slashOpen = false;
+    let slashIndex = 0;
+    let slashMatches = [];
+    /** @type {{id: string, name: string, description: string}[]} */
+    let skillsCache = null;
+    let skillsLoading = false;
 
     function currentSessionId() { return wrap.dataset.sessionId || ''; }
     function pendingAgentIds() {
@@ -113,6 +121,125 @@
         mentionMenu.classList.add('hidden');
         mentionMenu.innerHTML = '';
       }
+    }
+
+    function hideSlash() {
+      slashOpen = false;
+      slashMatches = [];
+      if (slashMenu) {
+        slashMenu.classList.add('hidden');
+        slashMenu.innerHTML = '';
+      }
+    }
+
+    function hidePopups() {
+      hideMentions();
+      hideSlash();
+    }
+
+    function ensureSkills(cb) {
+      if (skillsCache) {
+        if (cb) cb(skillsCache);
+        return;
+      }
+      if (skillsLoading) return;
+      skillsLoading = true;
+      fetch('/api/skills', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : { skills: [] }; })
+        .then(function (data) {
+          skillsCache = (data.skills || []).filter(function (s) {
+            return s && s.enabled !== false && (s.id || s.name);
+          });
+          skillsLoading = false;
+          if (cb) cb(skillsCache);
+        })
+        .catch(function () {
+          skillsCache = [];
+          skillsLoading = false;
+          if (cb) cb(skillsCache);
+        });
+    }
+
+    function filterSkills(query) {
+      var q = (query || '').toLowerCase().replace(/^\//, '');
+      var all = skillsCache || [];
+      if (!q) return all.slice(0, 14);
+      return all.map(function (s, index) {
+        var id = String(s.id || '').toLowerCase();
+        var name = String(s.name || '').toLowerCase();
+        var desc = String(s.description || '').toLowerCase();
+        var score = 0;
+        if (id === q || name === q) score = 3;
+        else if (id.indexOf(q) === 0 || name.indexOf(q) === 0) score = 2;
+        else if (id.indexOf(q) >= 0 || name.indexOf(q) >= 0 || desc.indexOf(q) >= 0) score = 1;
+        return { s: s, index: index, score: score };
+      }).filter(function (x) { return x.score > 0; })
+        .sort(function (a, b) {
+          if (a.score !== b.score) return b.score - a.score;
+          return a.index - b.index;
+        })
+        .slice(0, 14)
+        .map(function (x) { return x.s; });
+    }
+
+    function renderSlashMenu() {
+      if (!slashMenu) return;
+      if (!slashMatches.length) {
+        hideSlash();
+        return;
+      }
+      slashMenu.innerHTML = slashMatches.map(function (s, i) {
+        var active = i === slashIndex ? ' active' : '';
+        var sid = s.id || s.name || '';
+        var label = '/' + sid;
+        var desc = s.description || s.name || '';
+        return '<button type="button" class="slash-item' + active + '" data-idx="' + i + '" role="option">' +
+          '<span class="slash-name">' + esc(label) + '</span>' +
+          '<span class="slash-desc">' + esc(desc) + '</span></button>';
+      }).join('');
+      slashMenu.classList.remove('hidden');
+      slashOpen = true;
+      slashMenu.querySelectorAll('.slash-item').forEach(function (btn) {
+        btn.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          insertSlash(parseInt(btn.dataset.idx, 10) || 0);
+        });
+      });
+    }
+
+    function updateSlash() {
+      if (!slashMenu || !input) return;
+      var val = input.value;
+      // Kimi-style: only when the whole input is a single /token (no space yet).
+      if (!(val.startsWith('/') && val.indexOf(' ') < 0)) {
+        hideSlash();
+        return;
+      }
+      hideMentions();
+      ensureSkills(function () {
+        // Re-check — input may have changed while fetch was in flight.
+        var cur = input.value;
+        if (!(cur.startsWith('/') && cur.indexOf(' ') < 0)) {
+          hideSlash();
+          return;
+        }
+        slashMatches = filterSkills(cur);
+        slashIndex = 0;
+        renderSlashMenu();
+      });
+    }
+
+    function insertSlash(idx) {
+      if (!input || !slashMatches[idx]) return;
+      var skill = slashMatches[idx];
+      var sid = skill.id || skill.name || '';
+      input.value = '/' + sid + ' ';
+      var pos = input.value.length;
+      input.setSelectionRange(pos, pos);
+      hideSlash();
+      input.focus();
+      refreshSendBtn();
+      resize();
     }
 
     function renderMentionMenu() {
@@ -170,11 +297,17 @@
 
     function updateMentions() {
       if (!mentionMenu) return;
+      // Slash menu owns the popup when input is a lone /token.
+      if (input && input.value.startsWith('/') && input.value.indexOf(' ') < 0) {
+        hideMentions();
+        return;
+      }
       const hit = detectMention();
       if (!hit) {
         hideMentions();
         return;
       }
+      hideSlash();
       mentionRange = { start: hit.start, end: hit.end };
       mentionMatches = filterMentions(hit.query);
       mentionIndex = 0;
@@ -197,6 +330,9 @@
       sendBtn.disabled = !input.value.trim() || sending;
       resize();
     }
+
+    // Prefetch skills so first `/` feels instant.
+    ensureSkills();
 
     // Session chat may be a client-side draft (pendingAgents, no sessionId yet).
     if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
@@ -852,42 +988,24 @@
       }
 
       function makeToolCollapsible(card) {
-        var head = card.querySelector('.tool-head') || card.querySelector(':scope > div:first-child') || card.firstElementChild;
-        if (!head) return;
-        head.classList.add('tool-head');
-        head.style.cursor = 'pointer';
-        var chevron = head.querySelector('.chevron');
-        if (!chevron) {
-          chevron = document.createElement('span');
-          chevron.className = 'chevron';
-          chevron.textContent = '\u25B6';
-          head.insertBefore(chevron, head.firstChild);
-        }
-        head.addEventListener('click', function (e) {
-          if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
-          card.classList.toggle('expanded');
-          chevron.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
-        });
+        if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
       }
 
       function buildToolCard(d) {
+        if (window.Tomo && Tomo.buildToolCard) {
+          return Tomo.buildToolCard({ tool: d.tool || 'tool', args: d.args || {}, running: true });
+        }
         var tool = d.tool || 'tool';
         var args = d.args || {};
-        var presented = (window.Tomo && Tomo.presentToolArgs)
-          ? Tomo.presentToolArgs(tool, args)
-          : { summary: JSON.stringify(args), detailHtml: '', isEdit: false, autoExpand: false };
         var card = document.createElement('div');
-        card.className = 'tool loading' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+        card.className = 'tool loading';
         card.innerHTML =
-          '<div class="tool-head">' +
-            '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
-            '<span class="tname">' + esc(tool) + '</span> ' +
-            '<span class="targs">' + esc(presented.summary || '') + '</span>' +
-          '</div>' +
-          (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
-          '<div class="tloading">running\u2026</div>' +
-          '<div class="tres" style="display:none"></div>';
+          '<button type="button" class="tool-head">' +
+            '<span class="tstatus"></span><span class="tname">' + esc(tool) + '</span> ' +
+            '<span class="targs"></span><span class="tchip"></span><span class="chevron"></span>' +
+          '</button><div class="tool-body"><pre class="tres"></pre></div>';
         card._res = card.querySelector('.tres');
+        card._chip = card.querySelector('.tchip');
         makeToolCollapsible(card);
         return card;
       }
@@ -996,16 +1114,13 @@
         }
         const cards = turn.querySelectorAll('.tool');
         const last = cards[cards.length - 1];
-        if (last && last._res) {
+        if (last) {
           var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
-          last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
-          last._res.style.display = '';
-          last.classList.remove('loading');
-          if (d.error || last.classList.contains('is-edit')) {
-            last.classList.add('expanded');
-            var ch = last.querySelector('.chevron');
-            if (ch) ch.textContent = '\u25BC';
+          if (window.Tomo && Tomo.finishToolCard) {
+            Tomo.finishToolCard(last, resultText, !!d.error);
+          } else if (last._res) {
+            last._res.textContent = resultText;
+            last.classList.remove('loading');
           }
         }
         // Keep typing indicator after tool so UI does not look frozen mid-turn.
@@ -1173,6 +1288,7 @@
         Tomo.toast('Wait for uploads to finish', 'err');
         return;
       }
+      hidePopups();
       input.value = '';
       resize();
       uploadedAttachments = [];
@@ -1188,6 +1304,7 @@
     input.addEventListener('input', function () {
       refreshSendBtn();
       resize();
+      updateSlash();
       updateMentions();
     });
 
@@ -1216,6 +1333,30 @@
       if (files.length) uploadFiles(files);
     });
     input.addEventListener('keydown', function (e) {
+      if (slashOpen && slashMatches.length) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          slashIndex = (slashIndex + 1) % slashMatches.length;
+          renderSlashMenu();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          slashIndex = (slashIndex - 1 + slashMatches.length) % slashMatches.length;
+          renderSlashMenu();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          insertSlash(slashIndex);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          hideSlash();
+          return;
+        }
+      }
       if (mentionOpen && mentionMatches.length) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -1244,7 +1385,7 @@
     });
     input.addEventListener('blur', function () {
       // Delay so mousedown on menu still fires.
-      setTimeout(hideMentions, 150);
+      setTimeout(hidePopups, 150);
     });
     sendBtn.addEventListener('click', function () { send(); });
     resize();
@@ -1401,35 +1542,23 @@
       }
 
       function makeToolCollapsible(card) {
-        var head = card.querySelector('.tool-head');
-        if (!head) return;
-        head.style.cursor = 'pointer';
-        head.addEventListener('click', function (e) {
-          if (e.target.closest('.targs') || e.target.closest('.diff-code-block')) return;
-          card.classList.toggle('expanded');
-          var ch = head.querySelector('.chevron');
-          if (ch) ch.textContent = card.classList.contains('expanded') ? '\u25BC' : '\u25B6';
-        });
+        if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
       }
 
       function buildToolCard(d) {
+        if (window.Tomo && Tomo.buildToolCard) {
+          return Tomo.buildToolCard({ tool: d.tool || 'tool', args: d.args || {}, running: true });
+        }
         var tool = d.tool || 'tool';
-        var args = d.args || {};
-        var presented = (window.Tomo && Tomo.presentToolArgs)
-          ? Tomo.presentToolArgs(tool, args)
-          : { summary: JSON.stringify(args), detailHtml: '', isEdit: false, autoExpand: false };
         var card = document.createElement('div');
-        card.className = 'tool loading' + (presented.isEdit ? ' is-edit' : '') + (presented.autoExpand ? ' expanded' : '');
+        card.className = 'tool loading';
         card.innerHTML =
-          '<div class="tool-head">' +
-            '<span class="chevron">' + (presented.autoExpand ? '\u25BC' : '\u25B6') + '</span>' +
-            '<span class="tname">' + esc(tool) + '</span> ' +
-            '<span class="targs">' + esc(presented.summary || '') + '</span>' +
-          '</div>' +
-          (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
-          '<div class="tloading">running\u2026</div>' +
-          '<div class="tres" style="display:none"></div>';
+          '<button type="button" class="tool-head">' +
+            '<span class="tstatus"></span><span class="tname">' + esc(tool) + '</span>' +
+            '<span class="targs"></span><span class="tchip"></span><span class="chevron"></span>' +
+          '</button><div class="tool-body"><pre class="tres"></pre></div>';
         card._res = card.querySelector('.tres');
+        card._chip = card.querySelector('.tchip');
         makeToolCollapsible(card);
         return card;
       }
@@ -1437,16 +1566,13 @@
       function applyToolResult(d) {
         const cards = turn.querySelectorAll('.tool');
         const last = cards[cards.length - 1];
-        if (last && last._res) {
+        if (last) {
           var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-          var truncated = resultText.length > 300 ? resultText.slice(0, 300) + '\u2026' : resultText;
-          last._res.textContent = (d.error ? '\u2717 ' : '\u2192 ') + truncated;
-          last._res.style.display = '';
-          last.classList.remove('loading');
-          if (d.error || last.classList.contains('is-edit')) {
-            last.classList.add('expanded');
-            var ch = last.querySelector('.chevron');
-            if (ch) ch.textContent = '\u25BC';
+          if (window.Tomo && Tomo.finishToolCard) {
+            Tomo.finishToolCard(last, resultText, !!d.error);
+          } else if (last._res) {
+            last._res.textContent = resultText;
+            last.classList.remove('loading');
           }
         }
         if (!asstEl && !pendingEl) showPending();

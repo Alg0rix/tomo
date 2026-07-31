@@ -614,6 +614,41 @@ class Store:
         with self._lock:
             return skills_store.update_skill(self._conn, skill_id, data)
 
+    def delete_skill(self, skill_id: str) -> bool:
+        with self._lock:
+            return skills_store.delete_skill(self._conn, skill_id)
+
+    def sync_skills(self) -> list[dict[str, Any]]:
+        """Rescan library + external skill dirs into SQLite."""
+        from app.extensions.skills import sync_skills_to_db
+
+        with self._lock:
+            return sync_skills_to_db(self._conn)
+
+    def install_skill_from_path(self, path: str | Path, skill_id: str | None = None) -> dict[str, Any]:
+        from app.extensions.skills import install_from_path, sync_skills_to_db
+
+        installed = install_from_path(Path(path), skill_id=skill_id)
+        with self._lock:
+            sync_skills_to_db(self._conn)
+            skill = skills_store.get_skill(self._conn, installed.id)
+        if skill is None:
+            raise RuntimeError(f"skill {installed.id} not found after install")
+        return skill
+
+    def uninstall_library_skill(self, skill_id: str) -> bool:
+        from app.extensions.skills import uninstall_library_skill
+
+        removed = uninstall_library_skill(skill_id)
+        with self._lock:
+            if removed:
+                skills_store.delete_skill(self._conn, skill_id)
+            else:
+                # Still drop DB row if it was a synced external entry user wants gone from catalog
+                # — only library uninstall removes files; for catalog-only use delete_skill.
+                pass
+        return removed
+
     def list_plugins(self) -> list[dict[str, Any]]:
         with self._lock:
             return plugins_store.list_plugins(self._conn)

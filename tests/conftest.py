@@ -15,3 +15,5 @@ _TEST_WORK = tempfile.mkdtemp(prefix="tomo-work-pytest-")
 os.environ["TOMO_HOME"] = _TEST_HOME
 os.environ["TOMO_WORK"] = _TEST_WORK
 os.environ.setdefault("TOMO_DB_PATH", os.path.join(_TEST_HOME, "state", "tomo.db"))
+# Do not pull the developer's ~/.agents/skills into unit tests.
+os.environ["TOMO_SKILLS_EXTERNAL_DIRS"] = ""

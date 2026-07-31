@@ -453,6 +453,25 @@ journalctl --user -u tomo -f
 
 Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
+### Skills
+
+Skills are folders with a `SKILL.md` (agentskills.io / Hermes style). Tomo discovers:
+
+| Path | Role |
+|------|------|
+| `$TOMO_HOME/library/skills` | Managed installs |
+| `~/.agents/skills` | Shared user skills (default) |
+| `~/.agent/skills` | Alternate shared path |
+
+```bash
+tomo skills sync
+tomo skills list
+tomo skills install ./my-skill-dir
+tomo skills uninstall <id>     # library installs only
+```
+
+Override external roots with `TOMO_SKILLS_EXTERNAL_DIRS` (colon-separated; empty disables). Agents load skill bodies via `list_skills` / `use_skill`.
+
 ### Develop from source
 
 ```bash
@@ -537,7 +556,8 @@ uv run pytest
 - [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
 - [ ] Channel adapters — Telegram, WhatsApp, Discord, Slack, CLI
-- [ ] Skill registry — install and share community skills
+- [x] Skills — filesystem discover (`~/.agents/skills` + library), install CLI, `use_skill` body load
+- [ ] Skill registry — community marketplace / remote install
 - [ ] Observability — traces, artifact browser, cost tracking per agent
 - [ ] Eval / evaluator UI (gated today via `TOMO_EVAL_UI`)
 

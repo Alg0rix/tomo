@@ -16,12 +16,31 @@ def _reset(tmp_path) -> None:
     reset_registry()
 
 
-def test_list_skills_includes_seeded() -> None:
+def test_list_skills_includes_seeded(tmp_path) -> None:
+    # Catalog may be empty without disk packages; install one for the tool path.
+    from app.core import config, home
+
+    d = home.library_skills_dir(config.TOMO_HOME) / "onboarding"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: onboarding\ndescription: Vendor intake\n---\n\nSteps.\n",
+        encoding="utf-8",
+    )
+    store.sync_skills()
     result = execute("list_skills", {})
     assert "onboarding" in result or "Vendor" in result
 
 
 def test_use_skill_returns_description() -> None:
+    from app.core import config, home
+
+    d = home.library_skills_dir(config.TOMO_HOME) / "demo-skill"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Demo\n---\n\nBody text.\n",
+        encoding="utf-8",
+    )
+    store.sync_skills()
     skills = store.list_skills()
     assert skills
     sid = skills[0]["id"]

@@ -1,1 +1,348 @@
-"""Skill packages and tool manifests."""
+"""Skill package discovery, install, and SKILL.md loading.
+
+Discovers agentskills.io-style packages (directory containing ``SKILL.md`` with
+optional YAML frontmatter) from:
+
+1. ``$TOMO_HOME/library/skills`` — managed install target (read/write)
+2. External dirs from ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). When the
+   env var is **unset**, defaults to ``~/.agents/skills`` and ``~/.agent/skills``
+   (Hermes / OpenClaw / Cursor conventions). Set the env var to empty to disable
+   external discovery (tests do this).
+
+Managed installs copy a skill tree into the library dir. External skills are
+discovered read-only and never deleted by uninstall.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterator
+
+from app.core import config, home
+
+_EXCLUDED_DIR_NAMES = frozenset(
+    {".git", ".github", ".hub", ".archive", "__pycache__", "node_modules", ".venv"}
+)
+_FRONTMATTER_END = re.compile(r"\n---\s*\n")
+
+
+@dataclass(frozen=True)
+class DiscoveredSkill:
+    """One skill package on disk."""
+
+    id: str
+    name: str
+    description: str
+    version: str
+    path: Path  # directory containing SKILL.md
+    skill_md: Path
+    source: str  # library | agents | agent | external
+    body: str
+
+
+def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
+    """Parse optional YAML-ish frontmatter; no PyYAML dependency."""
+    if not content.startswith("---"):
+        return {}, content
+    match = _FRONTMATTER_END.search(content[3:])
+    if not match:
+        return {}, content
+    yaml_block = content[3 : match.start() + 3]
+    body = content[match.end() + 3 :]
+    meta: dict[str, Any] = {}
+    # Simple key: value parser (handles folded `>` descriptions as single line).
+    current_key: str | None = None
+    current_fold: list[str] = []
+    for line in yaml_block.splitlines():
+        if current_key and (line.startswith("  ") or line.startswith("\t")):
+            current_fold.append(line.strip())
+            continue
+        if current_key and current_fold:
+            meta[current_key] = " ".join(current_fold).strip()
+            current_key = None
+            current_fold = []
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if not key or key.startswith("#"):
+            continue
+        if val in {">", "|"}:
+            current_key = key
+            current_fold = []
+            continue
+        meta[key] = val
+    if current_key and current_fold:
+        meta[current_key] = " ".join(current_fold).strip()
+    return meta, body
+
+
+def slugify_skill_id(raw: str) -> str:
+    text = (raw or "").strip().lower()
+    text = re.sub(r"[^a-z0-9_-]+", "-", text)
+    text = text.strip("-_")
+    return text or "skill"
+
+
+def external_skill_roots() -> list[Path]:
+    """User-shared skill directories (read-only)."""
+    raw = os.environ.get("TOMO_SKILLS_EXTERNAL_DIRS")
+    if raw is None:
+        candidates = [
+            Path.home() / ".agents" / "skills",
+            Path.home() / ".agent" / "skills",
+        ]
+    elif not raw.strip():
+        return []
+    else:
+        candidates = [Path(p.strip()).expanduser() for p in raw.split(":") if p.strip()]
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for p in candidates:
+        try:
+            resolved = p.resolve()
+        except OSError:
+            continue
+        if not resolved.is_dir() or resolved in seen:
+            continue
+        seen.add(resolved)
+        out.append(resolved)
+    return out
+
+
+def skill_search_roots(home_root: Path | None = None) -> list[tuple[Path, str]]:
+    """Ordered ``(dir, source_label)`` roots to scan."""
+    roots: list[tuple[Path, str]] = []
+    lib = home.library_skills_dir(home_root)
+    roots.append((lib, "library"))
+    for ext in external_skill_roots():
+        label = "agents" if ext.name == "skills" and ext.parent.name == ".agents" else (
+            "agent" if ext.name == "skills" and ext.parent.name == ".agent" else "external"
+        )
+        roots.append((ext, label))
+    return roots
+
+
+def iter_skill_md_files(root: Path) -> Iterator[Path]:
+    """Yield ``SKILL.md`` paths under ``root`` (non-recursive category layouts OK)."""
+    if not root.is_dir():
+        return
+    # Direct children: root/<skill>/SKILL.md
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.is_dir() or entry.name in _EXCLUDED_DIR_NAMES:
+            continue
+        skill_md = entry / "SKILL.md"
+        if skill_md.is_file():
+            yield skill_md
+            continue
+        # One nesting level: root/<category>/<skill>/SKILL.md (Hermes style)
+        try:
+            subdirs = list(entry.iterdir())
+        except OSError:
+            continue
+        for sub in subdirs:
+            if not sub.is_dir() or sub.name in _EXCLUDED_DIR_NAMES:
+                continue
+            nested = sub / "SKILL.md"
+            if nested.is_file():
+                yield nested
+
+
+def load_discovered_skill(skill_md: Path, source: str) -> DiscoveredSkill | None:
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    meta, body = parse_frontmatter(text)
+    dirname = skill_md.parent.name
+    sid = slugify_skill_id(str(meta.get("name") or dirname))
+    name = str(meta.get("name") or dirname).strip() or sid
+    description = str(meta.get("description") or "").strip()
+    if not description:
+        # First non-empty body line as fallback blurb
+        for line in body.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                description = line[:240]
+                break
+    version = str(meta.get("version") or "1.0").strip() or "1.0"
+    return DiscoveredSkill(
+        id=sid,
+        name=name,
+        description=description,
+        version=version,
+        path=skill_md.parent,
+        skill_md=skill_md,
+        source=source,
+        body=body.strip(),
+    )
+
+
+def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
+    """Scan all roots; library wins on id collisions, then first external."""
+    by_id: dict[str, DiscoveredSkill] = {}
+    for root, source in skill_search_roots(home_root):
+        for skill_md in iter_skill_md_files(root):
+            skill = load_discovered_skill(skill_md, source)
+            if skill is None:
+                continue
+            existing = by_id.get(skill.id)
+            if existing is None:
+                by_id[skill.id] = skill
+            elif existing.source != "library" and source == "library":
+                by_id[skill.id] = skill
+    return sorted(by_id.values(), key=lambda s: s.name.lower())
+
+
+def read_skill_body(skill_id: str, home_root: Path | None = None) -> str | None:
+    """Return markdown body (no frontmatter) for ``skill_id``, or None."""
+    sid = slugify_skill_id(skill_id)
+    for skill in discover_skills(home_root):
+        if skill.id == sid:
+            return skill.body or skill.description
+    return None
+
+
+def install_from_path(
+    src: Path,
+    *,
+    skill_id: str | None = None,
+    home_root: Path | None = None,
+) -> DiscoveredSkill:
+    """Copy a skill directory (or parent of SKILL.md) into the library."""
+    src = Path(src).expanduser().resolve()
+    if src.is_file() and src.name == "SKILL.md":
+        src = src.parent
+    if not src.is_dir():
+        raise FileNotFoundError(f"skill path not found: {src}")
+    skill_md = src / "SKILL.md"
+    if not skill_md.is_file():
+        raise FileNotFoundError(f"no SKILL.md in {src}")
+    loaded = load_discovered_skill(skill_md, "library")
+    if loaded is None:
+        raise ValueError(f"could not parse skill at {src}")
+    sid = slugify_skill_id(skill_id or loaded.id)
+    dest_root = home.library_skills_dir(home_root)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    dest = dest_root / sid
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest, dirs_exist_ok=False)
+    installed = load_discovered_skill(dest / "SKILL.md", "library")
+    if installed is None:
+        raise RuntimeError(f"install failed for {sid}")
+    # Re-key id to dest dirname when forced
+    if installed.id != sid:
+        installed = DiscoveredSkill(
+            id=sid,
+            name=installed.name,
+            description=installed.description,
+            version=installed.version,
+            path=installed.path,
+            skill_md=installed.skill_md,
+            source="library",
+            body=installed.body,
+        )
+    return installed
+
+
+def uninstall_library_skill(skill_id: str, home_root: Path | None = None) -> bool:
+    """Remove a managed library skill directory. External skills cannot be removed."""
+    sid = slugify_skill_id(skill_id)
+    dest = home.library_skills_dir(home_root) / sid
+    if not dest.is_dir():
+        return False
+    shutil.rmtree(dest)
+    return True
+
+
+def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str, Any]]:
+    """Upsert discovered skills into SQLite; drop stale disk-backed rows.
+
+    Keeps manually seeded rows that have empty ``path`` only if they are not
+    shadowed by a discovered id. Prefer disk as source of truth for ids that
+    exist on disk.
+    """
+    import sqlite3
+
+    assert isinstance(conn, sqlite3.Connection)
+    discovered = discover_skills(home_root)
+    now = time.time()
+    disk_ids = {s.id for s in discovered}
+
+    # Ensure path/source columns exist (migrate may have run already).
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(skills)")}
+    if "path" not in cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+    if "source" not in cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+
+    for skill in discovered:
+        conn.execute(
+            "INSERT INTO skills (id, name, description, version, enabled, tool_count, "
+            "created_at, path, source) VALUES (?,?,?,?,1,0,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
+            "description=excluded.description, version=excluded.version, "
+            "path=excluded.path, source=excluded.source",
+            (
+                skill.id,
+                skill.name,
+                skill.description,
+                skill.version,
+                now,
+                str(skill.skill_md),
+                skill.source,
+            ),
+        )
+
+    # Remove previously synced disk skills that disappeared (keep empty-path seeds).
+    for row in conn.execute(
+        "SELECT id, path, source FROM skills WHERE path != '' OR source IN "
+        "('library','agents','agent','external')"
+    ).fetchall():
+        if row["id"] not in disk_ids and (row["path"] or row["source"]):
+            # Don't delete if it's a pure catalog seed with no path
+            if row["path"]:
+                conn.execute("DELETE FROM agent_skills WHERE skill_id=?", (row["id"],))
+                conn.execute("DELETE FROM skills WHERE id=?", (row["id"],))
+
+    conn.commit()
+    rows = conn.execute("SELECT * FROM skills ORDER BY name ASC").fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "description": r["description"],
+            "version": r["version"],
+            "enabled": bool(r["enabled"]),
+            "tool_count": int(r["tool_count"] or 0),
+            "path": r["path"] if "path" in r.keys() else "",
+            "source": r["source"] if "source" in r.keys() else "",
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+__all__ = [
+    "DiscoveredSkill",
+    "parse_frontmatter",
+    "slugify_skill_id",
+    "external_skill_roots",
+    "skill_search_roots",
+    "discover_skills",
+    "read_skill_body",
+    "install_from_path",
+    "uninstall_library_skill",
+    "sync_skills_to_db",
+]

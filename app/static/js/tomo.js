@@ -288,6 +288,88 @@
     if (lines > 1) return lines + ' lines';
     return Tomo.truncate(text.replace(/\s+/g, ' ').trim(), 48);
   };
+
+  /**
+   * Compact tool row (kimi-inspired): status · name · summary · chip · expand.
+   * @param {{tool?: string, args?: object}|string} toolOrData
+   * @param {object} [args]
+   * @param {{running?: boolean}} [opts]
+   */
+  Tomo.buildToolCard = function (toolOrData, args, opts) {
+    var tool, presented;
+    opts = opts || {};
+    if (typeof toolOrData === 'string') {
+      tool = toolOrData;
+      args = args || {};
+    } else {
+      tool = (toolOrData && toolOrData.tool) || 'tool';
+      args = (toolOrData && toolOrData.args) || {};
+      if (toolOrData && toolOrData.running != null && opts.running == null) {
+        opts.running = toolOrData.running;
+      }
+    }
+    presented = Tomo.presentToolArgs(tool, args);
+    var running = !!opts.running;
+    var expanded = !!presented.autoExpand;
+    var card = document.createElement('div');
+    card.className = 'tool' +
+      (running ? ' loading' : ' ok') +
+      (presented.isEdit ? ' is-edit' : '') +
+      (expanded ? ' expanded' : '');
+    var summary = presented.summary || '';
+    card.innerHTML =
+      '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
+        '<span class="tstatus" aria-hidden="true"></span>' +
+        '<span class="tname">' + Tomo.escapeHtml(tool) + '</span>' +
+        '<span class="targs">' + Tomo.escapeHtml(summary) + '</span>' +
+        '<span class="tchip"></span>' +
+        '<span class="chevron" aria-hidden="true"></span>' +
+      '</button>' +
+      '<div class="tool-body">' +
+        (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
+        '<pre class="tres"></pre>' +
+      '</div>';
+    card._res = card.querySelector('.tres');
+    card._chip = card.querySelector('.tchip');
+    card._head = card.querySelector('.tool-head');
+    Tomo.wireToolCard(card);
+    return card;
+  };
+
+  Tomo.wireToolCard = function (card) {
+    if (!card || card.dataset.toolWired === '1') return card;
+    card.dataset.toolWired = '1';
+    var head = card.querySelector('.tool-head');
+    if (!head) return card;
+    head.addEventListener('click', function (e) {
+      if (e.target.closest('.diff-code-block') || e.target.closest('.tool-code-block')) return;
+      card.classList.toggle('expanded');
+      head.setAttribute('aria-expanded', card.classList.contains('expanded') ? 'true' : 'false');
+    });
+    return card;
+  };
+
+  /** Attach tool output to a card and flip status to ok/error. */
+  Tomo.finishToolCard = function (card, result, isError) {
+    if (!card) return;
+    var resultText = typeof result === 'string' ? result : JSON.stringify(result == null ? '' : result);
+    if (card._res) card._res.textContent = resultText;
+    card.classList.remove('loading');
+    card.classList.toggle('error', !!isError);
+    card.classList.toggle('ok', !isError);
+    if (card._chip) {
+      var hint = isError
+        ? (Tomo.truncate((resultText.split('\n')[0] || 'Error').trim(), 56) || 'Error')
+        : Tomo.toolResultPreview(resultText);
+      card._chip.textContent = hint;
+      card._chip.classList.toggle('err', !!isError);
+    }
+    if (isError || card.classList.contains('is-edit')) {
+      card.classList.add('expanded');
+      if (card._head) card._head.setAttribute('aria-expanded', 'true');
+    }
+  };
+
   /** Return (or create) the timeline container inside an inspector body. */
   Tomo.siTimeline = function (body) {
     var tl = body.querySelector('.si-timeline');
