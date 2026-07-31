@@ -2,6 +2,7 @@
 //
 //	tomo-connector pair --code <CODE> --server https://host:port
 //	tomo-connector run
+//	tomo-connector service install
 //	tomo-connector status
 //	tomo-connector logout
 package main
@@ -12,6 +13,7 @@ import (
 
 	"github.com/tomo-project/tomo/connector/internal/clog"
 	"github.com/tomo-project/tomo/connector/internal/pair"
+	"github.com/tomo-project/tomo/connector/internal/service"
 	"github.com/tomo-project/tomo/connector/internal/state"
 	"github.com/tomo-project/tomo/connector/internal/version"
 	"github.com/tomo-project/tomo/connector/internal/ws"
@@ -32,6 +34,8 @@ func main() {
 		err = cmdPair(args)
 	case "run":
 		err = ws.Run()
+	case "service":
+		err = cmdService(args)
 	case "status":
 		err = state.PrintStatus()
 	case "logout":
@@ -62,12 +66,16 @@ func printUsage() {
 Usage:
   tomo-connector pair --code <CODE> --server <URL>
   tomo-connector run
+  tomo-connector service install [--no-start]
+  tomo-connector service uninstall
+  tomo-connector service start|stop|restart|status|enable|disable
   tomo-connector status
   tomo-connector logout
 
 Environment:
   TOMO_CONNECTOR_HOME   state directory (default ~/.tomo-connector)
   TOMO_CONNECTOR_ROOT   jail root for bash/files (default $HOME/.tomo-connector/work)
+  TOMO_CONNECTOR_BIN    install path for binary (default ~/.local/bin/tomo-connector)
   TOMO_CONNECTOR_PAIR_AND_RUN=1   after pair, start run immediately
 `, version.Version)
 }
@@ -102,4 +110,36 @@ func cmdPair(args []string) error {
 		return ws.Run()
 	}
 	return nil
+}
+
+func cmdService(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprint(os.Stderr, service.UsageHelp())
+		return fmt.Errorf("usage: tomo-connector service <install|uninstall|start|…>")
+	}
+	switch args[0] {
+	case "install":
+		noStart := false
+		for _, a := range args[1:] {
+			switch a {
+			case "--no-start":
+				noStart = true
+			case "-h", "--help":
+				fmt.Fprint(os.Stderr, service.UsageHelp())
+				return nil
+			default:
+				return fmt.Errorf("unknown flag: %s", a)
+			}
+		}
+		return service.Install(noStart)
+	case "uninstall":
+		return service.Uninstall()
+	case "start", "stop", "restart", "status", "enable", "disable":
+		return service.Action(args[0])
+	case "help", "-h", "--help":
+		fmt.Fprint(os.Stderr, service.UsageHelp())
+		return nil
+	default:
+		return fmt.Errorf("unknown service action: %s", args[0])
+	}
 }

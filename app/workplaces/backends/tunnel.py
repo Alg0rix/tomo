@@ -24,7 +24,7 @@ def test_connection(workplace: dict[str, Any]) -> tuple[bool, str]:
     if status == "pairing" or workplace.get("pairing_code"):
         return False, "Waiting for connector — run tomo-connector pair with the code"
     if workplace.get("connector_token_set"):
-        return False, "Connector offline — run tomo-connector run to reconnect"
+        return False, "Connector offline — run tomo-connector service start (or run) to reconnect"
     return False, "No connector paired yet — generate a pairing code"
 
 

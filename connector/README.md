@@ -41,6 +41,30 @@ Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
 State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).  
 Jail: `$TOMO_CONNECTOR_ROOT` or `$TOMO_CONNECTOR_HOME/work`.
 
+## systemd user service
+
+Keep the connector online across reboots/logouts (Linux):
+
+```bash
+# Pair first (once), then:
+make build
+./tomo-connector service install
+# or: bash scripts/install-service.sh
+# or: make install-service
+
+tomo-connector service status
+loginctl enable-linger $USER   # optional: survive logout
+```
+
+| Command | Effect |
+|---------|--------|
+| `service install [--no-start]` | Copy binary → `~/.local/bin`, write `~/.config/systemd/user/tomo-connector.service`, enable (+ start) |
+| `service uninstall` | Disable/stop and remove the unit (keeps binary + pairing state) |
+| `service start\|stop\|restart\|status` | `systemctl --user … tomo-connector` |
+
+Unit template: [`deploy/tomo-connector.service`](deploy/tomo-connector.service).  
+Override binary path with `TOMO_CONNECTOR_BIN` if needed.
+
 ## Protocol (v1)
 
 ### Pair — `POST /api/connector/pair`

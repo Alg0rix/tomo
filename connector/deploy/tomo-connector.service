@@ -1,0 +1,16 @@
+[Unit]
+Description=Tomo Connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tomo-connector run
+Restart=always
+RestartSec=5
+Environment=TOMO_CONNECTOR_HOME=%h/.tomo-connector
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
