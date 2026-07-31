@@ -17,7 +17,7 @@ What ships in Alpha (slices 0→H):
 | **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
 | **Models** | Multi-profile catalog, default + per-agent model |
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
-| **Tools** | `bash`, `read_file`, `write_file`, `str_replace`, `search_files`, `delete_file`, `web_fetch`, `web_search`, `process`, `todo`, `session_search`, `list_skills`, `use_skill`, `clarify`, `forget_memory`, `recall`, `remember`, `delegate` |
+| **Tools** | `bash`, `read_file`, `write_file`, `str_replace`, `search_files`, `delete_file`, `web_fetch`, `web_search`, `process`, `todo`, `session_search`, `list_skills`, `use_skill`, `list_workplaces`, `clarify`, `forget_memory`, `recall`, `remember`, `delegate` |
 | **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) |
 | **Memory / KB** | SQLite knowledge entries + recall/remember tools |
 | **Channels** | Web UI ready; Telegram in progress; WhatsApp planned |
@@ -351,6 +351,7 @@ General-purpose primitives — enable per agent based on your use case:
 | `web_fetch` / `web_search` | Fetch URLs and search the web |
 | `todo` / `session_search` | Lightweight todos and message search |
 | `list_skills` / `use_skill` | Browse and load skill descriptions |
+| `list_workplaces` | Catalog local / tunnel / SSH workplaces (not filesystem search) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
 | `recall` / `remember` / `delegate` | Memory and swarm handoff |
 

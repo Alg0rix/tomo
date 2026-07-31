@@ -17,6 +17,7 @@ _READ_ONLY_TOOLS = frozenset(
         "recall",
         "session_search",
         "list_skills",
+        "list_workplaces",
         "todo",
     }
 )

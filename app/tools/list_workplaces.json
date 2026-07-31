@@ -1,0 +1,28 @@
+{
+  "id": "list_workplaces",
+  "name": "List Workplaces",
+  "description": "List Tomo workplaces from the registry (local / tunnel / SSH) — not filesystem paths.",
+  "backend": "app.runtime.tools.list_workplaces",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "list_workplaces",
+      "description": "Return workplaces this agent can use (id, name, kind, online/status, path or host). Use this instead of bash find/ls to discover hosts. For tunnels, prefer online ones and pass workplace=<id|name|hostname> on bash.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["local", "tunnel", "ssh", "all"],
+            "description": "Filter by kind (default all allowed for this agent)."
+          },
+          "online_only": {
+            "type": "boolean",
+            "description": "If true, only tunnels/SSH that are currently connected/reachable."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

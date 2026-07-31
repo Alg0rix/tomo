@@ -123,9 +123,32 @@ def _agent_workplace_summary(agent: dict[str, Any], workplaces_by_id: dict[str, 
     """Compact workplace binding for one agent (roster line)."""
     scope = (agent.get("workplace_scope") or "single").strip().lower()
     if scope == "all":
+        tunnels = [
+            w
+            for w in workplaces_by_id.values()
+            if (w.get("kind") or "").strip().lower() == "tunnel"
+        ]
+        online = [w for w in tunnels if w.get("online") is True]
+        if online:
+            names = ",".join((w.get("name") or w.get("id") or "?") for w in online[:4])
+            more = f"+{len(online) - 4}" if len(online) > 4 else ""
+            return f"workplaces=all(tunnels_online={names}{more})"
         return "workplaces=all(local+tunnel+ssh)"
     if scope == "all_tunnels":
-        return "workplaces=all_tunnels"
+        tunnels = [
+            w
+            for w in workplaces_by_id.values()
+            if (w.get("kind") or "").strip().lower() == "tunnel"
+        ]
+        if not tunnels:
+            return "workplaces=all_tunnels(none)"
+        bits: list[str] = []
+        for w in tunnels[:5]:
+            name = w.get("name") or w.get("id") or "?"
+            state = "online" if w.get("online") else "offline"
+            bits.append(f"{name}/{state}")
+        more = f"+{len(tunnels) - 5}" if len(tunnels) > 5 else ""
+        return "workplaces=all_tunnels:" + ",".join(bits) + more
     ids: list[str] = list(agent.get("workplace_ids") or [])
     primary = (agent.get("workplace_id") or "").strip()
     if primary and primary not in ids:
@@ -492,6 +515,8 @@ def _workplace_prompt_section(agent_id: str) -> str:
             "OK only under that root. Use list_dir to explore.",
             "Tunnel/SSH remain reachable via agents that own them, or "
             "`workplace=<id|name|hostname|ip>` on bash.",
+            "To inventory hosts call **list_workplaces** (never bash find/ls "
+            "under ~/tomo — workplaces are a Tomo registry, not folders).",
             "register_workplace(kind=local, path=...) binds a new **local** "
             "project path on this install.",
         ]
