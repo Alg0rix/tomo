@@ -293,13 +293,85 @@ def prepend_attachment_info(message: str, attachment_ids: list[str] | None) -> s
     return info + ("\n\n" + message if message else "")
 
 
+_SLASH_SKILL_RE = re.compile(r"^/([A-Za-z0-9][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$")
+
+
+def resolve_slash_skill(message: str) -> tuple[dict[str, Any], str] | None:
+    """If ``message`` is ``/skill-id [args]`` for a known skill, return ``(skill, arg)``."""
+    text = (message or "").strip()
+    match = _SLASH_SKILL_RE.match(text)
+    if not match:
+        return None
+    raw_id = match.group(1)
+    arg = (match.group(2) or "").strip()
+    try:
+        store.sync_skills()
+    except Exception:
+        pass
+    from app.extensions.skills import slugify_skill_id
+
+    sid = slugify_skill_id(raw_id)
+    skill = store.get_skill(sid) or store.get_skill(raw_id)
+    if not skill:
+        needle = raw_id.lower()
+        for row in store.list_skills():
+            if not row.get("enabled", True):
+                continue
+            if str(row.get("id") or "").lower() == needle:
+                skill = row
+                break
+            if str(row.get("name") or "").lower() == needle:
+                skill = row
+                break
+    if not skill:
+        return None
+    return skill, arg
+
+
+def expand_slash_skill(message: str) -> str:
+    """Inject skill body when the user message is a ``/skill`` activation.
+
+    History keeps the short ``/hallmark …`` form; only the LLM prompt expands.
+    Unknown ``/tokens`` are left unchanged so normal chat is unaffected.
+    """
+    hit = resolve_slash_skill(message)
+    if not hit:
+        return message or ""
+    skill, arg = hit
+    sid = str(skill.get("id") or "")
+    name = str(skill.get("name") or sid)
+    from app.extensions.skills import read_skill_body
+
+    body = (read_skill_body(sid) or skill.get("description") or "").strip()
+    parts = [
+        f"The user activated skill `{name}` (`{sid}`) with a leading /{sid} command.",
+        "Treat the skill body below as active instructions for this turn.",
+        "Do not claim the skill is missing, uninstalled, or unavailable.",
+        "",
+        "----- BEGIN SKILL -----",
+        body or "(empty skill body)",
+        "----- END SKILL -----",
+    ]
+    if arg:
+        parts.extend(["", "User request:", arg])
+    else:
+        parts.extend(
+            [
+                "",
+                "User request: (none — follow the skill's default flow; ask one short "
+                "clarifying question only if required.)",
+            ]
+        )
+    return "\n".join(parts)
+
+
 def expand_user_content_for_llm(entry: dict[str, Any]) -> str:
-    """User bubble text for the model — expands attachment_ids when present."""
+    """User bubble text for the model — expands slash skills + attachments."""
     content = entry.get("content") or ""
     ids = entry.get("attachment_ids")
     if not ids and isinstance(entry.get("params"), dict):
         ids = entry["params"].get("attachment_ids")
-    return prepend_attachment_info(content, ids)
+    return prepend_attachment_info(expand_slash_skill(content), ids)
 
 
 async def run_session_turn(
@@ -430,11 +502,13 @@ __all__ = [
     "_fmt_sse",
     "attachment_info_lines",
     "attachment_meta_for_ids",
+    "expand_slash_skill",
     "expand_user_content_for_llm",
     "get_active_session_turn",
     "heartbeat_stream",
     "prepend_attachment_info",
     "record_session_user_message",
+    "resolve_slash_skill",
     "run_session_turn",
     "run_turn",
     "session_heartbeat_stream",

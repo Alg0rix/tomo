@@ -525,12 +525,12 @@ async def stream_turn_sse(
                 # prompt without the user row or the just-written handoff row.
                 hist = store.get_session_history(session_id)
                 hist_for_member = _history_before_last_user(hist)
-                from app.services.chat import prepend_attachment_info
+                from app.services.chat import expand_slash_skill, prepend_attachment_info
 
-                # Caption for the member (no @mention); expand files only in
-                # this ephemeral LLM prompt — history UI stays clean.
+                # Caption for the member (no @mention); expand slash skills +
+                # files only in this ephemeral LLM prompt — history UI stays clean.
                 member_prompt = prepend_attachment_info(
-                    mention_rest.strip() or message, attachment_ids
+                    expand_slash_skill(mention_rest.strip() or message), attachment_ids
                 )
                 async for chunk, seq in _emit_member_turn_start(
                     to_id=force_target, turn_id=turn_id, seq=seq

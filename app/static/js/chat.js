@@ -137,8 +137,8 @@
       hideSlash();
     }
 
-    function ensureSkills(cb) {
-      if (skillsCache) {
+    function ensureSkills(cb, force) {
+      if (skillsCache && !force) {
         if (cb) cb(skillsCache);
         return;
       }
@@ -154,7 +154,7 @@
           if (cb) cb(skillsCache);
         })
         .catch(function () {
-          skillsCache = [];
+          skillsCache = skillsCache || [];
           skillsLoading = false;
           if (cb) cb(skillsCache);
         });
@@ -216,6 +216,7 @@
         return;
       }
       hideMentions();
+      // Re-fetch when opening so mid-session installs show up.
       ensureSkills(function () {
         // Re-check — input may have changed while fetch was in flight.
         var cur = input.value;
@@ -226,7 +227,7 @@
         slashMatches = filterSkills(cur);
         slashIndex = 0;
         renderSlashMenu();
-      });
+      }, !skillsCache || (slashMenu && slashMenu.classList.contains('hidden')));
     }
 
     function insertSlash(idx) {
