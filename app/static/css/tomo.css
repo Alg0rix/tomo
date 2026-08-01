@@ -1081,7 +1081,9 @@ img { max-width: 100%; display: block; }
   color: var(--text-faint);
 }
 
-/* turn timeline (thinking / tools) */
+/* turn timeline (thinking / tools) — centered column in .chat-main.
+   Stays centered when the session sidebar collapses; only the artifact
+   panel (sibling of .chat-main) changes the available width. */
 .turn { width: min(100%, 820px); margin: 0 auto 16px; }
 .turn > .msg { margin-bottom: 0; }
 /* Live turns reuse the user bubble's .turn for tools — keep air before the trail. */
@@ -2590,6 +2592,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 }
 .sessions-page.is-sidebar-collapsed .sessions-sidebar {
   width: 0;
+  min-width: 0; /* override flex min-content so the thread can recenter */
   border-right-color: transparent;
   opacity: 0;
   pointer-events: none;
@@ -2664,6 +2667,13 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-grain);
+}
+/* Thread + composer stay centered in the chat column (not the whole app).
+   Artifact panel lives beside .chat-main, so it is the only thing that
+   shifts/narrows that column. */
+.sessions-chat .chat-main {
+  flex: 1;
+  min-width: 0;
 }
 .sessions-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-faint); text-align: center; padding: 24px; }
 .sessions-empty .big { font-family: var(--font-display); font-size: 22px; font-weight: 700; color: var(--text-dim); }
