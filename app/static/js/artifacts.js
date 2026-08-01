@@ -53,6 +53,7 @@
     sessionId: "",
     openTabs: [],
     panelOpen: false,
+    maximized: false,
     previewMode: "render", // render | source (html/csv/md)
   };
 
@@ -275,7 +276,79 @@
     return renderHighlightedCode(pretty, "data.json", "json");
   }
 
-  function modeToolbar(modes, active, url) {
+  function fullPageUrl(art) {
+    var sid = sessionIdFrom(art, findChatWrap());
+    var fn = art && art.filename;
+    if (sid && fn) {
+      return (
+        "/sessions/" +
+        encodeURIComponent(sid) +
+        "/artifacts/" +
+        encodeURIComponent(fn) +
+        "/view"
+      );
+    }
+    return (art && art.url) || "#";
+  }
+
+  function setMaximized(wrap, on) {
+    _state.maximized = !!on;
+    wrap = wrap || findChatWrap();
+    if (!wrap) return;
+    wrap.classList.toggle("is-artifact-max", !!on);
+    var panel = wrap.querySelector(".chat-agent-panel");
+    if (panel) panel.classList.toggle("is-maximized", !!on);
+  }
+
+  function wireMaxToggle(root, wrap) {
+    if (!root) return;
+    root.querySelectorAll("[data-cap-max-toggle]").forEach(function (btn) {
+      if (btn.dataset.maxWired === "1") return;
+      btn.dataset.maxWired = "1";
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setMaximized(wrap, !_state.maximized);
+        syncMaxToggleLabels(wrap);
+      });
+    });
+    syncMaxToggleLabels(wrap);
+  }
+
+  function syncMaxToggleLabels(wrap) {
+    var maximized = !!_state.maximized;
+    var scope =
+      (wrap && wrap.querySelector(".chat-agent-panel")) ||
+      document.querySelector(".chat-agent-panel.is-maximized") ||
+      document;
+    scope.querySelectorAll("[data-cap-max-toggle]").forEach(function (el) {
+      el.textContent = maximized ? "Minimize" : "Full page";
+      el.title = maximized ? "Restore side panel" : "Open as full page";
+      el.setAttribute("aria-label", el.title);
+      el.classList.toggle("is-max", maximized);
+    });
+  }
+
+  function maxToggleHtml() {
+    var maximized = !!_state.maximized;
+    return (
+      '<button type="button" class="ap-html-ext ap-fullpage-btn' +
+      (maximized ? " is-max" : "") +
+      '" data-cap-max-toggle="1" title="' +
+      (maximized ? "Restore side panel" : "Open as full page") +
+      '">' +
+      (maximized ? "Minimize" : "Full page") +
+      "</button>"
+    );
+  }
+
+  function modeToolbar(modes, active, artOrUrl) {
+    var art =
+      artOrUrl && typeof artOrUrl === "object"
+        ? artOrUrl
+        : { url: artOrUrl || "" };
+    var url = art.url || "";
+    var viewUrl = fullPageUrl(art);
     var html =
       '<div class="ap-html-toolbar">' +
       modes
@@ -291,11 +364,17 @@
           );
         })
         .join("");
-    if (url) {
+    html += maxToggleHtml();
+    if (viewUrl && viewUrl !== "#") {
       html +=
-        '<a class="ap-html-ext" href="' +
+        '<a class="ap-html-popout" href="' +
+        esc(viewUrl) +
+        '" target="_blank" rel="noopener" title="Open in new browser tab">↗</a>';
+    } else if (url) {
+      html +=
+        '<a class="ap-html-popout" href="' +
         esc(url) +
-        '" target="_blank" rel="noopener">Open ↗</a>';
+        '" target="_blank" rel="noopener" title="Open raw file">↗</a>';
     }
     html += "</div>";
     return html;
@@ -562,6 +641,8 @@
       if (on) {
         wirePanelResize(panel);
         applyStoredPanelWidth(panel);
+      } else {
+        setMaximized(wrap, false);
       }
     }
   }
@@ -710,8 +791,14 @@
     _state.view = "home";
     _state.art = null;
     _state.panelOpen = false;
+    var wrap = findChatWrap();
+    if (wrap) setMaximized(wrap, false);
     document.querySelectorAll(".chat-agent-panel").forEach(function (p) {
       p.dataset.capOpen = "0";
+      p.classList.remove("is-maximized");
+    });
+    document.querySelectorAll(".chat-wrap.is-artifact-max").forEach(function (w) {
+      w.classList.remove("is-artifact-max");
     });
   }
 
@@ -727,7 +814,7 @@
           { id: "source", label: "Source" },
         ],
         mode,
-        url
+        art
       ) + '<div class="ap-html-stage"></div>';
     var stage = body.querySelector(".ap-html-stage");
 
@@ -771,6 +858,7 @@
         renderHtmlPreview(body, art, textOpt);
       });
     });
+    wireMaxToggle(body, findChatWrap());
   }
 
   function renderTextualPreview(body, art, text) {
@@ -805,7 +893,7 @@
       : [{ id: "source", label: "Source" }];
     if (!hasRender) mode = "source";
 
-    body.innerHTML = modeToolbar(modes, mode, url) + '<div class="ap-html-stage"></div>';
+    body.innerHTML = modeToolbar(modes, mode, art) + '<div class="ap-html-stage"></div>';
     var stage = body.querySelector(".ap-html-stage");
 
     if (mode === "render" && kind === "markdown") {
@@ -842,6 +930,7 @@
         renderTextualPreview(body, art, text);
       });
     });
+    wireMaxToggle(body, findChatWrap());
   }
 
   function renderPreviewInto(body, art) {
@@ -857,32 +946,40 @@
 
     if (cat === "image") {
       body.innerHTML =
+        modeToolbar([], "render", art) +
         '<div class="ap-media"><img class="ap-img" src="' +
         esc(url) +
         '" alt="' +
         esc(filename) +
         '"></div>';
+      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "video") {
       body.innerHTML =
+        modeToolbar([], "render", art) +
         '<div class="ap-media"><video class="ap-video" src="' +
         esc(url) +
         '" controls></video></div>';
+      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "sound") {
       body.innerHTML =
+        modeToolbar([], "render", art) +
         '<div class="ap-audio"><audio src="' + esc(url) + '" controls></audio></div>';
+      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "pdf") {
       body.innerHTML =
+        modeToolbar([], "render", art) +
         '<iframe class="ap-iframe ap-iframe-tall" src="' +
         esc(url) +
         '" title="' +
         esc(filename) +
         '"></iframe>';
+      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "html") {
@@ -1058,11 +1155,22 @@
 
   function renderDrill(root, wrap, kind) {
     var title = kind === "files" ? "Files" : (_state.art && (_state.art.title || prettyTitle(_state.art.filename))) || "Preview";
+    var maximized = !!_state.maximized;
+    var full =
+      kind === "preview" && _state.art && (_state.art.url || _state.art.filename)
+        ? '<button type="button" class="btn ghost sm cap-fullpage' +
+          (maximized ? " is-max" : "") +
+          '" data-cap-max-toggle="1" title="' +
+          (maximized ? "Restore side panel" : "Open as full page") +
+          '">' +
+          (maximized ? "Minimize" : "Full page") +
+          "</button>"
+        : "";
     var ext =
       _state.art && _state.art.url
         ? '<a class="cap-icon-btn" href="' +
-          esc(_state.art.url) +
-          '" target="_blank" rel="noopener" title="Open in new tab">↗</a>'
+          esc(fullPageUrl(_state.art)) +
+          '" target="_blank" rel="noopener" title="Open in new browser tab">↗</a>'
         : "";
 
     root.innerHTML =
@@ -1072,6 +1180,7 @@
       '<span class="cap-panel-title">' +
       esc(title) +
       "</span>" +
+      full +
       ext +
       '<button type="button" class="cap-icon-btn cap-collapse" title="Collapse panel" aria-label="Collapse">✕</button>' +
       "</div>" +
@@ -1079,10 +1188,15 @@
       "</div>";
 
     root.querySelector(".cap-back").addEventListener("click", function () {
+      setMaximized(wrap, false);
       _state.view = "home";
       renderPanel(wrap);
     });
-    root.querySelector(".cap-collapse").addEventListener("click", closePanel);
+    root.querySelector(".cap-collapse").addEventListener("click", function () {
+      setMaximized(wrap, false);
+      closePanel();
+    });
+    wireMaxToggle(root, wrap);
 
     var body = root.querySelector(".cap-drill-body");
     if (kind === "files") {
@@ -1237,6 +1351,15 @@
 
   document.addEventListener("click", onFilesClick);
 
+  // Escape restores the side panel from full-page mode.
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || !_state.maximized) return;
+    var wrap = findChatWrap();
+    if (!wrap) return;
+    setMaximized(wrap, false);
+    syncMaxToggleLabels(wrap);
+  });
+
   // Collapsed strip → expand to home (Open Tabs + Files)
   document.addEventListener("click", function (e) {
     var strip = e.target && e.target.closest ? e.target.closest(".cap-expand-strip") : null;
@@ -1260,6 +1383,12 @@
     bootPanels();
   }
 
+  function renderFullPage(host, art) {
+    if (!host || !art) return;
+    host.classList.add("av-rich");
+    renderPreviewInto(host, art);
+  }
+
   global.TomoArtifacts = {
     category: category,
     formatBytes: formatBytes,
@@ -1271,5 +1400,7 @@
     closePanel: closePanel,
     parseSaveResult: parseSaveResult,
     maybeAutoOpen: maybeAutoOpen,
+    renderFullPage: renderFullPage,
+    fullPageUrl: fullPageUrl,
   };
 })(typeof window !== "undefined" ? window : this);

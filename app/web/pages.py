@@ -70,6 +70,68 @@ async def sessions_page(request: Request, _: AuthDep):
     ))
 
 
+@router.get("/sessions/{session_id}/artifacts/{filename}/view", response_class=HTMLResponse)
+async def artifact_view_page(request: Request, session_id: str, filename: str, _: AuthDep):
+    """Full-page artifact viewer (HTML/media chrome-light; text via artifacts.js)."""
+    session = store.get_session(session_id)
+    if not session:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            _ctx(request, "error", code=404, message="Session not found."),
+            status_code=404,
+        )
+    from app.runtime.artifacts.fs import (
+        artifact_public_url,
+        artifacts_dir,
+        category_for,
+        validate_filename,
+    )
+
+    err = validate_filename(filename)
+    if err:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            _ctx(request, "error", code=400, message=err),
+            status_code=400,
+        )
+    base = artifacts_dir(session_id).resolve()
+    path = (base / filename).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            _ctx(request, "error", code=400, message="Invalid artifact path."),
+            status_code=400,
+        )
+    if not path.is_file():
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            _ctx(request, "error", code=404, message=f"Artifact “{filename}” not found."),
+            status_code=404,
+        )
+    category = category_for(filename)
+    title = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip() or filename
+    title = " ".join(w[:1].upper() + w[1:] if w else w for w in title.split())
+    return templates.TemplateResponse(
+        request,
+        "artifact_view.html",
+        _ctx(
+            request,
+            "artifact_view",
+            session_id=session_id,
+            filename=filename,
+            title=title,
+            category=category,
+            file_url=artifact_public_url(session_id, filename),
+        ),
+    )
+
+
 @router.get("/workplaces", response_class=HTMLResponse)
 async def workplaces_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "workplaces.html", _ctx(

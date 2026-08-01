@@ -584,7 +584,6 @@
     function finishTurn() {
       if (es) { es.close(); es = null; }
       sending = false;
-      Tomo.renderRail && Tomo.renderRail();
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
       if (messageQueue.length) {
         const next = messageQueue.shift();

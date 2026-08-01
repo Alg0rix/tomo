@@ -161,7 +161,6 @@
         body: JSON.stringify(body),
       });
       Tomo.toast('Agent "' + (created.name || body.name) + '" created', "ok");
-      if (window.Tomo && Tomo.renderRail) Tomo.renderRail();
       dlg.close();
       setTimeout(function () {
         location.href = "/agents/" + encodeURIComponent(created.id);

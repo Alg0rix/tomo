@@ -17,8 +17,48 @@
   const newConfirm = document.getElementById('newChatConfirm');
   const editBtn = document.getElementById('editSwarmBtn');
   const editConfirm = document.getElementById('editSwarmConfirm');
+  const sessionsPage = document.getElementById('sessionsPage');
+  const sidebarCollapseBtn = document.getElementById('sessionsSidebarCollapse');
+  const sidebarExpandBtn = document.getElementById('sessionsSidebarExpand');
 
   if (!listEl || !chatWrap) return;
+
+  var SIDEBAR_KEY = 'tomo-sessions-sidebar';
+
+  function sidebarCollapsed() {
+    return !!(sessionsPage && sessionsPage.classList.contains('is-sidebar-collapsed'));
+  }
+
+  function setSidebarCollapsed(collapsed) {
+    if (!sessionsPage) return;
+    sessionsPage.classList.toggle('is-sidebar-collapsed', !!collapsed);
+    if (sidebarExpandBtn) sidebarExpandBtn.classList.toggle('hidden', !collapsed);
+    if (sidebarCollapseBtn) {
+      sidebarCollapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      sidebarCollapseBtn.title = collapsed ? 'Show chat history' : 'Hide chat history';
+      sidebarCollapseBtn.setAttribute('aria-label', sidebarCollapseBtn.title);
+    }
+    if (sidebarExpandBtn) {
+      sidebarExpandBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? 'collapsed' : 'open');
+    } catch (e) {}
+  }
+
+  // Sync reopen button with any anti-flash class set in the template.
+  setSidebarCollapsed(sidebarCollapsed());
+
+  if (sidebarCollapseBtn) {
+    sidebarCollapseBtn.addEventListener('click', function () {
+      setSidebarCollapsed(true);
+    });
+  }
+  if (sidebarExpandBtn) {
+    sidebarExpandBtn.addEventListener('click', function () {
+      setSidebarCollapsed(false);
+    });
+  }
 
   let sessions = [];
   let agents = {};

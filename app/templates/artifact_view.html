@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>{{ filename }} · {{ brand }}</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem('tomo-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}?v=art-fullpage1">
+  <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
+    .av-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+    .av-bar {
+      flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .av-bar .av-title {
+      flex: 1; min-width: 0;
+      font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .av-bar .av-meta { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+    .av-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg-grain, var(--bg)); }
+    .av-stage iframe.av-frame {
+      flex: 1; width: 100%; height: 100%; border: 0; background: #fff;
+    }
+    .av-stage .av-img-wrap {
+      flex: 1; display: grid; place-items: center; overflow: auto; padding: 24px;
+      background: color-mix(in srgb, var(--bg) 80%, #000);
+    }
+    .av-stage .av-img-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .av-stage .av-media-wrap {
+      flex: 1; display: grid; place-items: center; padding: 24px; min-height: 0;
+    }
+    .av-stage .av-media-wrap video { max-width: 100%; max-height: 100%; }
+    .av-rich { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+  </style>
+</head>
+<body>
+<div class="av-shell">
+  <header class="av-bar">
+    <a class="btn ghost sm" href="/sessions?s={{ session_id }}">← Chat</a>
+    <span class="av-title" title="{{ filename }}">{{ title }}</span>
+    <span class="av-meta mono">{{ filename }}</span>
+    <a class="btn ghost sm" href="{{ file_url }}" target="_blank" rel="noopener">Raw</a>
+    <a class="btn sm primary" href="{{ file_url }}" download="{{ filename }}">Download</a>
+  </header>
+  <main class="av-stage" id="artifactViewStage"
+        data-url="{{ file_url }}"
+        data-filename="{{ filename }}"
+        data-category="{{ category }}"
+        data-session-id="{{ session_id }}">
+    {% if category == 'html' %}
+      <iframe class="av-frame" src="{{ file_url }}" title="{{ filename }}"></iframe>
+    {% elif category == 'image' %}
+      <div class="av-img-wrap"><img src="{{ file_url }}" alt="{{ filename }}"></div>
+    {% elif category == 'video' %}
+      <div class="av-media-wrap"><video src="{{ file_url }}" controls autoplay></video></div>
+    {% elif category == 'pdf' %}
+      <iframe class="av-frame" src="{{ file_url }}" title="{{ filename }}"></iframe>
+    {% elif category == 'sound' %}
+      <div class="av-media-wrap"><audio src="{{ file_url }}" controls autoplay></audio></div>
+    {% else %}
+      <div class="av-rich" id="artifactViewRich"></div>
+    {% endif %}
+  </main>
+</div>
+{% if category not in ('html', 'image', 'video', 'pdf', 'sound') %}
+{% include 'partials/chat_assets.html' %}
+<script>
+(function () {
+  var stage = document.getElementById('artifactViewStage');
+  var rich = document.getElementById('artifactViewRich');
+  if (!stage || !rich || !window.TomoArtifacts || !TomoArtifacts.renderFullPage) return;
+  TomoArtifacts.renderFullPage(rich, {
+    url: stage.dataset.url,
+    filename: stage.dataset.filename,
+    category: stage.dataset.category,
+    session_id: stage.dataset.sessionId,
+  });
+})();
+</script>
+{% endif %}
+</body>
+</html>

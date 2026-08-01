@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="sessions-page">
+<div class="sessions-page" id="sessionsPage">
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('tomo-sessions-sidebar') === 'collapsed') {
+          document.currentScript.parentElement.classList.add('is-sidebar-collapsed');
+        }
+      } catch (e) {}
+    })();
+  </script>
   {% include 'partials/sessions/sidebar.html' %}
   {% include 'partials/sessions/main.html' %}
 </div>
@@ -10,6 +19,6 @@
 {% include 'partials/chat_assets.html' %}
 <script src="{{ url_for('static', path='js/folder_picker.js') }}?v=1"></script>
 <script src="{{ url_for('static', path='js/context_usage.js') }}?v=chat-clean2"></script>
-<script src="{{ url_for('static', path='js/chat.js') }}?v=art-auto1"></script>
-<script src="{{ url_for('static', path='js/sessions.js') }}?v=art-auto1"></script>
+<script src="{{ url_for('static', path='js/chat.js') }}?v=no-rail1"></script>
+<script src="{{ url_for('static', path='js/sessions.js') }}?v=sidebar-collapse1"></script>
 {% endblock %}
