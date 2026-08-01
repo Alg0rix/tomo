@@ -175,12 +175,14 @@ SSH requires inbound access, key management, and often manual setup per host. A 
 # On the coordinator: create a tunnel workplace in the UI (Workplaces → New → tunnel)
 # and copy the pairing code (or POST /api/workplaces/{id}/pairing-code).
 
-# On the target device: build the Go connector, pair, run as a user service
-cd connector && make build
-./tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
-./tomo-connector service install   # systemd --user; or: make install-service
-# loginctl enable-linger $USER     # optional: keep running after logout
+# On the target device:
+curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install-connector.sh | bash
+tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
+tomo-connector service install   # systemd --user (Linux)
+# loginctl enable-linger $USER   # optional: keep running after logout
 ```
+
+Installs (or **updates** on re-run) the matching binary from [`latest` release](https://github.com/Alg0rix/tomo/releases) into `~/.local/bin`, and restarts the user service if it is already enabled. Pin with `TOMO_CONNECTOR_VERSION=v0.1.0`. To build from source: `cd connector && make build`.
 
 Once paired, agents assigned to that workplace run `bash` / file tools on the device as if they were local. Status is green only while the WebSocket is live.
 

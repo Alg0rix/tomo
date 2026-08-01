@@ -65,4 +65,5 @@ jobs:
       - name: Syntax-check install scripts
         run: |
           bash -n scripts/install.sh
+          bash -n scripts/install-connector.sh
           bash -n connector/scripts/install-service.sh

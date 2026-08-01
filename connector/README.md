@@ -18,6 +18,14 @@ connector/
 └── README.md
 ```
 
+## Install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install-connector.sh | bash
+```
+
+Downloads the matching binary from GitHub Releases into `~/.local/bin`. Re-run to update (overwrites the binary and restarts the user service if enabled). Pin a tag with `TOMO_CONNECTOR_VERSION=v0.1.0`.
+
 ## Build
 
 ```bash
@@ -31,13 +39,14 @@ make dist
 ```
 
 CI (`.github/workflows/ci.yml`) builds these binaries on every push/PR and attaches them to `v*` GitHub Releases with the Python wheel.
+
 ## Pair & run
 
 ```bash
-./tomo-connector pair --code X7KQ2M --server http://coordinator:8787
-./tomo-connector run
-./tomo-connector status
-./tomo-connector logout
+tomo-connector pair --code X7KQ2M --server http://coordinator:8787
+tomo-connector run
+tomo-connector status
+tomo-connector logout
 ```
 
 Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
