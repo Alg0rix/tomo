@@ -10,10 +10,19 @@ Output ONLY a single fenced ```json block with this exact shape:
   "nodes": [
     {
       "id": "n1",
-      "goal": "one-sentence intent of this step",
+      "goal": "read the config file",
       "tool": "read_file",
       "args_template": {"path": "src/config.py"},
-      "inputs": [{"name": "source", "from_node": "n1", "key": "result"}],
+      "inputs": [],
+      "outputs": ["result"],
+      "deps": []
+    },
+    {
+      "id": "n2",
+      "goal": "search for usages of the config key",
+      "tool": "search_files",
+      "args_template": {"query": "CONFIG", "path": "."},
+      "inputs": [{"name": "config", "from_node": "n1", "key": "result"}],
       "outputs": ["result"],
       "deps": ["n1"]
     }
@@ -21,6 +30,7 @@ Output ONLY a single fenced ```json block with this exact shape:
 }
 Rules:
 - The graph must be a DAG (no cycles). "deps" lists node ids that must finish first.
+  A node must NEVER list itself in "deps".
 - An ATOMIC node performs exactly ONE tool call: set "tool" to a tool name and
   fill "args_template" with its arguments.
 - If a step is too coarse for a single tool call, set "tool": null (a COMPOSITE
@@ -30,7 +40,8 @@ Rules:
   upstream node's output string at execution time. Every placeholder and every
   "inputs" entry must reference a node listed in "deps" and one of its declared
   "outputs".
-- Every node should declare "outputs": ["result"] (Tomo tools return a string).
+- Every node MUST declare "outputs": ["result"] (Tomo tools return one string
+  under the key "result" — never invent keys like content/stdout).
 - Keep goals concrete and self-contained; a worker will execute each node
   WITHOUT seeing the conversation."""
 

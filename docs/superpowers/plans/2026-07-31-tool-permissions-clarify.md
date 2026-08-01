@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Hermes-like tool approval (`manual`/`smart`/`off`) with workplace-escape gating, jail lift, blocking clarify, web HITL UI, and chat slash `/auto` (toggle → `off`).
+**Goal:** Tool approval (`manual`/`smart`/`off`) with workplace-escape gating, jail lift, blocking clarify, web HITL UI, and chat slash `/auto` (toggle → `off`).
 
 **Architecture:** Central `gate` in `run_turn` before `execute`. Split package `app/runtime/permissions/`. Async HITL registry + SSE cards in `chat.js`. `/auto` intercepted in chat before the LLM turn.
 
@@ -104,7 +104,7 @@ Run: `pytest tests/unit/runtime/permissions/test_assess.py -v`
 
 - [ ] **Step 3: Implement patterns/escape/assess**
 
-Port a **trimmed** Hermes hardline set (`rm -rf /`, home wipe, mkfs, dd to disk, fork bomb, kill -1, shutdown). Dangerous: recursive rm, curl|sh, chmod 777, sensitive redirects to `~/.ssh` / `~/.tomo`, etc. Escape: file-tool path resolve vs `work_root`; bash/runpy heuristics for `~`, `$HOME`, absolute paths outside root.
+Port a **trimmed** hardline set (`rm -rf /`, home wipe, mkfs, dd to disk, fork bomb, kill -1, shutdown). Dangerous: recursive rm, curl|sh, chmod 777, sensitive redirects to `~/.ssh` / `~/.tomo`, etc. Escape: file-tool path resolve vs `work_root`; bash/runpy heuristics for `~`, `$HOME`, absolute paths outside root.
 
 - [ ] **Step 4: Run tests — expect PASS**
 

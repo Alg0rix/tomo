@@ -1,4 +1,4 @@
-"""Hardline and dangerous command pattern detection (trimmed Hermes port)."""
+"""Hardline and dangerous command pattern detection."""
 
 from __future__ import annotations
 

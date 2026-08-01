@@ -50,7 +50,7 @@ def test_search_files_no_match() -> None:
 
 def test_search_files_bad_regex_is_error() -> None:
     sandbox.bind_agent("ops")
-    # regex is default true (Hermes-aligned)
+    # regex is default true
     result = execute("search_files", {"pattern": "["})
     assert result.startswith("Error")
 

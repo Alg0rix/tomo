@@ -1,6 +1,6 @@
 # Installable skill packages
 
-Skills are directories containing a ``SKILL.md`` (agentskills.io / Hermes style)
+Skills are directories containing a ``SKILL.md`` (agentskills.io style)
 with optional YAML frontmatter (`name`, `description`, `version`).
 
 ## Discovery roots

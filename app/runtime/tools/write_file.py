@@ -13,7 +13,7 @@ _MODES = frozenset({"create", "overwrite", "append"})
 def run(arguments: dict[str, Any]) -> str:
     """Write ``content`` to ``path``; always returns a string.
 
-    Modes (better than Evonic hard-refuse / Hermes always-overwrite):
+    Modes:
     - ``overwrite`` (default) — create or replace entire file
     - ``create`` — fail if file already exists (safe new files)
     - ``append`` — append to existing or create
@@ -28,7 +28,7 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: 'content' argument must be a string"
 
     mode = str(arguments.get("mode") or "overwrite").strip().lower()
-    # Evonic-style: overwrite=false maps to create
+    # overwrite=false maps to create
     if "overwrite" in arguments and arguments.get("overwrite") is False:
         mode = "create"
     if mode not in _MODES:

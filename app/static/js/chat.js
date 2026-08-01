@@ -223,7 +223,7 @@
     function updateSlash() {
       if (!slashMenu || !input) return;
       var val = input.value;
-      // Kimi-style: only when the whole input is a single /token (no space yet).
+      // Only when the whole input is a single /token (no space yet).
       if (!(val.startsWith('/') && val.indexOf(' ') < 0)) {
         hideSlash();
         return;
@@ -688,6 +688,7 @@
         'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
         'delta', 'done', 'delegate', 'error', 'heartbeat', 'turn.end', 'auth_expired',
         'subagent_start', 'subagent_done', 'approval_required', 'clarify_required',
+        'todos',
       ].forEach(function (name) {
         es.addEventListener(name, function (e) {
           var payload = e && e.data;
@@ -1227,9 +1228,27 @@
             last.classList.remove('loading');
           }
         }
+        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
+          Tomo.upsertTodoPanel(turn, d.todos);
+        }
         // Keep typing indicator after tool so UI does not look frozen mid-turn.
         if (!asstEl && !pendingEl) showPending();
         atBottom();
+      });
+      es.addEventListener('todos', function (e) {
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        if (isSubagentEvent(d)) {
+          bufferEvent(d.agent_id, 'todos', d);
+          bumpSwarmProgress(d.agent_id);
+          return;
+        }
+        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
+          clearPending();
+          Tomo.upsertTodoPanel(turn, d.todos);
+          if (!asstEl && !pendingEl) showPending();
+          atBottom();
+        }
       });
       es.addEventListener('approval_required', function (e) {
         bumpActivity();
@@ -1514,6 +1533,7 @@
         messageQueue = [];
         if (es) { es.close(); es = null; }
         sending = false;
+        if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(wrap);
         if (!currentSessionId() && !agentId) {
           wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
           return;
@@ -1693,6 +1713,9 @@
             last.classList.remove('loading');
           }
         }
+        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
+          Tomo.upsertTodoPanel(turn, d.todos);
+        }
         if (!asstEl && !pendingEl) showPending();
         atBottom();
       }
@@ -1791,6 +1814,18 @@
         resultSeen++;
         if (resultSeen <= skipResults) return;
         applyToolResult(d);
+      });
+
+      es.addEventListener('todos', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
+          clearPending();
+          Tomo.upsertTodoPanel(turn, d.todos);
+          if (!asstEl && !pendingEl) showPending();
+          atBottom();
+        }
       });
 
       es.addEventListener('thinking', function (e) {

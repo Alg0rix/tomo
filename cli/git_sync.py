@@ -1,4 +1,4 @@
-"""Hermes-style git sync for managed Tomo installs."""
+"""Git sync helpers for managed Tomo installs."""
 
 from __future__ import annotations
 

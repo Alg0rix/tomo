@@ -782,6 +782,63 @@ img { max-width: 100%; display: block; }
   font-size: 12.5px;
   transition: border-color .15s;
 }
+
+/* Session Todo dock — pinned above composer, outside chat thread */
+.chat-todo-dock {
+  flex-shrink: 0;
+  padding: 8px 18px 10px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  max-height: min(34vh, 280px);
+  overflow-y: auto;
+}
+.chat-todo-dock[hidden] { display: none !important; }
+.chat-todo-dock .todo-panel {
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 9px;
+  font-size: 12.5px;
+  overflow: hidden;
+  max-width: 820px;
+  margin-inline: auto;
+}
+.todo-panel .todo-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.todo-panel .todo-title { font-weight: 650; }
+.todo-panel .todo-count { color: var(--text-dim); font-size: 12px; }
+.todo-panel .todo-caret { color: var(--accent); width: 0.9em; display: inline-block; }
+.todo-panel .todo-bd { padding: 0 12px 10px 28px; display: flex; flex-direction: column; gap: 3px; }
+.todo-panel .todo-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.todo-panel .todo-row.status-in_progress { color: var(--text); font-weight: 550; }
+.todo-panel .todo-row.status-completed { color: var(--text-dim); opacity: 0.72; }
+.todo-panel .todo-row.status-cancelled { text-decoration: line-through; opacity: 0.55; }
+.todo-panel .todo-glyph { flex: 0 0 auto; color: var(--accent); }
+
+/* Legacy: strip any inline panels that may still exist in old markup */
+.turn .todo-panel,
+.si-timeline .todo-panel { display: none !important; }
+
 .turn .hitl-card {
   margin: 0 0 8px;
   padding: 12px 14px;

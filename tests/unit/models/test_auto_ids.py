@@ -47,10 +47,10 @@ def test_new_agent_joins_existing_swarm_sessions(tmp_path: Path) -> None:
 def test_llm_profile_create_without_id(tmp_path: Path) -> None:
     _rebind(tmp_path)
     p = store.create_llm_profile(
-        {"name": "Kimi Cloud", "base_url": "https://x", "model": "kimi"}
+        {"name": "North Cloud", "base_url": "https://x", "model": "north"}
     )
     assert p["id"]
-    assert "kimi" in p["id"] or "cloud" in p["id"]
+    assert "north" in p["id"] or "cloud" in p["id"]
 
 
 def test_knowledge_create_without_id(tmp_path: Path) -> None:

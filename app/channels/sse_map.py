@@ -182,17 +182,20 @@ def map_loop_event(
         )
     elif kind == "tool_result":
         seq += 1
+        data = {
+            "tool": ev["tool"],
+            "result": ev["result"],
+            "error": ev["error"],
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
+        if ev.get("todos") is not None:
+            data["todos"] = ev["todos"]
         chunks.append(
             fmt_sse(
                 {
                     "event": "tool_result",
-                    "data": {
-                        "tool": ev["tool"],
-                        "result": ev["result"],
-                        "error": ev["error"],
-                        "agent_id": agent_id,
-                        "agent": agent_name,
-                    },
+                    "data": data,
                     "seq": seq,
                 }
             )
@@ -207,6 +210,23 @@ def map_loop_event(
                 "ts": now(),
             }
         )
+        # Also emit a dedicated todos SSE when the tool carried a snapshot.
+        if isinstance(ev.get("todos"), list):
+            seq += 1
+            chunks.append(
+                fmt_sse(
+                    {
+                        "event": "todos",
+                        "data": {
+                            "todos": ev["todos"],
+                            "source": "tool",
+                            "agent_id": agent_id,
+                            "agent": agent_name,
+                        },
+                        "seq": seq,
+                    }
+                )
+            )
     elif kind == "final":
         content = ev["content"] or ""
         # Models sometimes echo internal swarm notes; never show/persist those.
@@ -456,9 +476,25 @@ def map_loop_event(
         chunks.append(
             fmt_sse({"event": "clarify_required", "data": data, "seq": seq})
         )
+    elif kind == "todos":
+        seq += 1
+        chunks.append(
+            fmt_sse(
+                {
+                    "event": "todos",
+                    "data": {
+                        "todos": ev.get("todos") or [],
+                        "summary": ev.get("summary") or {},
+                        "source": ev.get("source") or "atg",
+                        "agent_id": agent_id,
+                        "agent": agent_name,
+                    },
+                    "seq": seq,
+                }
+            )
+        )
     elif kind in ("atg_wave", "atg_summary"):
-        # Meta-events: ATG tool/tool_result events map normally via the
-        # tool/tool_result branches above; wave/summary are internal.
+        # Meta-events: ATG tool/tool_result map normally; todos carry the plan UI.
         pass
 
     return chunks, entries, seq

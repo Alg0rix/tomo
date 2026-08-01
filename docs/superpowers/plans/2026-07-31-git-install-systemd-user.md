@@ -4,7 +4,7 @@
 
 **Goal:** Bootstrap Tomo from git via `scripts/install.sh`, manage updates/uninstall via CLI, and run as a systemd **user** unit with `TOMO_HOME` and `TOMO_WORK` set explicitly.
 
-**Architecture:** Fixed managed install at `~/.local/share/tomo/app`. Shell script handles first clone + unit write + enable. Python CLI (`cli/`) owns post-install `update`, `uninstall`, and `service` subcommands, sharing path/unit helpers. Git sync follows Hermes: autostash → ff-only → hard-reset fallback.
+**Architecture:** Fixed managed install at `~/.local/share/tomo/app`. Shell script handles first clone + unit write + enable. Python CLI (`cli/`) owns post-install `update`, `uninstall`, and `service` subcommands, sharing path/unit helpers. Git sync: autostash → ff-only → hard-reset fallback.
 
 **Tech Stack:** bash, git, uv, systemd `--user`, Python argparse stdlib, pytest.
 
@@ -422,7 +422,7 @@ Expected: FAIL missing module
 
 - [ ] **Step 3: Implement `cli/git_sync.py`**
 
-Implement Hermes-lite flow:
+Implement managed git sync flow:
 
 1. `git status --porcelain` → if dirty, `git stash push --include-untracked -m tomo-update-…`; record stash ref via `git rev-parse refs/stash`.
 2. `git fetch origin` — on non-zero, raise `RuntimeError` with first stderr line; do not mutate further.
@@ -445,7 +445,7 @@ Expected: all PASS
 ```bash
 git add cli/git_sync.py tests/unit/cli/test_git_sync.py
 git commit -m "$(cat <<'EOF'
-feat(cli): Hermes-style git sync for managed installs
+feat(cli): git sync for managed installs
 
 EOF
 )"
@@ -947,7 +947,7 @@ Expected: both present in the embedded unit
 | `install.sh` bootstrap | 7 |
 | Path `~/.local/share/tomo/app` | 1, 7 |
 | Unit sets `TOMO_HOME` + `TOMO_WORK` | 2, 7, 9 |
-| Hermes git sync | 3, 5 |
+| Git sync | 3, 5 |
 | `tomo update` | 5, 6 |
 | `tomo service *` | 4, 6 |
 | `tomo uninstall` / `--purge` | 4, 6 |

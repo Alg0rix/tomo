@@ -44,7 +44,7 @@ def _extract_seq(chunk: str) -> int | None:
 # disconnect (page refresh) does NOT kill the turn.  The turn runs as a
 # background task; SSE streams subscribe to a broadcast queue.
 #
-# Adapted from evonic's realtime.py: per-connection ring buffer with
+# Per-connection ring buffer with
 # replay-on-subscribe so a reconnecting client sees events it missed.
 @dataclass
 class _ActiveTurn:
@@ -58,7 +58,7 @@ class _ActiveTurn:
 
         If *after_seq* > 0, replay buffered chunks with ``seq > after_seq``
         into the queue first — so a reconnecting client catches up on
-        events it missed during the disconnect gap (evonic pattern).
+        events it missed during the disconnect gap.
         """
         q: asyncio.Queue = asyncio.Queue(maxsize=512)
         # Replay: push past chunks the client hasn't seen yet.

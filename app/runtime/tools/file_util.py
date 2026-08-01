@@ -17,7 +17,7 @@ def format_numbered_page(
 ) -> str:
     """Return 1-based ``N|line`` page of ``text`` with continuation hints.
 
-    Better than Hermes/Evonic plain slices: includes total lines, range header,
+    Includes total lines, range header,
     and explicit next_offset when more content remains.
     """
     if offset < 1:

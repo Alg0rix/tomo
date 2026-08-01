@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "search_files",
-      "description": "Prefer this over shell grep/find. Uses ripgrep (rg) when available, then grep/find, then a pure-Python fallback. target=content (default): regex search inside files (Hermes-aligned; pass regex=false for literal/fixed-string). target=files: find by filename/glob (e.g. '*.py' or 'config'). output_mode: content | files_only | count. Optional path, glob, context, limit, offset.",
+      "description": "Prefer this over shell grep/find. Uses ripgrep (rg) when available, then grep/find, then a pure-Python fallback. target=content (default): regex search inside files (pass regex=false for literal/fixed-string). target=files: find by filename/glob (e.g. '*.py' or 'config'). output_mode: content | files_only | count. Optional path, glob, context, limit, offset.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -34,7 +34,7 @@
           },
           "regex": {
             "type": "boolean",
-            "description": "Treat content pattern as regex (default true, like Hermes). Set false for fixed-string / literal match (rg -F). For target=files, default is glob; set true to regex-match filenames."
+            "description": "Treat content pattern as regex (default true). Set false for fixed-string / literal match (rg -F). For target=files, default is glob; set true to regex-match filenames."
           },
           "output_mode": {
             "type": "string",

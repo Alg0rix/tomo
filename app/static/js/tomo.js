@@ -252,6 +252,19 @@
       return { summary: wsum, detailHtml: wbody, isEdit: true, autoExpand: false };
     }
 
+    if (tool === 'todo') {
+      var todosArg = args.todos;
+      var merge = !!args.merge;
+      var n = Array.isArray(todosArg) ? todosArg.length : null;
+      var tsum = n == null ? 'read list' : (merge ? 'merge ' + n : 'plan ' + n);
+      return {
+        summary: tsum,
+        detailHtml: '',
+        isEdit: false,
+        autoExpand: false,
+      };
+    }
+
     var sum = Tomo.formatToolSummary(tool, args);
     var json;
     try { json = JSON.stringify(args, null, 2); } catch (_) { json = String(args); }
@@ -290,7 +303,7 @@
   };
 
   /**
-   * Compact tool row (kimi-inspired): status · name · summary · chip · expand.
+   * Compact tool row: status · name · summary · chip · expand.
    * @param {{tool?: string, args?: object}|string} toolOrData
    * @param {object} [args]
    * @param {{running?: boolean}} [opts]
@@ -347,6 +360,100 @@
       head.setAttribute('aria-expanded', card.classList.contains('expanded') ? 'true' : 'false');
     });
     return card;
+  };
+
+  Tomo.todoGlyph = function (status) {
+    if (status === 'completed') return '[x]';
+    if (status === 'in_progress') return '[>]';
+    if (status === 'cancelled') return '[-]';
+    return '[ ]';
+  };
+
+  /**
+   * Session-scoped todo dock — lives in chat chrome (above composer), not
+   * inside the scrolling message thread.
+   */
+  Tomo.ensureTodoDock = function (fromEl) {
+    var wrap = null;
+    if (fromEl && fromEl.nodeType === 1) {
+      wrap = fromEl.closest('.chat-wrap');
+    }
+    if (!wrap) wrap = document.querySelector('.chat-wrap[data-session-id], .chat-wrap');
+    if (!wrap) return null;
+    var dock = wrap.querySelector('.chat-todo-dock');
+    if (dock) return dock;
+    var main = wrap.querySelector('.chat-main') || wrap;
+    dock = document.createElement('aside');
+    dock.className = 'chat-todo-dock';
+    dock.hidden = true;
+    dock.setAttribute('aria-label', 'Session todo list');
+    var composer = main.querySelector('.composer');
+    if (composer) main.insertBefore(dock, composer);
+    else main.appendChild(dock);
+    return dock;
+  };
+
+  Tomo.clearTodoDock = function (fromEl) {
+    var dock = Tomo.ensureTodoDock(fromEl);
+    if (!dock) return;
+    dock.hidden = true;
+    dock._todos = [];
+    var panel = dock.querySelector('.todo-panel');
+    if (panel) panel.remove();
+  };
+
+  /**
+   * Upsert the session Todo checklist into the chrome dock (not the thread).
+   * ``parent`` is any element inside the chat wrap (used to locate the dock).
+   */
+  Tomo.upsertTodoPanel = function (parent, todos) {
+    var dock = Tomo.ensureTodoDock(parent);
+    if (!dock) return null;
+    if (!Array.isArray(todos) || !todos.length) {
+      Tomo.clearTodoDock(parent);
+      return null;
+    }
+    dock.hidden = false;
+    var panel = dock.querySelector(':scope > .todo-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.className = 'todo-panel';
+      dock.appendChild(panel);
+      panel.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('.todo-hd');
+        if (!btn || !panel.contains(btn)) return;
+        panel.classList.toggle('collapsed');
+        Tomo.renderTodoPanel(panel);
+      });
+    }
+    panel._todos = todos.slice();
+    Tomo.renderTodoPanel(panel);
+    return panel;
+  };
+
+  Tomo.renderTodoPanel = function (panel) {
+    if (!panel || !panel._todos) return;
+    var esc = Tomo.escapeHtml;
+    var todos = panel._todos;
+    var done = todos.filter(function (t) { return t && t.status === 'completed'; }).length;
+    var collapsed = panel.classList.contains('collapsed');
+    var rows = todos.map(function (t) {
+      var st = (t && t.status) || 'pending';
+      var content = (t && t.content) || '';
+      return (
+        '<div class="todo-row status-' + esc(st) + '">' +
+          '<span class="todo-glyph" aria-hidden="true">' + esc(Tomo.todoGlyph(st)) + '</span>' +
+          '<span class="todo-text">' + esc(content) + '</span>' +
+        '</div>'
+      );
+    }).join('');
+    panel.innerHTML =
+      '<button type="button" class="todo-hd" aria-expanded="' + (!collapsed) + '">' +
+        '<span class="todo-caret">' + (collapsed ? '▸' : '▾') + '</span> ' +
+        '<span class="todo-title">Todo</span> ' +
+        '<span class="todo-count">(' + done + '/' + todos.length + ')</span>' +
+      '</button>' +
+      (collapsed ? '' : '<div class="todo-bd">' + rows + '</div>');
   };
 
   /** Attach tool output to a card and flip status to ok/error. */
@@ -449,7 +556,10 @@
     if (kind === 'tool_result') {
       var tools = body.querySelectorAll('.si-tool');
       var last = tools[tools.length - 1];
-      if (!last || !last._res) return null;
+      if (!last || !last._res) {
+        if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
+        return null;
+      }
       var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
       last._res.textContent = resultText;
       if (data.error) {
@@ -467,7 +577,12 @@
         }
         last._meta.textContent = hint;
       }
+      if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
       return last;
+    }
+
+    if (kind === 'todos') {
+      return Tomo.upsertTodoPanel(root, data.todos || []);
     }
 
     if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {

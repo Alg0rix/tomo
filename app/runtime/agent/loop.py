@@ -16,7 +16,7 @@ onto SSE:
    "parallel_index": int, "parallel_total": int}``
 * ``{"kind": "subagent_done", "agent_id": str, "content": str,
    "status": "ok" | "error"}``
-* ``{"kind": "final", "content": str, "already_streamed": bool}``
+* ``{"kind": "todos", "todos": list, "source": "atg"|"tool"}``  # plan checklist
 * ``{"kind": "error", "message": str}``
 
 **Subagent delegation.** When the model calls ``delegate``, the target agent
@@ -33,9 +33,10 @@ force-stop — preventing token-burn spin loops.
 read-only tool calls, they run concurrently via :func:`asyncio.gather`;
 mutating tools run serially. Events are emitted in original call order.
 
-**ATG hook.** When ``enable_atg`` is set, the loop compiles a task DAG from
-the user goal, executes it (streaming events), and feeds the summary back as
-a user message before composing the final answer.
+**Planning.** Session planning is prompt-gated via the ``todo`` tool (the
+model decides when to track multi-step work). Optional ATG: pass
+``enable_atg=True`` to front-load a compiled DAG that seeds the same
+checklist; default is off (no word/length heuristic).
 """
 from __future__ import annotations
 
@@ -46,15 +47,20 @@ import json
 import logging
 from typing import Any, AsyncIterator
 
+from app.runtime.agent.compress import maybe_compress_messages
 from app.runtime.agent.context import build_messages, build_system_prompt
+from app.runtime.agent.metrics import TurnMetrics
+from app.runtime.agent.retry import is_transient_llm_error
 from app.runtime.agent.subagent import (
     MAX_TOOL_RESULT_CHARS,
+    current_depth,
     depth_exceeded,
     drain_subagent_turn,
 )
+from app.runtime.agent.tool_errors import tool_result_is_error
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
-from app.runtime.permissions.gate import apply_choice, evaluate
+from app.runtime.permissions.gate import Decision, apply_choice, evaluate
 from app.runtime.permissions.grants import reset_outside_grant, set_outside_grant
 from app.runtime.permissions import hitl as hitl_mod
 from app.runtime.permissions.modes import get_effective_mode
@@ -69,7 +75,7 @@ _logger = logging.getLogger(__name__)
 _LOOP_WINDOW = 10
 _LOOP_THRESHOLD = 5
 
-# Read-only tools safe to run in parallel within one round.
+# Read-only tools safe to run in parallel within one round (after gating).
 _READ_ONLY_TOOLS = frozenset(
     {
         "read_file",
@@ -94,6 +100,23 @@ def _max_tool_iterations() -> int:
     except (TypeError, ValueError):
         return 12
 
+
+def _should_run_atg(goal: str, *, enable_atg: bool | None) -> bool:
+    """Front-load ATG only when explicitly requested.
+
+    Default product path relies on the ``todo`` tool (prompt-gated). Nested
+    subagent turns never run ATG (parent owns the plan).
+    """
+    if enable_atg is not True:
+        return False
+    if not (goal or "").strip():
+        return False
+    # Nested delegates must not re-compile a DAG on every handoff.
+    if current_depth() > 0:
+        return False
+    from app.runtime.agent.atg import is_atg_eligible
+
+    return is_atg_eligible(enable_atg=True)
 
 async def _llm_round(
     client: LLMClient,
@@ -120,6 +143,40 @@ async def _llm_round(
             yield {"kind": "_response", "response": ev["response"]}
 
 
+async def _llm_round_with_retry(
+    client: LLMClient,
+    messages: list[dict[str, Any]],
+    tool_schemas: list[dict[str, Any]],
+    *,
+    metrics: TurnMetrics | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Like ``_llm_round`` but retries the whole round on transient failures.
+
+    Streaming cannot resume mid-flight; on failure we discard partial deltas
+    and restart the round (caller only sees deltas from the successful attempt).
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(2):
+        pieces: list[dict[str, Any]] = []
+        try:
+            async for piece in _llm_round(client, messages, tool_schemas):
+                pieces.append(piece)
+            for piece in pieces:
+                yield piece
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0 and is_transient_llm_error(exc):
+                if metrics is not None:
+                    metrics.llm_retries += 1
+                _logger.warning("LLM round transient failure — retrying: %s", exc)
+                await asyncio.sleep(0.75)
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
+
+
 def _last_user_text(
     user_message: str | None, history: list[dict[str, Any]] | None
 ) -> str:
@@ -133,73 +190,78 @@ def _last_user_text(
     return ""
 
 
-def _tool_result_is_error(result: Any) -> bool:
-    """True when a tool string is a hard failure or non-zero bash exit."""
-    text = str(result or "")
-    if text.startswith("Error:") or text.startswith("BLOCKED"):
-        return True
-    import re
-
-    m = re.search(r"(?m)^exit code:\s*(\d+)\s*$", text)
-    if m and int(m.group(1)) != 0:
-        return True
-    return False
+# Back-compat alias for tests that patch/import the old name.
+_tool_result_is_error = tool_result_is_error
 
 
-async def _run_one_gated_tool(
+async def _handle_clarify(
     call: ToolCall,
     *,
     session_id: str | None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Yield optional HITL events, then a ``tool_result`` event."""
+    """Yield clarify HITL events then a tool_result."""
     args = call.arguments if isinstance(call.arguments, dict) else {}
-
-    if call.name == "clarify":
-        question = args.get("question")
-        if not isinstance(question, str) or not question.strip():
-            yield {
-                "kind": "tool_result",
-                "tool": call.name,
-                "result": "Error: 'question' argument must be a non-empty string",
-                "error": True,
-            }
-            return
-        raw_choices = args.get("choices")
-        choices: list[str] = []
-        if isinstance(raw_choices, list):
-            for c in raw_choices:
-                if isinstance(c, str) and c.strip() and len(choices) < 4:
-                    choices.append(c.strip())
-        payload = hitl_mod.create_clarify(
-            question=question.strip(),
-            choices=choices,
-            session_id=session_id,
-        )
-        yield {"kind": "clarify_required", **{k: v for k, v in payload.items() if k != "kind"}}
-        answer = await hitl_mod.await_clarify(payload["id"])
-        result = json.dumps(
-            {
-                "question": question.strip(),
-                "choices_offered": choices,
-                "user_response": answer,
-            },
-            ensure_ascii=False,
-        )
+    question = args.get("question")
+    if not isinstance(question, str) or not question.strip():
         yield {
             "kind": "tool_result",
             "tool": call.name,
-            "result": result,
-            "error": False,
+            "result": "Error: 'question' argument must be a non-empty string",
+            "error": True,
         }
         return
+    raw_choices = args.get("choices")
+    choices: list[str] = []
+    if isinstance(raw_choices, list):
+        for c in raw_choices:
+            if isinstance(c, str) and c.strip() and len(choices) < 4:
+                choices.append(c.strip())
+    payload = hitl_mod.create_clarify(
+        question=question.strip(),
+        choices=choices,
+        session_id=session_id,
+    )
+    yield {
+        "kind": "clarify_required",
+        **{k: v for k, v in payload.items() if k != "kind"},
+    }
+    answer = await hitl_mod.await_clarify(payload["id"])
+    result = json.dumps(
+        {
+            "question": question.strip(),
+            "choices_offered": choices,
+            "user_response": answer,
+        },
+        ensure_ascii=False,
+    )
+    yield {
+        "kind": "tool_result",
+        "tool": call.name,
+        "result": result,
+        "error": False,
+    }
 
+
+async def _authorize_tool(
+    call: ToolCall,
+    *,
+    session_id: str | None,
+) -> AsyncIterator[dict[str, Any] | Decision]:
+    """Yield HITL events; finally yield a :class:`Decision` or blocked result dict.
+
+    The last yielded value is either a ``Decision`` (allowed or not) or a
+    finished ``tool_result`` dict (clarify path / early error).
+    """
+    args = call.arguments if isinstance(call.arguments, dict) else {}
     work_root = sandbox.resolve_work_root()
     decision = evaluate(
         call.name, args, work_root=work_root, session_id=session_id
     )
     if decision.needs_hitl and get_effective_mode(session_id) == "smart":
         cmd = command_from_args(call.name, args)
-        verdict = await smart_approve(cmd or decision.description, decision.description)
+        verdict = await smart_approve(
+            cmd or decision.description, decision.description
+        )
         if verdict == "approve":
             decision = apply_choice(decision, "once", session_id=session_id)
         elif verdict == "deny":
@@ -223,6 +285,39 @@ async def _run_one_gated_tool(
         choice = await hitl_mod.await_approval(payload["id"])
         decision = apply_choice(decision, choice, session_id=session_id)
 
+    yield decision
+
+
+async def _execute_authorized(call: ToolCall, decision: Decision) -> str:
+    """Run a tool under the granted outside-jail token."""
+    args = call.arguments if isinstance(call.arguments, dict) else {}
+    grant_tok = set_outside_grant(decision.grant)
+    try:
+        return await asyncio.to_thread(execute, call.name, args)
+    except Exception as exc:
+        return f"Error: {exc}"
+    finally:
+        reset_outside_grant(grant_tok)
+
+
+async def _run_one_gated_tool(
+    call: ToolCall,
+    *,
+    session_id: str | None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield optional HITL events, then a ``tool_result`` event (serial path)."""
+    if call.name == "clarify":
+        async for ev in _handle_clarify(call, session_id=session_id):
+            yield ev
+        return
+
+    decision: Decision | None = None
+    async for item in _authorize_tool(call, session_id=session_id):
+        if isinstance(item, Decision):
+            decision = item
+        else:
+            yield item
+    assert decision is not None
     if not decision.allowed:
         result = decision.message or "BLOCKED: denied"
         yield {
@@ -233,20 +328,12 @@ async def _run_one_gated_tool(
         }
         return
 
-    grant_tok = set_outside_grant(decision.grant)
-    try:
-        result = await asyncio.to_thread(execute, call.name, args)
-    except Exception as exc:
-        result = f"Error: {exc}"
-    finally:
-        reset_outside_grant(grant_tok)
-
-    result = _truncate_result(result)
+    result = _truncate_result(await _execute_authorized(call, decision))
     yield {
         "kind": "tool_result",
         "tool": call.name,
         "result": result,
-        "error": _tool_result_is_error(result),
+        "error": tool_result_is_error(result),
     }
 
 
@@ -304,25 +391,51 @@ async def _maybe_run_atg(
     tools: list[dict[str, Any]],
     llm: LLMClient,
     agent_id: str | None,
+    session_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]] | None:
-    """Compile + execute a task DAG when ATG is enabled.
+    """Compile + execute a task DAG; seed the session todo checklist from it.
 
-    Yields ATG events (tool/tool_result/atg_wave/atg_summary). Returns None
-    (no-ATG path) when the compile fails or the caller didn't request it.
-    The final ``atg_summary`` event's ``summary`` is what the loop feeds back.
+    Yields ATG events (tool/tool_result/atg_wave/atg_summary/todos). Returns
+    None when compile fails. The final ``atg_summary`` event's ``summary`` is
+    what the loop feeds back.
     """
     goal = (user_message or "").strip()
     if not goal:
         return None
     try:
         from app.runtime.agent.atg import compile_task_graph, run_dag_execution
-        from app.runtime.agent.atg.compiler import CompilationError
+        from app.runtime.tools import todo as todo_mod
 
         dag, _history = await compile_task_graph(goal, tools, llm)
-    except Exception as exc:  # CompilationError or any failure → no-ATG fallback
+        # Visible plan: ATG nodes become the session todo list.
+        snap = todo_mod.seed_from_dag(dag, session_id=session_id)
+
+        async def _gen():
+            yield {
+                "kind": "todos",
+                "todos": snap.get("todos") or [],
+                "summary": snap.get("summary") or {},
+                "source": "atg",
+                "agent_id": agent_id or "",
+            }
+            async for ev in run_dag_execution(
+                dag, llm=llm, tools=tools, agent_id=agent_id
+            ):
+                # Promote per-node todo snapshots to a dedicated todos event too.
+                if ev.get("kind") == "tool_result" and ev.get("todos") is not None:
+                    yield {
+                        "kind": "todos",
+                        "todos": ev["todos"],
+                        "source": "atg",
+                        "agent_id": agent_id or "",
+                        "atg_node": ev.get("atg_node"),
+                    }
+                yield ev
+
+        return _gen()
+    except Exception as exc:
         _logger.warning("ATG compile failed: %s", exc)
         return None
-    return run_dag_execution(dag, llm=llm, tools=tools, agent_id=agent_id)
 
 
 async def run_turn(
@@ -335,7 +448,7 @@ async def run_turn(
     agent_id: str | None = None,
     session_id: str | None = None,
     max_iterations: int | None = None,
-    enable_atg: bool = False,
+    enable_atg: bool | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one agent turn, yielding internal events.
 
@@ -344,14 +457,20 @@ async def run_turn(
     duplicated. ``llm`` / ``tools`` / ``system_prompt`` / ``max_iterations``
     default to settings-backed values but are injectable for tests.
     ``agent_id`` selects the per-agent ``SYSTEM.md`` / ``SOUL.md``;
-    ``session_id`` is context for persistence wiring. ``enable_atg`` turns on
-    the Atomic Task Graph path (compile + execute a DAG before the loop).
+    ``session_id`` is context for persistence wiring and the session todo
+    store. Planning defaults to the prompt-gated ``todo`` tool. Pass
+    ``enable_atg=True`` to front-load an ATG DAG that seeds the same
+    checklist; omit or pass ``False`` to leave ATG off.
 
     Setup failures and per-round backend failures are surfaced as
     ``{"kind": "error", ...}`` events — ``run_turn`` never raises out to the
     consumer. The function is an async generator — iterate with ``async for``.
     """
+    from app.runtime.tools import todo as todo_mod
+
+    metrics = TurnMetrics(agent_id=agent_id, session_id=session_id)
     sandbox_token = sandbox.bind_agent(agent_id)
+    todo_token = todo_mod.bind_session(session_id)
     try:
         try:
             client = llm if llm is not None else get_llm(agent_id)
@@ -378,24 +497,34 @@ async def run_turn(
                 for_agent_id=agent_id,
             )
         except Exception as exc:
+            metrics.ended_kind = "error"
+            metrics.log_summary()
             yield {"kind": "error", "message": f"Agent setup failed: {exc}"}
             return
 
+        use_atg = _should_run_atg(user_message or "", enable_atg=enable_atg)
+
         _logger.info(
             "turn start agent=%s session=%s tools=%d limit=%d atg=%s",
-            agent_id, session_id, len(tool_schemas), limit, enable_atg,
+            agent_id,
+            session_id,
+            len(tool_schemas),
+            limit,
+            use_atg,
         )
 
         id_counter = itertools.count()
         user_request = _last_user_text(user_message, history)
 
         # ── ATG branch: front-load a compiled DAG before the tool loop ──
-        if enable_atg:
+        if use_atg:
+            metrics.atg_used = True
             atg_gen = await _maybe_run_atg(
                 user_message=user_message,
                 tools=tool_schemas,
                 llm=client,
                 agent_id=agent_id,
+                session_id=session_id,
             )
             if atg_gen is not None:
                 atg_summary = ""
@@ -405,10 +534,13 @@ async def run_turn(
                     yield ev
                     if ev["kind"] == "atg_summary":
                         atg_summary = ev.get("summary") or ""
+                        metrics.atg_status = ev.get("status")
                 if atg_summary:
                     messages.append(
                         {"role": "user", "content": f"[SYSTEM] {atg_summary}"}
                     )
+            else:
+                metrics.atg_status = "compile_failed"
 
         # ── Loop-detection state ──
         call_window: collections.deque[str] = collections.deque(maxlen=_LOOP_WINDOW)
@@ -419,31 +551,54 @@ async def run_turn(
             iteration += 1
             resp: LLMResponse | None = None
             streamed = False
-            _logger.info("LLM round %d agent=%s …", iteration, agent_id)
+            metrics.mark_llm_round()
+            before_len = len(messages)
+            compressed = maybe_compress_messages(messages)
+            if compressed is not messages:
+                messages = compressed
+                metrics.compressed = True
+            _logger.info("LLM round %d agent=%s msgs=%d…", iteration, agent_id, len(messages))
             try:
-                async for piece in _llm_round(client, messages, tool_schemas):
+                async for piece in _llm_round_with_retry(
+                    client, messages, tool_schemas, metrics=metrics
+                ):
                     if piece["kind"] == "delta":
                         streamed = True
                         yield piece
                     elif piece["kind"] == "_response":
                         resp = piece["response"]
             except Exception as exc:
+                metrics.ended_kind = "error"
+                metrics.log_summary()
                 yield {"kind": "error", "message": f"LLM request failed: {exc}"}
                 return
+            _ = before_len  # kept for readability / future delta metrics
 
             if resp is None:
-                yield {"kind": "error", "message": "LLM stream ended without a response"}
+                metrics.ended_kind = "error"
+                metrics.log_summary()
+                yield {
+                    "kind": "error",
+                    "message": "LLM stream ended without a response",
+                }
                 return
 
             if resp.has_tool_calls and resp.content:
                 yield {"kind": "thinking", "content": resp.content}
 
             if not resp.has_tool_calls:
-                _logger.info("turn end agent=%s final_chars=%d", agent_id, len(resp.content or ""))
+                _logger.info(
+                    "turn end agent=%s final_chars=%d",
+                    agent_id,
+                    len(resp.content or ""),
+                )
+                metrics.ended_kind = "final"
+                metrics.log_summary()
                 yield {
                     "kind": "final",
                     "content": resp.content or "",
                     "already_streamed": streamed,
+                    "metrics": metrics.as_dict(),
                 }
                 return
 
@@ -451,9 +606,7 @@ async def run_turn(
             messages.append(_assistant_tool_calls_message(resp, paired))
 
             tool_names = [c.name for _cid, c in paired]
-            _logger.info(
-                "tool round %d: %s", iteration, tool_names,
-            )
+            _logger.info("tool round %d: %s", iteration, tool_names)
 
             # ── Loop detection: identical (tool, args) repeated too often ──
             for _cid, call in paired:
@@ -463,7 +616,9 @@ async def run_turn(
                     force_stopped = True
                     _logger.warning(
                         "loop detected agent=%s tool=%s sig=%s — forcing stop",
-                        agent_id, call.name, sig[:80],
+                        agent_id,
+                        call.name,
+                        sig[:80],
                     )
                     messages.append(
                         {
@@ -476,7 +631,7 @@ async def run_turn(
                         }
                     )
 
-            # ── Tool execution (permission-gated; serial for correct HITL) ──
+            # ── Tool execution: gate serially, run auto-allowed RO in parallel ──
             delegate_calls = [
                 (cid, c) for cid, c in paired if c.name == "delegate"
             ]
@@ -490,136 +645,228 @@ async def run_turn(
                     len(other_calls),
                 )
 
-            by_cid: dict[str, tuple[ToolCall, Any]] = {}
+            # Results keyed by call id. ``already_yielded`` tracks early emits
+            # (clarify / blocked) so we do not double-emit after parallel exec.
+            result_by_cid: dict[str, tuple[str, bool]] = {}
+            already_yielded: set[str] = set()
+            pending_ro: list[tuple[str, ToolCall, Decision]] = []
+            pending_mut: list[tuple[str, ToolCall, Decision]] = []
+
             for cid, call in other_calls:
                 yield {"kind": "tool", "tool": call.name, "args": call.arguments}
-                result_text = "Error: no tool result"
-                error = True
-                async for ev in _run_one_gated_tool(call, session_id=session_id):
-                    if ev.get("kind") in {"approval_required", "clarify_required"}:
-                        yield ev
-                        continue
-                    if ev.get("kind") == "tool_result":
-                        result_text = _truncate_result(ev.get("result"))
-                        error = bool(ev.get("error"))
-                        yield {
-                            "kind": "tool_result",
-                            "tool": call.name,
-                            "result": result_text,
-                            "error": error,
-                        }
-                by_cid[cid] = (call, result_text)
-                messages.append(
-                    {"role": "tool", "tool_call_id": cid, "content": result_text}
-                )
 
-            # ── Subagent delegation: run the child, capture output, continue ──
-            parallel_total = len(delegate_calls)
-            for idx, (cid, call) in enumerate(delegate_calls):
-                parallel_index = idx + 1
-                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
-                args = call.arguments
-                reason = args.get("reason") if isinstance(args, dict) else None
-                if not isinstance(reason, str) or not reason.strip():
-                    reason = "delegate"
-                reason = reason.strip()
+                if call.name == "clarify":
+                    result_text = "Error: no tool result"
+                    error = True
+                    async for ev in _handle_clarify(call, session_id=session_id):
+                        if ev.get("kind") == "clarify_required":
+                            yield ev
+                            continue
+                        if ev.get("kind") == "tool_result":
+                            result_text = _truncate_result(ev.get("result"))
+                            error = bool(ev.get("error"))
+                            yield {
+                                "kind": "tool_result",
+                                "tool": call.name,
+                                "result": result_text,
+                                "error": error,
+                            }
+                    result_by_cid[cid] = (result_text, error)
+                    already_yielded.add(cid)
+                    continue
 
-                # The delegate tool backend resolved the target id.
-                delegate_result = await asyncio.to_thread(
-                    execute, call.name, call.arguments
-                )
-                target = parse_delegated_id(str(delegate_result))
-                delegate_error = _tool_result_is_error(delegate_result)
-
-                if target and not delegate_error:
-                    if depth_exceeded():
-                        _logger.warning(
-                            "delegate depth exceeded: agent=%s target=%s",
-                            agent_id, target,
-                        )
-                        sub_result = (
-                            f"Error: delegation depth limit reached — "
-                            f"cannot delegate further to {target}."
-                        )
-                        delegate_error = True
+                decision: Decision | None = None
+                async for item in _authorize_tool(call, session_id=session_id):
+                    if isinstance(item, Decision):
+                        decision = item
                     else:
-                        # Emit the handoff marker for the UI.
-                        yield {
-                            "kind": "delegate",
-                            "from": agent_id or "",
-                            "to": target,
-                            "reason": reason,
-                            "task": reason,
-                            "parallel_index": parallel_index,
-                            "parallel_total": parallel_total,
-                        }
-                        # Signal subagent start so the UI can create its card.
-                        _logger.info(
-                            "delegate→ agent=%s target=%s reason=%s parallel=%d/%d",
-                            agent_id, target, reason[:60], parallel_index, parallel_total,
-                        )
-                        yield {
-                            "kind": "subagent_start",
-                            "agent_id": target,
-                            "from": agent_id or "",
-                            "task": reason,
-                            "parallel_index": parallel_index,
-                            "parallel_total": parallel_total,
-                        }
-                        # Run the nested subagent turn, streaming its events.
-                        sub_output = ""
-                        try:
-                            async for ev, final in drain_subagent_turn(
-                                target,
-                                from_agent_id=agent_id or "",
-                                reason=reason,
-                                user_request=user_request,
-                                history=None,
-                            ):
-                                yield ev
-                                sub_output = final
-                        except Exception as exc:
-                            sub_output = f"Error: subagent {target} failed: {exc}"
-                            delegate_error = True
-                            _logger.error(
-                                "subagent error: agent=%s target=%s err=%s",
-                                agent_id, target, exc,
-                            )
-                        # Signal subagent completion so the UI can mark it done.
-                        _logger.info(
-                            "subagent done: target=%s status=%s output=%d chars",
-                            target,
-                            "error" if delegate_error else "ok",
-                            len(sub_output),
-                        )
-                        yield {
-                            "kind": "subagent_done",
-                            "agent_id": target,
-                            "content": sub_output,
-                            "status": "error" if delegate_error else "ok",
-                        }
-                        sub_result = sub_output or "(no output from subagent)"
-                elif delegate_error:
-                    sub_result = str(delegate_result)
-                else:
-                    sub_result = "Error: delegate did not resolve a target agent."
+                        yield item
+                assert decision is not None
+                if not decision.allowed:
+                    result_text = decision.message or "BLOCKED: denied"
+                    yield {
+                        "kind": "tool_result",
+                        "tool": call.name,
+                        "result": result_text,
+                        "error": True,
+                    }
+                    result_by_cid[cid] = (result_text, True)
+                    already_yielded.add(cid)
+                    continue
 
-                sub_result = _truncate_result(sub_result)
-                yield {
-                    "kind": "tool_result",
-                    "tool": call.name,
-                    "result": sub_result,
-                    "error": delegate_error,
-                }
-                messages.append(
-                    {"role": "tool", "tool_call_id": cid, "content": sub_result}
+                if call.name in _READ_ONLY_TOOLS:
+                    pending_ro.append((cid, call, decision))
+                else:
+                    pending_mut.append((cid, call, decision))
+
+            # Parallel execute auto-allowed read-only tools.
+            if len(pending_ro) > 1:
+                ro_results = await asyncio.gather(
+                    *(_execute_authorized(c, d) for _cid, c, d in pending_ro),
+                    return_exceptions=True,
                 )
+                for (cid, _call, _d), res in zip(pending_ro, ro_results):
+                    if isinstance(res, Exception):
+                        res = f"Error: {res}"
+                    text_res = _truncate_result(res)
+                    result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
+            else:
+                for cid, call, decision in pending_ro:
+                    text_res = _truncate_result(
+                        await _execute_authorized(call, decision)
+                    )
+                    result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
+
+            # Mutating tools stay serial.
+            for cid, call, decision in pending_mut:
+                text_res = _truncate_result(await _execute_authorized(call, decision))
+                result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
+
+            # Emit remaining tool_results in original call order; append all.
+            errors_this_round = 0
+            for cid, call in other_calls:
+                text_res, err = result_by_cid.get(cid, ("Error: no tool result", True))
+                if cid not in already_yielded:
+                    payload = {
+                        "kind": "tool_result",
+                        "tool": call.name,
+                        "result": text_res,
+                        "error": err,
+                    }
+                    if call.name == "todo" and not err:
+                        todos = todo_mod.parse_todos_payload(text_res)
+                        if todos is not None:
+                            payload["todos"] = todos
+                            yield {
+                                "kind": "todos",
+                                "todos": todos,
+                                "source": "tool",
+                                "agent_id": agent_id or "",
+                            }
+                    yield payload
+                elif call.name == "todo" and not err:
+                    # Already yielded (shouldn't happen for todo) — still sync UI.
+                    todos = todo_mod.parse_todos_payload(text_res)
+                    if todos is not None:
+                        yield {
+                            "kind": "todos",
+                            "todos": todos,
+                            "source": "tool",
+                            "agent_id": agent_id or "",
+                        }
+                if err:
+                    errors_this_round += 1
+                messages.append(
+                    {"role": "tool", "tool_call_id": cid, "content": text_res}
+                )
+
+            metrics.mark_tools(
+                len(other_calls),
+                errors=errors_this_round,
+                parallel=len(pending_ro) if len(pending_ro) > 1 else 0,
+            )
+
+            # ── Subagent delegation (parallel when 2+ independent targets) ──
+            parallel_total = len(delegate_calls)
+            metrics.delegates += parallel_total
+
+            if parallel_total > 1:
+                # Fan-out: each child captures its own event list; emit in order.
+                gathered = await asyncio.gather(
+                    *(
+                        _drain_delegate_bundle(
+                            cid=cid,
+                            call=call,
+                            agent_id=agent_id,
+                            user_request=user_request,
+                            parallel_index=idx + 1,
+                            parallel_total=parallel_total,
+                        )
+                        for idx, (cid, call) in enumerate(delegate_calls)
+                    )
+                )
+                for cid, events, sub_result in gathered:
+                    for ev in events:
+                        yield ev
+                    messages.append(
+                        {"role": "tool", "tool_call_id": cid, "content": sub_result}
+                    )
+            else:
+                for idx, (cid, call) in enumerate(delegate_calls):
+                    _cid, events, sub_result = await _drain_delegate_bundle(
+                        cid=cid,
+                        call=call,
+                        agent_id=agent_id,
+                        user_request=user_request,
+                        parallel_index=idx + 1,
+                        parallel_total=max(parallel_total, 1),
+                    )
+                    for ev in events:
+                        yield ev
+                    messages.append(
+                        {"role": "tool", "tool_call_id": cid, "content": sub_result}
+                    )
 
             continue
 
+        # Max iterations: force one final no-tools synthesis instead of hard error.
         _logger.warning(
-            "max iterations exceeded: agent=%s limit=%d", agent_id, limit,
+            "max iterations exceeded: agent=%s limit=%d — forcing final",
+            agent_id,
+            limit,
         )
+        metrics.force_final = True
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "[SYSTEM] You have reached the maximum number of tool "
+                    f"iterations ({limit}). Do NOT call any more tools. "
+                    "Summarize what you know and give the best final answer now."
+                ),
+            }
+        )
+        try:
+            resp_final: LLMResponse | None = None
+            streamed_final = False
+            async for piece in _llm_round_with_retry(
+                client, messages, [], metrics=metrics
+            ):
+                if piece["kind"] == "delta":
+                    streamed_final = True
+                    yield piece
+                elif piece["kind"] == "_response":
+                    resp_final = piece["response"]
+            if resp_final is not None:
+                content = (resp_final.content or "").strip()
+                if resp_final.has_tool_calls and not content:
+                    content = (
+                        f"Stopped after {limit} tool iterations without a clean "
+                        "final answer."
+                    )
+                metrics.ended_kind = "final"
+                metrics.log_summary()
+                yield {
+                    "kind": "final",
+                    "content": content,
+                    "already_streamed": streamed_final and not resp_final.has_tool_calls,
+                    "metrics": metrics.as_dict(),
+                }
+                return
+        except Exception as exc:
+            metrics.ended_kind = "error"
+            metrics.log_summary()
+            yield {
+                "kind": "error",
+                "message": (
+                    f"Reached max tool iterations ({limit}) and force-final "
+                    f"failed: {exc}"
+                ),
+            }
+            return
+
+        metrics.ended_kind = "error"
+        metrics.log_summary()
         yield {
             "kind": "error",
             "message": (
@@ -627,7 +874,100 @@ async def run_turn(
             ),
         }
     finally:
+        todo_mod.reset_session(todo_token)
         sandbox.reset_agent(sandbox_token)
+
+
+async def _drain_delegate_bundle(
+    *,
+    cid: str,
+    call: ToolCall,
+    agent_id: str | None,
+    user_request: str,
+    parallel_index: int,
+    parallel_total: int,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Run one delegate and return ``(cid, events, tool_result_text)``."""
+    events: list[dict[str, Any]] = [
+        {"kind": "tool", "tool": call.name, "args": call.arguments}
+    ]
+    args = call.arguments if isinstance(call.arguments, dict) else {}
+    reason = args.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = "delegate"
+    reason = reason.strip()
+
+    delegate_result = await asyncio.to_thread(execute, call.name, call.arguments)
+    target = parse_delegated_id(str(delegate_result))
+    delegate_error = tool_result_is_error(delegate_result)
+
+    if target and not delegate_error:
+        if depth_exceeded():
+            sub_result = (
+                f"Error: delegation depth limit reached — "
+                f"cannot delegate further to {target}."
+            )
+            delegate_error = True
+        else:
+            events.append(
+                {
+                    "kind": "delegate",
+                    "from": agent_id or "",
+                    "to": target,
+                    "reason": reason,
+                    "task": reason,
+                    "parallel_index": parallel_index,
+                    "parallel_total": parallel_total,
+                }
+            )
+            events.append(
+                {
+                    "kind": "subagent_start",
+                    "agent_id": target,
+                    "from": agent_id or "",
+                    "task": reason,
+                    "parallel_index": parallel_index,
+                    "parallel_total": parallel_total,
+                }
+            )
+            sub_output = ""
+            try:
+                async for ev, final in drain_subagent_turn(
+                    target,
+                    from_agent_id=agent_id or "",
+                    reason=reason,
+                    user_request=user_request,
+                    history=None,
+                ):
+                    events.append(ev)
+                    sub_output = final
+            except Exception as exc:
+                sub_output = f"Error: subagent {target} failed: {exc}"
+                delegate_error = True
+            events.append(
+                {
+                    "kind": "subagent_done",
+                    "agent_id": target,
+                    "content": sub_output,
+                    "status": "error" if delegate_error else "ok",
+                }
+            )
+            sub_result = sub_output or "(no output from subagent)"
+    elif delegate_error:
+        sub_result = str(delegate_result)
+    else:
+        sub_result = "Error: delegate did not resolve a target agent."
+
+    sub_result = _truncate_result(sub_result)
+    events.append(
+        {
+            "kind": "tool_result",
+            "tool": call.name,
+            "result": sub_result,
+            "error": delegate_error,
+        }
+    )
+    return cid, events, sub_result
 
 
 __all__ = ["run_turn"]

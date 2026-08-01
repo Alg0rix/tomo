@@ -358,6 +358,7 @@
   function renderHistory(entries) {
     const scroll = chatWrap.querySelector('.chat-scroll');
     scroll.innerHTML = '';
+    if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(chatWrap);
     if (!entries.length) {
       scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
       return;

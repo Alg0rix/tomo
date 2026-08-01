@@ -6,7 +6,7 @@ optional YAML frontmatter) from:
 1. ``$TOMO_HOME/library/skills`` — managed install target (read/write)
 2. External dirs from ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). When the
    env var is **unset**, defaults to ``~/.agents/skills`` and ``~/.agent/skills``
-   (Hermes / OpenClaw / Cursor conventions). Set the env var to empty to disable
+   (common skill-folder conventions). Set the env var to empty to disable
    external discovery (tests do this).
 
 Managed installs copy a skill tree into the library dir. External skills are
@@ -145,7 +145,7 @@ def iter_skill_md_files(root: Path) -> Iterator[Path]:
         if skill_md.is_file():
             yield skill_md
             continue
-        # One nesting level: root/<category>/<skill>/SKILL.md (Hermes style)
+        # One nesting level: root/<category>/<skill>/SKILL.md
         try:
             subdirs = list(entry.iterdir())
         except OSError:

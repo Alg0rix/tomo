@@ -1,14 +1,14 @@
 # Git install / update + systemd user service
 
 **Date:** 2026-07-31  
-**Status:** Approved (user: Hermes-lite · XDG app path · TOMO_HOME/TOMO_WORK in unit · uninstall + `--purge`)  
+**Status:** Approved (user: managed-git · XDG app path · TOMO_HOME/TOMO_WORK in unit · uninstall + `--purge`)  
 **Roles:** Cursor plans/implements  
 
 ---
 
 ## 1. Goal
 
-Ship a first-run **install from git** path and a durable **update** path, and run Tomo as a **systemd user** service. Match Hermes UX lightly: `scripts/install.sh` for bootstrap, then `tomo update` / `tomo uninstall` from the CLI.
+Ship a first-run **install from git** path and a durable **update** path, and run Tomo as a **systemd user** service. Use `scripts/install.sh` for bootstrap, then `tomo update` / `tomo uninstall` from the CLI.
 
 ---
 
@@ -19,7 +19,7 @@ Ship a first-run **install from git** path and a durable **update** path, and ru
 | Invocation | Bootstrap `scripts/install.sh`; post-install CLI (`tomo update`, `tomo uninstall`, `tomo service …`) |
 | Code install path | Fixed: `~/.local/share/tomo/app` |
 | Data | Unchanged: `$TOMO_HOME` default `~/.tomo`; `$TOMO_WORK` default `~/tomo` |
-| Update git strategy | Hermes-style: autostash → `fetch` → `pull --ff-only origin main` → on diverge `reset --hard origin/main` → restore stash (prompt unless `-y`) |
+| Update git strategy | Autostash → `fetch` → `pull --ff-only origin main` → on diverge `reset --hard origin/main` → restore stash (prompt unless `-y`) |
 | Systemd scope | **User** unit only (`systemctl --user`) |
 | Unit env | Explicitly set `TOMO_HOME` and `TOMO_WORK` (do not rely on process defaults alone) |
 | Uninstall | Default: service + symlink + code tree; `--purge` also removes `$TOMO_HOME` and `$TOMO_WORK` |

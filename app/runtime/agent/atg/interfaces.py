@@ -22,19 +22,18 @@ _READ_ONLY_TOOLS = frozenset(
     }
 )
 
-# Declared output keys per tool. Tomo tools return a single string, so the
-# default interface is {"result": "string"} — only override when a tool's
-# result has a more specific semantic label worth surfacing in compiler
-# prompts.
-TOOL_INTERFACES = {
-    "read_file": {"outputs": {"content": "string"}},
-    "bash": {"outputs": {"stdout": "string", "exit_code": "integer"}},
-    "web_fetch": {"outputs": {"content": "string"}},
-    "web_search": {"outputs": {"results": "string"}},
-    "recall": {"outputs": {"entry": "string"}},
-}
-
+# Declared output keys per tool. Tomo tools return a single string stored
+# under ``result`` — keep the catalog honest so compile validation succeeds.
 DEFAULT_INTERFACE = {"outputs": {"result": "string"}}
+
+# Optional semantic notes for the catalog prompt (still ``result`` as key).
+TOOL_INTERFACES = {
+    "read_file": DEFAULT_INTERFACE,
+    "bash": DEFAULT_INTERFACE,
+    "web_fetch": DEFAULT_INTERFACE,
+    "web_search": DEFAULT_INTERFACE,
+    "recall": DEFAULT_INTERFACE,
+}
 
 
 def get_tool_interface(tool_name: str) -> dict:

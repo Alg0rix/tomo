@@ -217,7 +217,7 @@ The **portal** system lets agents copy files between workplaces and the coordina
 
 > **Alpha:** Web UI is live. Telegram bot is implemented and in progress; WhatsApp and other adapters remain planned.
 
-Tomo agents aren't locked to a terminal. **Channels** bridge your swarm and the messaging apps you already use — inspired by multi-platform agents like [Hermes](https://github.com/NousResearch/hermes-agent).
+Tomo agents aren't locked to a terminal. **Channels** bridge your swarm and the messaging apps you already use.
 
 ```
 You (Telegram)  ──►  Channel  ──►  Agent  ──►  Workplace
@@ -247,7 +247,7 @@ Same pattern works for ops deploys, research summaries, or code reviews. The cha
 
 ### The mobile pattern
 
-**You're on your phone; the swarm runs on a server.** Inspired by agents like [Hermes](https://github.com/NousResearch/hermes-agent) — chat from Telegram while work happens elsewhere. No laptop required.
+**You're on your phone; the swarm runs on a server.** Chat from Telegram while work happens elsewhere. No laptop required.
 
 ### Access control (planned)
 
@@ -398,7 +398,7 @@ tomo/
 ├── scripts/                      # install.sh + release helpers
 ├── docs/                         # Architecture notes
 ├── seed/                         # Dev database seeds
-├── tmp/                          # Local scratch (gitignored); e.g. hermes-agent clone
+├── tmp/                          # Local scratch (gitignored)
 └── var/                          # Runtime state (gitignored)
 ```
 
@@ -416,7 +416,7 @@ tomo/
 
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
 
-See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`. Local reference clone: `tmp/hermes-agent/` (NousResearch/hermes-agent).
+See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`.
 
 ---
 
@@ -456,7 +456,7 @@ Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
 ### Skills
 
-Skills are folders with a `SKILL.md` (agentskills.io / Hermes style). Tomo discovers:
+Skills are folders with a `SKILL.md` (agentskills.io style). Tomo discovers:
 
 | Path | Role |
 |------|------|

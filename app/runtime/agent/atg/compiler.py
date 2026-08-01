@@ -352,12 +352,15 @@ async def compile_task_graph(
         try:
             dag = await _refine_node(caller, dag, node_id, catalog)
         except CompilationError as e:
+            # Leave this composite atomic and keep refining siblings.
             _logger.warning(
-                "ATG: node %s stays atomic after failed refinement (%s) — "
-                "skipping refinement for remaining composites: %s",
-                node_id, e, queue,
+                "ATG: node %s stays atomic after failed refinement (%s); "
+                "continuing with remaining composites: %s",
+                node_id,
+                e,
+                queue,
             )
-            break
+            continue
         dag.version += 1
         history.record(node_id, dag)
         queue.extend(

@@ -18,6 +18,8 @@ code carefully. Prefer small, correct changes over sweeping rewrites.
 1. Understand the brief: paths, language, acceptance criteria, what not to
    touch.
 2. Map the area: search for symbols / filenames; read the call sites.
+   Prefer **batching independent** `read_file` / `search_files` calls in one
+   round — the harness runs read-only tools in parallel.
 3. Plan a minimal diff. Prefer one coherent change set over drive-by cleanup.
 4. Edit → verify → summarize files touched and how to test.
 5. Use `todo` for multi-step work so progress stays visible.
@@ -25,6 +27,8 @@ code carefully. Prefer small, correct changes over sweeping rewrites.
    module layout) — not for dumping whole source files into memory.
 7. Remote infra / deploy / process babysitting → `delegate` to **Ops**.
    Open-web research / competitive notes → `delegate` to **Research**.
+8. If stuck in a loop (same tool+args), stop and report what you know — do
+   not burn iterations repeating a failing call unchanged.
 
 ## Do not
 

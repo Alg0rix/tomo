@@ -64,12 +64,10 @@ class _NodeError(Exception):
 
 
 def _is_error_result(result: Any) -> bool:
-    """Tomo tools return strings; ``Error:`` prefix or empty = failure."""
-    text = str(result or "")
-    if text.startswith("Error:"):
-        return True
-    return not text.strip()
+    """Delegate to shared tool-error detection (empty stdout is OK)."""
+    from app.runtime.agent.tool_errors import tool_result_is_error
 
+    return tool_result_is_error(result, empty_is_error=False)
 
 def _lookup_output(outputs: dict, node_id: str, key: str):
     value = outputs.get(node_id)
@@ -207,39 +205,87 @@ async def _execute_one(
     llm: LLMClient,
     tools: list[dict[str, Any]],
 ) -> dict:
-    """Bind and execute one node in-place; returns an event dict.
+    """Bind and execute one node with bounded retries; returns an event dict.
 
     The dict has ``tool``, ``args``, ``result``, ``error``, ``atg_node`` — ready
     to be turned into ``tool``/``tool_result`` events by the caller.
     """
+    from app.runtime.agent.atg.graph import MAX_NODE_ATTEMPTS
     from app.runtime.tools.registry import execute as _execute_tool
 
-    ts_start = time.time()
-    node.status = "running"
-    node.attempts += 1
+    # Mark running before execute
     try:
-        tool, args = await _bind_node(node, dag, outputs, llm, tools)
-    except _NodeError as e:
-        node.status = "failed"
-        node.record_result(error=str(e), ts_start=ts_start, ts_end=time.time())
-        return {"tool": node.tool or "?", "args": {}, "result": str(e),
-                "error": True, "atg_node": node.id}
-    result = await asyncio.to_thread(_execute_tool, tool, args)
-    has_error = _is_error_result(result)
-    ts_end = time.time()
-    node.tool = tool
-    node.status = "failed" if has_error else "done"
-    node.record_result(
-        resolved_args=args,
-        output=None if has_error else result,
-        error=str(result) if has_error else None,
-        ts_start=ts_start,
-        ts_end=ts_end,
-    )
-    if not has_error:
-        outputs[node.id] = result
-    return {"tool": tool, "args": args, "result": result, "error": has_error,
-            "atg_node": node.id}
+        from app.runtime.tools import todo as todo_mod
+
+        todo_mod.mark_node(node.id, "in_progress", content=node.goal)
+    except Exception:
+        pass
+    last_ev: dict | None = None
+    attempts = max(1, int(MAX_NODE_ATTEMPTS))
+    for attempt in range(attempts):
+        ts_start = time.time()
+        node.status = "running"
+        node.attempts += 1
+        try:
+            tool, args = await _bind_node(node, dag, outputs, llm, tools)
+        except _NodeError as e:
+            node.status = "failed"
+            node.record_result(error=str(e), ts_start=ts_start, ts_end=time.time())
+            last_ev = {
+                "tool": node.tool or "?",
+                "args": {},
+                "result": str(e),
+                "error": True,
+                "atg_node": node.id,
+            }
+            continue
+        result = await asyncio.to_thread(_execute_tool, tool, args)
+        has_error = _is_error_result(result)
+        ts_end = time.time()
+        node.tool = tool
+        node.status = "failed" if has_error else "done"
+        node.record_result(
+            resolved_args=args,
+            output=None if has_error else result,
+            error=str(result) if has_error else None,
+            ts_start=ts_start,
+            ts_end=ts_end,
+        )
+        last_ev = {
+            "tool": tool,
+            "args": args,
+            "result": result,
+            "error": has_error,
+            "atg_node": node.id,
+        }
+        if not has_error:
+            outputs[node.id] = result
+            try:
+                from app.runtime.tools import todo as todo_mod
+
+                snap = todo_mod.mark_node(
+                    node.id, "completed", content=node.goal
+                )
+                last_ev["todos"] = snap.get("todos")
+            except Exception:
+                pass
+            return last_ev
+        try:
+            from app.runtime.tools import todo as todo_mod
+
+            snap = todo_mod.mark_node(node.id, "cancelled", content=node.goal)
+            last_ev["todos"] = snap.get("todos")
+        except Exception:
+            pass
+        _logger.info(
+            "ATG node %s attempt %d/%d failed: %s",
+            node.id,
+            attempt + 1,
+            attempts,
+            str(result)[:120],
+        )
+    assert last_ev is not None
+    return last_ev
 
 
 def _seed_outputs(dag: TaskDAG) -> dict:
@@ -356,12 +402,47 @@ async def run_dag_execution(
                 *(_execute_one(n, dag, outputs, llm, tools) for n in parallel_nodes),
                 return_exceptions=True,
             )
-            by_node = {r["atg_node"]: r for r in results if isinstance(r, dict)}
+            by_node: dict[str, dict] = {}
+            for n, r in zip(parallel_nodes, results):
+                if isinstance(r, dict):
+                    by_node[r["atg_node"]] = r
+                else:
+                    # gather exception — synthesize a failed node event
+                    err = f"Error: parallel node crashed: {r}"
+                    n.status = "failed"
+                    n.record_result(error=str(r), ts_start=time.time(), ts_end=time.time())
+                    by_node[n.id] = {
+                        "tool": n.tool or "?",
+                        "args": {},
+                        "result": err,
+                        "error": True,
+                        "atg_node": n.id,
+                    }
             for n in parallel_nodes:
                 ev = by_node.get(n.id)
                 if ev:
                     yield _tool_event(ev, agent_id)
                     yield _tool_result_event(ev, agent_id)
+                    if ev["error"]:
+                        _logger.warning(
+                            "ATG parallel node failed: %s tool=%s",
+                            n.id,
+                            ev.get("tool"),
+                        )
+                        _mark_skipped(dag)
+                        yield {
+                            "kind": "atg_wave",
+                            "phase": "end",
+                            "status": "fallback",
+                            "agent_id": agent_id or "",
+                        }
+                        yield {
+                            "kind": "atg_summary",
+                            "summary": _summarize(dag, "fallback", n),
+                            "status": "fallback",
+                            "agent_id": agent_id or "",
+                        }
+                        return
         else:
             serial_nodes = parallel_nodes + serial_nodes
 
@@ -411,9 +492,17 @@ def _tool_event(ev: dict, agent_id: str | None) -> dict:
 
 
 def _tool_result_event(ev: dict, agent_id: str | None) -> dict:
-    return {"kind": "tool_result", "tool": ev["tool"], "result": ev["result"],
-            "error": ev["error"], "atg_node": ev["atg_node"],
-            "agent_id": agent_id or ""}
+    out = {
+        "kind": "tool_result",
+        "tool": ev["tool"],
+        "result": ev["result"],
+        "error": ev["error"],
+        "atg_node": ev["atg_node"],
+        "agent_id": agent_id or "",
+    }
+    if ev.get("todos") is not None:
+        out["todos"] = ev["todos"]
+    return out
 
 
 __all__ = ["AtgOutcome", "run_dag_execution"]

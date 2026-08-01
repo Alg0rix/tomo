@@ -23,6 +23,9 @@ app/data/*.json
 # Local scratch / reference trees (not shipped)
 tmp/
 
+# Harbor / Terminal-Bench job outputs
+benchmarks/terminal_bench/jobs/
+
 # Runtime state (created at install / first run)
 var/
 shared/

@@ -39,6 +39,8 @@ def _recall_tools() -> list[dict[str, Any]]:
 
 async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
     """Drain the ``run_turn`` async generator into a list of events."""
+    # Unit tests use scripted LLMs — keep ATG off unless a test opts in.
+    kw.setdefault("enable_atg", False)
     return [ev async for ev in run_turn(user_message, **kw)]
 
 
@@ -148,8 +150,31 @@ async def test_history_rebuilt_so_new_bash_turn_still_calls_tool(tmp_path) -> No
 # --- adversarial paths --------------------------------------------------
 
 
-async def test_max_iterations_stops_cleanly_with_error_event() -> None:
-    """A client that always requests tools must stop at the cap with ``error``."""
+async def test_max_iterations_force_final_when_budget_exhausted() -> None:
+    """A client that always requests tools gets a forced no-tools final round."""
+    llm = ScriptedLLM(
+        [
+            bash_call("echo 1", id="call_a"),
+            bash_call("echo 1", id="call_b"),
+            text_reply("Best effort answer after tool budget."),
+        ]
+    )
+    events = await _collect(
+        "keep calling tools",
+        llm=llm,
+        tools=_bash_tools(),
+        max_iterations=2,
+    )
+    kinds = _kinds(events, drop_delta=True)
+    assert kinds[:4] == ["tool", "tool_result", "tool", "tool_result"]
+    assert kinds[-1] == "final"
+    final = _final(events)
+    assert "Best effort" in final["content"]
+    assert final.get("metrics", {}).get("force_final") is True
+
+
+async def test_max_iterations_force_final_failure_surfaces_error() -> None:
+    """If the force-final LLM round fails, surface an error event."""
     llm = ScriptedLLM(
         [
             bash_call("echo 1", id="call_a"),
@@ -162,16 +187,8 @@ async def test_max_iterations_stops_cleanly_with_error_event() -> None:
         tools=_bash_tools(),
         max_iterations=2,
     )
-    # Two rounds of (tool, tool_result), then the budget-exhausted error.
-    assert [e["kind"] for e in events] == [
-        "tool",
-        "tool_result",
-        "tool",
-        "tool_result",
-        "error",
-    ]
+    assert events[-1]["kind"] == "error"
     assert "max tool iterations" in events[-1]["message"]
-    assert "2" in events[-1]["message"]
 
 
 async def test_thinking_emitted_when_content_accompanies_tool_calls() -> None:

@@ -1,7 +1,6 @@
 """Subagent delegation — run a target agent as a synchronous subagent call.
 
-Inspired by evonic's ``subagent_manager`` + ``agent_messaging.wait_for_reply``:
-when the parent agent calls the ``delegate`` tool, the target agent runs a
+When the parent agent calls the ``delegate`` tool, the target agent runs a
 nested turn, its final output is captured and returned as the delegate tool
 result, and the **parent loop continues** with that output fed back — it does
 not stop after delegating.

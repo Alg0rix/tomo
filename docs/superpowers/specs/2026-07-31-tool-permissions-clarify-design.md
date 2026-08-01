@@ -2,8 +2,7 @@
 
 **Date:** 2026-07-31  
 **Status:** Approved (pipeline, modules, HITL/UI)  
-**Inspiration:** Hermes `check_all_command_guards` + clarify tool; Kimi mode naming; Evonic HITL wait  
-**Goal:** Hermes-like approval modes with Tomo-specific workplace escape, jail lift, async HITL, and web UI — without a 4k-line godfile.
+**Goal:** Tool approval modes with Tomo-specific workplace escape, jail lift, async HITL, and web UI — without a 4k-line godfile.
 
 ---
 
@@ -17,7 +16,7 @@ When tools leave the workplace or look dangerous, Tomo **assesses → (smart) �
 
 | Topic | Choice |
 |-------|--------|
-| Modes | `manual` \| `smart` \| `off` (Hermes internal names) |
+| Modes | `manual` \| `smart` \| `off` |
 | Chat slash | **`/auto`** sets session mode to `off` (toggle: second `/auto` restores previous non-off mode). Also `/manual`, `/smart`. Handled **before** skill expansion / agent turn — local system reply, no LLM |
 | What requires approval | Workplace **escape** + **dangerous** patterns (not every in-root bash) |
 | File tools outside root | Allowed after approve / in `off` (option B) — via per-call jail grant |
@@ -27,7 +26,7 @@ When tools leave the workplace or look dangerous, Tomo **assesses → (smart) �
 | Architecture | Central gate in `run_turn` (not per-tool copy-paste) |
 | Tirith / external scanner | **Out of v1** — pattern + escape only |
 | UI v1 | Web chat (`chat.js` + SSE + resolve APIs); registry ready for other channels |
-| Async | `asyncio.Event` waiter (no Hermes-style sync thread block in the loop) |
+| Async | `asyncio.Event` waiter (no sync thread block in the loop) |
 
 ---
 
@@ -47,7 +46,7 @@ run_turn
 SSE / chat.js cards ←→ POST /api/approvals/{id} | /api/clarify/{id}
 ```
 
-**Consent contract (from Hermes):** deny and timeout tell the model not to retry, rephrase, or achieve the same outcome via another path. Silence is not consent.
+**Consent contract:** deny and timeout tell the model not to retry, rephrase, or achieve the same outcome via another path. Silence is not consent.
 
 ---
 
@@ -58,7 +57,7 @@ SSE / chat.js cards ←→ POST /api/approvals/{id} | /api/clarify/{id}
 | Path | Responsibility |
 |------|----------------|
 | `modes.py` | Resolve effective mode from config + session override |
-| `patterns.py` | Hardline + dangerous regexes (trimmed Hermes port; Tomo-tuned) |
+| `patterns.py` | Hardline + dangerous regexes (Tomo-tuned) |
 | `escape.py` | Out-of-root detection for file args; cheap bash/runpy path heuristics |
 | `assess.py` | `assess(tool, args, work_root) -> Assessment` (findings + allowlist keys) |
 | `allowlist.py` | Session + permanent allowlists under `$TOMO_HOME` |
@@ -81,7 +80,7 @@ SSE / chat.js cards ←→ POST /api/approvals/{id} | /api/clarify/{id}
 | `app/static/js/chat.js` (+ CSS) | Inline cards, buttons, waiting state, mode display |
 | `app/core/config.py` or settings store | `approvals.mode`, `approvals.timeout`, `approvals.deny` |
 
-**Do not** collapse permissions into one Hermes-sized file. Prefer ~150–250 lines per module; split before ~400.
+**Do not** collapse permissions into one oversized file. Prefer ~150–250 lines per module; split before ~400.
 
 ---
 
@@ -113,7 +112,7 @@ SSE / chat.js cards ←→ POST /api/approvals/{id} | /api/clarify/{id}
 | `escape` | Path/command leaves workplace root |
 | `dangerous` | Recoverable-risk pattern (rm -r, curl\|sh, sensitive redirects, …) |
 
-### Allowlist keys (finer than Hermes description-only)
+### Allowlist keys (finer than description-only)
 
 - Escape: `escape:<normalized-root-or-path-prefix>` (e.g. `escape:~/.tomo`)
 - Dangerous: `dangerous:<stable_id>` (e.g. `dangerous:recursive_delete`)
@@ -150,7 +149,7 @@ False negatives possible (obfuscation); hardline/dangerous still apply. V1 accep
 {"question":"…","choices_offered":["…"],"user_response":"…"}
 ```
 
-- In `off`: clarify still works (Hermes-like; unlike Kimi auto). Unattended jobs that must not block should avoid calling clarify.
+- In `off`: clarify still works. Unattended jobs that must not block should avoid calling clarify.
 - Do **not** use clarify for dangerous-command confirm — the approval gate owns that.
 
 ---
@@ -252,16 +251,16 @@ Prefer unit tests on `permissions/*` without a live LLM; mock `smart.py`.
 ## 11. Non-goals (v1)
 
 - Tirith or external binary scanners
-- Full POSIX shell parsing / deobfuscation suite (Hermes-level)
+- Full POSIX shell parsing / deobfuscation suite
 - Messaging-channel approval buttons (API ready only)
-- Plan-mode write gating (Evonic-style) as a separate system
+- Plan-mode write gating as a separate system
 - Changing default cwd away from workplace root
 
 ---
 
-## 12. Better than Hermes (checklist)
+## 12. Reliability checklist
 
-| Hermes pain | Tomo approach |
+| Pain | Tomo approach |
 |-------------|----------------|
 | Monolithic `approval.py` | Split `permissions/` modules |
 | No workplace-escape class | First-class `escape` finding |

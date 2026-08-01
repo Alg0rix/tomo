@@ -1,30 +1,46 @@
 {
   "id": "todo",
   "name": "Todo",
-  "description": "Track a simple todo list under $TOMO_HOME/library/memory.",
+  "description": "Session task checklist — prompt-gated plan surface (model decides when to use).",
   "backend": "app.runtime.tools.todo",
   "schema": {
     "type": "function",
     "function": {
       "name": "todo",
-      "description": "list, add, or complete todos stored in the library memory directory.",
+      "description": "Manage your task list for the current session. Use for complex tasks with 3+ steps or when the user provides multiple tasks. Call with no parameters (or omit todos) to read the current list.\n\nWriting:\n- Provide 'todos' array to create/update items\n- merge=false (default): replace the entire list with a fresh plan\n- merge=true: update existing items by id, add any new ones\n\nEach item: {id: string, content: string, status: pending|in_progress|completed|cancelled}\nList order is priority. Only ONE item in_progress at a time.\nMark items completed immediately when done. If something fails, cancel it and add a revised item.\n\nWhen to use:\n- Multi-step work spanning several tool calls\n- After new multi-step instructions, capture requirements as todos\n- Mark exactly one item in_progress before starting; mark completed immediately when finished\n\nWhen NOT to use: single-shot Q&A, trivial one-step replies, pure conversation.\nAvoid churn: do not re-call when nothing meaningful changed.\n\nAlways returns JSON {todos, summary}. The UI renders this as a live checklist.",
       "parameters": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "description": "list | add | complete"
+          "todos": {
+            "type": "array",
+            "description": "Task items to write. Omit to read the current list. Pass [] to clear.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique item identifier"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Short actionable task description"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pending", "in_progress", "completed", "cancelled"],
+                  "description": "Current status"
+                }
+              },
+              "required": ["id", "content", "status"]
+            }
           },
-          "content": {
-            "type": "string",
-            "description": "Todo text (required for add)."
-          },
-          "id": {
-            "type": "string",
-            "description": "Todo id (required for complete)."
+          "merge": {
+            "type": "boolean",
+            "description": "true: update existing items by id, add new ones. false (default): replace the entire list.",
+            "default": false
           }
         },
-        "required": ["action"]
+        "required": []
       }
     }
   }

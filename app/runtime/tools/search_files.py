@@ -1,10 +1,10 @@
-"""search_files — Hermes-style: prefer ripgrep, then grep/find, then Python.
+"""search_files — prefer ripgrep, then grep/find, then Python.
 
 Cascade (local workplace / sandbox):
   content:  ``rg`` → ``grep -rn`` → pure Python walk
   files:    ``rg --files`` → ``find`` → pure Python walk
 
-Content patterns are regex by default (Hermes-aligned). Pass ``regex=false``
+Content patterns are regex by default. Pass ``regex=false``
 for fixed-string (``rg -F`` / ``grep -F``). Always has a Python last resort
 when rg/grep/find are missing.
 """
@@ -55,7 +55,7 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(path_arg, str) or not path_arg.strip():
         path_arg = "."
 
-    # Hermes: content patterns are regex; filename search is glob.
+    # Content patterns are regex; filename search is glob.
     # Opt out of regex content with regex=false (-F). Opt into regex
     # filenames with regex=true.
     if "regex" in arguments:
@@ -577,7 +577,7 @@ def _search_files_by_name(
 
 
 def _filename_glob(pattern: str) -> str:
-    # Hermes: bare names become *name* for depth matching
+    # Bare names become *name* for depth matching
     if "/" not in pattern and not any(c in pattern for c in "*?["):
         return f"*{pattern}*"
     return pattern
