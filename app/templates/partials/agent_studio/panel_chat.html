@@ -10,7 +10,7 @@
         {% for e in history %}
           {% if e.type == 'user' %}
           <div class="turn">
-          <div class="msg user"><div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body">{{ e.content|e }}{% if e.attachments %}<div class="bubble-attachments">{% for a in e.attachments %}<span class="attachment-chip"><span class="name">{{ a.name|e }}</span>{% if a.size is defined %}<span class="size">{% if a.size < 1024 %}{{ a.size }}B{% elif a.size < 1048576 %}{{ '%.1f'|format(a.size / 1024) }}KB{% else %}{{ '%.1f'|format(a.size / 1048576) }}MB{% endif %}</span>{% endif %}</span>{% endfor %}</div>{% endif %}</div></div></div>
+          <div class="msg user"><div class="bubble"><div class="bubble-body">{{ e.content|e }}{% if e.attachments %}<div class="bubble-attachments">{% for a in e.attachments %}<span class="attachment-chip"><span class="name">{{ a.name|e }}</span>{% if a.size is defined %}<span class="size">{% if a.size < 1024 %}{{ a.size }}B{% elif a.size < 1048576 %}{{ '%.1f'|format(a.size / 1024) }}KB{% else %}{{ '%.1f'|format(a.size / 1048576) }}MB{% endif %}</span>{% endif %}</span>{% endfor %}</div>{% endif %}</div></div></div>
           </div>
           {% elif e.type == 'final' %}
           <div class="turn">

@@ -5,7 +5,12 @@
   const listEl = document.getElementById('sessionList');
   const emptyEl = document.getElementById('sessionEmpty');
   const chatWrap = document.getElementById('sessionChat');
-  const searchEl = document.getElementById('sessionSearch');
+  const searchView = document.getElementById('sessionSearchView');
+  const searchInput = document.getElementById('sessionSearchInput');
+  const searchResultsEl = document.getElementById('sessionSearchResults');
+  const searchLabelEl = document.getElementById('sessionSearchLabel');
+  const searchClearBtn = document.getElementById('sessionSearchClear');
+  const searchChatsBtn = document.getElementById('searchChatsBtn');
   const modal = document.getElementById('newChatModal');
   const editModal = document.getElementById('editSwarmModal');
   const newBtn = document.getElementById('newChatBtn');
@@ -25,6 +30,9 @@
   var lastHistLen = -1;
   var inspectorOpenKey = null;
   var draftWorkplaceId = '';
+  var searchMode = false;
+  var searchTimer = null;
+  var searchReq = 0;
   // Account id from the server-rendered page (login session).
   var loginUserId = chatWrap.dataset.userId || 'web';
 
@@ -240,7 +248,7 @@
         document.getElementById('chatAgentName').textContent = title;
       }
     }
-    renderList(searchEl ? searchEl.value : '');
+    renderList();
   }
 
   function params() {
@@ -253,6 +261,7 @@
     p.delete('agent');
     p.delete('swarm');
     p.delete('q');
+    p.delete('search');
     const q = p.toString();
     history.replaceState(null, '', q ? ('?' + q) : location.pathname);
   }
@@ -261,6 +270,14 @@
     const p = new URLSearchParams(location.search);
     if (!p.has(name)) return;
     p.delete(name);
+    const q = p.toString();
+    history.replaceState(null, '', q ? ('?' + q) : location.pathname);
+  }
+
+  function setSearchUrl(on) {
+    const p = new URLSearchParams(location.search);
+    if (on) p.set('search', '1'); else p.delete('search');
+    if (on) p.delete('s');
     const q = p.toString();
     history.replaceState(null, '', q ? ('?' + q) : location.pathname);
   }
@@ -276,20 +293,11 @@
     }).join('');
   }
 
-  function renderList(filter) {
-    const q = (filter || '').trim().toLowerCase();
-    const rows = sessions.filter(function (s) {
-      if (!q) return true;
-      const label = sessionLabel(s);
-      const wp = workplaceLabel(s.workplace_id || '');
-      return (s.title || '').toLowerCase().includes(q) ||
-        label.toLowerCase().includes(q) ||
-        wp.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q);
-    });
+  function renderList() {
+    const rows = sessions.slice();
 
     if (!rows.length) {
-      listEl.innerHTML = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet') + '</div>';
+      listEl.innerHTML = '<div class="empty">No sessions yet</div>';
       return;
     }
 
@@ -318,16 +326,10 @@
     });
 
     function sessionButton(s) {
-      const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
       const label = sessionLabel(s);
-      const sel = s.id === activeId ? ' selected' : '';
+      const sel = s.id === activeId && !searchMode ? ' selected' : '';
       const swarm = isSwarmSession(s);
-      const avatars = ids.slice(0, 3).map(function (id, i) {
-        const n = agentName(id);
-        return '<span class="avatar xs" style="background:' + agentColor(id) + ';margin-left:' + (i ? '-6px' : '0') + '">' + esc(n.slice(0, 1).toUpperCase()) + '</span>';
-      }).join('');
       return '<button type="button" class="session-item' + sel + '" data-id="' + esc(s.id) + '">' +
-        '<div class="session-avatars">' + avatars + '</div>' +
         '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') +
         (swarm ? ' <span class="badge accent sm">swarm</span>' : '') + '</div>' +
         '<div class="desc">' + esc(label) + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
@@ -353,6 +355,108 @@
     listEl.querySelectorAll('.session-item').forEach(function (btn) {
       btn.addEventListener('click', function () { selectSession(btn.dataset.id); });
     });
+  }
+
+  function searchSnippetForSession(s) {
+    var label = sessionLabel(s);
+    var wp = workplaceLabel(s.workplace_id || '');
+    return label + ' · ' + (s.message_count || 0) + ' msgs' + (wp ? ' · ' + wp : '');
+  }
+
+  function renderSearchRows(rows, emptyText) {
+    if (!searchResultsEl) return;
+    if (!rows.length) {
+      searchResultsEl.innerHTML = '<div class="sessions-search-empty">' + esc(emptyText || 'No matching chats') + '</div>';
+      return;
+    }
+    searchResultsEl.innerHTML = rows.map(function (r) {
+      return '<button type="button" class="sessions-search-row" data-id="' + esc(r.session_id) + '">' +
+        '<div class="sessions-search-row-main">' +
+          '<div class="sessions-search-row-title">' + esc(r.title || 'Conversation') + '</div>' +
+          '<div class="sessions-search-row-snippet">' + esc(r.snippet || '') + '</div>' +
+        '</div>' +
+        '<span class="sessions-search-row-date">' + esc(Tomo.ts ? Tomo.ts(r.updated_at) : '') + '</span>' +
+      '</button>';
+    }).join('');
+    searchResultsEl.querySelectorAll('.sessions-search-row').forEach(function (btn) {
+      btn.addEventListener('click', function () { selectSession(btn.dataset.id); });
+    });
+  }
+
+  function showRecentInSearch() {
+    if (searchLabelEl) searchLabelEl.textContent = 'Recent';
+    var rows = sessions.slice().sort(function (a, b) {
+      return (b.updated_at || 0) - (a.updated_at || 0);
+    }).slice(0, 40).map(function (s) {
+      return {
+        session_id: s.id,
+        title: s.title || 'Conversation',
+        snippet: searchSnippetForSession(s),
+        updated_at: s.updated_at || 0,
+      };
+    });
+    renderSearchRows(rows, 'No chats yet');
+  }
+
+  function runSessionSearch(query) {
+    var q = (query || '').trim();
+    if (searchClearBtn) searchClearBtn.classList.toggle('hidden', !q);
+    if (!q) {
+      showRecentInSearch();
+      return;
+    }
+    if (searchLabelEl) searchLabelEl.textContent = 'Results';
+    var req = ++searchReq;
+    if (searchResultsEl) {
+      searchResultsEl.innerHTML = '<div class="sessions-search-empty">Searching…</div>';
+    }
+    Tomo.api('/api/sessions/search?q=' + encodeURIComponent(q) + '&limit=40').then(function (data) {
+      if (req !== searchReq) return;
+      renderSearchRows((data && data.results) || [], 'No matching chats');
+    }).catch(function () {
+      if (req !== searchReq) return;
+      // Fallback: local title filter if API fails.
+      var needle = q.toLowerCase();
+      var rows = sessions.filter(function (s) {
+        return ((s.title || '') + ' ' + (s.id || '')).toLowerCase().indexOf(needle) >= 0;
+      }).map(function (s) {
+        return {
+          session_id: s.id,
+          title: s.title || 'Conversation',
+          snippet: searchSnippetForSession(s),
+          updated_at: s.updated_at || 0,
+        };
+      });
+      renderSearchRows(rows, 'No matching chats');
+    });
+  }
+
+  function openSearchView() {
+    searchMode = true;
+    if (emptyEl) emptyEl.style.display = 'none';
+    chatWrap.style.display = 'none';
+    if (searchView) {
+      searchView.style.display = 'flex';
+      searchView.hidden = false;
+    }
+    setSearchUrl(true);
+    renderList();
+    if (searchChatsBtn) searchChatsBtn.classList.add('active');
+    showRecentInSearch();
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+  }
+
+  function closeSearchView() {
+    searchMode = false;
+    if (searchView) {
+      searchView.style.display = 'none';
+      searchView.hidden = true;
+    }
+    if (searchChatsBtn) searchChatsBtn.classList.remove('active');
+    if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
   }
 
   function renderHistory(entries) {
@@ -652,8 +756,10 @@
             return '<span class="attachment-chip"><span class="name">' + esc(a.name || a.original_name || 'file') + '</span>' + sizeHtml + '</span>';
           }).join('') + '</div>';
         }
-        row.innerHTML = '<div class="av">You</div><div class="bubble"><div class="who">You</div><div class="bubble-body"></div></div>';
+        row.innerHTML = '<div class="bubble"><div class="bubble-body"></div>' +
+          (window.TomoChat && TomoChat.msgActionsHtml ? TomoChat.msgActionsHtml('user') : '') + '</div>';
         var body = row.querySelector('.bubble-body');
+        body.dataset.raw = e.content || '';
         body.textContent = e.content || '';
         if (chips) body.insertAdjacentHTML('beforeend', chips);
         turn.appendChild(row);
@@ -766,11 +872,13 @@
           row.className = 'msg assistant';
           var avStyle = ' style="background:' + agentColor(aid) + '"';
           row.innerHTML = '<div class="av"' + avStyle + '>' + esc(who.slice(0, 1).toUpperCase()) + '</div>' +
-            '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose chat-prose"></div></div>';
+            '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose chat-prose"></div>' +
+            (window.TomoChat && TomoChat.msgActionsHtml ? TomoChat.msgActionsHtml('assistant') : '') + '</div>';
           var body = row.querySelector('.bubble-body');
           if (window.TomoChat && TomoChat.setMarkdown) {
             TomoChat.setMarkdown(body, text);
           } else {
+            body.dataset.raw = text;
             body.textContent = text;
           }
           turn.appendChild(row);
@@ -803,9 +911,10 @@
   async function selectSession(sessionId, opts) {
     const s = sessions.find(function (x) { return x.id === sessionId; });
     if (!s) return;
+    closeSearchView();
     activeId = sessionId;
     setUrl(sessionId);
-    renderList(searchEl ? searchEl.value : '');
+    renderList();
 
     // Live enabled agents for swarm @mentions (not a frozen snapshot).
     const ids = isSwarmSession(s)
@@ -885,11 +994,11 @@
         var cur = sessions.find(function (s) { return s.id === activeId; });
         if (cur) applyChatHeader(cur);
       }
-      renderList(searchEl ? searchEl.value : '');
+      renderList();
       if (activeId && !sessions.find(function (s) { return s.id === activeId; })) {
         activeId = null;
         chatWrap.style.display = 'none';
-        emptyEl.style.display = 'flex';
+        if (!searchMode) emptyEl.style.display = 'flex';
       }
     } catch (e) {
       listEl.innerHTML = '<div class="empty">Could not load sessions</div>';
@@ -923,8 +1032,9 @@
     }
     draftWorkplaceId = wpId || '';
     activeId = null;
+    closeSearchView();
     setUrl(null);
-    renderList(searchEl ? searchEl.value : '');
+    renderList();
 
     emptyEl.style.display = 'none';
     chatWrap.style.display = 'flex';
@@ -986,7 +1096,48 @@
     }).join('');
   }
 
-  if (searchEl) searchEl.addEventListener('input', function () { renderList(searchEl.value); });
+  if (searchChatsBtn) {
+    searchChatsBtn.addEventListener('click', function () {
+      if (searchMode) {
+        // Already open — just focus the field.
+        if (searchInput) searchInput.focus();
+        return;
+      }
+      openSearchView();
+    });
+  }
+  if (searchInput) {
+    searchInput.addEventListener('input', function () {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        runSessionSearch(searchInput.value);
+      }, 180);
+    });
+    searchInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        if (searchInput.value) {
+          searchInput.value = '';
+          runSessionSearch('');
+        } else if (activeId) {
+          selectSession(activeId);
+        } else {
+          closeSearchView();
+          setUrl(null);
+          emptyEl.style.display = 'flex';
+          chatWrap.style.display = 'none';
+          renderList();
+        }
+      }
+    });
+  }
+  if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', function () {
+      if (!searchInput) return;
+      searchInput.value = '';
+      runSessionSearch('');
+      searchInput.focus();
+    });
+  }
 
   chatWrap.addEventListener('tomo:turn-start', function () {
     stopHistoryPoll();
@@ -1132,6 +1283,7 @@
     const wanted = params().get('s');
     const agent = params().get('agent');
     const swarm = params().get('swarm');
+    const wantSearch = params().get('search') === '1';
     const firstMessage = params().get('q') || '';
     // Dashboard may pass wp= (empty = Tomo work dir).
     var wpParam = params().has('wp') ? (params().get('wp') || '') : null;
@@ -1141,7 +1293,8 @@
     if (params().has('swarm')) stripQueryParam('swarm');
     var draftOpts = { pendingMessage: firstMessage };
     if (wpParam !== null) draftOpts.workplaceId = wpParam;
-    if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
+    if (wantSearch) openSearchView();
+    else if (wanted) selectSession(wanted, { pendingMessage: firstMessage });
     else if (swarm === '1' || swarm === 'true') startDefaultSwarm(draftOpts);
     else if (agent) startNewChat([agent], draftOpts); // intentional solo
     else if (sessions.length) selectSession(sessions[0].id);

@@ -6,25 +6,30 @@
     <div>Pick a conversation from the sidebar — or start a new chat.</div>
   </div>
 
+  <div id="sessionSearchView" class="sessions-search-view" style="display:none" hidden>
+    <div class="sessions-search-shell">
+      <div class="sessions-search-bar">
+        <svg class="sessions-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+        </svg>
+        <input class="sessions-search-input" id="sessionSearchInput" type="search"
+               placeholder="Search chats" autocomplete="off" spellcheck="false">
+        <button type="button" class="sessions-search-clear hidden" id="sessionSearchClear" aria-label="Clear search">×</button>
+      </div>
+      <div class="sessions-search-label" id="sessionSearchLabel">Recent</div>
+      <div class="sessions-search-results" id="sessionSearchResults"></div>
+    </div>
+  </div>
+
   <div id="sessionChat" class="chat-wrap sessions-chat" style="display:none"
        data-session-id="" data-user-id="{{ current_user_id | default('web') }}" data-agent-name="" data-agent-ids="">
     <div class="chat-main">
-      <div class="sessions-chat-head">
+      {# Header data kept for JS; visible chrome lives in the composer bar. #}
+      <div class="sessions-chat-meta-store" hidden aria-hidden="true">
         <div class="swarm-avatars" id="chatAvatars"></div>
-        <div class="sessions-chat-meta">
-          <div class="chat-agent-name" id="chatAgentName">Swarm</div>
-          <div class="faint mono" id="chatSessionMeta">session</div>
-          <div class="chat-wp-row" id="chatWorkplaceRow" title="Set when the chat starts — not switchable mid-thread">
-            <span class="faint">Workplace</span>
-            <span class="badge muted sm chat-wp-badge" id="chatWorkplaceBadge">—</span>
-          </div>
-        </div>
-        <button class="btn ghost sm" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
-        <span class="badge ok chat-status" id="chatStatus"><span class="pulse"></span>online</span>
-        <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-          Clear
-        </button>
+        <div class="chat-agent-name" id="chatAgentName">Swarm</div>
+        <div id="chatSessionMeta">session</div>
+        <span id="chatWorkplaceBadge">—</span>
       </div>
 
       <div class="chat-scroll" data-chat-panel="chat">
@@ -34,7 +39,11 @@
         </div>
       </div>
 
-      {{ chat_composer('Message…  @ agent · / skill', 'Type @name to hand off, / to pick a skill. Coordinator routes everything else.') }}
+      {{ chat_composer(
+           'Message…  @ agent · / skill',
+           'Type @name to hand off, / to pick a skill.',
+           toolbar=True
+         ) }}
     </div>
   </div>
 </section>

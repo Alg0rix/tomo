@@ -56,7 +56,7 @@
         '</div>' +
         '<div class="ctx-pop-bar" aria-hidden="true"></div>' +
         '<ul class="ctx-pop-legend"></ul>';
-      var host = wrap.querySelector(".composer") || wrap;
+      var host = trigger.closest(".composer-footer") || wrap.querySelector(".composer") || wrap;
       host.appendChild(popover);
       popover.querySelector(".ctx-pop-close").addEventListener("click", closePopover);
       return popover;

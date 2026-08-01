@@ -6,7 +6,7 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from app.core.config import TOMO_HOME
@@ -126,6 +126,59 @@ async def list_sessions_api(_: AuthDep):
         row["agent_name"] = "swarm" if is_swarm else (names[0] if names else row.get("agent_id", ""))
         sessions.append(row)
     return {"sessions": sessions, "agents": agents}
+
+
+@router.get("/sessions/search")
+async def search_sessions_api(
+    _: AuthDep,
+    q: str = Query(default="", description="Search chat titles and message content"),
+    limit: int = Query(default=40, ge=1, le=100),
+):
+    """Search sessions by title and message content (Gemini-style chat search)."""
+    text = (q or "").strip()
+    if not text:
+        return {"query": "", "results": []}
+
+    sessions = {s["id"]: s for s in store.list_sessions()}
+    seen: dict[str, dict] = {}
+    needle = text.lower()
+
+    for s in sessions.values():
+        title = (s.get("title") or "").strip()
+        if needle in title.lower() or needle in (s.get("id") or "").lower():
+            seen[s["id"]] = {
+                "session_id": s["id"],
+                "title": title or "Conversation",
+                "snippet": (str(s.get("message_count") or 0) + " msgs"),
+                "updated_at": s.get("updated_at") or 0,
+                "match": "title",
+            }
+
+    try:
+        hits = store.search_messages(text, limit=limit)
+    except Exception:
+        hits = []
+
+    for hit in hits:
+        sid = hit.get("session_id") or ""
+        s = sessions.get(sid)
+        if not s:
+            continue
+        content = (hit.get("content") or "").strip().replace("\n", " ")
+        if len(content) > 140:
+            content = content[:140].rstrip() + "…"
+        prev = seen.get(sid)
+        if not prev or prev.get("match") == "title":
+            seen[sid] = {
+                "session_id": sid,
+                "title": (s.get("title") or "").strip() or "Conversation",
+                "snippet": content or (str(s.get("message_count") or 0) + " msgs"),
+                "updated_at": s.get("updated_at") or hit.get("ts") or 0,
+                "match": "message",
+            }
+
+    results = sorted(seen.values(), key=lambda r: -(r.get("updated_at") or 0))[:limit]
+    return {"query": text, "results": results}
 
 
 @router.get("/sessions/{session_id}")

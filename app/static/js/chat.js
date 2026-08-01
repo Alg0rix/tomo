@@ -31,12 +31,14 @@
 
   function setMarkdown(el, text) {
     if (!el) return;
+    var raw = text == null ? '' : String(text);
+    el.dataset.raw = raw;
     el.dataset.md = '0';
     if (window.TomoMarkdown && TomoMarkdown.renderInto) {
-      TomoMarkdown.renderInto(el, text == null ? '' : String(text));
+      TomoMarkdown.renderInto(el, raw);
       return;
     }
-    el.textContent = text == null ? '' : String(text);
+    el.textContent = raw;
     renderMarkdown(el);
   }
 
@@ -44,11 +46,57 @@
     return (window.Tomo && Tomo.avatarColor) ? Tomo.avatarColor(id) : 'var(--accent)';
   }
 
+  var ICON_COPY =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  var ICON_EDIT =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+  var ICON_REGEN =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-15.5-6.36L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.5 6.36L21 16"/><path d="M21 21v-5h-5"/></svg>';
+  var ICON_CHECK =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+  function msgActionsHtml(role) {
+    if (role === 'user') {
+      return '<div class="msg-actions" data-role="user">' +
+        '<button type="button" class="msg-act" data-act="copy" title="Copy" aria-label="Copy">' + ICON_COPY + '</button>' +
+        '<button type="button" class="msg-act" data-act="edit" title="Edit message" aria-label="Edit message">' + ICON_EDIT + '</button>' +
+        '</div>';
+    }
+    return '<div class="msg-actions" data-role="assistant">' +
+      '<button type="button" class="msg-act" data-act="copy" title="Copy" aria-label="Copy">' + ICON_COPY + '</button>' +
+      '<button type="button" class="msg-act" data-act="regen" title="Regenerate" aria-label="Regenerate">' + ICON_REGEN + '</button>' +
+      '</div>';
+  }
+
   function bubbleHtml(role, agentName, agentId) {
-    const av = role === 'user' ? 'You' : esc((agentName || 'A').slice(0, 1).toUpperCase());
-    const who = role === 'user' ? 'You' : esc(agentName || 'Agent');
-    const style = role === 'assistant' && agentId ? ' style="background:' + agentColor(agentId) + '"' : '';
-    return '<div class="msg ' + role + '"><div class="av"' + style + '>' + av + '</div><div class="bubble"><div class="who">' + who + '</div><div class="bubble-body prose chat-prose"></div></div></div>';
+    if (role === 'user') {
+      return '<div class="msg user"><div class="bubble"><div class="bubble-body prose chat-prose"></div>' + msgActionsHtml('user') + '</div></div>';
+    }
+    const av = esc((agentName || 'A').slice(0, 1).toUpperCase());
+    const who = esc(agentName || 'Agent');
+    const style = agentId ? ' style="background:' + agentColor(agentId) + '"' : '';
+    return '<div class="msg assistant"><div class="av"' + style + '>' + av + '</div><div class="bubble"><div class="who">' + who + '</div><div class="bubble-body prose chat-prose"></div>' + msgActionsHtml('assistant') + '</div></div>';
+  }
+
+  function msgPlainText(msg) {
+    var body = msg && msg.querySelector('.bubble-body');
+    if (!body) return '';
+    if (body.dataset.raw) return body.dataset.raw;
+    var clone = body.cloneNode(true);
+    clone.querySelectorAll('.bubble-attachments, .msg-actions').forEach(function (n) { n.remove(); });
+    return (clone.innerText || clone.textContent || '').replace(/\s+\n/g, '\n').trim();
+  }
+
+  function ensureMsgActions(root) {
+    if (!root) return;
+    root.querySelectorAll('.msg.user, .msg.assistant').forEach(function (msg) {
+      if (msg.querySelector('.msg-actions')) return;
+      if (msg.classList.contains('streaming')) return;
+      var bubble = msg.querySelector('.bubble');
+      if (!bubble) return;
+      var role = msg.classList.contains('user') ? 'user' : 'assistant';
+      bubble.insertAdjacentHTML('beforeend', msgActionsHtml(role));
+    });
   }
 
   function highlightMentions(text) {
@@ -499,16 +547,17 @@
       u.innerHTML = bubbleHtml('user', defaultAgentName);
       const bubble = u.firstElementChild;
       const body = bubble.querySelector('.bubble-body');
+      body.dataset.raw = value || '';
       body.innerHTML = highlightMentions(value || '');
       if (attachments && attachments.length) {
         body.insertAdjacentHTML('beforeend', attachmentChipsHtml(attachments, false));
       }
       if (queued) {
         bubble.classList.add('msg-queued');
-        const who = bubble.querySelector('.who');
-        if (who) {
-          who.innerHTML = 'You <span class="queue-chip">queued</span>';
-        }
+        var actions = bubble.querySelector('.msg-actions');
+        var chip = '<span class="queue-chip">queued</span>';
+        if (actions) actions.insertAdjacentHTML('afterbegin', chip);
+        else bubble.querySelector('.bubble').insertAdjacentHTML('beforeend', chip);
       }
       // Match history layout: user bubble lives inside a centered .turn column.
       const turn = document.createElement('div');
@@ -1529,6 +1578,86 @@
     sendBtn.addEventListener('click', function () { send(); });
     resize();
 
+    function flashActBtn(btn) {
+      if (!btn) return;
+      var prev = btn.innerHTML;
+      btn.innerHTML = ICON_CHECK;
+      btn.classList.add('ok');
+      setTimeout(function () {
+        btn.innerHTML = prev;
+        btn.classList.remove('ok');
+      }, 1200);
+    }
+
+    function copyMsgText(msg, btn) {
+      var text = msgPlainText(msg);
+      if (!text) return;
+      function done() { flashActBtn(btn); }
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fallback);
+      } else {
+        fallback();
+      }
+    }
+
+    function editUserMsg(msg) {
+      var text = msgPlainText(msg);
+      input.value = text;
+      resize();
+      refreshSendBtn();
+      input.focus();
+      try {
+        var len = input.value.length;
+        input.setSelectionRange(len, len);
+      } catch (e) {}
+    }
+
+    function regenFromMsg(msg) {
+      var turn = msg.closest('.turn');
+      var userMsg = turn && turn.querySelector('.msg.user');
+      if (!userMsg && turn && turn.previousElementSibling) {
+        userMsg = turn.previousElementSibling.querySelector('.msg.user');
+      }
+      var text = msgPlainText(userMsg);
+      if (!text) {
+        Tomo.toast('No user message to regenerate from', 'err');
+        return;
+      }
+      if (sending) {
+        Tomo.toast('Wait for the current turn to finish', 'err');
+        return;
+      }
+      send(text);
+    }
+
+    scroll.addEventListener('click', function (e) {
+      var btn = e.target.closest('.msg-act');
+      if (!btn || !scroll.contains(btn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var msg = btn.closest('.msg');
+      if (!msg) return;
+      var act = btn.getAttribute('data-act');
+      if (act === 'copy') copyMsgText(msg, btn);
+      else if (act === 'edit') editUserMsg(msg);
+      else if (act === 'regen') regenFromMsg(msg);
+    });
+
+    ensureMsgActions(scroll);
+    wrap.addEventListener('tomo:turn-end', function () {
+      ensureMsgActions(scroll);
+    });
+
     if (clearBtn) {
       clearBtn.addEventListener('click', async function () {
         if (!confirm('Clear this conversation?')) return;
@@ -2071,7 +2200,13 @@
     };
   }
 
-  window.TomoChat = { init: initChat, renderMarkdown: renderMarkdown, setMarkdown: setMarkdown };
+  window.TomoChat = {
+    init: initChat,
+    renderMarkdown: renderMarkdown,
+    setMarkdown: setMarkdown,
+    ensureMsgActions: ensureMsgActions,
+    msgActionsHtml: msgActionsHtml,
+  };
 
   document.querySelectorAll('.chat-wrap').forEach(function (wrap) {
     initChat(wrap);

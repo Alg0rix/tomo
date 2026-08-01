@@ -1,5 +1,5 @@
-{% macro chat_composer(placeholder='Message…', hint='') %}
-<div class="composer">
+{% macro chat_composer(placeholder='Message…', hint='', toolbar=False) %}
+<div class="composer{% if toolbar %} composer-float{% endif %}">
   <div class="composer-inner mention-host">
     <input type="file" class="attachment-input" multiple tabindex="-1" aria-hidden="true">
     <button class="attach-btn" type="button" aria-label="Attach files" title="Attach files">
@@ -12,7 +12,7 @@
     <div class="mention-menu hidden" role="listbox" aria-label="Mention agent"></div>
     <div class="slash-menu hidden" role="listbox" aria-label="Skills"></div>
     <button class="send btn primary chat-send" type="button" disabled aria-label="Send">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4 20.85 12.9a1 1 0 0 0 0-1.8L3.4 3.6A1 1 0 0 0 2 4.5v5.1c0 .5.37.93.87.99L17 12 2.87 13.4c-.5.07-.87.5-.87 1v5.1a1 1 0 0 0 1.4.9z"/></svg>
     </button>
   </div>
   <div class="composer-footer">
@@ -20,7 +20,14 @@
       <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
       <span class="ctx-usage-label">Context</span>
     </button>
-    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Messages sent while busy are queued and run next. Drag files here or click the paperclip.</div>
+    {% if toolbar %}
+    <div class="composer-actions">
+      <span class="badge ok chat-status" id="chatStatus"><span class="pulse"></span>online</span>
+      <button class="btn ghost sm" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
+      <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>
+    </div>
+    {% endif %}
+    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Queued while busy. Attach via paperclip or drop.</div>
   </div>
 </div>
 {% endmacro %}
