@@ -1609,6 +1609,74 @@
         if (row.dataset.agentId) subagentSet.add(row.dataset.agentId);
       });
 
+      function swarmRowFor(aid) {
+        if (!aid) return null;
+        var rows = turn.querySelectorAll('.swarm-row[data-agent-id]');
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].dataset.agentId === aid) return rows[i];
+        }
+        return null;
+      }
+
+      function bumpSwarmProgress(aid) {
+        if (!aid) return;
+        var row = swarmRowFor(aid);
+        if (!row) return;
+        row.classList.add('active');
+        var bar = row.querySelector('.swarm-progress-bar');
+        if (bar) {
+          var w = parseFloat(bar.style.width) || 0;
+          bar.style.width = Math.min(92, w + 7) + '%';
+        }
+      }
+
+      function ensureSwarmRow(aid, name, task, idx, total) {
+        if (!aid) return;
+        subagentSet.add(aid);
+        var row = swarmRowFor(aid);
+        if (row) {
+          bumpSwarmProgress(aid);
+          return row;
+        }
+        var card = turn.querySelector('.swarm-card');
+        if (!card) {
+          card = document.createElement('div');
+          card.className = 'swarm-card';
+          turn.appendChild(card);
+        }
+        row = document.createElement('div');
+        row.className = 'swarm-row active';
+        row.dataset.agentId = aid;
+        var color = agentColor(aid);
+        var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
+        var idxStr = String(idx || 1).padStart(2, '0');
+        var totalStr = String(total || 1).padStart(2, '0');
+        row.innerHTML =
+          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
+          '<div class="swarm-meta">' +
+            '<div class="swarm-row-head">' +
+              '<span class="name">' + esc(name || aid) + '</span>' +
+              '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
+            '</div>' +
+            '<div class="task">' + esc(task || '') + '</div>' +
+            '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:8%"></div></div>' +
+          '</div>' +
+          '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
+        card.appendChild(row);
+        atBottom();
+        return row;
+      }
+
+      function markSwarmDone(aid, status) {
+        if (!aid) return;
+        var row = swarmRowFor(aid);
+        if (!row) return;
+        row.classList.remove('active');
+        row.classList.add(status === 'error' ? 'error' : 'done');
+        var bar = row.querySelector('.swarm-progress-bar');
+        if (bar) bar.style.width = '100%';
+      }
+
       function clearWatchdogs() {
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
@@ -1762,9 +1830,10 @@
       armIdle(IDLE_MS);
 
       // If listen mode is only idle heartbeats (turn already finished), stop
-      // looking busy once replay would have arrived.
+      // looking busy once replay would have arrived. Keep waiting when history
+      // already shows an in-flight swarm row (mid-run refresh).
       setTimeout(function () {
-        if (!closed && !sawTurnEvent) endIdleResume();
+        if (!closed && !sawTurnEvent && subagentSet.size === 0) endIdleResume();
       }, 1000);
 
       es.addEventListener('state', function (e) {
@@ -1779,12 +1848,52 @@
         setStatus('amber', busyStatusLabel());
       });
 
+      es.addEventListener('delegate', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        ensureSwarmRow(
+          d.to || d.agent_id || '',
+          d.agent || d.to || '',
+          d.task || d.reason || '',
+          d.parallel_index || 1,
+          d.parallel_total || 1
+        );
+        setStatus('amber', busyStatusLabel());
+        atBottom();
+      });
+
+      es.addEventListener('subagent_start', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        ensureSwarmRow(
+          d.agent_id || '',
+          d.agent || d.agent_id || '',
+          d.task || '',
+          d.parallel_index || 1,
+          d.parallel_total || 1
+        );
+        atBottom();
+      });
+
+      es.addEventListener('subagent_done', function (e) {
+        sawTurnEvent = true;
+        bumpActivity();
+        const d = JSON.parse(e.data || '{}');
+        markSwarmDone(d.agent_id || '', d.status || 'ok');
+        atBottom();
+      });
+
       es.addEventListener('tool', function (e) {
         sawTurnEvent = true;
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        if (aid && subagentSet.has(aid) && aid !== agentId) {
+          bumpSwarmProgress(aid);
+          return;
+        }
         toolSeen++;
         if (toolSeen <= skipTools) {
           // Replay of a history tool — keep unpaired card in loading state.
@@ -1813,7 +1922,10 @@
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        if (aid && subagentSet.has(aid) && aid !== agentId) {
+          bumpSwarmProgress(aid);
+          return;
+        }
         resultSeen++;
         if (resultSeen <= skipResults) return;
         applyToolResult(d);
@@ -1836,7 +1948,10 @@
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        if (aid && subagentSet.has(aid) && aid !== agentId) {
+          bumpSwarmProgress(aid);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         clearPending();
         if (!thinkEl) {
@@ -1853,7 +1968,10 @@
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        if (aid && subagentSet.has(aid) && aid !== agentId) {
+          bumpSwarmProgress(aid);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         const piece = d.content || '';
         if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
@@ -1876,7 +1994,10 @@
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) return;
+        if (aid && subagentSet.has(aid) && aid !== agentId) {
+          bumpSwarmProgress(aid);
+          return;
+        }
         adoptAgent(d.agent_id, d.agent);
         if (thinkEl) { thinkEl.remove(); thinkEl = null; }
         let content = (d.content != null ? String(d.content) : '').trim();

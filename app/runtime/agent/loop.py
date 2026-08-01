@@ -624,7 +624,6 @@ async def run_turn(
                     "metrics": metrics.as_dict(),
                 }
                 from app.runtime.agent.learning import schedule_learning_review
-                from app.runtime.agent.subagent import current_depth
 
                 schedule_learning_review(
                     client=client,
@@ -809,35 +808,78 @@ async def run_turn(
                 parallel=len(pending_ro) if len(pending_ro) > 1 else 0,
             )
 
-            # ── Subagent delegation (parallel when 2+ independent targets) ──
+            # ── Subagent delegation (stream live; parallel merges via queue) ──
             parallel_total = len(delegate_calls)
             metrics.delegates += parallel_total
 
             if parallel_total > 1:
-                # Fan-out: each child captures its own event list; emit in order.
-                gathered = await asyncio.gather(
-                    *(
-                        _drain_delegate_bundle(
-                            cid=cid,
-                            call=call,
+                merge_q: asyncio.Queue = asyncio.Queue()
+                results_by_cid: dict[str, str] = {}
+
+                async def _run_one(
+                    _cid: str,
+                    _call: ToolCall,
+                    _idx: int,
+                ) -> None:
+                    box: list[str] = []
+                    try:
+                        async for ev in _stream_delegate_bundle(
+                            cid=_cid,
+                            call=_call,
                             agent_id=agent_id,
                             user_request=user_request,
-                            parallel_index=idx + 1,
+                            parallel_index=_idx + 1,
                             parallel_total=parallel_total,
                             session_id=session_id,
+                            result_out=box,
+                        ):
+                            await merge_q.put(("ev", ev))
+                    except Exception as exc:
+                        box.clear()
+                        box.append(f"Error: subagent failed: {exc}")
+                        await merge_q.put(
+                            (
+                                "ev",
+                                {
+                                    "kind": "tool_result",
+                                    "tool": _call.name,
+                                    "result": box[0],
+                                    "error": True,
+                                },
+                            )
                         )
-                        for idx, (cid, call) in enumerate(delegate_calls)
-                    )
-                )
-                for cid, events, sub_result in gathered:
-                    for ev in events:
-                        yield ev
+                    finally:
+                        results_by_cid[_cid] = (
+                            box[0] if box else "Error: no output from subagent"
+                        )
+                        await merge_q.put(("done", _cid))
+
+                tasks = [
+                    asyncio.create_task(_run_one(cid, call, idx))
+                    for idx, (cid, call) in enumerate(delegate_calls)
+                ]
+                finished = 0
+                while finished < parallel_total:
+                    kind, payload = await merge_q.get()
+                    if kind == "ev":
+                        yield payload
+                    else:
+                        finished += 1
+                await asyncio.gather(*tasks, return_exceptions=True)
+                for cid, _call in delegate_calls:
                     messages.append(
-                        {"role": "tool", "tool_call_id": cid, "content": sub_result}
+                        {
+                            "role": "tool",
+                            "tool_call_id": cid,
+                            "content": results_by_cid.get(
+                                cid, "Error: no output from subagent"
+                            ),
+                        }
                     )
             else:
                 for idx, (cid, call) in enumerate(delegate_calls):
-                    _cid, events, sub_result = await _drain_delegate_bundle(
+                    box: list[str] = []
+                    async for ev in _stream_delegate_bundle(
                         cid=cid,
                         call=call,
                         agent_id=agent_id,
@@ -845,11 +887,17 @@ async def run_turn(
                         parallel_index=idx + 1,
                         parallel_total=max(parallel_total, 1),
                         session_id=session_id,
-                    )
-                    for ev in events:
+                        result_out=box,
+                    ):
                         yield ev
                     messages.append(
-                        {"role": "tool", "tool_call_id": cid, "content": sub_result}
+                        {
+                            "role": "tool",
+                            "tool_call_id": cid,
+                            "content": box[0]
+                            if box
+                            else "Error: no output from subagent",
+                        }
                     )
 
             continue
@@ -898,7 +946,6 @@ async def run_turn(
                     "metrics": metrics.as_dict(),
                 }
                 from app.runtime.agent.learning import schedule_learning_review
-                from app.runtime.agent.subagent import current_depth
 
                 schedule_learning_review(
                     client=client,
@@ -935,7 +982,7 @@ async def run_turn(
         sandbox.reset_agent(sandbox_token)
 
 
-async def _drain_delegate_bundle(
+async def _stream_delegate_bundle(
     *,
     cid: str,
     call: ToolCall,
@@ -944,11 +991,15 @@ async def _drain_delegate_bundle(
     parallel_index: int,
     parallel_total: int,
     session_id: str | None = None,
-) -> tuple[str, list[dict[str, Any]], str]:
-    """Run one delegate and return ``(cid, events, tool_result_text)``."""
-    events: list[dict[str, Any]] = [
-        {"kind": "tool", "tool": call.name, "args": call.arguments}
-    ]
+    result_out: list[str] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield delegate / subagent events **live** (do not buffer until done).
+
+    The final delegate ``tool_result`` is yielded last. When ``result_out`` is
+    provided, the truncated result string is appended so callers can feed the
+    parent LLM tool message without re-scanning the stream.
+    """
+    yield {"kind": "tool", "tool": call.name, "args": call.arguments}
     args = call.arguments if isinstance(call.arguments, dict) else {}
     reason = args.get("reason")
     if not isinstance(reason, str) or not reason.strip():
@@ -958,6 +1009,7 @@ async def _drain_delegate_bundle(
     delegate_result = await asyncio.to_thread(execute, call.name, call.arguments)
     target = parse_delegated_id(str(delegate_result))
     delegate_error = tool_result_is_error(delegate_result)
+    sub_result = ""
 
     if target and not delegate_error:
         if depth_exceeded():
@@ -967,27 +1019,23 @@ async def _drain_delegate_bundle(
             )
             delegate_error = True
         else:
-            events.append(
-                {
-                    "kind": "delegate",
-                    "from": agent_id or "",
-                    "to": target,
-                    "reason": reason,
-                    "task": reason,
-                    "parallel_index": parallel_index,
-                    "parallel_total": parallel_total,
-                }
-            )
-            events.append(
-                {
-                    "kind": "subagent_start",
-                    "agent_id": target,
-                    "from": agent_id or "",
-                    "task": reason,
-                    "parallel_index": parallel_index,
-                    "parallel_total": parallel_total,
-                }
-            )
+            yield {
+                "kind": "delegate",
+                "from": agent_id or "",
+                "to": target,
+                "reason": reason,
+                "task": reason,
+                "parallel_index": parallel_index,
+                "parallel_total": parallel_total,
+            }
+            yield {
+                "kind": "subagent_start",
+                "agent_id": target,
+                "from": agent_id or "",
+                "task": reason,
+                "parallel_index": parallel_index,
+                "parallel_total": parallel_total,
+            }
             sub_output = ""
             try:
                 async for ev, final in drain_subagent_turn(
@@ -998,19 +1046,17 @@ async def _drain_delegate_bundle(
                     history=None,
                     session_id=session_id,
                 ):
-                    events.append(ev)
+                    yield ev
                     sub_output = final
             except Exception as exc:
                 sub_output = f"Error: subagent {target} failed: {exc}"
                 delegate_error = True
-            events.append(
-                {
-                    "kind": "subagent_done",
-                    "agent_id": target,
-                    "content": sub_output,
-                    "status": "error" if delegate_error else "ok",
-                }
-            )
+            yield {
+                "kind": "subagent_done",
+                "agent_id": target,
+                "content": sub_output,
+                "status": "error" if delegate_error else "ok",
+            }
             sub_result = sub_output or "(no output from subagent)"
     elif delegate_error:
         sub_result = str(delegate_result)
@@ -1018,15 +1064,42 @@ async def _drain_delegate_bundle(
         sub_result = "Error: delegate did not resolve a target agent."
 
     sub_result = _truncate_result(sub_result)
-    events.append(
-        {
-            "kind": "tool_result",
-            "tool": call.name,
-            "result": sub_result,
-            "error": delegate_error,
-        }
-    )
-    return cid, events, sub_result
+    if result_out is not None:
+        result_out.append(sub_result)
+    yield {
+        "kind": "tool_result",
+        "tool": call.name,
+        "result": sub_result,
+        "error": delegate_error,
+    }
+
+
+# Back-compat alias (tests / older callers).
+async def _drain_delegate_bundle(
+    *,
+    cid: str,
+    call: ToolCall,
+    agent_id: str | None,
+    user_request: str,
+    parallel_index: int,
+    parallel_total: int,
+    session_id: str | None = None,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Buffered wrapper around :func:`_stream_delegate_bundle`."""
+    events: list[dict[str, Any]] = []
+    box: list[str] = []
+    async for ev in _stream_delegate_bundle(
+        cid=cid,
+        call=call,
+        agent_id=agent_id,
+        user_request=user_request,
+        parallel_index=parallel_index,
+        parallel_total=parallel_total,
+        session_id=session_id,
+        result_out=box,
+    ):
+        events.append(ev)
+    return cid, events, (box[0] if box else "Error: no output from subagent")
 
 
 __all__ = ["run_turn"]

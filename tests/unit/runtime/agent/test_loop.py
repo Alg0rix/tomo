@@ -401,6 +401,53 @@ async def test_successful_delegate_runs_subagent_and_parent_continues(
     assert result_ev["error"] is False
 
 
+async def test_delegate_streams_subagent_events_before_tool_result(
+    monkeypatch, tmp_path
+) -> None:
+    """Nested tool events must appear before the parent delegate tool_result."""
+    store.rebind(tmp_path / "delegate_stream.db")
+
+    def _exec(name: str, args: dict) -> str:
+        if name == "delegate":
+            return "Delegated to ops"
+        if name == "bash":
+            return "up 1 day"
+        return f"Error: unexpected tool {name}"
+
+    monkeypatch.setattr("app.runtime.agent.loop.execute", _exec)
+
+    parent_llm = ScriptedLLM([_delegate_call(), text_reply("Parent wrap-up.")])
+    # Ops: one bash call then a final answer.
+    ops_llm = ScriptedLLM(tool_then_text(bash_call("uptime"), "ops done"))
+
+    def _llm_for(agent_id: str | None = None):
+        return ops_llm if agent_id == "ops" else parent_llm
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm_for)
+
+    events = await _collect(
+        "ask ops",
+        llm=parent_llm,
+        tools=_delegate_tools() + _bash_tools(),
+        agent_id="main",
+    )
+    # Live order: start markers, then nested tool work, then delegate tool_result.
+    first_nested_tool = next(
+        i
+        for i, e in enumerate(events)
+        if e["kind"] == "tool" and e.get("tool") == "bash"
+    )
+    delegate_result_i = next(
+        i
+        for i, e in enumerate(events)
+        if e["kind"] == "tool_result" and e.get("tool") == "delegate"
+    )
+    assert "subagent_start" in {e["kind"] for e in events}
+    assert first_nested_tool < delegate_result_i
+    assert any(e["kind"] == "subagent_done" for e in events)
+
+
+
 async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
     """A rejected delegate is a normal tool error; loop keeps iterating."""
     monkeypatch.setattr(
