@@ -1,33 +1,8 @@
 # Tomo (友達)
 
-> **Alpha is complete** — end-to-end demo path works: home chat → swarm handoff → tools on workplace → recall → schedule. Telegram channel is implemented but not yet verified end-to-end. Eval UI stays gated (`TOMO_EVAL_UI=1` to re-enable).
-
 **Tomodachi** — a general-purpose agent swarm that learns, coordinates, and acts on your behalf.
 
 Tomo starts broad: a **coordinator** plus a team of agents that can talk to you, connect to your machines, use tools, and **get smarter over time**. You shape it into whatever you need — ops automation, customer support, research, coding, personal assistant — by adding agents, skills, and knowledge. The platform stays the same; the use case is yours to define.
-
----
-
-## Alpha
-
-What ships in Alpha (slices 0→H):
-
-| Area | Status |
-|------|--------|
-| **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
-| **Models** | Multi-profile catalog, default + per-agent model |
-| **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
-| **Tools** | File/shell/web/process tools, `todo`, `list_workplaces`, `portal`, `memory`, `agent_info`, `manage_skill`, `agent_state`, `save_artifact`, `recall` / `remember`, `delegate`, … |
-| **Workplaces** | Local (path-jailed host process) + SSH + **Tomo Connector** (WebSocket tunnel) + **Portals** file bridge |
-| **Memory / KB** | Curated MD (`USER.md` / `MEMORY.md`) + FTS5 session/KB search; embeddings optional |
-| **Channels** | Web UI ready; Telegram implemented (long-poll; e2e not fully verified); WhatsApp planned |
-| **Scheduler** | Interval schedules ship (SQLite + background runner + UI) |
-| **Platform** | Skills in SQLite + filesystem discover; plugins/schedules catalog mostly stub |
-| **Eval** | Hidden by default (`TOMO_EVAL_UI`) — engine stub |
-
-**Demo path:** Dashboard home chat → session with Main+Ops handoff → tools on a workplace → ask a KB fact → (optional) Telegram ping → create a short-interval schedule.
-
-
 
 ---
 
