@@ -21,6 +21,162 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 
 ---
 
+## Getting started
+
+Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
+
+### Install (Linux, systemd user)
+
+Recommended for a lasting install. Requires `git`; installs `uv` if missing.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install.sh | bash
+# from a checkout: bash scripts/install.sh
+# options: --no-start   --branch NAME
+```
+
+| Path | Role |
+|------|------|
+| `~/.local/share/tomo/app` | Managed git checkout + `.venv` (code) |
+| `~/.config/systemd/user/tomo.service` | User unit (`WorkingDirectory` = install tree) |
+| `~/.local/bin/tomo` | CLI symlink |
+| `~/.tomo` (`$TOMO_HOME`) | Config, DB, secrets |
+| `~/tomo` (`$TOMO_WORK`) | Per-agent tool workspaces |
+
+The unit sets `TOMO_HOME` and `TOMO_WORK` explicitly. UI: [http://127.0.0.1:8787](http://127.0.0.1:8787).
+
+```bash
+tomo update                 # fetch + ff-only (or hard reset) + uv sync + restart
+tomo service status|start|stop|restart
+tomo uninstall              # remove service + code; keep data
+tomo uninstall --purge -y   # also delete ~/.tomo and ~/tomo
+journalctl --user -u tomo -f
+```
+
+Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
+
+### Install connector (tunnel workplaces)
+
+On each remote device (or re-run to **update**):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install-connector.sh | bash
+tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
+tomo-connector service install   # systemd --user (Linux)
+```
+
+Downloads the matching binary from [`latest` release](https://github.com/Alg0rix/tomo/releases) into `~/.local/bin`. Pin with `TOMO_CONNECTOR_VERSION=v0.1.0`. Create the pairing code in the UI (Workplaces → New → tunnel). Details: [Machine connectivity](#machine-connectivity).
+
+### Skills
+
+Skills are folders with a `SKILL.md` (agentskills.io style). Tomo discovers:
+
+| Path | Role |
+|------|------|
+| `$TOMO_HOME/library/skills` | Managed installs |
+| `~/.agents/skills` | Shared user skills (default) |
+| `~/.agent/skills` | Alternate shared path |
+
+```bash
+tomo skills sync
+tomo skills list
+tomo skills install ./my-skill-dir
+tomo skills uninstall <id>     # library installs only
+```
+
+Override external roots with `TOMO_SKILLS_EXTERNAL_DIRS` (colon-separated; empty disables). Agents load skill bodies via `list_skills` / `use_skill`.
+
+### Develop from source
+
+```bash
+git clone https://github.com/Alg0rix/tomo.git
+cd tomo
+uv sync
+uv run python -m app.main   # http://127.0.0.1:8787
+```
+
+Do not edit the managed install tree for day-to-day development — use a normal clone. `tomo update` always targets `~/.local/share/tomo/app`.
+
+### Configuration
+
+**Tomo Home (`$TOMO_HOME`)** — writable config/state root (default `~/.tomo`).
+**Tomo Work (`$TOMO_WORK`)** — agent tool cwd root (default `~/tomo`; per agent `$TOMO_WORK/<agent_id>`). Separate from Home; the systemd unit sets both. There is no `TOMO_WORKDIR`.
+
+Set `export TOMO_HOME=/path/to/tomo` (and optionally `TOMO_WORK`) to relocate. On first start the Home tree is created and seeded from the shipped `defaults/`:
+
+```text
+$TOMO_HOME/
+├── tomo.yaml          # non-secret prefs only (never API keys / master key)
+├── .env               # optional bootstrap secrets (dotfile; never auto-created)
+├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
+├── SOUL.md            # global default persona
+├── memories/USER.md   # curated user profile (memory tool)
+├── library/{skills,memory}
+├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
+├── workplaces/
+└── state/tomo.db      # SQLite (secret settings encrypted at rest)
+```
+
+Agent tool cwd is **not** under Home — it is `$TOMO_WORK/<agent_id>` (default `~/tomo/<id>`), or a bound local workplace root.
+
+Persona/prompt files use the familiar names `SOUL.md` (persona) and `SYSTEM.md`
+(agent system prompt). Curated notes use `memories/USER.md` and
+`agents/<id>/MEMORY.md`. Edit them under `$TOMO_HOME` to customize Tomo without
+touching the git tree; the coordinator loads `$TOMO_HOME/SOUL.md` plus each
+agent's `SYSTEM.md` / `SOUL.md` (and a frozen curated-memory snapshot) at turn time.
+
+**Secrets policy** — UI-managed secrets (LLM API key, …) are stored **encrypted
+at rest** in the SQLite `settings` table, never as plaintext. A master key
+encrypts/decrypts them (Fernet, `cryptography`):
+
+- **Master key sources** (first match wins): process env `TOMO_SECRET_KEY`
+  (preferred for containers / CI), else `$TOMO_HOME/.secret_key` (auto-created
+  on first run, `chmod 600`, never overwritten).
+- `tomo.yaml` never holds secrets or the master key.
+- GET settings returns **masked** values + `*_set` flags; a blank PUT keeps the
+  existing key. Decrypted secrets never travel over HTTP/HTML.
+- **Back up `.secret_key` / `TOMO_SECRET_KEY`** with the same care as the DB —
+  losing it makes encrypted secrets unrecoverable.
+- Optional `$TOMO_HOME/.env` (dotfile, `0600`) may hold plaintext bootstrap
+  values (loaded with `override=False`, process env wins). Prefer moving durable
+  secrets into encrypted SQLite via the UI. Never name it `secrets.env`.
+
+**LLM** — open **System → Models** and set Base URL, API key, and model id
+(e.g. `gpt-4o-mini`). The API key is encrypted before it touches SQLite. Until a
+key is saved, chat returns a clear error pointing at that page. Max tool
+iterations live under **System → General**.
+
+**Database** — state lives in SQLite at `$TOMO_HOME/state/tomo.db` by default
+(`TOMO_DB_PATH` / `TOMO_VAR_DIR` override). The directory and DB are created on
+first run. To keep a legacy `var/tomo.db`, set
+`export TOMO_DB_PATH=var/tomo.db` (there is no automatic migration).
+
+**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`),
+`TOMO_RELOAD` (default `false`). Session cookies are signed with
+`TOMO_SESSION_SECRET` (default dev value; set a stable secret in any real
+deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
+**at-rest master key** (see Secrets policy), not the session secret.
+
+### Tests
+
+```bash
+uv run pytest
+uv run ruff check app cli tests   # same rules as CI lint
+```
+
+CI workflows:
+
+| Workflow | When | What |
+|----------|------|------|
+| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release |
+| [`lint.yml`](.github/workflows/lint.yml) | push/PR | ruff (E/F), `gofmt`/`go vet`, `bash -n` on install scripts |
+| [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
+
+Dependabot (`.github/dependabot.yml`) opens weekly PRs for `pip`, `gomod`, and Actions.
+> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (FTS-first + curated MD), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
+
+---
+
 ## Architecture
 
 ```
@@ -171,20 +327,9 @@ SSH requires inbound access, key management, and often manual setup per host. A 
 - **Same tool surface** — `bash`, `runpy`, file ops — regardless of whether the workplace is local, tunneled, or SSH
 - **Persistent channel** — coordinator always knows which devices are online (green/red status)
 
-```bash
-# On the coordinator: create a tunnel workplace in the UI (Workplaces → New → tunnel)
-# and copy the pairing code (or POST /api/workplaces/{id}/pairing-code).
+Install + pair steps live under [Getting started → Install connector](#install-connector-tunnel-workplaces). On the coordinator, create a tunnel workplace and copy the pairing code (or `POST /api/workplaces/{id}/pairing-code`).
 
-# On the target device:
-curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install-connector.sh | bash
-tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
-tomo-connector service install   # systemd --user (Linux)
-# loginctl enable-linger $USER   # optional: keep running after logout
-```
-
-Installs (or **updates** on re-run) the matching binary from [`latest` release](https://github.com/Alg0rix/tomo/releases) into `~/.local/bin`, and restarts the user service if it is already enabled. Pin with `TOMO_CONNECTOR_VERSION=v0.1.0`. To build from source: `cd connector && make build`.
-
-Once paired, agents assigned to that workplace run `bash` / file tools on the device as if they were local. Status is green only while the WebSocket is live.
+Once paired, agents assigned to that workplace run `bash` / file tools on the device as if they were local. Status is green only while the WebSocket is live. To build from source: `cd connector && make build`.
 
 ### SSH as a fallback
 
@@ -396,150 +541,6 @@ tomo/
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
 
 See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/` and must be listed in the registry.
-
----
-
-## Getting started
-
-Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
-
-### Install (Linux, systemd user)
-
-Recommended for a lasting install. Requires `git`; installs `uv` if missing.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install.sh | bash
-# from a checkout: bash scripts/install.sh
-# options: --no-start   --branch NAME
-```
-
-| Path | Role |
-|------|------|
-| `~/.local/share/tomo/app` | Managed git checkout + `.venv` (code) |
-| `~/.config/systemd/user/tomo.service` | User unit (`WorkingDirectory` = install tree) |
-| `~/.local/bin/tomo` | CLI symlink |
-| `~/.tomo` (`$TOMO_HOME`) | Config, DB, secrets |
-| `~/tomo` (`$TOMO_WORK`) | Per-agent tool workspaces |
-
-The unit sets `TOMO_HOME` and `TOMO_WORK` explicitly. UI: [http://127.0.0.1:8787](http://127.0.0.1:8787).
-
-```bash
-tomo update                 # fetch + ff-only (or hard reset) + uv sync + restart
-tomo service status|start|stop|restart
-tomo uninstall              # remove service + code; keep data
-tomo uninstall --purge -y   # also delete ~/.tomo and ~/tomo
-journalctl --user -u tomo -f
-```
-
-Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
-
-### Skills
-
-Skills are folders with a `SKILL.md` (agentskills.io style). Tomo discovers:
-
-| Path | Role |
-|------|------|
-| `$TOMO_HOME/library/skills` | Managed installs |
-| `~/.agents/skills` | Shared user skills (default) |
-| `~/.agent/skills` | Alternate shared path |
-
-```bash
-tomo skills sync
-tomo skills list
-tomo skills install ./my-skill-dir
-tomo skills uninstall <id>     # library installs only
-```
-
-Override external roots with `TOMO_SKILLS_EXTERNAL_DIRS` (colon-separated; empty disables). Agents load skill bodies via `list_skills` / `use_skill`.
-
-### Develop from source
-
-```bash
-git clone https://github.com/Alg0rix/tomo.git
-cd tomo
-uv sync
-uv run python -m app.main   # http://127.0.0.1:8787
-```
-
-Do not edit the managed install tree for day-to-day development — use a normal clone. `tomo update` always targets `~/.local/share/tomo/app`.
-
-### Configuration
-
-**Tomo Home (`$TOMO_HOME`)** — writable config/state root (default `~/.tomo`).
-**Tomo Work (`$TOMO_WORK`)** — agent tool cwd root (default `~/tomo`; per agent `$TOMO_WORK/<agent_id>`). Separate from Home; the systemd unit sets both. There is no `TOMO_WORKDIR`.
-
-Set `export TOMO_HOME=/path/to/tomo` (and optionally `TOMO_WORK`) to relocate. On first start the Home tree is created and seeded from the shipped `defaults/`:
-
-```text
-$TOMO_HOME/
-├── tomo.yaml          # non-secret prefs only (never API keys / master key)
-├── .env               # optional bootstrap secrets (dotfile; never auto-created)
-├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
-├── SOUL.md            # global default persona
-├── memories/USER.md   # curated user profile (memory tool)
-├── library/{skills,memory}
-├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
-├── workplaces/
-└── state/tomo.db      # SQLite (secret settings encrypted at rest)
-```
-
-Agent tool cwd is **not** under Home — it is `$TOMO_WORK/<agent_id>` (default `~/tomo/<id>`), or a bound local workplace root.
-
-Persona/prompt files use the familiar names `SOUL.md` (persona) and `SYSTEM.md`
-(agent system prompt). Curated notes use `memories/USER.md` and
-`agents/<id>/MEMORY.md`. Edit them under `$TOMO_HOME` to customize Tomo without
-touching the git tree; the coordinator loads `$TOMO_HOME/SOUL.md` plus each
-agent's `SYSTEM.md` / `SOUL.md` (and a frozen curated-memory snapshot) at turn time.
-
-**Secrets policy** — UI-managed secrets (LLM API key, …) are stored **encrypted
-at rest** in the SQLite `settings` table, never as plaintext. A master key
-encrypts/decrypts them (Fernet, `cryptography`):
-
-- **Master key sources** (first match wins): process env `TOMO_SECRET_KEY`
-  (preferred for containers / CI), else `$TOMO_HOME/.secret_key` (auto-created
-  on first run, `chmod 600`, never overwritten).
-- `tomo.yaml` never holds secrets or the master key.
-- GET settings returns **masked** values + `*_set` flags; a blank PUT keeps the
-  existing key. Decrypted secrets never travel over HTTP/HTML.
-- **Back up `.secret_key` / `TOMO_SECRET_KEY`** with the same care as the DB —
-  losing it makes encrypted secrets unrecoverable.
-- Optional `$TOMO_HOME/.env` (dotfile, `0600`) may hold plaintext bootstrap
-  values (loaded with `override=False`, process env wins). Prefer moving durable
-  secrets into encrypted SQLite via the UI. Never name it `secrets.env`.
-
-**LLM** — open **System → Models** and set Base URL, API key, and model id
-(e.g. `gpt-4o-mini`). The API key is encrypted before it touches SQLite. Until a
-key is saved, chat returns a clear error pointing at that page. Max tool
-iterations live under **System → General**.
-
-**Database** — state lives in SQLite at `$TOMO_HOME/state/tomo.db` by default
-(`TOMO_DB_PATH` / `TOMO_VAR_DIR` override). The directory and DB are created on
-first run. To keep a legacy `var/tomo.db`, set
-`export TOMO_DB_PATH=var/tomo.db` (there is no automatic migration).
-
-**Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`),
-`TOMO_RELOAD` (default `false`). Session cookies are signed with
-`TOMO_SESSION_SECRET` (default dev value; set a stable secret in any real
-deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
-**at-rest master key** (see Secrets policy), not the session secret.
-
-### Tests
-
-```bash
-uv run pytest
-uv run ruff check app cli tests   # same rules as CI lint
-```
-
-CI workflows:
-
-| Workflow | When | What |
-|----------|------|------|
-| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release |
-| [`lint.yml`](.github/workflows/lint.yml) | push/PR | ruff (E/F), `gofmt`/`go vet`, `bash -n` on install scripts |
-| [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
-
-Dependabot (`.github/dependabot.yml`) opens weekly PRs for `pip`, `gomod`, and Actions.
-> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (FTS-first + curated MD), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
 
 ---
 
