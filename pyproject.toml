@@ -12,7 +12,7 @@ dependencies = [
     "itsdangerous>=2.2",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
-    "openai>=1.40",
+    "openai>=2.50.0",
     "cryptography>=42",
     "paramiko>=5.0.0",
 ]
