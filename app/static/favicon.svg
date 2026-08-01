@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f0a83a"/>
+      <stop offset="100%" stop-color="#e8962f"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="20" fill="url(#g)"/>
+  <text x="32" y="33.5" text-anchor="middle" dominant-baseline="central"
+        font-family="'Noto Serif CJK JP','Hiragino Mincho ProN','Yu Mincho',serif"
+        font-size="38" font-weight="700" fill="#1a1206">友</text>
+</svg>
