@@ -1,0 +1,45 @@
+{
+  "id": "memory",
+  "name": "Memory",
+  "description": "Curated persistent notes in MEMORY.md / USER.md (file-backed).",
+  "backend": "app.runtime.tools.memory",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "memory",
+      "description": "Save durable facts to persistent curated memory (Markdown under $TOMO_HOME). Entries are injected into future sessions, so keep them compact and high-signal.\n\nWHEN — save proactively (do NOT wait for the user to say \"remember\" / \"save this\"):\n- User states a preference, correction, or personal detail\n- User corrects your style, tone, format, or verbosity\n- You learn a stable fact about their environment, hostnames, conventions, or workflow\nPriority: user preferences & corrections > environment facts > procedures. The best memory stops the user repeating themselves.\n\nTARGETS:\n- user → memories/USER.md — who the user is (name, role, prefs, communication style)\n- memory → agents/<id>/MEMORY.md — your notes (env facts, conventions, tool quirks, lessons)\n\nHOW: action=add|replace|remove|list. For replace/remove, pass old= a short unique substring of the existing entry. Writes hit disk immediately; the system-prompt snapshot refreshes next session.\n\nSKIP: trivial/obvious info, easily re-discovered facts, raw dumps, task progress, completed-work logs, temporary TODOs, PR/issue numbers, commit SHAs, \"Phase N done\" — use session_search for those. Reusable procedures belong in manage_skill, not memory. Longer documents → remember/recall.\n\nSTYLE: write declarative facts, not self-instructions. \"User prefers concise responses\" ✓ — \"Always respond concisely\" ✗.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["add", "replace", "remove", "list"],
+            "description": "add | replace | remove | list"
+          },
+          "target": {
+            "type": "string",
+            "enum": ["memory", "user", "all"],
+            "description": "memory (agent notes) | user (shared profile) | all (list only)"
+          },
+          "content": {
+            "type": "string",
+            "description": "Entry text for add (or new text for replace)."
+          },
+          "old": {
+            "type": "string",
+            "description": "Unique substring identifying the entry for replace/remove."
+          },
+          "new": {
+            "type": "string",
+            "description": "Replacement text for replace."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Defaults to the bound agent (for memory target)."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

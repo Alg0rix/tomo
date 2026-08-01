@@ -19,7 +19,7 @@ What ships in Alpha (slices 0→H):
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
 | **Tools** | File/shell/web/process tools, `todo`, `list_workplaces`, `portal`, `manage_skill`, `agent_state`, `save_artifact`, `recall` / `remember`, `delegate`, … |
 | **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) + **Portals** file bridge |
-| **Memory / KB** | FTS5 + optional embeddings; session summaries; learning loop; artifacts / agent state |
+| **Memory / KB** | Curated MD (`USER.md` / `MEMORY.md`) + FTS5 session/KB search; embeddings optional |
 | **Channels** | Web UI ready; Telegram in progress; WhatsApp planned |
 | **Scheduler** | Not ready — design in progress; interval schedules not wired |
 | **Platform** | Skills/plugins/schedules in SQLite |
@@ -117,13 +117,14 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 
 | Layer | What it stores | Example |
 |-------|----------------|---------|
-| **Conversation memory** | Recent turns + rolled session summaries | "Last week we discussed the Q3 budget" |
-| **Knowledge base** | Documents, notes (FTS + optional embeddings) | Company policies, API docs, personal preferences |
+| **Curated memory** | `USER.md` + per-agent `MEMORY.md` (file-backed, always in prompt) | Prefs, timezone, env quirks |
+| **Conversation memory** | Recent turns + rolled session summaries; `session_search` (FTS5) | "Last week we discussed the Q3 budget" |
+| **Knowledge base** | Longer documents via `remember` / `recall` (FTS5; embeddings optional) | Company policies, API docs |
 | **Artifacts** | Files and outputs from past tasks (`save_artifact`) | Generated reports, exported data |
 | **Skills** | Reusable procedures distilled from experience | "How to onboard a new customer" playbook |
-| **Agent state** | Cross-session facts (`agent_state`) | Your timezone, preferred language, ongoing projects |
+| **Agent state** | Optional structured KV (`agent_state`) | Machine-readable keys when useful |
 
-Retrieval is hybrid: SQLite FTS5 lexical search fused with OpenAI-compatible embeddings when an API key is configured. Matching memory/skills are injected at turn start (Reuse).
+Curated memory is the hot path: short durable notes written with the `memory` tool to Markdown under `$TOMO_HOME`. A frozen snapshot is injected at session start; mid-session writes update the files but refresh the prompt on the **next** session. Episodic search is **FTS5-first** (no vector DB required). Embeddings, when an API key is configured, are an optional boost for KB recall — not required for memory to work. Matching KB/skills/state may also be injected at turn start (Reuse).
 
 ### The learning loop
 
@@ -370,10 +371,11 @@ General-purpose primitives — enable per agent based on your use case:
 | `web_fetch` / `web_search` | Fetch URLs and search the web |
 | `todo` / `session_search` | Lightweight todos and message search |
 | `list_skills` / `use_skill` / `manage_skill` | Browse, load, and distill skill playbooks |
+| `memory` | Curated `USER.md` / `MEMORY.md` notes (always-on next session) |
 | `list_workplaces` | Catalog local / tunnel / SSH workplaces (not filesystem search) |
 | `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
-| `recall` / `remember` / `agent_state` / `save_artifact` | Memory layers and swarm handoff |
+| `recall` / `remember` / `agent_state` / `save_artifact` | Searchable KB, KV state, artifacts |
 | `delegate` | Hand a subtask to another agent |
 
 See the `app/tools/` directory for the full catalog.
@@ -396,7 +398,7 @@ tomo/
 │   ├── runtime/                  # Agent execution core (loop, LLM, tools)
 │   │   ├── coordinator/          # Swarm routing and delegation
 │   │   ├── agent/                # LLM turn loop, context, learning
-│   │   ├── memory/               # FTS / embeddings / retrieval layers
+│   │   ├── memory/               # FTS / curated MD / retrieval layers
 │   │   ├── portal/               # Cross-workplace file bridge
 │   │   ├── events/               # Internal event bus
 │   │   └── tools/                # Built-in Python tool backends

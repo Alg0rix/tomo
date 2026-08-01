@@ -225,7 +225,7 @@ async def _drain_agent_turn(
     Yields ``(sse_chunk, seq)``.
     """
     agent_name = _agent_label(agent_id)
-    store.set_busy(agent_id, True)
+    store.set_busy(agent_id, True, session_id=session_id)
     busy_ids.add(agent_id)
 
     if history is None:
@@ -242,7 +242,7 @@ async def _drain_agent_turn(
         if ev_agent_id != agent_id:
             ev_agent_name = _agent_label(ev_agent_id)
             if ev_agent_id not in busy_ids:
-                store.set_busy(ev_agent_id, True)
+                store.set_busy(ev_agent_id, True, session_id=session_id)
                 busy_ids.add(ev_agent_id)
         else:
             ev_agent_name = agent_name
@@ -490,7 +490,7 @@ async def stream_turn_sse(
         start_agent_id = force_target or coordinator_id
         start_agent_name = _agent_label(start_agent_id)
 
-        store.set_busy(coordinator_id, True)
+        store.set_busy(coordinator_id, True, session_id=session_id)
         busy_ids.add(coordinator_id)
         seq += 1
         yield fmt_sse(
@@ -583,7 +583,7 @@ async def stream_turn_sse(
                     seq=seq,
                 ):
                     yield chunk
-                store.set_busy(coordinator_id, False)
+                store.set_busy(coordinator_id, False, session_id=session_id)
                 # Persist full ``@ops …`` user row; feed the member the stripped
                 # prompt without the user row or the just-written handoff row.
                 hist = store.get_session_history(session_id)
@@ -634,8 +634,8 @@ async def stream_turn_sse(
         except Exception:
             pass
         for aid in list(busy_ids):
-            store.set_busy(aid, False)
-        store.set_busy(coordinator_id, False)
+            store.set_busy(aid, False, session_id=session_id)
+        store.set_busy(coordinator_id, False, session_id=session_id)
         if turn_locked:
             store.end_session_turn(session_id)
 

@@ -27,6 +27,7 @@ from app.runtime.tools import delegate as _delegate_backend
 from app.runtime.tools import forget_memory as _forget_memory_backend
 from app.runtime.tools import list_dir as _list_dir_backend
 from app.runtime.tools import list_workplaces as _list_workplaces_backend
+from app.runtime.tools import memory as _memory_backend
 from app.runtime.tools import patch as _patch_backend
 from app.runtime.tools import portal as _portal_backend
 from app.runtime.tools import process as _process_backend
@@ -79,6 +80,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "agent_state": _agent_state_backend.run,
     "save_artifact": _save_artifact_backend.run,
     "portal": _portal_backend.run,
+    "memory": _memory_backend.run,
 }
 
 

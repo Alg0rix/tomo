@@ -201,8 +201,18 @@ async def chat_stream(
 
 
 @router.get("/agents/{agent_id}/state")
-async def agent_state(agent_id: str, _: AuthDep):
+async def agent_state(
+    agent_id: str,
+    _: AuthDep,
+    session_id: str | None = None,
+):
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return {"agent_id": agent_id, "busy": agent["busy"], "enabled": agent["enabled"]}
+    busy = bool(session_id) and store.is_agent_busy(agent_id, session_id)
+    return {
+        "agent_id": agent_id,
+        "busy": busy,
+        "enabled": agent["enabled"],
+        "session_id": session_id or "",
+    }

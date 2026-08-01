@@ -73,7 +73,10 @@ def _read_md(path: Path) -> str:
 
 
 def build_system_prompt(
-    agent_id: str | None = None, *, home_root: Path | None = None
+    agent_id: str | None = None,
+    *,
+    home_root: Path | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Build the system prompt for a coordinator/agent turn from ``$TOMO_HOME``.
 
@@ -85,6 +88,8 @@ def build_system_prompt(
     2. **Global persona** — ``$TOMO_HOME/SOUL.md`` is *prepended* when present.
     3. **Agent persona overlay** — ``$TOMO_HOME/agents/<id>/SOUL.md`` is
        *appended* after the base when present (only when ``agent_id`` is given).
+    4. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
+       this session (file-backed; refreshes next session).
 
     Sections are joined with a blank line. No secrets are read from files.
     ``home_root`` overrides the home root (tests); it defaults to
@@ -115,6 +120,16 @@ def build_system_prompt(
         wp_block = _workplace_prompt_section(agent_id)
         if wp_block:
             parts.append(wp_block)
+
+    try:
+        from app.runtime.memory.curated import MEMORY_GUIDANCE, prompt_block
+
+        parts.append(MEMORY_GUIDANCE)
+        mem = prompt_block(agent_id, session_id=session_id, home_root=root)
+        if mem:
+            parts.append(mem)
+    except Exception:
+        pass
 
     return "\n\n".join(parts)
 

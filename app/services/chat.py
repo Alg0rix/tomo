@@ -465,12 +465,16 @@ def record_session_user_message(session_id: str, message: str) -> None:
 
 
 async def heartbeat_stream(agent_id: str, start_seq: int = 0) -> AsyncIterator[str]:
-    """Emit the agent's initial ``state`` then periodic ``heartbeat`` events."""
+    """Emit the agent's initial ``state`` then periodic ``heartbeat`` events.
+
+    Agent-only heartbeats have no session context, so ``busy`` is always false
+    (busy is session-scoped and must not leak across chats).
+    """
     seq = start_seq
     agent = store.get_agent(agent_id)
     if agent:
         yield _fmt_sse(
-            {"event": "state", "data": {"agent_id": agent_id, "busy": agent["busy"]}, "seq": seq}
+            {"event": "state", "data": {"agent_id": agent_id, "busy": False}, "seq": seq}
         )
     while True:
         await asyncio.sleep(15)
@@ -489,7 +493,14 @@ async def session_heartbeat_stream(
             agent = store.get_agent(aid)
             if agent:
                 yield _fmt_sse(
-                    {"event": "state", "data": {"agent_id": aid, "busy": agent["busy"]}, "seq": seq}
+                    {
+                        "event": "state",
+                        "data": {
+                            "agent_id": aid,
+                            "busy": store.is_agent_busy(aid, session_id),
+                        },
+                        "seq": seq,
+                    }
                 )
                 seq += 1
     while True:

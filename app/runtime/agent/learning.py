@@ -39,8 +39,9 @@ _REVIEW_SYSTEM = """You are Tomo's learning reviewer. You do not chat with the u
 You only distill durable knowledge from the completed turn.
 
 You may call:
-- remember — facts about the user, durable preferences, project conventions
-- agent_state — cross-session key/value facts (timezone, language, active project)
+- memory — curated USER.md / MEMORY.md facts the model always sees next session
+- remember — longer searchable KB documents (FTS)
+- agent_state — structured key/value facts when a short key is enough
 - save_artifact — catalog lasting file outputs from this turn
 - list_skills / use_skill — inspect the existing skill library before writing
 - manage_skill — create/patch class-level procedural skills (how to do a *type* of task)
@@ -178,17 +179,23 @@ def _mark_reviewed(agent_id: str | None) -> None:
 def _focus_text(*, review_memory: bool, review_skills: bool) -> str:
     if review_memory and review_skills:
         return (
-            "BOTH memory and skills. Save durable user/project facts AND "
-            "update class-level procedural skills when warranted."
+            "BOTH memory and skills. Be ACTIVE on memory: if the user stated a "
+            "preference, correction, or personal detail, save it with `memory` "
+            "(target=user for who they are; target=memory for env/conventions) — "
+            "do not wait for them to ask. Also update class-level skills when "
+            "a procedural lesson is clear."
         )
     if review_memory:
         return (
-            "MEMORY primarily — who the user is, prefs, conventions. "
-            "Only touch skills if a clear procedural lesson is unavoidable."
+            "MEMORY primarily — be ACTIVE. Look for persona, preferences, "
+            "corrections, or expectations about how you should behave. "
+            "If something stands out, save with `memory` even if the user "
+            "never said \"remember\". Prefer target=user for who they are. "
+            "If nothing is worth saving, say 'Nothing to save.' and stop."
         )
     return (
         "SKILLS primarily — how to do this class of task. "
-        "Only remember facts if they are clearly durable user/project state."
+        "Only save memory facts if a clear durable preference/correction appeared."
     )
 
 
@@ -225,12 +232,12 @@ def _learning_tool_schemas(*, review_memory: bool, review_skills: bool) -> list[
 
     allow: set[str] = set()
     if review_memory:
-        allow.update({"remember", "agent_state", "save_artifact"})
+        allow.update({"remember", "agent_state", "save_artifact", "memory"})
     if review_skills:
         allow.update({"list_skills", "use_skill", "manage_skill", "save_artifact"})
     # Always allow remember for combined edge cases
     if not allow:
-        allow = {"remember", "list_skills", "use_skill", "manage_skill"}
+        allow = {"remember", "memory", "list_skills", "use_skill", "manage_skill"}
 
     out: list[dict[str, Any]] = []
     for schema in get_openai_tools():
@@ -310,6 +317,8 @@ async def _run_review_llm(
             if call.name == "manage_skill" and agent_id and "agent_id" not in args:
                 args["agent_id"] = agent_id
             if call.name == "agent_state" and agent_id and "agent_id" not in args:
+                args["agent_id"] = agent_id
+            if call.name == "memory" and agent_id and "agent_id" not in args:
                 args["agent_id"] = agent_id
             result = execute(call.name, args)
             if not str(result).startswith("Error"):

@@ -6,8 +6,9 @@ Owns the **config** root (default ``~/.tomo``), not agent workspaces::
     ├── tomo.yaml
     ├── .env / .secret_key
     ├── SOUL.md
+    ├── memories/USER.md        # curated user profile (memory tool)
     ├── library/{skills,memory}
-    ├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge}
+    ├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
     ├── workplaces/
     └── state/tomo.db
 
@@ -22,7 +23,8 @@ live config). The master ``.secret_key`` is auto-created (chmod 600) only when
 ``TOMO_SECRET_KEY`` is unset and no key file exists — it is never overwritten.
 No API keys or secrets are written into home files; the optional ``.env`` is
 never auto-created. Allowed familiar names: ``SOUL.md``, ``SYSTEM.md``,
-``.env``, ``.secret_key``; no ``secrets.env`` / ``identity.md`` / ``prompt.md``.
+``MEMORY.md``, ``USER.md``, ``.env``, ``.secret_key``; no ``secrets.env`` /
+``identity.md`` / ``prompt.md``.
 """
 
 from __future__ import annotations
@@ -101,6 +103,23 @@ def library_memory_dir(root: Path | None = None) -> Path:
     return _root(root) / "library" / "memory"
 
 
+def memories_dir(root: Path | None = None) -> Path:
+    """Curated memory root — ``USER.md`` lives here."""
+    return _root(root) / "memories"
+
+
+def user_memory_path(root: Path | None = None) -> Path:
+    return memories_dir(root) / "USER.md"
+
+
+def agent_memory_path(agent_id: str | None, root: Path | None = None) -> Path:
+    """Per-agent curated notes: ``agents/<id>/MEMORY.md``."""
+    aid = (agent_id or "").strip() or "_default"
+    if "/" in aid or "\\" in aid or ".." in aid or aid in {".", ".."}:
+        aid = "_default"
+    return agent_dir(aid, root) / "MEMORY.md"
+
+
 def workplaces_dir(root: Path | None = None) -> Path:
     return _root(root) / "workplaces"
 
@@ -154,6 +173,7 @@ def ensure_tomo_home(root: Path | None = None) -> Path:
     for d in (
         library_skills_dir(home_root),
         library_memory_dir(home_root),
+        memories_dir(home_root),
         home_root / "agents",
         workplaces_dir(home_root),
         state_dir(home_root),
@@ -185,6 +205,9 @@ __all__ = [
     "agent_work_dir",
     "library_skills_dir",
     "library_memory_dir",
+    "memories_dir",
+    "user_memory_path",
+    "agent_memory_path",
     "workplaces_dir",
     "state_dir",
 ]

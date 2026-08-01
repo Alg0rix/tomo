@@ -58,10 +58,24 @@ def test_delete_agent(tmp_path) -> None:
     assert store.delete_agent("coder") is False
 
 
-def test_set_busy_reflected_in_list(tmp_path) -> None:
+def test_set_busy_is_session_scoped(tmp_path) -> None:
     _rebind(tmp_path)
-    store.set_busy("ops", True)
+    store.set_busy("ops", True, session_id="sess_a")
+    # Global agent list / rail must not show busy from another session.
     by_id = {a["id"]: a for a in store.list_agents()}
-    assert by_id["ops"]["busy"] is True
-    store.set_busy("ops", False)
-    assert {a["id"]: a for a in store.list_agents()}["ops"]["busy"] is False
+    assert by_id["ops"]["busy"] is False
+    assert store.is_agent_busy("ops", "sess_a") is True
+    assert store.is_agent_busy("ops", "sess_b") is False
+    store.set_busy("ops", False, session_id="sess_a")
+    assert store.is_agent_busy("ops", "sess_a") is False
+
+
+def test_busy_in_one_session_does_not_affect_another(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.set_busy("main", True, session_id="sess_a")
+    store.set_busy("main", True, session_id="sess_b")
+    store.set_busy("main", False, session_id="sess_a")
+    assert store.is_agent_busy("main", "sess_a") is False
+    assert store.is_agent_busy("main", "sess_b") is True
+    store.set_busy("main", False, session_id="sess_b")
+    assert store.is_agent_busy("main", "sess_b") is False

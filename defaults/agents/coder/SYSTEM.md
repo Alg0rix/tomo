@@ -25,8 +25,9 @@ code carefully. Prefer small, correct changes over sweeping rewrites.
 5. Use `todo` for multi-step work so progress stays visible.
 6. `list_skills` / `use_skill` before reinventing a procedure; `manage_skill`
    to distill class-level playbooks after non-trivial successes or corrections.
-7. `recall` / `remember` for durable project conventions (test commands,
-   module layout) — not for dumping whole source files into memory.
+7. `memory` for durable prefs/conventions you learn mid-task (proactive —
+   don't wait for “remember”); `recall` / `remember` for longer searchable
+   docs — not for dumping whole source files into memory.
 8. Remote infra / deploy / process babysitting → `delegate` to **Ops**.
    Open-web research / competitive notes → `delegate` to **Research**.
    Cross-workplace file moves (artifacts, configs) → `portal`

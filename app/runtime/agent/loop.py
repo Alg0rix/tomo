@@ -498,7 +498,7 @@ async def run_turn(
             )
             prompt = system_prompt
             if prompt is None:
-                prompt = build_system_prompt(agent_id)
+                prompt = build_system_prompt(agent_id, session_id=session_id)
             messages = build_messages(
                 history,
                 user_message,

@@ -4,8 +4,9 @@ for remaining stub lists (models, providers, safety rules, channel users, shared
 channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
 Public method names match the previous JSON-backed store so the API/UI layer
-is unchanged. Busy state is process-local in-memory
-(:class:`app.models.mixins.busy.BusyState`) — never persisted to SQLite.
+is unchanged. Busy state is process-local and **session-scoped**
+(:class:`app.models.mixins.busy.BusyState`) — never persisted to SQLite and
+never shown as a global agent flag across chats.
 """
 
 from __future__ import annotations
@@ -154,12 +155,17 @@ class Store:
         with self._lock:
             ok = agents_store.delete_agent(self._conn, agent_id)
             if ok:
-                self._busy.set_busy(agent_id, False)
+                self._busy.clear_agent(agent_id)
             return ok
 
-    def set_busy(self, agent_id: str, busy: bool) -> None:
+    def set_busy(self, agent_id: str, busy: bool, *, session_id: str) -> None:
+        """Mark agent busy for ``session_id`` only (not cross-session UI)."""
         with self._lock:
-            self._busy.set_busy(agent_id, busy)
+            self._busy.set_busy(agent_id, busy, session_id=session_id)
+
+    def is_agent_busy(self, agent_id: str, session_id: str) -> bool:
+        with self._lock:
+            return self._busy.is_busy(agent_id, session_id)
 
     def try_begin_session_turn(self, session_id: str) -> bool:
         """Exclusive session turn lock (prevents concurrent SSE turns)."""
@@ -252,6 +258,12 @@ class Store:
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
             messages_store.clear_session_history(self._conn, session_id)
+        try:
+            from app.runtime.memory.curated import reset_freeze
+
+            reset_freeze(session_id=session_id)
+        except Exception:
+            pass
 
     # -- attachments (SQLite) --------------------------------------------
     def create_attachment(
@@ -299,11 +311,18 @@ class Store:
             return messages_store.get_session_history(self._conn, sid)
 
     def clear_session(self, agent_id: str, user_id: str) -> None:
+        sid = None
         with self._lock:
             sid = sessions_store.find_session(self._conn, agent_id, user_id)
             if sid is None:
                 return
             messages_store.clear_session_history(self._conn, sid)
+        try:
+            from app.runtime.memory.curated import reset_freeze
+
+            reset_freeze(session_id=sid)
+        except Exception:
+            pass
 
     # -- stats / dashboard -----------------------------------------------
     def _stats_from(
