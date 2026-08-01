@@ -1360,8 +1360,10 @@
         endTurn();
       });
       es.addEventListener('heartbeat', function () {
-        // Heartbeats are keep-alive signals during long operations
-        // (subagent LLM calls, tool execution). Do NOT end the turn.
+        // Keep-alive during long tools/LLM calls. After `done`, do NOT reset
+        // the post-done timer — forever-heartbeats (lost turn.end) used to
+        // keep the UI busy until hard timeout / refresh.
+        if (sawDone) return;
         bumpActivity();
       });
       es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
@@ -1580,6 +1582,7 @@
 
       let closed = false;
       let sawTurnEvent = false;
+      let sawDone = false;
       let turnAgentName = defaultAgentName;
       let turnAgentId = agentId || '';
       let thinkEl = null;
@@ -1869,6 +1872,7 @@
 
       es.addEventListener('done', function (e) {
         sawTurnEvent = true;
+        sawDone = true;
         bumpActivity();
         const d = JSON.parse(e.data || '{}');
         const aid = d.agent_id || '';
@@ -1895,9 +1899,14 @@
       });
 
       es.addEventListener('heartbeat', function () {
-        bumpActivity();
         // Heartbeat with no turn events ⇒ idle listen stream (stale busy, etc.).
-        if (!sawTurnEvent) endIdleResume();
+        if (!sawTurnEvent) {
+          endIdleResume();
+          return;
+        }
+        // After done, don't let keepalives defer endResume forever.
+        if (sawDone) return;
+        bumpActivity();
       });
 
       es.addEventListener('error', function (e) {

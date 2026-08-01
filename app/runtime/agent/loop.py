@@ -682,9 +682,10 @@ async def run_turn(
             ]
             if delegate_calls or other_calls:
                 _logger.info(
-                    "exec: delegate=%d gated=%d",
+                    "exec: delegate=%d tools=%d nested=%d",
                     len(delegate_calls),
                     len(other_calls),
+                    current_depth(),
                 )
 
             # Results keyed by call id. ``already_yielded`` tracks early emits

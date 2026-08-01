@@ -83,6 +83,38 @@ class _ActiveTurn:
         if q in self._consumers:
             self._consumers.remove(q)
 
+    @staticmethod
+    def _put(q: asyncio.Queue, chunk: str | None) -> None:
+        """Enqueue *chunk*; never silently drop the terminal ``None`` sentinel.
+
+        A dropped ``None`` leaves SSE drains emitting heartbeats forever while
+        the turn has already finished (UI stale until refresh).
+        """
+        try:
+            q.put_nowait(chunk)
+            return
+        except asyncio.QueueFull:
+            pass
+        # Make room: drop oldest buffered event(s).
+        for _ in range(8):
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                q.put_nowait(chunk)
+                return
+            except asyncio.QueueFull:
+                continue
+        if chunk is None:
+            # Last resort — drain completely so the sentinel always lands.
+            while True:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            q.put_nowait(None)
+
     def _broadcast(self, chunk: str | None) -> None:
         if chunk is not None:
             seq = _extract_seq(chunk)
@@ -90,10 +122,7 @@ class _ActiveTurn:
             if len(self._replay) > _REPLAY_MAX:
                 self._replay = self._replay[-_REPLAY_MAX:]
         for q in list(self._consumers):
-            try:
-                q.put_nowait(chunk)
-            except asyncio.QueueFull:
-                pass
+            self._put(q, chunk)
 
     def finish(self) -> None:
         self._broadcast(None)
@@ -114,8 +143,8 @@ def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
 
 async def start_session_turn(
     session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
-) -> asyncio.Queue:
-    """Start a background agent turn and return a subscription queue.
+) -> tuple[_ActiveTurn, asyncio.Queue]:
+    """Start a background agent turn and return ``(turn, subscription_queue)``.
 
     The turn runs independently of any SSE connection.  Multiple clients
     can subscribe to the same turn (e.g. after a page refresh).
@@ -154,7 +183,7 @@ async def start_session_turn(
 
     turn.task = asyncio.create_task(_runner())
     _active_turns[session_id] = turn
-    return turn.subscribe()
+    return turn, turn.subscribe()
 
 
 def _coordinator_for(session: dict[str, Any]) -> str | None:

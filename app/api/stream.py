@@ -40,7 +40,10 @@ def _resolve_user_id(request: Request, user_id: str | None) -> str:
 
 
 async def _drain_queue_with_heartbeats(
-    queue: asyncio.Queue, request: Request
+    queue: asyncio.Queue,
+    request: Request,
+    *,
+    on_exit=None,
 ) -> AsyncIterator[str]:
     """Read chunks from *queue*, yielding heartbeats on timeout.
 
@@ -50,19 +53,26 @@ async def _drain_queue_with_heartbeats(
     """
     from app.channels.sse_map import fmt_sse
 
-    while True:
-        try:
-            chunk = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
-        except asyncio.TimeoutError:
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    return
+                yield fmt_sse({"event": "heartbeat", "data": {}})
+                continue
+            if chunk is None:
+                return
             if await request.is_disconnected():
                 return
-            yield fmt_sse({"event": "heartbeat", "data": {}})
-            continue
-        if chunk is None:
-            return
-        if await request.is_disconnected():
-            return
-        yield chunk
+            yield chunk
+    finally:
+        if on_exit is not None:
+            try:
+                on_exit()
+            except Exception:
+                pass
 
 
 @router.post("/sessions/{session_id}/chat/stream")
@@ -145,7 +155,7 @@ async def session_chat_stream(
                 queue = active.subscribe(after_seq=after)
             else:
                 try:
-                    queue = await start_session_turn(
+                    active, queue = await start_session_turn(
                         session_id,
                         message,
                         uid,
@@ -161,7 +171,15 @@ async def session_chat_stream(
                     )
                     return
 
-            async for chunk in _drain_queue_with_heartbeats(queue, request):
+            owner = active
+
+            def _release() -> None:
+                if owner is not None:
+                    owner.unsubscribe(queue)
+
+            async for chunk in _drain_queue_with_heartbeats(
+                queue, request, on_exit=_release
+            ):
                 yield chunk
 
             yield fmt_sse(
@@ -179,7 +197,14 @@ async def session_chat_stream(
         active = get_active_session_turn(session_id)
         if active:
             queue = active.subscribe(after_seq=after)
-            async for chunk in _drain_queue_with_heartbeats(queue, request):
+            owner = active
+
+            def _release_listen() -> None:
+                owner.unsubscribe(queue)
+
+            async for chunk in _drain_queue_with_heartbeats(
+                queue, request, on_exit=_release_listen
+            ):
                 yield chunk
             yield fmt_sse(
                 {
