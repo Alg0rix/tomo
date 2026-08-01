@@ -1,7 +1,7 @@
 """Path jail helpers for CodeQL ``py/path-injection``.
 
-Validate with ``os.path.realpath`` + ``commonpath`` (recognized sanitizer)
-before returning a ``Path``.
+Uses ``realpath`` + prefix check (``startswith``) — the pattern CodeQL
+treats as a validated path before FS sinks.
 """
 
 from __future__ import annotations
@@ -21,11 +21,9 @@ def ensure_under(root: Path | str, candidate: Path | str) -> Path:
     if not os.path.isabs(raw):
         raw = os.path.join(root_r, raw)
     target = os.path.realpath(raw)
-    try:
-        common = os.path.commonpath([root_r, target])
-    except ValueError as exc:
-        raise ValueError(f"path escapes root ({root_r}): {candidate}") from exc
-    if common != root_r:
+    # Trailing sep so "/tmp/foo" does not match root "/tmp/fo"
+    root_prefix = root_r if root_r.endswith(os.sep) else root_r + os.sep
+    if target != root_r and not target.startswith(root_prefix):
         raise ValueError(f"path escapes root ({root_r}): {candidate}")
     return Path(target)
 

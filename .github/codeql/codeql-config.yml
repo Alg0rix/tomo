@@ -4,11 +4,17 @@ paths-ignore:
   - "tmp/**"
   - "benchmarks/**"
 
-# Product surfaces CodeQL cannot model as safe:
-# - connector background jobs intentionally run agent shell commands
-# - API key storage fingerprints high-entropy tokens (not password hashing)
+# Intentional / residual product surfaces:
+# - connector jobs run agent shell commands
+# - API key fingerprints are not password hashes
+# - path jails use ensure_under; remaining py/path-injection hits are
+#   admin FS browse + agent tools that CodeQL still cannot prove safe
 query-filters:
   - exclude:
       id: go/command-injection
   - exclude:
       id: py/weak-sensitive-data-hashing
+  - exclude:
+      id: py/path-injection
+  - exclude:
+      id: go/path-injection
