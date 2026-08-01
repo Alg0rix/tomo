@@ -94,7 +94,11 @@ def build_system_prompt(
     2. **Global persona** — ``$TOMO_HOME/SOUL.md`` is *prepended* when present.
     3. **Agent persona overlay** — ``$TOMO_HOME/agents/<id>/SOUL.md`` is
        *appended* after the base when present (only when ``agent_id`` is given).
-    4. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
+    4. **Swarm / workplace** — live roster and workplace bindings when relevant.
+    5. **Skills awareness** — compact enabled-skill catalog when the agent has
+       ``list_skills`` / ``use_skill`` / ``manage_skill`` (full bodies via
+       ``use_skill``).
+    6. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
        this session (file-backed; refreshes next session).
 
     Sections are joined with a blank line. No secrets are read from files.
@@ -126,11 +130,15 @@ def build_system_prompt(
         wp_block = _workplace_prompt_section(agent_id)
         if wp_block:
             parts.append(wp_block)
+        skills_block = _skills_prompt_section(agent_id)
+        if skills_block:
+            parts.append(skills_block)
 
     try:
         from app.runtime.memory.curated import MEMORY_GUIDANCE, prompt_block
 
-        parts.append(MEMORY_GUIDANCE)
+        if _agent_has_memory_tool(agent_id):
+            parts.append(MEMORY_GUIDANCE)
         mem = prompt_block(agent_id, session_id=session_id, home_root=root)
         if mem:
             parts.append(mem)
@@ -138,6 +146,28 @@ def build_system_prompt(
         pass
 
     return "\n\n".join(parts)
+
+
+def _agent_has_memory_tool(agent_id: str | None) -> bool:
+    """True when curated-memory guidance should be injected for this agent."""
+    if not agent_id:
+        return True  # coordinator fallback path still gets guidance
+    try:
+        from app.services import store
+
+        return "memory" in store.get_enabled_tool_ids(agent_id)
+    except Exception:
+        return False
+
+
+def _skills_prompt_section(agent_id: str) -> str:
+    """Hermes-style skill awareness catalog (name + short description)."""
+    try:
+        from app.runtime.agent.skills_prompt import build_skills_system_prompt
+
+        return build_skills_system_prompt(agent_id)
+    except Exception:
+        return ""
 
 
 def _agent_workplace_summary(agent: dict[str, Any], workplaces_by_id: dict[str, dict]) -> str:
