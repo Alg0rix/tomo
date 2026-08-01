@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, reset_registry
+from app.services import store
 
 
 @pytest.fixture(autouse=True)
-def _reset() -> None:
+def _reset(tmp_path: Path) -> None:
+    # Isolate from other tests that rebind the global store / assign workplaces.
+    store.rebind(tmp_path / "search-files.db")
     reset_registry()
     sandbox.reset_agent()
     yield

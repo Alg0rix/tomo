@@ -99,7 +99,7 @@ class SessionWorkplaceIn(BaseModel):
 
 
 class HomeSessionIn(BaseModel):
-    """Dashboard chat-home start — no agent picker; coordinator only."""
+    """Dashboard chat-home start — no agent picker; full swarm."""
 
     message: str = ""
     user_id: str = "web"

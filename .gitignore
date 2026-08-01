@@ -33,7 +33,8 @@ logs/
 artifacts/
 # Local agent scratch at repo root (not defaults/agents/)
 /agents/
-state/
+# Runtime state dir at repo root only — do not ignore connector/internal/state/
+/state/
 
 # Built connector binary
 connector/tomo-connector

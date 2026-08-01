@@ -4,9 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      python-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: gomod
     directory: /connector
@@ -15,6 +19,10 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      go-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
@@ -23,3 +31,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"
