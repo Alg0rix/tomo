@@ -1,0 +1,70 @@
+name: Feature request
+description: Suggest an idea or enhancement for Tomo
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share the problem you want solved and how a change in Tomo would help.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that is hard or impossible today?
+      placeholder: As a user, I want to … because …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should Tomo behave instead?
+      placeholder: Describe the feature or change you have in mind…
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, or workarounds you use now.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Tomo would this touch?
+      multiple: true
+      options:
+        - Agents / coordinator
+        - Channels (Web UI / Telegram)
+        - Tools / skills
+        - Memory / knowledge base / learning
+        - Workplaces (local / tunnel / SSH)
+        - Connector
+        - Install / setup
+        - Docs / DX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, examples, links, or related issues.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate
+          required: true
