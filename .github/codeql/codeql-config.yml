@@ -1,0 +1,13 @@
+name: Tomo CodeQL
+
+# Intentional product surfaces that CodeQL cannot fully model:
+# - connector bash jobs (agent shell tool)
+paths-ignore:
+  - "tmp/**"
+  - "benchmarks/**"
+
+query-filters:
+  - exclude:
+      id: go/command-injection
+      paths:
+        - connector/internal/executor/jobs.go

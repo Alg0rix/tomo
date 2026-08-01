@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -52,10 +53,15 @@ _SKIP_DIR_NAMES = frozenset(
 
 
 def _resolve_browse_path(raw: str | None) -> Path:
+    from app.core.paths import ensure_under
+
     text = (raw or "").strip() or str(Path.home())
+    # Admin FS browse: jail under configurable root (default filesystem root).
+    browse_root = Path(os.environ.get("TOMO_FS_BROWSE_ROOT", "/")).expanduser()
     try:
-        p = Path(text).expanduser().resolve()
-    except OSError as exc:
+        browse_root = browse_root.resolve()
+        p = ensure_under(browse_root, Path(text).expanduser())
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"path not found: {p}")
@@ -252,9 +258,13 @@ async def browse_filesystem(
 @router.post("/workplaces/ensure-local")
 async def ensure_local_workplace(body: EnsureLocalWorkplaceIn, _: AuthDep):
     """Create or reuse a local workplace for an absolute path (VS Code open-folder)."""
+    from app.core.paths import ensure_under
+
+    browse_root = Path(os.environ.get("TOMO_FS_BROWSE_ROOT", "/")).expanduser()
     try:
-        p = Path(body.path).expanduser().resolve()
-    except OSError as exc:
+        browse_root = browse_root.resolve()
+        p = ensure_under(browse_root, Path(body.path).expanduser())
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
     if not p.is_dir():
         raise HTTPException(status_code=400, detail=f"not a directory: {p}")

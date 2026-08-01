@@ -88,8 +88,10 @@ async def connector_pair_http(request: Request) -> JSONResponse:
             platform=platform,
             remote_ip=stored_ip,
         )
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, 400)
+    except ValueError:
+        return JSONResponse(
+            {"ok": False, "error": "Invalid or expired pairing code"}, 400
+        )
     if not result:
         return JSONResponse(
             {"ok": False, "error": "Invalid or expired pairing code"}, 400
@@ -228,8 +230,8 @@ async def connector_ws(websocket: WebSocket) -> None:
                         platform=platform,
                         remote_ip=use_ip,
                     )
-                except ValueError as exc:
-                    await websocket.send_json(_err(str(exc)))
+                except ValueError:
+                    await websocket.send_json(_err("invalid pairing request"))
                     continue
                 if not result:
                     await websocket.send_json(_err("invalid or expired pairing code"))
@@ -274,8 +276,8 @@ async def connector_ws(websocket: WebSocket) -> None:
                         platform=platform,
                         remote_ip=use_ip,
                     )
-                except ValueError as exc:
-                    await websocket.send_json(_err(str(exc)))
+                except ValueError:
+                    await websocket.send_json(_err("invalid hello request"))
                     continue
                 if not result:
                     await websocket.send_json(_err("invalid connector token"))
