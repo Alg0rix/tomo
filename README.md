@@ -65,7 +65,7 @@ tomo-connector pair --code X7KQ2M --server https://your-coordinator.example.com
 tomo-connector service install   # systemd --user (Linux)
 ```
 
-Downloads the matching binary from [`latest` release](https://github.com/Alg0rix/tomo/releases) into `~/.local/bin`. Pin with `TOMO_CONNECTOR_VERSION=v0.1.0`. Create the pairing code in the UI (Workplaces → New → tunnel). Details: [Machine connectivity](#machine-connectivity).
+Downloads the matching binary from [`latest` release](https://github.com/Alg0rix/tomo/releases) into `~/.local/bin`. Pin with `TOMO_CONNECTOR_VERSION=v0.1.1`. Create the pairing code in the UI (Workplaces → New → tunnel). Details: [Machine connectivity](#machine-connectivity).
 
 ### Skills
 

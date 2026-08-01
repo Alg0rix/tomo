@@ -24,7 +24,7 @@ connector/
 curl -fsSL https://raw.githubusercontent.com/Alg0rix/tomo/main/scripts/install-connector.sh | bash
 ```
 
-Downloads the matching binary from GitHub Releases into `~/.local/bin`. Re-run to update (overwrites the binary and restarts the user service if enabled). Pin a tag with `TOMO_CONNECTOR_VERSION=v0.1.0`.
+Downloads the matching binary from GitHub Releases into `~/.local/bin`. Re-run to update (overwrites the binary and restarts the user service if enabled). Pin a tag with `TOMO_CONNECTOR_VERSION=v0.1.1`.
 
 ## Build
 
