@@ -76,6 +76,8 @@ Skills are folders with a `SKILL.md` (agentskills.io style). Tomo discovers:
 | `$TOMO_HOME/library/skills` | Managed installs |
 | `~/.agents/skills` | Shared user skills (default) |
 | `~/.agent/skills` | Alternate shared path |
+| `~/.tomo/skills` | Tomo-home peer skills dir |
+| `~/.claude/skills` | Claude Code skills (often symlinks) |
 
 ```bash
 tomo skills sync
@@ -84,7 +86,7 @@ tomo skills install ./my-skill-dir
 tomo skills uninstall <id>     # library installs only
 ```
 
-Override external roots with `TOMO_SKILLS_EXTERNAL_DIRS` (colon-separated; empty disables). Agents load skill bodies via `list_skills` / `use_skill`.
+Override external roots with `TOMO_SKILLS_EXTERNAL_DIRS` (colon-separated; empty disables). Agents load skill bodies via `list_skills` / `use_skill` (optional `file=` for package support docs).
 
 ### Develop from source
 

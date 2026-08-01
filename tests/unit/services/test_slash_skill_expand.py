@@ -54,3 +54,21 @@ def test_history_entry_expands_for_llm() -> None:
     text = expand_user_content_for_llm({"type": "user", "content": "/hallmark"})
     assert "BEGIN SKILL" in text
     assert "Ask Audience" in text or "Audience" in text
+
+
+def test_expand_lists_support_file_hint() -> None:
+    d = home.library_skills_dir(config.TOMO_HOME) / "hallmark"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: hallmark\ndescription: Design skill\n---\n\n"
+        "Load references/structure.md before designing.\n",
+        encoding="utf-8",
+    )
+    (d / "references").mkdir(exist_ok=True)
+    (d / "references" / "structure.md").write_text("# Structure\n", encoding="utf-8")
+    store.sync_skills()
+    out = expand_slash_skill("/hallmark make a landing page")
+    assert "use_skill" in out
+    assert "references/structure.md" in out
+    assert "read_file" in out
+    assert "make a landing page" in out

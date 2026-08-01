@@ -31,15 +31,31 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
 
 
 def use_skill_run(arguments: dict[str, Any]) -> str:
-    """Return a skill's body from disk (or DB description); always a string."""
+    """Return a skill's body (or a support file) from disk; always a string."""
     if not isinstance(arguments, dict):
         return "Error: use_skill expects a dict of arguments"
     skill_id = arguments.get("skill_id") or arguments.get("id") or arguments.get("name")
     if not isinstance(skill_id, str) or not skill_id.strip():
         return "Error: 'skill_id' argument must be a non-empty string"
     skill_id = skill_id.strip()
+    file_path = (
+        arguments.get("file")
+        or arguments.get("path")
+        or arguments.get("reference")
+        or arguments.get("file_path")
+        or ""
+    )
+    if file_path is not None and not isinstance(file_path, str):
+        file_path = str(file_path)
+    file_path = (file_path or "").strip()
 
-    from app.extensions.skills import read_skill_body, slugify_skill_id
+    from app.extensions.skills import (
+        find_discovered_skill,
+        list_skill_support_files,
+        read_skill_body,
+        read_skill_file,
+        slugify_skill_id,
+    )
     from app.services import store
 
     try:
@@ -49,21 +65,50 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
 
     sid = slugify_skill_id(skill_id)
     skill = store.get_skill(sid) or store.get_skill(skill_id)
+    discovered = find_discovered_skill(sid)
+
+    if file_path:
+        try:
+            content = read_skill_file(sid, file_path)
+        except FileNotFoundError as exc:
+            return f"Error: {exc}"
+        except ValueError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            return f"Error: failed to read skill file: {exc}"
+        name = (skill or {}).get("name") or (discovered.name if discovered else skill_id)
+        return (
+            f"Skill file: {name} ({sid}) → {file_path}\n\n"
+            f"{content}"
+        )
+
     body = read_skill_body(sid)
-    if body is None and skill is None:
+    if body is None and skill is None and discovered is None:
         return f"Error: unknown skill {skill_id!r}"
     try:
         store.bump_skill_use(sid)
     except Exception:
         pass
-    name = (skill or {}).get("name") or skill_id
-    version = (skill or {}).get("version") or ""
-    source = (skill or {}).get("source") or ""
+    name = (skill or {}).get("name") or (discovered.name if discovered else skill_id)
+    version = (skill or {}).get("version") or (discovered.version if discovered else "")
+    source = (skill or {}).get("source") or (discovered.source if discovered else "")
     parts = [f"Skill: {name} ({sid})"]
     if source:
         parts.append(f"Source: {source}")
     if version:
         parts.append(f"Version: {version}")
+    if discovered is not None:
+        parts.append(f"Root: {discovered.path}")
+    support = list_skill_support_files(sid, limit=40)
+    if support:
+        parts.append(
+            "Support files (load with use_skill skill_id="
+            f"{sid} file=<path> — do NOT use read_file with absolute paths):"
+        )
+        for rel in support[:25]:
+            parts.append(f"  - {rel}")
+        if len(support) > 25:
+            parts.append(f"  … +{len(support) - 25} more")
     parts.append("")
     if body:
         parts.append(body)

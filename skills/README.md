@@ -10,6 +10,8 @@ with optional YAML frontmatter (`name`, `description`, `version`).
 | `$TOMO_HOME/library/skills` | Managed installs (writable) |
 | `~/.agents/skills` | Shared user skills (read-only discover) |
 | `~/.agent/skills` | Alternate shared path (read-only) |
+| `~/.tomo/skills` | Peer of `$TOMO_HOME` for drop-in skills |
+| `~/.claude/skills` | Claude Code skills (often symlinks into `.agents`) |
 
 Override external roots with ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). Set
 empty to disable external discovery.
@@ -26,7 +28,7 @@ tomo skills uninstall <id>    # library installs only
 ## Agent tools
 
 - ``list_skills`` — catalog (syncs first)
-- ``use_skill`` — returns the skill body from disk
+- ``use_skill`` — returns the skill body; optional ``file`` loads ``references/…`` (etc.) from the package without workplace ``read_file``
 - ``manage_skill`` — create / edit / patch / delete library skills (active learning)
 
 ## Active learning

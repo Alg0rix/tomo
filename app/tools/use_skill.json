@@ -1,19 +1,23 @@
 {
   "id": "use_skill",
   "name": "Use Skill",
-  "description": "Load a skill's description/body by id.",
+  "description": "Load a skill body or a support file from its package.",
   "backend": "app.runtime.tools.skills_tools",
   "schema": {
     "type": "function",
     "function": {
       "name": "use_skill",
-      "description": "Return the skill description so the agent can follow it.",
+      "description": "Load a skill's instructions by id. Optional file loads a package support doc (references/, templates/, scripts/, assets/) relative to the skill root — prefer this over read_file for absolute skill paths outside the workplace.",
       "parameters": {
         "type": "object",
         "properties": {
           "skill_id": {
             "type": "string",
             "description": "Skill id from list_skills."
+          },
+          "file": {
+            "type": "string",
+            "description": "Optional relative path inside the skill package, e.g. references/structure.md or SKILL.md."
           }
         },
         "required": ["skill_id"]

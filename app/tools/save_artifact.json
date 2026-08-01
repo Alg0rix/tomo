@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "save_artifact",
-      "description": "Save lasting outputs (reports, exports, images, PDFs) into this chat session's artifacts store. Prefer after producing files the user may want later in this conversation. Use source_path for existing files; content for UTF-8 text. Files are served at /api/sessions/<session-id>/artifacts/<filename>.",
+      "description": "Save lasting outputs (HTML pages, reports, CSVs, images, PDFs, exports) into this chat session's artifacts store so they appear in the Files panel and can be previewed/downloaded. ALWAYS call this in the same turn after you create a user-facing deliverable — writing a workplace file alone does not register an artifact. Prefer source_path for a file you just wrote; use content for UTF-8 text. Served at /api/sessions/<session-id>/artifacts/<filename>.",
       "parameters": {
         "type": "object",
         "properties": {

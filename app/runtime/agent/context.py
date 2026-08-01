@@ -188,12 +188,14 @@ def _artifacts_prompt_section(agent_id: str) -> str:
         url = f"/api/sessions/{sid}/artifacts/<filename>"
         return (
             "## Artifacts (this session only)\n\n"
-            "Save lasting outputs with **save_artifact** "
-            "(filename + content or source_path). "
-            "Files are scoped to the **current chat session** under "
+            "When you create a user-facing deliverable (HTML page, CSV/report, PDF, image, "
+            "export, slide deck, etc.), you **must** call **save_artifact** in the **same turn** "
+            "— do not wait for the user to ask. Writing a file with shell/`write` alone is not enough; "
+            "the Files panel and chat preview only see session artifacts.\n\n"
+            "Use **save_artifact** with `filename` + `content`, or `source_path` pointing at the "
+            "file you just wrote. Files are scoped to the **current chat session** under "
             f"`$TOMO_HOME/sessions/{sid}/artifacts/` and served at `{url}`. "
-            "Use **list_artifacts** / **fetch_artifact** for this session only — "
-            "do not expect files from other chats. "
+            "Use **list_artifacts** / **fetch_artifact** for this session only. "
             "After saving an image, embed it with "
             f'`<img src="/api/sessions/{sid}/artifacts/NAME" alt="...">`.'
         )

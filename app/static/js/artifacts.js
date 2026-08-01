@@ -1205,7 +1205,11 @@
   }
 
   function maybeAutoOpen(art) {
-    if (!art) return;
+    if (!art || !art.url) return;
+    // Open Files panel on the new artifact so the user sees it without another click.
+    try {
+      openPreview(art);
+    } catch (_) {}
   }
 
   function onFilesClick(e) {

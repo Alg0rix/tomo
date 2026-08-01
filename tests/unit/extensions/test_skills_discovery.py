@@ -82,3 +82,42 @@ def test_discover_external_agents_dir(tmp_path, monkeypatch) -> None:
     skill = store.get_skill("caveman-lite")
     assert skill is not None
     assert skill["source"] in {"external", "agents", "agent"}
+
+
+def test_use_skill_reads_support_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOMO_SKILLS_EXTERNAL_DIRS", "")
+    reset_registry()
+    store.rebind(tmp_path / "use-file.db")
+    d = _write_skill(
+        home.library_skills_dir(config.TOMO_HOME),
+        "with-refs",
+        name="With Refs",
+    )
+    (d / "references").mkdir(parents=True, exist_ok=True)
+    (d / "references" / "structure.md").write_text(
+        "# Structure\n\nPick a rhythm.\n", encoding="utf-8"
+    )
+    store.sync_skills()
+    result = execute("use_skill", {"skill_id": "with-refs", "file": "references/structure.md"})
+    assert "Pick a rhythm." in result
+    assert "structure.md" in result
+    blocked = execute("use_skill", {"skill_id": "with-refs", "file": "../secrets.txt"})
+    assert blocked.startswith("Error:")
+    reset_registry()
+
+
+def test_default_external_roots_include_tomo(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("TOMO_SKILLS_EXTERNAL_DIRS", raising=False)
+    fake_home = tmp_path / "home"
+    skill_dir = fake_home / ".tomo" / "skills" / "tomo-only"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tomo-only\ndescription: from .tomo\n---\n\nHi\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skills_ext.Path, "home", lambda: fake_home)
+    roots = skills_ext.external_skill_roots()
+    assert any(r.name == "skills" and r.parent.name == ".tomo" for r in roots)
+    labeled = skills_ext.skill_search_roots(tmp_path / "tomo-home")
+    sources = {src for _, src in labeled}
+    assert "tomo" in sources

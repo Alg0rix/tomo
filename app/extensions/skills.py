@@ -5,9 +5,14 @@ optional YAML frontmatter) from:
 
 1. ``$TOMO_HOME/library/skills`` — managed install target (read/write)
 2. External dirs from ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). When the
-   env var is **unset**, defaults to ``~/.agents/skills`` and ``~/.agent/skills``
-   (common skill-folder conventions). Set the env var to empty to disable
-   external discovery (tests do this).
+   env var is **unset**, defaults to:
+
+   - ``~/.agents/skills``
+   - ``~/.agent/skills``
+   - ``~/.tomo/skills``
+   - ``~/.claude/skills`` (often symlinks into ``~/.agents/skills``)
+
+   Set the env var to empty to disable external discovery (tests do this).
 
 Managed installs copy a skill tree into the library dir. External skills are
 discovered read-only and never deleted by uninstall.
@@ -29,6 +34,8 @@ _EXCLUDED_DIR_NAMES = frozenset(
     {".git", ".github", ".hub", ".archive", "__pycache__", "node_modules", ".venv"}
 )
 _FRONTMATTER_END = re.compile(r"\n---\s*\n")
+_MAX_SKILL_CHARS = 48_000
+_ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 
 
 @dataclass(frozen=True)
@@ -41,7 +48,7 @@ class DiscoveredSkill:
     version: str
     path: Path  # directory containing SKILL.md
     skill_md: Path
-    source: str  # library | agents | agent | external
+    source: str  # library | agents | agent | tomo | claude | external
     body: str
 
 
@@ -90,6 +97,25 @@ def slugify_skill_id(raw: str) -> str:
     return text or "skill"
 
 
+def _external_source_label(root: Path) -> str:
+    """Human/source tag for an external skills directory."""
+    try:
+        name = root.name
+        parent = root.parent.name
+    except Exception:
+        return "external"
+    if name == "skills":
+        if parent == ".agents":
+            return "agents"
+        if parent == ".agent":
+            return "agent"
+        if parent == ".tomo":
+            return "tomo"
+        if parent == ".claude":
+            return "claude"
+    return "external"
+
+
 def external_skill_roots() -> list[Path]:
     """User-shared skill directories (read-only)."""
     raw = os.environ.get("TOMO_SKILLS_EXTERNAL_DIRS")
@@ -97,6 +123,8 @@ def external_skill_roots() -> list[Path]:
         candidates = [
             Path.home() / ".agents" / "skills",
             Path.home() / ".agent" / "skills",
+            Path.home() / ".tomo" / "skills",
+            Path.home() / ".claude" / "skills",
         ]
     elif not raw.strip():
         return []
@@ -122,10 +150,7 @@ def skill_search_roots(home_root: Path | None = None) -> list[tuple[Path, str]]:
     lib = home.library_skills_dir(home_root)
     roots.append((lib, "library"))
     for ext in external_skill_roots():
-        label = "agents" if ext.name == "skills" and ext.parent.name == ".agents" else (
-            "agent" if ext.name == "skills" and ext.parent.name == ".agent" else "external"
-        )
-        roots.append((ext, label))
+        roots.append((ext, _external_source_label(ext)))
     return roots
 
 
@@ -218,11 +243,87 @@ def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
 
 def read_skill_body(skill_id: str, home_root: Path | None = None) -> str | None:
     """Return markdown body (no frontmatter) for ``skill_id``, or None."""
+    skill = find_discovered_skill(skill_id, home_root=home_root)
+    if skill is None:
+        return None
+    return skill.body or skill.description
+
+
+def find_discovered_skill(
+    skill_id: str, home_root: Path | None = None
+) -> DiscoveredSkill | None:
+    """Return the discovered skill package for ``skill_id``, or None."""
     sid = slugify_skill_id(skill_id)
     for skill in discover_skills(home_root):
         if skill.id == sid:
-            return skill.body or skill.description
+            return skill
     return None
+
+
+def list_skill_support_files(
+    skill_id: str, home_root: Path | None = None, *, limit: int = 80
+) -> list[str]:
+    """Relative paths under references/templates/scripts/assets for a skill."""
+    skill = find_discovered_skill(skill_id, home_root=home_root)
+    if skill is None:
+        return []
+    root = skill.path.resolve()
+    out: list[str] = []
+    for dirname in sorted(_ALLOWED_SUPPORT_DIRS):
+        base = root / dirname
+        if not base.is_dir():
+            continue
+        try:
+            for path in sorted(base.rglob("*")):
+                if not path.is_file():
+                    continue
+                if any(part in _EXCLUDED_DIR_NAMES for part in path.parts):
+                    continue
+                rel = path.relative_to(root).as_posix()
+                out.append(rel)
+                if len(out) >= limit:
+                    return out
+        except OSError:
+            continue
+    return out
+
+
+def read_skill_file(
+    skill_id: str,
+    file_path: str,
+    *,
+    home_root: Path | None = None,
+    max_chars: int = _MAX_SKILL_CHARS,
+) -> str:
+    """Read a support file (or SKILL.md) relative to a discovered skill package.
+
+    Raises ``FileNotFoundError`` / ``ValueError`` on bad paths.
+    """
+    from app.core.paths import try_under
+
+    skill = find_discovered_skill(skill_id, home_root=home_root)
+    if skill is None:
+        raise FileNotFoundError(f"unknown skill: {skill_id}")
+    rel = (file_path or "").strip().lstrip("./")
+    if not rel:
+        raise ValueError("file path is required")
+    if ".." in Path(rel).parts:
+        raise ValueError("file path must not contain '..'")
+    # SKILL.md at package root is allowed; otherwise only support dirs.
+    if rel != "SKILL.md":
+        top = Path(rel).parts[0] if Path(rel).parts else ""
+        if top not in _ALLOWED_SUPPORT_DIRS:
+            raise ValueError(
+                f"file must be SKILL.md or under one of: "
+                f"{', '.join(sorted(_ALLOWED_SUPPORT_DIRS))}"
+            )
+    target = try_under(skill.path.resolve(), rel)
+    if target is None or not target.is_file():
+        raise FileNotFoundError(f"file not found: {rel}")
+    text = target.read_text(encoding="utf-8", errors="replace")
+    if len(text) > max_chars:
+        return text[:max_chars] + f"\n\n… truncated ({len(text)} chars total)"
+    return text
 
 
 def install_from_path(
@@ -325,7 +426,7 @@ def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str
     # Remove previously synced disk skills that disappeared (keep empty-path seeds).
     for row in conn.execute(
         "SELECT id, path, source FROM skills WHERE path != '' OR source IN "
-        "('library','agents','agent','external')"
+        "('library','agents','agent','tomo','claude','external')"
     ).fetchall():
         if row["id"] not in disk_ids and (row["path"] or row["source"]):
             # Don't delete if it's a pure catalog seed with no path
@@ -349,10 +450,6 @@ def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str
         }
         for r in rows
     ]
-
-
-_MAX_SKILL_CHARS = 48_000
-_ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 
 
 def _library_skill_dir(skill_id: str, home_root: Path | None = None) -> Path:
@@ -555,7 +652,10 @@ __all__ = [
     "external_skill_roots",
     "skill_search_roots",
     "discover_skills",
+    "find_discovered_skill",
+    "list_skill_support_files",
     "read_skill_body",
+    "read_skill_file",
     "install_from_path",
     "uninstall_library_skill",
     "sync_skills_to_db",

@@ -1284,6 +1284,7 @@
               : null;
             if (!d.error && parsedArt) {
               turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
             }
           } catch (_) {}
         }
@@ -1929,6 +1930,7 @@
               : null;
             if (!d.error && parsedArt) {
               turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
             }
           } catch (_) {}
         }

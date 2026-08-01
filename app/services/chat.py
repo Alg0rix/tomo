@@ -369,18 +369,40 @@ def expand_slash_skill(message: str) -> str:
     skill, arg = hit
     sid = str(skill.get("id") or "")
     name = str(skill.get("name") or sid)
-    from app.extensions.skills import read_skill_body
+    from app.extensions.skills import (
+        find_discovered_skill,
+        list_skill_support_files,
+        read_skill_body,
+    )
 
     body = (read_skill_body(sid) or skill.get("description") or "").strip()
+    discovered = find_discovered_skill(sid)
     parts = [
         f"The user activated skill `{name}` (`{sid}`) with a leading /{sid} command.",
         "Treat the skill body below as active instructions for this turn.",
         "Do not claim the skill is missing, uninstalled, or unavailable.",
-        "",
-        "----- BEGIN SKILL -----",
-        body or "(empty skill body)",
-        "----- END SKILL -----",
+        "When the skill says to load a references/* (or templates/scripts/assets) file, "
+        f"call `use_skill` with skill_id=`{sid}` and file=`references/...` — "
+        "do NOT use read_file with absolute paths under ~/.tomo, ~/.agents, or similar "
+        "(those are outside the workplace and will fail approval).",
     ]
+    if discovered is not None:
+        parts.append(f"Skill package root: `{discovered.path}` (source: {discovered.source}).")
+    support = list_skill_support_files(sid, limit=40)
+    if support:
+        parts.append("Available support files:")
+        for rel in support[:30]:
+            parts.append(f"- {rel}")
+        if len(support) > 30:
+            parts.append(f"- … +{len(support) - 30} more")
+    parts.extend(
+        [
+            "",
+            "----- BEGIN SKILL -----",
+            body or "(empty skill body)",
+            "----- END SKILL -----",
+        ]
+    )
     if arg:
         parts.extend(["", "User request:", arg])
     else:

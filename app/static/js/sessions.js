@@ -847,7 +847,10 @@
           }
           if (!e.error && window.TomoArtifacts) {
             var parsedArt = TomoArtifacts.parseSaveResult(e.function || '', resultText);
-            if (parsedArt) turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+            if (parsedArt) {
+              turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
+            }
           }
         }
         return;

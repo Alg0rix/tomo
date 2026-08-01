@@ -12,7 +12,7 @@ def cmd_skills_list() -> int:
     skills = store.list_skills()
     if not skills:
         print("No skills found.")
-        print("  Install into ~/.tomo/library/skills or add packages under ~/.agents/skills")
+        print("  Install into ~/.tomo/library/skills or add packages under ~/.agents/skills / ~/.tomo/skills")
         return 0
     for s in skills:
         flag = "on" if s.get("enabled") else "off"

@@ -19,8 +19,11 @@ SKILLS_GUIDANCE = (
     "After completing a complex task (several tool calls), fixing a tricky "
     "error, or discovering a reusable workflow, distill it with "
     "`manage_skill` so you can reuse it next time. Prefer `list_skills` / "
-    "`use_skill` before reinventing a procedure. Do not save one-off chatter "
-    "or \"tool X is broken\" as a skill."
+    "`use_skill` before reinventing a procedure. When a skill references "
+    "`references/` (or templates/scripts/assets), load them with "
+    "`use_skill(skill_id=…, file=references/…)` — do not `read_file` absolute "
+    "paths under ~/.agents, ~/.tomo, or ~/.claude (outside the workplace). "
+    "Do not save one-off chatter or \"tool X is broken\" as a skill."
 )
 
 
