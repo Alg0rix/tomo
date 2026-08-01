@@ -44,9 +44,6 @@ def _session_agents(session: dict[str, Any]) -> tuple[list[str], list[dict[str, 
     sid = (session.get("id") or "").strip()
     if sid:
         try:
-            # Persist live membership so API/UI stay in sync with routing.
-            from app.models.mixins import sessions as sessions_store
-
             # store facade holds the connection; prefer public resolve.
             live = store.get_session(sid)
             if live:

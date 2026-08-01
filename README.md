@@ -525,8 +525,18 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 
 ```bash
 uv run pytest
+uv run ruff check app cli tests   # same rules as CI lint
 ```
 
+CI workflows:
+
+| Workflow | When | What |
+|----------|------|------|
+| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release |
+| [`lint.yml`](.github/workflows/lint.yml) | push/PR | ruff (E/F), `gofmt`/`go vet`, `bash -n` on install scripts |
+| [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
+
+Dependabot (`.github/dependabot.yml`) opens weekly PRs for `pip`, `gomod`, and Actions.
 > **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (FTS-first + curated MD), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
 
 ---

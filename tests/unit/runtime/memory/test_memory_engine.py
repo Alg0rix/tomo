@@ -6,7 +6,6 @@ from pathlib import Path
 
 from app.runtime.memory.fts import _fts_query, search_knowledge_fts
 from app.runtime.memory.layers import (
-    create_artifact,
     list_agent_state,
     set_agent_state,
     upsert_session_summary,

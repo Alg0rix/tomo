@@ -29,7 +29,6 @@ from app.runtime.agent.atg import prompts
 from app.runtime.agent.atg.compiler import _extract_first_json
 from app.runtime.agent.atg.graph import (
     PLACEHOLDER_RE,
-    RefinementHistory,
     TaskDAG,
     TaskNode,
     parse_placeholder,

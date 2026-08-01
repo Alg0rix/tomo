@@ -34,8 +34,20 @@ entrypoint = "app.main:app"
 package = true
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.16.1",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# Baseline flake8-equivalent rules so CI stays green; expand selectively later.
+[tool.ruff]
+target-version = "py312"
+src = ["app", "cli", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

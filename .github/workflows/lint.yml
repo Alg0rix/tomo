@@ -1,0 +1,68 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync deps
+        run: uv sync --group dev
+
+      - name: Ruff check
+        run: uv run ruff check app cli tests
+
+  go:
+    name: gofmt + vet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: connector
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: connector/go.mod
+          cache-dependency-path: connector/go.sum
+
+      - name: gofmt
+        run: |
+          dirty=$(gofmt -l .)
+          if [ -n "$dirty" ]; then
+            echo "gofmt needed on:"
+            echo "$dirty"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+  scripts:
+    name: bash -n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check install scripts
+        run: |
+          bash -n scripts/install.sh
+          bash -n connector/scripts/install-service.sh

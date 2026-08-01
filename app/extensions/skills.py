@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from app.core import config, home
+from app.core import home
 
 _EXCLUDED_DIR_NAMES = frozenset(
     {".git", ".github", ".hub", ".archive", "__pycache__", "node_modules", ".venv"}

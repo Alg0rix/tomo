@@ -258,7 +258,7 @@ def _find_hunk_pos(
         transform,
     ) -> int:
         want = [transform(t) for _, t in to_match]
-        got = [transform(l.rstrip("\r\n")) for l in lines]
+        got = [transform(line.rstrip("\r\n")) for line in lines]
         # Window first
         for delta in range(window + 1):
             for sign in [0] if delta == 0 else [1, -1]:

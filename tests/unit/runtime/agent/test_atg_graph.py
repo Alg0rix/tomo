@@ -7,8 +7,6 @@ lineage tracking.
 from __future__ import annotations
 
 from app.runtime.agent.atg.graph import (
-    MAX_NODES,
-    PLACEHOLDER_RE,
     RefinementHistory,
     TaskDAG,
     TaskNode,

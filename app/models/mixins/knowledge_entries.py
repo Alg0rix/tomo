@@ -11,7 +11,6 @@ import logging
 import re
 import sqlite3
 import time
-import uuid
 from typing import Any
 
 _logger = logging.getLogger(__name__)

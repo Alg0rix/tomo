@@ -25,8 +25,12 @@ cd connector
 go mod tidy
 make build
 # or: go build -o tomo-connector ./cmd/tomo-connector
+
+# Cross-compile linux/darwin/windows → dist/ (same targets as CI)
+make dist
 ```
 
+CI (`.github/workflows/ci.yml`) builds these binaries on every push/PR and attaches them to `v*` GitHub Releases with the Python wheel.
 ## Pair & run
 
 ```bash
