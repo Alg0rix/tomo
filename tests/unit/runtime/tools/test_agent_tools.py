@@ -32,21 +32,25 @@ def test_agent_tools_default_all_enabled(tmp_path) -> None:
 
 def test_set_agent_tools_persists(tmp_path) -> None:
     _rebind(tmp_path)
+    from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
     enabled = {t["id"]: t["id"] in {"bash", "str_replace"} for t in store.list_tools()}
     updated = store.set_agent_tools("main", enabled)
     assert updated is not None
     on = {t["id"] for t in updated if t["enabled"]}
-    assert on == {"bash", "str_replace"}
-    # Reload view
+    # Artifact tools are locked on when artifacts_enabled (default).
+    assert on == {"bash", "str_replace"} | ARTIFACT_TOOLS
     again = store.get_agent_tools("main")
-    assert {t["id"] for t in again if t["enabled"]} == {"bash", "str_replace"}
+    assert {t["id"] for t in again if t["enabled"]} == on
     agent = store.get_agent("main")
     assert agent is not None
-    assert agent["tool_count"] == 2
+    assert agent["tool_count"] == len(on)
 
 
 def test_get_agent_openai_tools_filters(tmp_path) -> None:
     _rebind(tmp_path)
+    from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
     store.set_agent_tools(
         "main",
         {
@@ -63,4 +67,4 @@ def test_get_agent_openai_tools_filters(tmp_path) -> None:
     )
     schemas = store.get_agent_openai_tools("main")
     names = {t["function"]["name"] for t in schemas}
-    assert names == {"bash"}
+    assert names == {"bash"} | ARTIFACT_TOOLS

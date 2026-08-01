@@ -836,14 +836,18 @@
         } else {
           var cards = turn.querySelectorAll('.tool');
           var last = cards[cards.length - 1];
+          var resultText = e.content || '';
           if (last) {
-            var resultText = e.content || '';
             if (window.Tomo && Tomo.finishToolCard) {
               Tomo.finishToolCard(last, resultText, !!e.error);
             } else if (last._res) {
               last._res.textContent = resultText;
               last.classList.remove('loading');
             }
+          }
+          if (!e.error && window.TomoArtifacts) {
+            var parsedArt = TomoArtifacts.parseSaveResult(e.function || '', resultText);
+            if (parsedArt) turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
           }
         }
         return;

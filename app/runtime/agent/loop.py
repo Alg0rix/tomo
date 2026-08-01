@@ -491,6 +491,9 @@ async def run_turn(
     metrics = TurnMetrics(agent_id=agent_id, session_id=session_id)
     sandbox_token = sandbox.bind_agent(agent_id)
     todo_token = todo_mod.bind_session(session_id)
+    from app.runtime.artifacts import fs as artifacts_fs
+
+    arts_token = artifacts_fs.bind_session(session_id)
     skills_touched: list[str] = []
     try:
         try:
@@ -978,6 +981,7 @@ async def run_turn(
             ),
         }
     finally:
+        artifacts_fs.reset_session(arts_token)
         todo_mod.reset_session(todo_token)
         sandbox.reset_agent(sandbox_token)
 

@@ -1,0 +1,28 @@
+{
+  "id": "fetch_artifact",
+  "name": "Fetch Artifact",
+  "description": "Copy an artifact from the host artifacts directory into the workplace/sandbox.",
+  "backend": "app.runtime.tools.fetch_artifact",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "fetch_artifact",
+      "description": "Bring a saved artifact into the execution environment for inspection or further processing. On local agents without dest_path, returns the host path instead of copying.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Artifact basename (required)."
+          },
+          "dest_path": {
+            "type": "string",
+            "description": "Destination under the workplace (default: filename in work root)."
+          },
+          "agent_id": { "type": "string" }
+        },
+        "required": ["filename"]
+      }
+    }
+  }
+}

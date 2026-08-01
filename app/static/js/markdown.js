@@ -757,6 +757,8 @@
     enhanceCodeBlocks: enhanceCodeBlocks,
     renderMermaid: renderMermaid,
     enhanceImages: enhanceImages,
+    openLightbox: openLightbox,
+    render: renderInto,
     renderInto: renderInto,
   };
 })(typeof window !== "undefined" ? window : this);

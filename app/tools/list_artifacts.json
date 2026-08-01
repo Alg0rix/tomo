@@ -1,0 +1,40 @@
+{
+  "id": "list_artifacts",
+  "name": "List Artifacts",
+  "description": "List and search files in this agent's artifacts directory.",
+  "backend": "app.runtime.tools.list_artifacts",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "list_artifacts",
+      "description": "List saved artifacts for the current chat session only. Supports filename filter, content grep (text/document), category type, sort, and limit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "string",
+            "description": "Case-insensitive filename substring."
+          },
+          "grep": {
+            "type": "string",
+            "description": "Case-insensitive content search (text/document only)."
+          },
+          "type": {
+            "type": "string",
+            "description": "document | text | image | sound | video | data | all"
+          },
+          "sort": {
+            "type": "string",
+            "description": "newest (default) | updated | alpha | alpha_desc"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (default 50, max 200)."
+          },
+          "agent_id": { "type": "string" }
+        },
+        "required": []
+      }
+    }
+  }
+}

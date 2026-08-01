@@ -1,0 +1,28 @@
+<div class="agent-studio-panel hidden" id="panel-artifacts" data-agent-id="{{ agent.id }}" data-session-id="{{ session_id }}">
+  {% if agent.artifacts_enabled %}
+  <p class="faint" style="margin:0 0 12px">Artifacts for <strong>this chat session</strong> only — each conversation keeps its own files.</p>
+  <div class="artifacts-toolbar">
+    <input class="input" id="artifactsSearch" type="search" placeholder="Search filename…" style="max-width:220px">
+    <select class="input" id="artifactsSort" style="max-width:140px">
+      <option value="newest">Newest</option>
+      <option value="alpha">A–Z</option>
+      <option value="alpha_desc">Z–A</option>
+    </select>
+    <select class="input" id="artifactsType" style="max-width:140px">
+      <option value="">All types</option>
+      <option value="document">Document</option>
+      <option value="text">Text</option>
+      <option value="image">Image</option>
+      <option value="sound">Sound</option>
+      <option value="video">Video</option>
+      <option value="data">Data</option>
+    </select>
+    <button class="btn sm" type="button" id="artifactsRefresh">Refresh</button>
+  </div>
+  <div class="artifacts-grid" id="artifactsGrid"></div>
+  <div class="artifacts-pager faint" id="artifactsPager" style="margin-top:12px"></div>
+  <div class="empty hidden" id="artifactsEmpty">No artifacts in this session yet. The agent can save with <code>save_artifact</code>.</div>
+  {% else %}
+  <div class="empty">Artifacts are disabled for this agent. Enable them under Config.</div>
+  {% endif %}
+</div>

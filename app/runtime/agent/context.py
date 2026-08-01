@@ -133,6 +133,9 @@ def build_system_prompt(
         skills_block = _skills_prompt_section(agent_id)
         if skills_block:
             parts.append(skills_block)
+        arts_block = _artifacts_prompt_section(agent_id)
+        if arts_block:
+            parts.append(arts_block)
 
     try:
         from app.runtime.memory.curated import MEMORY_GUIDANCE, prompt_block
@@ -166,6 +169,34 @@ def _skills_prompt_section(agent_id: str) -> str:
         from app.runtime.agent.skills_prompt import build_skills_system_prompt
 
         return build_skills_system_prompt(agent_id)
+    except Exception:
+        return ""
+
+
+def _artifacts_prompt_section(agent_id: str) -> str:
+    """Guidance when artifacts are enabled for this agent."""
+    try:
+        from app.runtime.artifacts.fs import current_session_id
+        from app.services import store
+
+        agent = store.get_agent(agent_id)
+        if not agent or not agent.get("artifacts_enabled", True):
+            return ""
+        if "save_artifact" not in store.get_enabled_tool_ids(agent_id):
+            return ""
+        sid = current_session_id() or "<session_id>"
+        url = f"/api/sessions/{sid}/artifacts/<filename>"
+        return (
+            "## Artifacts (this session only)\n\n"
+            "Save lasting outputs with **save_artifact** "
+            "(filename + content or source_path). "
+            "Files are scoped to the **current chat session** under "
+            f"`$TOMO_HOME/sessions/{sid}/artifacts/` and served at `{url}`. "
+            "Use **list_artifacts** / **fetch_artifact** for this session only — "
+            "do not expect files from other chats. "
+            "After saving an image, embed it with "
+            f'`<img src="/api/sessions/{sid}/artifacts/NAME" alt="...">`.'
+        )
     except Exception:
         return ""
 

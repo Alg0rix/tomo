@@ -43,6 +43,9 @@ def _row_to_agent(row: sqlite3.Row, busy_ids: set[str]) -> dict[str, Any]:
     primary = row["workplace_id"] if "workplace_id" in keys else ""
     if primary and primary not in wids and scope == "single":
         wids = [primary] if primary else wids
+    artifacts_enabled = True
+    if "artifacts_enabled" in keys:
+        artifacts_enabled = bool(row["artifacts_enabled"])
     return {
         "id": row["id"],
         "name": row["name"],
@@ -52,6 +55,7 @@ def _row_to_agent(row: sqlite3.Row, busy_ids: set[str]) -> dict[str, Any]:
         "workplace_id": primary or "",
         "workplace_scope": scope,
         "workplace_ids": wids,
+        "artifacts_enabled": artifacts_enabled,
         "enabled": bool(row["enabled"]),
         "is_super": bool(row["is_super"]),
         "tool_count": row["tool_count"],
@@ -118,11 +122,13 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
 
     created_at = _now()
     workplace_id, scope, wids = _normalize_workplace_fields(data)
+    artifacts_on = data.get("artifacts_enabled")
+    artifacts_enabled = 1 if artifacts_on is None or artifacts_on else 0
     conn.execute(
         "INSERT INTO agents (id, name, description, model_id, role, workplace_id, "
-        "workplace_scope, workplace_ids_json, enabled, "
+        "workplace_scope, workplace_ids_json, artifacts_enabled, enabled, "
         "is_super, tool_count, channel_count, skill_count, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             aid,
             name,
@@ -132,6 +138,7 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
             workplace_id,
             scope,
             json.dumps(wids),
+            artifacts_enabled,
             1, 0, 0, 0, 0, created_at,
         ),
     )
@@ -254,6 +261,9 @@ def update_agent(
     if "enabled" in data and data["enabled"] is not None:
         sets.append("enabled=?")
         params.append(1 if data["enabled"] else 0)
+    if "artifacts_enabled" in data and data["artifacts_enabled"] is not None:
+        sets.append("artifacts_enabled=?")
+        params.append(1 if data["artifacts_enabled"] else 0)
     if sets:
         params.append(agent_id)
         conn.execute(f"UPDATE agents SET {', '.join(sets)} WHERE id=?", params)

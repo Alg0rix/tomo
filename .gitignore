@@ -30,7 +30,7 @@ benchmarks/terminal_bench/jobs/
 var/
 shared/
 logs/
-artifacts/
+/artifacts/
 # Local agent scratch at repo root (not defaults/agents/)
 /agents/
 # Runtime state dir at repo root only — do not ignore connector/internal/state/

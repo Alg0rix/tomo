@@ -166,7 +166,7 @@ def retrieve_for_turn(
             pass
 
     try:
-        arts = store.search_artifacts(query, limit=3)
+        arts = store.search_artifacts(query, limit=3, session_id=session_id)
         if arts:
             lines = [
                 f"- {a.get('title')} ({a.get('path') or a.get('kind')})"

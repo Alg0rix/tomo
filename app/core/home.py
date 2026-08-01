@@ -9,6 +9,7 @@ Owns the **config** root (default ``~/.tomo``), not agent workspaces::
     ├── memories/USER.md        # curated user profile (memory tool)
     ├── library/{skills,memory}
     ├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
+    ├── sessions/<session_id>/artifacts/   # per-chat durable outputs
     ├── workplaces/
     └── state/tomo.db
 
@@ -118,6 +119,23 @@ def agent_memory_path(agent_id: str | None, root: Path | None = None) -> Path:
     if "/" in aid or "\\" in aid or ".." in aid or aid in {".", ".."}:
         aid = "_default"
     return agent_dir(aid, root) / "MEMORY.md"
+
+
+def sessions_dir(root: Path | None = None) -> Path:
+    """Session-scoped data root: ``$TOMO_HOME/sessions/<session_id>/…``."""
+    return _root(root) / "sessions"
+
+
+def session_dir(session_id: str, root: Path | None = None) -> Path:
+    """``$TOMO_HOME/sessions/<session_id>`` (Kimi-style sessionDir)."""
+    sid = (session_id or "").strip() or "_default"
+    if "/" in sid or "\\" in sid or ".." in sid or sid in {".", ".."}:
+        sid = "_default"
+    return sessions_dir(root) / sid
+
+
+def session_artifacts_dir(session_id: str, root: Path | None = None) -> Path:
+    return session_dir(session_id, root) / "artifacts"
 
 
 def workplaces_dir(root: Path | None = None) -> Path:

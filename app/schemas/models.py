@@ -26,6 +26,7 @@ class Agent(BaseModel):
     channel_count: int = 0
     skill_count: int = 0
     busy: bool = False
+    artifacts_enabled: bool = True
     created_at: str = ""
 
 
@@ -42,6 +43,7 @@ class AgentCreate(BaseModel):
     workplace_id: str = ""
     workplace_ids: list[str] = Field(default_factory=list)
     workplace_scope: str = "single"  # single | list | all_tunnels | all
+    artifacts_enabled: bool = True
     system_prompt: str | None = Field(default=None, max_length=12_000)
 
 
@@ -69,6 +71,7 @@ class AgentUpdate(BaseModel):
     workplace_id: str | None = None
     workplace_ids: list[str] | None = None
     workplace_scope: str | None = None  # single | list | all_tunnels | all
+    artifacts_enabled: bool | None = None
     enabled: bool | None = None
 
 

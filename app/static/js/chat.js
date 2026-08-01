@@ -1277,6 +1277,15 @@
             last._res.textContent = resultText;
             last.classList.remove('loading');
           }
+          try {
+            var toolName = (d.name || d.tool || '').toString();
+            var parsedArt = window.TomoArtifacts
+              ? TomoArtifacts.parseSaveResult(toolName, resultText)
+              : null;
+            if (!d.error && parsedArt) {
+              turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+            }
+          } catch (_) {}
         }
         if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
           Tomo.upsertTodoPanel(turn, d.todos);
@@ -1913,6 +1922,15 @@
             last._res.textContent = resultText;
             last.classList.remove('loading');
           }
+          try {
+            var toolName = (d.name || d.tool || '').toString();
+            var parsedArt = window.TomoArtifacts
+              ? TomoArtifacts.parseSaveResult(toolName, resultText)
+              : null;
+            if (!d.error && parsedArt) {
+              turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
+            }
+          } catch (_) {}
         }
         if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
           Tomo.upsertTodoPanel(turn, d.todos);

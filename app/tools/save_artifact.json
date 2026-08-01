@@ -1,28 +1,49 @@
 {
   "id": "save_artifact",
   "name": "Save Artifact",
-  "description": "Catalog a file or output from a task for later retrieval.",
+  "description": "Save a file to this agent's durable artifacts directory for later retrieval and UI browse/download.",
   "backend": "app.runtime.tools.save_artifact",
   "schema": {
     "type": "function",
     "function": {
       "name": "save_artifact",
-      "description": "Register an artifact (report, export, generated file) so future turns can find it. Prefer after producing lasting outputs.",
+      "description": "Save lasting outputs (reports, exports, images, PDFs) into this chat session's artifacts store. Prefer after producing files the user may want later in this conversation. Use source_path for existing files; content for UTF-8 text. Files are served at /api/sessions/<session-id>/artifacts/<filename>.",
       "parameters": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "description": "Short label." },
-          "path": { "type": "string", "description": "Filesystem path or URL." },
+          "filename": {
+            "type": "string",
+            "description": "Basename only (e.g. report.md, chart.png). No path separators."
+          },
+          "content": {
+            "type": "string",
+            "description": "UTF-8 text to write. Ignored if source_path is set."
+          },
+          "source_path": {
+            "type": "string",
+            "description": "Existing file path under the workplace, or workplace_id:path, or /_portal/name/...."
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "Optional MIME hint."
+          },
+          "title": {
+            "type": "string",
+            "description": "Legacy catalog-only: short label (with path)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Legacy catalog-only: path/URL pointer."
+          },
           "kind": {
             "type": "string",
-            "description": "file | report | export | other",
-            "default": "file"
+            "description": "Legacy catalog-only: file|report|export|other"
           },
-          "notes": { "type": "string", "description": "Optional context." },
+          "notes": { "type": "string" },
           "session_id": { "type": "string" },
           "agent_id": { "type": "string" }
         },
-        "required": ["title"]
+        "required": []
       }
     }
   }

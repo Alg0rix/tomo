@@ -232,7 +232,7 @@ def _learning_tool_schemas(*, review_memory: bool, review_skills: bool) -> list[
 
     allow: set[str] = set()
     if review_memory:
-        allow.update({"remember", "agent_state", "save_artifact", "memory"})
+        allow.update({"remember", "agent_state", "save_artifact", "list_artifacts", "memory"})
     if review_skills:
         allow.update({"list_skills", "use_skill", "manage_skill", "save_artifact"})
     # Always allow remember for combined edge cases

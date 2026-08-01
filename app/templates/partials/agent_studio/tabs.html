@@ -4,4 +4,7 @@
   <button class="pill-tab" type="button" data-panel="tools">Tools</button>
   <button class="pill-tab" type="button" data-panel="skills">Skills</button>
   <button class="pill-tab" type="button" data-panel="channels">Channels</button>
+  {% if agent.artifacts_enabled %}
+  <button class="pill-tab" type="button" data-panel="artifacts">Artifacts</button>
+  {% endif %}
 </div>

@@ -273,6 +273,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE agents ADD COLUMN workplace_ids_json TEXT NOT NULL DEFAULT '[]'"
         )
+    if "artifacts_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE agents ADD COLUMN artifacts_enabled INTEGER NOT NULL DEFAULT 1"
+        )
     sess_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
     if "workplace_id" not in sess_cols:
         conn.execute(

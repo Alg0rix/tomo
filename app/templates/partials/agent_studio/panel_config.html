@@ -63,6 +63,13 @@
           <div class="config-row"><div class="lbl">Description</div>
             <input class="input" id="cfgDesc" value="{{ agent.description }}" style="max-width:420px">
           </div>
+          <div class="config-row"><div class="lbl">Artifacts</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              {% from 'partials/toggle.html' import toggle %}
+              {{ toggle(id='cfgArtifacts', checked=agent.artifacts_enabled, disabled=false) }}
+              <span class="muted" style="font-size:12.5px">Durable file store + Artifacts tab</span>
+            </div>
+          </div>
           <div class="config-row"><div class="lbl">Status</div>
             <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
           </div>

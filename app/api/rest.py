@@ -416,3 +416,139 @@ async def chat_clear(agent_id: str, request: Request, _: AuthDep):
     user_id = _uid(request, request.query_params.get("user_id"))
     store.clear_session(agent_id, user_id)
     return {"success": True}
+
+
+# ── Session artifacts ($TOMO_HOME/sessions/<id>/artifacts/) — Kimi-style ──
+
+
+def _require_session(session_id: str) -> dict:
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@router.get("/sessions/{session_id}/artifacts")
+async def list_session_artifacts(
+    session_id: str,
+    _: AuthDep,
+    sort: str = Query("newest"),
+    q: str = Query(""),
+    type: str = Query(""),
+    page: int = Query(1, ge=1),
+    limit: int = Query(24, ge=1, le=200),
+):
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import list_artifact_files
+
+    return list_artifact_files(
+        session_id,
+        filter=q,
+        type=type,
+        sort=sort,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/sessions/{session_id}/artifacts/{filename}")
+async def get_session_artifact(session_id: str, filename: str, _: AuthDep):
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import artifacts_dir, validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    base = artifacts_dir(session_id).resolve()
+    path = (base / filename).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid path") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    if filename.lower().endswith((".html", ".htm")):
+        mime = "text/html"
+    # Inline so chat/img/iframe can display without forced download (Kimi-style).
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=filename,
+        content_disposition_type="inline",
+    )
+
+
+@router.delete("/sessions/{session_id}/artifacts/{filename}")
+async def delete_session_artifact(session_id: str, filename: str, _: AuthDep):
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import delete_artifact_file, validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    if not delete_artifact_file(session_id, filename):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return {"success": True}
+
+
+@router.post("/sessions/{session_id}/artifacts")
+async def create_session_artifact(session_id: str, body: dict, _: AuthDep):
+    """Create a text artifact: ``{filename, content}``."""
+    session = _require_session(session_id)
+    from app.runtime.artifacts.fs import validate_filename, write_artifact_text
+
+    filename = str((body or {}).get("filename") or "").strip()
+    content = (body or {}).get("content")
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    if not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="content must be a string")
+    info = write_artifact_text(session_id, filename, content)
+    agent_id = ""
+    ids = session.get("agent_ids") or []
+    if ids:
+        agent_id = str(ids[0])
+    elif session.get("coordinator_id"):
+        agent_id = str(session["coordinator_id"])
+    try:
+        store.create_artifact(
+            {
+                "title": filename,
+                "path": info["filepath"],
+                "kind": "export",
+                "session_id": session_id,
+                "agent_id": agent_id,
+            }
+        )
+    except Exception:
+        pass
+    return info
+
+
+# Compat: agent routes require ?session_id= (artifacts are session-scoped).
+@router.get("/agents/{agent_id}/artifacts")
+async def list_agent_artifacts_compat(
+    agent_id: str,
+    _: AuthDep,
+    session_id: str = Query(..., min_length=1),
+    sort: str = Query("newest"),
+    q: str = Query(""),
+    type: str = Query(""),
+    page: int = Query(1, ge=1),
+    limit: int = Query(24, ge=1, le=200),
+):
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import list_artifact_files
+
+    return list_artifact_files(
+        session_id,
+        filter=q,
+        type=type,
+        sort=sort,
+        page=page,
+        limit=limit,
+    )

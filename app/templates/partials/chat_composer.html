@@ -20,13 +20,16 @@
       <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
       <span class="ctx-usage-label">Context</span>
     </button>
-    {% if toolbar %}
     <div class="composer-actions">
+      {% if toolbar %}
       <span class="badge ok chat-status" id="chatStatus"><span class="pulse"></span>online</span>
+      {% endif %}
+      <button class="btn ghost sm chat-files-btn" type="button" title="Session files / artifacts">Files</button>
+      {% if toolbar %}
       <button class="btn ghost sm" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
       <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>
+      {% endif %}
     </div>
-    {% endif %}
     <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Queued while busy. Attach via paperclip or drop.</div>
   </div>
 </div>

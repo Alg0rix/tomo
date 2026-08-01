@@ -102,18 +102,27 @@ def create_artifact(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
 
 
 def search_artifacts(
-    conn: sqlite3.Connection, query: str, *, limit: int = 5
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 5,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     text = (query or "").strip().lower()
     k = max(1, min(int(limit or 5), 20))
-    if not text:
+    sid = (session_id or "").strip()
+    if sid:
         rows = conn.execute(
-            "SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?", (k,)
+            "SELECT * FROM artifacts WHERE session_id=? "
+            "ORDER BY created_at DESC LIMIT 200",
+            (sid,),
         ).fetchall()
-        return [_artifact_row(r) for r in rows]
-    rows = conn.execute(
-        "SELECT * FROM artifacts ORDER BY created_at DESC LIMIT 200"
-    ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM artifacts ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+    if not text:
+        return [_artifact_row(r) for r in rows[:k]]
     tokens = [t for t in text.split() if t]
     scored: list[tuple[int, dict[str, Any]]] = []
     for row in rows:

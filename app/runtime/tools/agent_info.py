@@ -184,17 +184,30 @@ def _section_memory(agent_id: str) -> list[str]:
 
 
 def _section_artifacts(agent_id: str) -> list[str]:
-    from app.services import store
+    from app.runtime.artifacts.fs import current_session_id, stats_for_session
 
-    all_arts = store.list_artifacts(limit=50) or []
-    mine = [h for h in all_arts if (h.get("agent_id") or "") == agent_id][:8]
-    lines = [f"Artifacts tagged to this agent: {len(mine)} shown"]
-    if not mine:
-        lines.append("  (none found)")
-        return lines
-    for h in mine:
-        title = h.get("title") or h.get("path") or h.get("id") or "?"
-        lines.append(f"  - {title}")
+    sid = current_session_id()
+    if not sid:
+        return [
+            "Artifacts: session-scoped (no active session in this tool call)",
+            "  Pass session_id or run inside a chat turn to inspect files.",
+        ]
+    try:
+        stats = stats_for_session(sid)
+    except Exception:
+        stats = {"count": 0, "total_size": 0, "by_category": {}}
+    count = int(stats.get("count") or 0)
+    size = int(stats.get("total_size") or 0)
+    by_cat = stats.get("by_category") or {}
+    lines = [
+        f"Artifacts (session `{sid}`): {count} files · {size} bytes",
+        f"  agent_context={agent_id}",
+    ]
+    if by_cat:
+        parts = [f"{k}={v}" for k, v in sorted(by_cat.items())]
+        lines.append("  by_category: " + ", ".join(parts))
+    if count == 0:
+        lines.append("  (none in this session)")
     return lines
 
 

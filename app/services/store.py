@@ -149,7 +149,18 @@ class Store:
                     if not workplaces_store.get_workplace(self._conn, wid):
                         raise ValueError(f"Workplace not found: {wid}")
                 data = {**data, "workplace_ids": ids}
-            return agents_store.update_agent(self._conn, agent_id, data, self._busy.ids())
+            prev = agents_store.get_agent(self._conn, agent_id, self._busy.ids())
+            agent = agents_store.update_agent(self._conn, agent_id, data, self._busy.ids())
+        if (
+            agent
+            and prev
+            and "artifacts_enabled" in data
+            and bool(prev.get("artifacts_enabled", True))
+            != bool(agent.get("artifacts_enabled", True))
+        ):
+            self.sync_artifact_tools(agent_id)
+            agent = self.get_agent(agent_id)
+        return agent
 
     def delete_agent(self, agent_id: str) -> bool:
         with self._lock:
@@ -846,26 +857,68 @@ class Store:
     # -- agent-derived platform views ------------------------------------
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
         """Registry tools with per-agent enablement from ``agent_tools``."""
+        from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
         catalog = self.list_tools()
         with self._lock:
-            return tools_store.list_for_agent(self._conn, agent_id, catalog)
+            rows = tools_store.list_for_agent(self._conn, agent_id, catalog)
+        agent = self.get_agent(agent_id)
+        arts_on = bool(agent.get("artifacts_enabled", True)) if agent else True
+        out: list[dict[str, Any]] = []
+        for t in rows:
+            row = dict(t)
+            if t["id"] in ARTIFACT_TOOLS:
+                row["locked"] = True
+                row["enabled"] = arts_on
+            out.append(row)
+        return out
 
     def set_agent_tools(
         self, agent_id: str, enabled: dict[str, bool]
     ) -> list[dict[str, Any]] | None:
         """Persist enable/disable map; returns updated tool list or None if agent missing."""
-        if not self.get_agent(agent_id):
+        agent = self.get_agent(agent_id)
+        if not agent:
             return None
+        from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
+        # Artifact tools are locked to artifacts_enabled — callers cannot override.
+        locked = dict(enabled)
+        if agent.get("artifacts_enabled", True):
+            for tid in ARTIFACT_TOOLS:
+                locked[tid] = True
+        else:
+            for tid in ARTIFACT_TOOLS:
+                locked[tid] = False
         known = [t["id"] for t in self.list_tools()]
         with self._lock:
-            tools_store.set_for_agent(self._conn, agent_id, enabled, known)
+            tools_store.set_for_agent(self._conn, agent_id, locked, known)
             return tools_store.list_for_agent(self._conn, agent_id, self.list_tools())
 
     def get_enabled_tool_ids(self, agent_id: str) -> set[str]:
         """Tool names advertised to the LLM for ``agent_id``."""
         known = get_registry().names()
         with self._lock:
-            return tools_store.enabled_ids(self._conn, agent_id, known)
+            ids = set(tools_store.enabled_ids(self._conn, agent_id, known))
+        agent = self.get_agent(agent_id)
+        from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
+        if agent and not agent.get("artifacts_enabled", True):
+            ids -= ARTIFACT_TOOLS
+        elif agent and agent.get("artifacts_enabled", True):
+            ids |= ARTIFACT_TOOLS & set(known)
+        return ids
+
+    def sync_artifact_tools(self, agent_id: str) -> None:
+        """Re-apply artifact tool lock after ``artifacts_enabled`` flips."""
+        agent = self.get_agent(agent_id)
+        if not agent:
+            return
+        catalog = self.list_tools()
+        with self._lock:
+            rows = tools_store.list_for_agent(self._conn, agent_id, catalog)
+        enabled = {t["id"]: bool(t.get("enabled")) for t in rows}
+        self.set_agent_tools(agent_id, enabled)
 
     def get_agent_openai_tools(self, agent_id: str) -> list[dict[str, Any]]:
         """OpenAI schemas filtered to tools enabled for ``agent_id``."""
@@ -926,11 +979,15 @@ class Store:
         with self._lock:
             return mem_layers.create_artifact(self._conn, data)
 
-    def search_artifacts(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    def search_artifacts(
+        self, query: str, *, limit: int = 5, session_id: str | None = None
+    ) -> list[dict[str, Any]]:
         from app.runtime.memory import layers as mem_layers
 
         with self._lock:
-            return mem_layers.search_artifacts(self._conn, query, limit=limit)
+            return mem_layers.search_artifacts(
+                self._conn, query, limit=limit, session_id=session_id
+            )
 
     def list_artifacts(self, *, limit: int = 20) -> list[dict[str, Any]]:
         from app.runtime.memory import layers as mem_layers

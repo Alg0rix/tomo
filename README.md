@@ -253,7 +253,9 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 | **Curated memory** | `USER.md` + per-agent `MEMORY.md` (file-backed, always in prompt) | Prefs, timezone, env quirks |
 | **Conversation memory** | Recent turns + rolled session summaries; `session_search` (FTS5) | "Last week we discussed the Q3 budget" |
 | **Knowledge base** | Longer documents via `remember` / `recall` (FTS5; embeddings optional) | Company policies, API docs |
-| **Artifacts** | Files and outputs from past tasks (`save_artifact`) | Generated reports, exported data |
+| **Artifacts** | Per-session files under `$TOMO_HOME/sessions/<id>/artifacts/` (`save_artifact` / `list_artifacts` / `fetch_artifact`) | Reports, exports, images for this chat |
+
+
 | **Skills** | Reusable procedures distilled from experience | "How to onboard a new customer" playbook |
 | **Agent state** | Optional structured KV (`agent_state`) | Machine-readable keys when useful |
 
@@ -476,7 +478,8 @@ General-purpose primitives — enable per agent based on your use case:
 | `list_workplaces` / `agent_info` / `register_workplace` / `create_agent` | Workplaces, peer inspect, register local path, spawn agents |
 | `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
-| `recall` / `remember` / `agent_state` / `save_artifact` | Searchable KB, KV state, artifacts |
+| `recall` / `remember` / `agent_state` / `save_artifact` / `list_artifacts` / `fetch_artifact` | Searchable KB, KV state, durable artifacts |
+
 | `delegate` | Hand a subtask to another agent |
 
 See the `app/tools/` directory for the full catalog.
@@ -556,7 +559,7 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 - [ ] Channel adapters — WhatsApp, Discord, Slack; CLI-as-chat; multi-agent routing; media tools
 - [x] Skills — filesystem discover (`~/.agents/skills` + library), install CLI, `use_skill` body load
 - [ ] Skill registry — community marketplace / remote install
-- [ ] Observability — traces, artifact browser, cost tracking per agent
+- [ ] Observability — traces, cost tracking per agent
 - [ ] Eval / evaluator UI (gated today via `TOMO_EVAL_UI`)
 - [ ] Local Docker isolation (today: path-jailed host process)
 
