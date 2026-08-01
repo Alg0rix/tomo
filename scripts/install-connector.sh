@@ -2,7 +2,7 @@
 # Install or update a prebuilt tomo-connector from GitHub Releases into ~/.local/bin.
 # Re-running replaces the binary (and restarts the user service if enabled).
 # Usage: curl -fsSL …/scripts/install-connector.sh | bash
-# Env: TOMO_CONNECTOR_VERSION=v0.1.1 (default: latest)
+# Env: TOMO_CONNECTOR_VERSION=v0.1.2 (default: latest)
 set -euo pipefail
 
 REPO="${TOMO_CONNECTOR_REPO:-Alg0rix/tomo}"
