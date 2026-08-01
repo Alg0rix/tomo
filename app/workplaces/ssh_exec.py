@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import io
-import os
 import shlex
 import time
 from pathlib import Path
@@ -54,15 +53,8 @@ def connect(workplace: dict[str, Any]) -> paramiko.SSHClient:
             client.load_host_keys(str(known))
         except OSError:
             pass
-    # Reject unknown hosts by default. Opt into TOFU via TOMO_SSH_TRUST_UNKNOWN=1
-    # (or workplace flag) for first-time lab devices.
-    trust = bool(workplace.get("ssh_trust_unknown")) or (
-        os.environ.get("TOMO_SSH_TRUST_UNKNOWN", "").strip() in ("1", "true", "yes")
-    )
-    if trust:
-        client.set_missing_host_key_policy(paramiko.WarningPolicy())
-    else:
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    # Require a known host key (add via ssh-keyscan / known_hosts). Never AutoAdd.
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     pkey = None
     if key.strip():
         for loader in (

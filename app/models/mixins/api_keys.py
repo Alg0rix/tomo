@@ -21,7 +21,8 @@ def _now() -> float:
 
 
 def _hash_key(token: str) -> str:
-    # Fingerprint for high-entropy API tokens (not password KDF).
+    # Fingerprint for high-entropy API tokens (not a password KDF).
+    # codeql[py/weak-sensitive-data-hashing]
     return hashlib.blake2b(token.encode("utf-8"), digest_size=32).hexdigest()
 
 

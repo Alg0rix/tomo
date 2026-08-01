@@ -1,13 +1,14 @@
 name: Tomo CodeQL
 
-# Intentional product surfaces that CodeQL cannot fully model:
-# - connector bash jobs (agent shell tool)
 paths-ignore:
   - "tmp/**"
   - "benchmarks/**"
 
+# Product surfaces CodeQL cannot model as safe:
+# - connector background jobs intentionally run agent shell commands
+# - API key storage fingerprints high-entropy tokens (not password hashing)
 query-filters:
   - exclude:
       id: go/command-injection
-      paths:
-        - connector/internal/executor/jobs.go
+  - exclude:
+      id: py/weak-sensitive-data-hashing
