@@ -37,7 +37,7 @@ func ensureTrailingSep(p string) string {
 	return clean
 }
 
-// resolvePath — relative paths jailed under workDir; absolute allowed.
+// resolvePath — paths (relative or absolute) must stay under workDir.
 func resolvePath(path, workDir string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -53,24 +53,16 @@ func resolvePath(path, workDir string) (string, error) {
 		resolved = filepath.Join(workDir, path)
 	}
 	clean := filepath.Clean(resolved)
-	if !filepath.IsAbs(path) {
-		prefix := workDir
-		if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
-			prefix += string(os.PathSeparator)
-		}
-		workClean := filepath.Clean(strings.TrimRight(workDir, string(os.PathSeparator)))
-		if clean != workClean && !strings.HasPrefix(clean, prefix) {
-			return "", fmt.Errorf("path escapes working directory: %s", path)
-		}
+	workClean := filepath.Clean(strings.TrimRight(workDir, string(os.PathSeparator)))
+	prefix := workClean + string(os.PathSeparator)
+	if clean != workClean && !strings.HasPrefix(clean, prefix) {
+		return "", fmt.Errorf("path escapes working directory: %s", path)
 	}
 	return clean, nil
 }
 
-func resolvePathAbs(path, workDir string) string {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	return filepath.Clean(filepath.Join(workDir, path))
+func resolvePathAbs(path, workDir string) (string, error) {
+	return resolvePath(path, workDir)
 }
 
 func truncate(s string) string {

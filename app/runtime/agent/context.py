@@ -63,10 +63,16 @@ def coordinator_system_prompt(path: Path | None = None) -> str:
     return text or _FALLBACK_PROMPT
 
 
-def _read_md(path: Path) -> str:
+def _read_md(path: Path, *, home_root: Path | None = None) -> str:
     """Read a markdown file, returning stripped text or '' when missing/blank."""
+    from app.core.paths import try_under
+
+    root = home._root(home_root)
+    target = try_under(root, path)
+    if target is None:
+        return ""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return ""
     return text.strip()
@@ -98,19 +104,19 @@ def build_system_prompt(
     root = Path(home_root) if home_root is not None else config.TOMO_HOME
     parts: list[str] = []
 
-    global_soul = _read_md(home.soul_path(root))
+    global_soul = _read_md(home.soul_path(root), home_root=root)
     if global_soul:
         parts.append(global_soul)
 
     base = ""
     if agent_id:
-        base = _read_md(home.agent_system_path(agent_id, root))
+        base = _read_md(home.agent_system_path(agent_id, root), home_root=root)
     if not base:
         base = coordinator_system_prompt()
     parts.append(base)
 
     if agent_id:
-        agent_soul = _read_md(home.agent_soul_path(agent_id, root))
+        agent_soul = _read_md(home.agent_soul_path(agent_id, root), home_root=root)
         if agent_soul:
             parts.append(agent_soul)
         # Coordinator (and any agent with delegate) needs the live swarm roster.

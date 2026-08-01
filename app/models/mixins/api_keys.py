@@ -1,7 +1,7 @@
 """Per-account API keys for Bearer / X-API-Key access to ``/api/*``.
 
-Plaintext token is shown **once** on create. Only SHA-256 hashes are stored.
-Token format: ``tomo_<urlsafe>``.
+Plaintext token is shown **once** on create. Only fingerprints are stored
+(BLAKE2b-256 of the high-entropy token). Token format: ``tomo_<urlsafe>``.
 """
 
 from __future__ import annotations
@@ -21,7 +21,9 @@ def _now() -> float:
 
 
 def _hash_key(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    # Fingerprint for high-entropy API tokens (not a password KDF).
+    # codeql[py/weak-sensitive-data-hashing]
+    return hashlib.blake2b(token.encode("utf-8"), digest_size=32).hexdigest()
 
 
 def _row_public(row: sqlite3.Row) -> dict[str, Any]:

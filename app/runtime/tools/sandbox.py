@@ -118,11 +118,14 @@ def resolve_work_root(agent_id: str | None = None) -> Path:
     Order: session/turn local workplace → else ``$TOMO_WORK/<agent>``
     (``~/tomo/<agent>`` by default).
     """
+    from app.core.paths import ensure_under
+
     aid = _safe_agent_id(agent_id if agent_id is not None else current_agent_id())
     wp_root = _workplace_local_root(aid)
     if wp_root is not None:
         return wp_root
-    root = home.agent_work_dir(aid).resolve()
+    base = home.work_root().resolve()
+    root = ensure_under(base, aid)
     root.mkdir(parents=True, exist_ok=True)
     return root
 

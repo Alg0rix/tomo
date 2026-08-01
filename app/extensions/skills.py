@@ -158,13 +158,25 @@ def iter_skill_md_files(root: Path) -> Iterator[Path]:
                 yield nested
 
 
-def load_discovered_skill(skill_md: Path, source: str) -> DiscoveredSkill | None:
+def load_discovered_skill(
+    skill_md: Path, source: str, *, root: Path | None = None
+) -> DiscoveredSkill | None:
+    from app.core.paths import try_under
+
     try:
-        text = skill_md.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        md = skill_md
+        if root is not None:
+            jailed = try_under(root, skill_md)
+            if jailed is None:
+                return None
+            md = jailed
+        else:
+            md = skill_md.resolve()
+        text = md.read_text(encoding="utf-8")
+    except (OSError, UnicodeError, ValueError):
         return None
     meta, body = parse_frontmatter(text)
-    dirname = skill_md.parent.name
+    dirname = md.parent.name
     sid = slugify_skill_id(str(meta.get("name") or dirname))
     name = str(meta.get("name") or dirname).strip() or sid
     description = str(meta.get("description") or "").strip()
@@ -181,8 +193,8 @@ def load_discovered_skill(skill_md: Path, source: str) -> DiscoveredSkill | None
         name=name,
         description=description,
         version=version,
-        path=skill_md.parent,
-        skill_md=skill_md,
+        path=md.parent,
+        skill_md=md,
         source=source,
         body=body.strip(),
     )
@@ -193,7 +205,7 @@ def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
     by_id: dict[str, DiscoveredSkill] = {}
     for root, source in skill_search_roots(home_root):
         for skill_md in iter_skill_md_files(root):
-            skill = load_discovered_skill(skill_md, source)
+            skill = load_discovered_skill(skill_md, source, root=root)
             if skill is None:
                 continue
             existing = by_id.get(skill.id)
@@ -220,6 +232,8 @@ def install_from_path(
     home_root: Path | None = None,
 ) -> DiscoveredSkill:
     """Copy a skill directory (or parent of SKILL.md) into the library."""
+    from app.core.paths import ensure_under
+
     src = Path(src).expanduser().resolve()
     if src.is_file() and src.name == "SKILL.md":
         src = src.parent
@@ -228,17 +242,17 @@ def install_from_path(
     skill_md = src / "SKILL.md"
     if not skill_md.is_file():
         raise FileNotFoundError(f"no SKILL.md in {src}")
-    loaded = load_discovered_skill(skill_md, "library")
+    loaded = load_discovered_skill(skill_md, "library", root=src)
     if loaded is None:
         raise ValueError(f"could not parse skill at {src}")
     sid = slugify_skill_id(skill_id or loaded.id)
-    dest_root = home.library_skills_dir(home_root)
+    dest_root = home.library_skills_dir(home_root).resolve()
     dest_root.mkdir(parents=True, exist_ok=True)
-    dest = dest_root / sid
+    dest = ensure_under(dest_root, sid)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(src, dest, dirs_exist_ok=False)
-    installed = load_discovered_skill(dest / "SKILL.md", "library")
+    installed = load_discovered_skill(dest / "SKILL.md", "library", root=dest_root)
     if installed is None:
         raise RuntimeError(f"install failed for {sid}")
     # Re-key id to dest dirname when forced
@@ -258,9 +272,12 @@ def install_from_path(
 
 def uninstall_library_skill(skill_id: str, home_root: Path | None = None) -> bool:
     """Remove a managed library skill directory. External skills cannot be removed."""
+    from app.core.paths import try_under
+
     sid = slugify_skill_id(skill_id)
-    dest = home.library_skills_dir(home_root) / sid
-    if not dest.is_dir():
+    lib = home.library_skills_dir(home_root).resolve()
+    dest = try_under(lib, sid)
+    if dest is None or not dest.is_dir():
         return False
     shutil.rmtree(dest)
     return True
@@ -339,7 +356,10 @@ _ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets
 
 
 def _library_skill_dir(skill_id: str, home_root: Path | None = None) -> Path:
-    return home.library_skills_dir(home_root) / slugify_skill_id(skill_id)
+    from app.core.paths import ensure_under
+
+    lib = home.library_skills_dir(home_root).resolve()
+    return ensure_under(lib, slugify_skill_id(skill_id))
 
 
 def _compose_skill_md(
@@ -395,7 +415,7 @@ def write_library_skill(
         raise FileExistsError(f"skill already exists: {sid}")
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "SKILL.md").write_text(content, encoding="utf-8")
-    loaded = load_discovered_skill(dest / "SKILL.md", "library")
+    loaded = load_discovered_skill(dest / "SKILL.md", "library", root=home.library_skills_dir(home_root))
     if loaded is None:
         raise RuntimeError(f"failed to load written skill {sid}")
     return loaded
@@ -425,7 +445,7 @@ def edit_library_skill(
             raise ValueError(f"SKILL.md exceeds {_MAX_SKILL_CHARS} characters")
         skill_md.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
     else:
-        existing = load_discovered_skill(skill_md, "library")
+        existing = load_discovered_skill(skill_md, "library", root=home.library_skills_dir(home_root))
         if existing is None:
             raise ValueError(f"could not parse skill {sid}")
         meta, old_body = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
@@ -441,7 +461,7 @@ def edit_library_skill(
             },
         )
         skill_md.write_text(text, encoding="utf-8")
-    loaded = load_discovered_skill(skill_md, "library")
+    loaded = load_discovered_skill(skill_md, "library", root=home.library_skills_dir(home_root))
     if loaded is None:
         raise RuntimeError(f"failed to reload skill {sid}")
     return loaded
@@ -486,7 +506,7 @@ def patch_library_skill(
     if len(updated) > _MAX_SKILL_CHARS:
         raise ValueError(f"result exceeds {_MAX_SKILL_CHARS} characters")
     target.write_text(updated, encoding="utf-8")
-    loaded = load_discovered_skill(dest / "SKILL.md", "library")
+    loaded = load_discovered_skill(dest / "SKILL.md", "library", root=home.library_skills_dir(home_root))
     if loaded is None:
         raise RuntimeError(f"failed to reload skill {sid}")
     return loaded

@@ -10,6 +10,7 @@ import base64
 import io
 import shlex
 import time
+from pathlib import Path
 from typing import Any
 
 import paramiko
@@ -45,7 +46,15 @@ def connect(workplace: dict[str, Any]) -> paramiko.SSHClient:
     if not host or not user:
         raise ValueError("SSH workplace needs ssh_host and ssh_user")
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.load_system_host_keys()
+    known = Path.home() / ".ssh" / "known_hosts"
+    if known.is_file():
+        try:
+            client.load_host_keys(str(known))
+        except OSError:
+            pass
+    # Require a known host key (add via ssh-keyscan / known_hosts). Never AutoAdd.
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     pkey = None
     if key.strip():
         for loader in (

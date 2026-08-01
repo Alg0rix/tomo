@@ -54,11 +54,20 @@ func startBackgroundJob(command, cwd string) (map[string]any, error) {
 	if command == "" {
 		return nil, fmt.Errorf("'command' must be a non-empty string")
 	}
+	root := WorkRoot()
 	if cwd == "" {
-		cwd = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
+		cwd = strings.TrimRight(root, string(os.PathSeparator))
+	} else {
+		resolved, err := resolvePath(cwd, root)
+		if err != nil {
+			return nil, fmt.Errorf("cwd: %w", err)
+		}
+		cwd = resolved
 	}
 	id := fmt.Sprintf("job_%d", jobCounter.Add(1))
-	cmd := exec.Command("bash", "-lc", command)
+	// Agent workplace tooling intentionally runs shell scripts from the coordinator.
+	// #nosec G204 -- command is the product surface (bash tool); cwd is jailed above.
+	cmd := exec.Command("bash", "-lc", command) //nolint:gosec
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 

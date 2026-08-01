@@ -246,11 +246,18 @@ async def upload_session_attachment(
         raise HTTPException(status_code=400, detail="File too large (max 20MB)")
     safe_name = Path((name or file.filename or "upload")).name[:120] or "upload"
     attachment_id = f"att_{uuid4().hex[:18]}"
-    storage_dir = Path(TOMO_HOME) / "attachments" / session_id
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    ext = Path(safe_name).suffix or (Path(file.filename or "").suffix or ".bin")
-    stored_name = f"{attachment_id}{ext}"
-    stored_path = storage_dir / stored_name
+    from app.core.paths import ensure_under
+
+    try:
+        att_root = (Path(TOMO_HOME) / "attachments").resolve()
+        att_root.mkdir(parents=True, exist_ok=True)
+        storage_dir = ensure_under(att_root, session_id)
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        ext = Path(safe_name).suffix or (Path(file.filename or "").suffix or ".bin")
+        stored_name = f"{attachment_id}{ext}"
+        stored_path = ensure_under(storage_dir, stored_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     stored_path.write_bytes(data)
     mime = file.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
     attachment = store.create_attachment(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
@@ -14,9 +15,21 @@ router = APIRouter()
 
 
 def _safe_next(target: str) -> str:
-    if not target or "://" in target or target.startswith("//"):
+    """Allow only same-origin relative paths (no scheme / host / protocol-relative)."""
+    if not target or not isinstance(target, str):
         return "/"
-    return target if target.startswith("/") else "/"
+    parts = urlsplit(target.strip())
+    if parts.scheme or parts.netloc:
+        return "/"
+    path = parts.path or "/"
+    if not path.startswith("/") or path.startswith("//"):
+        return "/"
+    # Drop backslash tricks / nulls.
+    if "\\" in path or "\x00" in path:
+        return "/"
+    query = f"?{parts.query}" if parts.query else ""
+    frag = f"#{parts.fragment}" if parts.fragment else ""
+    return f"{path}{query}{frag}"
 
 
 @router.post("/login")

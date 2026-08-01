@@ -86,9 +86,12 @@ async def session_chat_stream(
                         start_seq=0,
                         attachment_ids=attachment_ids,
                     )
-                except ValueError as exc:
+                except ValueError:
                     yield fmt_sse(
-                        {"event": "error", "data": {"message": str(exc)}}
+                        {
+                            "event": "error",
+                            "data": {"message": "Could not start turn"},
+                        }
                     )
                     return
 

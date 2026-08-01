@@ -317,7 +317,10 @@ func searchFiles(params map[string]any) (any, error) {
 func readFileB64(params map[string]any) (any, error) {
 	pathArg := paramString(params, "path")
 	root := WorkRoot()
-	path := resolvePathAbs(pathArg, root)
+	path, err := resolvePathAbs(pathArg, root)
+	if err != nil {
+		return nil, fmt.Errorf("read_file_b64 error: %w", err)
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("read_file_b64 error: %w", err)
@@ -344,12 +347,16 @@ func readFileB64(params map[string]any) (any, error) {
 			return nil, fmt.Errorf("seek error: %w", err)
 		}
 	}
+	const maxChunk = 8 << 20 // 8 MiB cap — avoid unbounded allocation from client size
 	readSize := totalSize - offset
 	if size > 0 && int64(size) < readSize {
 		readSize = int64(size)
 	}
 	if readSize < 0 {
 		readSize = 0
+	}
+	if readSize > maxChunk {
+		readSize = maxChunk
 	}
 	buf := make([]byte, readSize)
 	n, err := io.ReadFull(f, buf)
@@ -369,7 +376,10 @@ func writeFileB64(params map[string]any) (any, error) {
 	pathArg := paramString(params, "path")
 	dataB64 := paramString(params, "data")
 	root := WorkRoot()
-	path := resolvePathAbs(pathArg, root)
+	path, err := resolvePathAbs(pathArg, root)
+	if err != nil {
+		return nil, fmt.Errorf("write_file_b64 error: %w", err)
+	}
 	decoded, err := base64.StdEncoding.DecodeString(dataB64)
 	if err != nil {
 		return nil, fmt.Errorf("base64 decode error: %w", err)

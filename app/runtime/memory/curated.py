@@ -91,19 +91,27 @@ def serialize_entries(entries: list[str]) -> str:
     return ENTRY_DELIMITER.join(cleaned) + "\n"
 
 
-def read_entries(path: Path) -> list[str]:
-    if not path.is_file():
+def read_entries(path: Path, *, home_root: Path | None = None) -> list[str]:
+    from app.core.paths import try_under
+
+    root = home._root(home_root)
+    target = try_under(root, path)
+    if target is None or not target.is_file():
         return []
     try:
-        return parse_entries(path.read_text(encoding="utf-8"))
+        return parse_entries(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeError) as exc:
-        _logger.warning("failed to read memory file %s: %s", path, exc)
+        _logger.warning("failed to read memory file %s: %s", target, exc)
         return []
 
 
-def write_entries(path: Path, entries: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialize_entries(entries), encoding="utf-8")
+def write_entries(path: Path, entries: list[str], *, home_root: Path | None = None) -> None:
+    from app.core.paths import ensure_under
+
+    root = home._root(home_root)
+    target = ensure_under(root, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(serialize_entries(entries), encoding="utf-8")
 
 
 def _char_count(entries: list[str]) -> int:
@@ -137,11 +145,13 @@ def render_from_disk(
 ) -> str:
     """Build the live curated-memory prompt section from disk."""
     parts: list[str] = []
-    user_entries = read_entries(user_path(home_root=home_root))
+    user_entries = read_entries(user_path(home_root=home_root), home_root=home_root)
     if user_entries:
         parts.append(render_block("user", user_entries))
     if agent_id:
-        mem_entries = read_entries(memory_path(agent_id, home_root=home_root))
+        mem_entries = read_entries(
+            memory_path(agent_id, home_root=home_root), home_root=home_root
+        )
         if mem_entries:
             parts.append(render_block("memory", mem_entries))
     return "\n\n".join(parts)
@@ -189,7 +199,7 @@ def add_entry(
     if not text:
         return {"ok": False, "error": "content is empty"}
     path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path)
+    entries = read_entries(path, home_root=home_root)
     if text in entries:
         return {"ok": True, "message": "already present", "count": len(entries)}
     limit = _char_limit(target)
@@ -201,7 +211,7 @@ def add_entry(
             "count": len(entries),
             "chars": _char_count(entries),
         }
-    write_entries(path, trial)
+    write_entries(path, trial, home_root=home_root)
     return {
         "ok": True,
         "message": f"added to {path.name}",
@@ -229,7 +239,7 @@ def replace_entry(
     if not replacement:
         return {"ok": False, "error": "new content is empty"}
     path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path)
+    entries = read_entries(path, home_root=home_root)
     matches = [i for i, e in enumerate(entries) if needle in e]
     if not matches:
         return {"ok": False, "error": f"no entry matching {needle!r}"}
@@ -246,7 +256,7 @@ def replace_entry(
         updated[idx] = entries[idx].replace(needle, replacement, 1)
     if _char_count(updated) > _char_limit(target):
         return {"ok": False, "error": f"would exceed {target} char limit"}
-    write_entries(path, updated)
+    write_entries(path, updated, home_root=home_root)
     return {
         "ok": True,
         "message": f"replaced in {path.name}",
@@ -269,7 +279,7 @@ def remove_entry(
     if not needle:
         return {"ok": False, "error": "old must be a non-empty substring"}
     path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path)
+    entries = read_entries(path, home_root=home_root)
     matches = [i for i, e in enumerate(entries) if needle in e]
     if not matches:
         return {"ok": False, "error": f"no entry matching {needle!r}"}
@@ -279,7 +289,7 @@ def remove_entry(
             "error": f"ambiguous match ({len(matches)} entries); use a longer unique substring",
         }
     updated = [e for i, e in enumerate(entries) if i != matches[0]]
-    write_entries(path, updated)
+    write_entries(path, updated, home_root=home_root)
     return {
         "ok": True,
         "message": f"removed from {path.name}",
@@ -298,7 +308,7 @@ def list_entries(
     if target not in ("memory", "user"):
         return {"ok": False, "error": "target must be memory or user"}
     path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path)
+    entries = read_entries(path, home_root=home_root)
     return {
         "ok": True,
         "target": target,
