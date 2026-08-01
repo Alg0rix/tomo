@@ -136,6 +136,26 @@ def test_login_post_success_and_fail(tmp_path) -> None:
     assert res.status_code == 303
     assert res.headers["location"] == "/"
 
+    res = client.post(
+        "/login",
+        data={
+            "username": "admin",
+            "password": "tomo",
+            "next": "https://evil.example/phish",
+        },
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/"
+
+    res = client.post(
+        "/login",
+        data={"username": "admin", "password": "tomo", "next": "/sessions"},
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/sessions"
+
 
 def test_system_page_includes_accounts(tmp_path) -> None:
     client = _client(tmp_path)

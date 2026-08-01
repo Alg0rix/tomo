@@ -358,8 +358,10 @@ func readFileB64(params map[string]any) (any, error) {
 	if readSize > maxChunk {
 		readSize = maxChunk
 	}
-	buf := make([]byte, readSize)
-	n, err := io.ReadFull(f, buf)
+	// Allocate a fixed-cap buffer (constant size) so allocation is not
+	// driven by user-controlled size/offset or file length (CWE-770).
+	buf := make([]byte, maxChunk)
+	n, err := io.ReadFull(f, buf[:readSize])
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, fmt.Errorf("read error: %w", err)
 	}
