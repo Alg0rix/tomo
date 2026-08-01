@@ -34,8 +34,9 @@
     var raw = text == null ? '' : String(text);
     el.dataset.raw = raw;
     el.dataset.md = '0';
+    var partial = !!(el.closest && el.closest('.streaming, .msg.streaming'));
     if (window.TomoMarkdown && TomoMarkdown.renderInto) {
-      TomoMarkdown.renderInto(el, raw);
+      TomoMarkdown.renderInto(el, raw, { partial: partial });
       return;
     }
     el.textContent = raw;
