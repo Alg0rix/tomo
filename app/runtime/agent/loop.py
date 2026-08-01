@@ -37,6 +37,11 @@ mutating tools run serially. Events are emitted in original call order.
 model decides when to track multi-step work). Optional ATG: pass
 ``enable_atg=True`` to front-load a compiled DAG that seeds the same
 checklist; default is off (no word/length heuristic).
+
+**Active learning.** After eligible multi-step turns, a background review may
+distill durable facts (``remember``) and procedural skills (``manage_skill``)
+when Settings → Learning loop is on. Mid-turn the agent can also call those
+tools directly.
 """
 from __future__ import annotations
 
@@ -87,6 +92,9 @@ _READ_ONLY_TOOLS = frozenset(
         "list_skills",
         "list_workplaces",
         "todo",
+        "use_skill",
+        "agent_state",
+        "recall",
     }
 )
 
@@ -471,6 +479,7 @@ async def run_turn(
     metrics = TurnMetrics(agent_id=agent_id, session_id=session_id)
     sandbox_token = sandbox.bind_agent(agent_id)
     todo_token = todo_mod.bind_session(session_id)
+    skills_touched: list[str] = []
     try:
         try:
             client = llm if llm is not None else get_llm(agent_id)
@@ -495,6 +504,7 @@ async def run_turn(
                 user_message,
                 system_prompt=prompt,
                 for_agent_id=agent_id,
+                session_id=session_id,
             )
         except Exception as exc:
             metrics.ended_kind = "error"
@@ -594,12 +604,25 @@ async def run_turn(
                 )
                 metrics.ended_kind = "final"
                 metrics.log_summary()
+                final_content = resp.content or ""
                 yield {
                     "kind": "final",
-                    "content": resp.content or "",
+                    "content": final_content,
                     "already_streamed": streamed,
                     "metrics": metrics.as_dict(),
                 }
+                from app.runtime.agent.learning import schedule_learning_review
+                from app.runtime.agent.subagent import current_depth
+
+                schedule_learning_review(
+                    client=client,
+                    messages=messages,
+                    metrics=metrics,
+                    user_message=user_message,
+                    final_content=final_content,
+                    skills_touched=skills_touched,
+                    nested=current_depth() > 0,
+                )
                 return
 
             paired = _with_ids(resp.tool_calls, id_counter)
@@ -607,6 +630,13 @@ async def run_turn(
 
             tool_names = [c.name for _cid, c in paired]
             _logger.info("tool round %d: %s", iteration, tool_names)
+            for _cid, call in paired:
+                if call.name not in {"use_skill", "manage_skill"}:
+                    continue
+                args = call.arguments if isinstance(call.arguments, dict) else {}
+                sid = args.get("skill_id") or args.get("name") or args.get("id")
+                if isinstance(sid, str) and sid.strip():
+                    skills_touched.append(sid.strip())
 
             # ── Loop detection: identical (tool, args) repeated too often ──
             for _cid, call in paired:
@@ -852,6 +882,18 @@ async def run_turn(
                     "already_streamed": streamed_final and not resp_final.has_tool_calls,
                     "metrics": metrics.as_dict(),
                 }
+                from app.runtime.agent.learning import schedule_learning_review
+                from app.runtime.agent.subagent import current_depth
+
+                schedule_learning_review(
+                    client=client,
+                    messages=messages,
+                    metrics=metrics,
+                    user_message=user_message,
+                    final_content=content,
+                    skills_touched=skills_touched,
+                    nested=current_depth() > 0,
+                )
                 return
         except Exception as exc:
             metrics.ended_kind = "error"

@@ -1,0 +1,29 @@
+{
+  "id": "save_artifact",
+  "name": "Save Artifact",
+  "description": "Catalog a file or output from a task for later retrieval.",
+  "backend": "app.runtime.tools.save_artifact",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "save_artifact",
+      "description": "Register an artifact (report, export, generated file) so future turns can find it. Prefer after producing lasting outputs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Short label." },
+          "path": { "type": "string", "description": "Filesystem path or URL." },
+          "kind": {
+            "type": "string",
+            "description": "file | report | export | other",
+            "default": "file"
+          },
+          "notes": { "type": "string", "description": "Optional context." },
+          "session_id": { "type": "string" },
+          "agent_id": { "type": "string" }
+        },
+        "required": ["title"]
+      }
+    }
+  }
+}

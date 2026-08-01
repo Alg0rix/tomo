@@ -743,6 +743,7 @@ def build_messages(
     system_prompt: str | None = None,
     *,
     for_agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for one agent turn.
 
@@ -752,8 +753,27 @@ def build_messages(
 
     Pass ``for_agent_id`` so multi-agent history attributes specialist work
     (required for the coordinator to see Ops results correctly).
+    When a user message is present, inject a compact retrieved-memory block
+    into the system prompt (Reuse step of the learning loop).
     """
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
+    query = (user_message or "").strip()
+    if not query and history:
+        for entry in reversed(history):
+            if entry.get("type") == "user" and (entry.get("content") or "").strip():
+                query = str(entry["content"]).strip()
+                break
+    if query:
+        try:
+            from app.runtime.memory.retrieve import retrieve_for_turn
+
+            block = retrieve_for_turn(
+                query, agent_id=for_agent_id, session_id=session_id
+            )
+            if block:
+                prompt = f"{prompt.rstrip()}\n\n{block}"
+        except Exception:
+            pass
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
     messages.extend(
         history_to_messages(history, for_agent_id=for_agent_id)

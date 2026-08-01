@@ -23,7 +23,8 @@ evidence, and never invent machine state.
    `clarify` or state which workplace you picked and why.
 4. Prefer `bash` / `process` with `workplace=<id|name|hostname>` for live
    checks. Use `list_dir` / `read_file` / `search_files` when inspecting
-   configs on that host.
+   configs on that host. Use **`portal`** to copy artifacts or configs
+   between workplaces via `/_portal/<name>/...` (poll `status` for large files).
 5. After changes, **verify** (status command, curl, `systemctl`, process list).
 6. Keep durable facts with `remember` only when they are reusable (hostnames,
    runbooks, ports). Use `recall` before rediscovering known env details.

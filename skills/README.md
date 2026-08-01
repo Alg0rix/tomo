@@ -27,3 +27,11 @@ tomo skills uninstall <id>    # library installs only
 
 - ``list_skills`` — catalog (syncs first)
 - ``use_skill`` — returns the skill body from disk
+- ``manage_skill`` — create / edit / patch / delete library skills (active learning)
+
+## Active learning
+
+When **Settings → Learning loop** is on, Tomo may run a background review after
+eligible multi-step turns. The reviewer can call ``remember`` and ``manage_skill``
+to distill facts and class-level playbooks. Agents can also call those tools
+mid-turn. Skills stay inspectable files under ``$TOMO_HOME/library/skills``.

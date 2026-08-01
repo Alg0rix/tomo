@@ -738,6 +738,8 @@ img { max-width: 100%; display: block; }
 /* turn timeline (thinking / tools) */
 .turn { width: min(100%, 820px); margin: 0 auto 16px; }
 .turn > .msg { margin-bottom: 0; }
+/* Live turns reuse the user bubble's .turn for tools — keep air before the trail. */
+.turn > .msg.user { margin-bottom: 14px; }
 .turn-pending {
   display: flex; align-items: center; gap: 10px;
   width: min(100%, 820px); margin: 0 auto 10px;
@@ -2139,7 +2141,15 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .data-table tr:last-child td { border-bottom: none; }
 
 /* toggle switch */
-.toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  cursor: pointer;
+}
 .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
 .toggle .track {
   position: absolute; inset: 0; border-radius: 99px; background: var(--surface-3);
@@ -2151,6 +2161,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: var(--shadow-1);
 }
 .toggle input:checked + .track::after { transform: translateX(16px); }
+.toggle input:disabled + .track { opacity: 0.5; cursor: not-allowed; }
 
 /* status dot */
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -2187,6 +2198,21 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .config-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .config-row:last-child { border-bottom: none; }
 .config-row .lbl { font-size: 12.5px; color: var(--text-dim); font-weight: 600; padding-top: 10px; }
+.config-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 6px;
+  min-width: 0;
+}
+.config-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  max-width: 36em;
+}
 .workplace-multi { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
 .workplace-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; line-height: 1.35; }
 .workplace-check input { margin-top: 2px; accent-color: var(--accent); }

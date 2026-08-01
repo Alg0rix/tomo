@@ -11,6 +11,7 @@ is unchanged. Busy state is process-local in-memory
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -874,6 +875,77 @@ class Store:
         ]
         n = (self.get_agent(agent_id) or {}).get("channel_count", 1)
         return [dict(c, enabled=i < n) for i, c in enumerate(base)]
+
+    # -- memory layers (state / artifacts / session summaries) ----------
+    def list_agent_state(self, agent_id: str) -> dict[str, str]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.list_agent_state(self._conn, agent_id)
+
+    def get_agent_state_value(self, agent_id: str, key: str) -> str | None:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.get_agent_state(self._conn, agent_id, key)
+
+    def set_agent_state_value(self, agent_id: str, key: str, value: str) -> None:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            mem_layers.set_agent_state(self._conn, agent_id, key, value)
+
+    def delete_agent_state_value(self, agent_id: str, key: str) -> bool:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.delete_agent_state(self._conn, agent_id, key)
+
+    def create_artifact(self, data: dict[str, Any]) -> dict[str, Any]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.create_artifact(self._conn, data)
+
+    def search_artifacts(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.search_artifacts(self._conn, query, limit=limit)
+
+    def list_artifacts(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.list_artifacts(self._conn, limit=limit)
+
+    def get_session_summary(self, session_id: str) -> dict[str, Any] | None:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.get_session_summary(self._conn, session_id)
+
+    def upsert_session_summary(
+        self, session_id: str, summary: str, *, message_count: int = 0
+    ) -> dict[str, Any]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.upsert_session_summary(
+                self._conn, session_id, summary, message_count=message_count
+            )
+
+    def bump_skill_use(self, skill_id: str) -> None:
+        with self._lock:
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(skills)")}
+            if "use_count" not in cols:
+                return
+            self._conn.execute(
+                "UPDATE skills SET use_count=COALESCE(use_count,0)+1, "
+                "last_used_at=? WHERE id=?",
+                (time.time(), skill_id),
+            )
+            self._conn.commit()
 
 
 store = Store()

@@ -23,11 +23,15 @@ code carefully. Prefer small, correct changes over sweeping rewrites.
 3. Plan a minimal diff. Prefer one coherent change set over drive-by cleanup.
 4. Edit → verify → summarize files touched and how to test.
 5. Use `todo` for multi-step work so progress stays visible.
-6. `recall` / `remember` for durable project conventions (test commands,
+6. `list_skills` / `use_skill` before reinventing a procedure; `manage_skill`
+   to distill class-level playbooks after non-trivial successes or corrections.
+7. `recall` / `remember` for durable project conventions (test commands,
    module layout) — not for dumping whole source files into memory.
-7. Remote infra / deploy / process babysitting → `delegate` to **Ops**.
+8. Remote infra / deploy / process babysitting → `delegate` to **Ops**.
    Open-web research / competitive notes → `delegate` to **Research**.
-8. If stuck in a loop (same tool+args), stop and report what you know — do
+   Cross-workplace file moves (artifacts, configs) → `portal`
+   (`/_portal/<name>/...` or `workplace_id:path`).
+9. If stuck in a loop (same tool+args), stop and report what you know — do
    not burn iterations repeating a failing call unchanged.
 
 ## Do not

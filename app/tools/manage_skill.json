@@ -1,0 +1,68 @@
+{
+  "id": "manage_skill",
+  "name": "Manage Skill",
+  "description": "Create or update reusable skill playbooks distilled from experience.",
+  "backend": "app.runtime.tools.skills_tools",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "manage_skill",
+      "description": "Create, edit, patch, or delete a reusable skill (SKILL.md playbook) in the local skill library. Use after multi-step work when a durable procedure, fix pattern, or user preference about how to do a *class* of tasks should persist. Prefer patching an existing class-level skill over creating narrow one-off skills.\n\nActions:\n- create: new skill (skill_id, description, body required)\n- edit: replace SKILL.md fields or full content\n- patch: unique find-and-replace in SKILL.md or a support file\n- write_file: add references/templates/scripts/assets support file\n- delete: remove a library skill you created\n\nWhen NOT to use: greetings, one-shot Q&A, environment glitches ('command not found'), or transient failures that already resolved. Capture the durable FIX pattern, not 'tool X is broken'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["create", "edit", "patch", "write_file", "delete"],
+            "description": "Mutation to perform."
+          },
+          "skill_id": {
+            "type": "string",
+            "description": "Skill id / directory slug (e.g. python-testing)."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human name for create/edit (defaults to skill_id)."
+          },
+          "description": {
+            "type": "string",
+            "description": "Short trigger blurb — when to load this skill."
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown procedure after frontmatter (create/edit)."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full SKILL.md including frontmatter (edit), or support file text (write_file)."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "Exact text to replace (patch)."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "Replacement text (patch)."
+          },
+          "file_path": {
+            "type": "string",
+            "description": "SKILL.md (default) or references|templates|scripts|assets/..."
+          },
+          "version": {
+            "type": "string",
+            "description": "Semver-ish version string."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "create only: replace existing skill id if present."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Optional agent to assign the new skill to."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

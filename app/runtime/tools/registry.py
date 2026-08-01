@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from app.core import config
+from app.runtime.tools import agent_state as _agent_state_backend
 from app.runtime.tools import bash as _bash_backend
 from app.runtime.tools import clarify as _clarify_backend
 from app.runtime.tools import create_agent as _create_agent_backend
@@ -27,12 +28,14 @@ from app.runtime.tools import forget_memory as _forget_memory_backend
 from app.runtime.tools import list_dir as _list_dir_backend
 from app.runtime.tools import list_workplaces as _list_workplaces_backend
 from app.runtime.tools import patch as _patch_backend
+from app.runtime.tools import portal as _portal_backend
 from app.runtime.tools import process as _process_backend
 from app.runtime.tools import read_file as _read_file_backend
 from app.runtime.tools import recall as _recall_backend
 from app.runtime.tools import register_workplace as _register_workplace_backend
 from app.runtime.tools import remember as _remember_backend
 from app.runtime.tools import runpy as _runpy_backend
+from app.runtime.tools import save_artifact as _save_artifact_backend
 from app.runtime.tools import search_files as _search_files_backend
 from app.runtime.tools import session_search as _session_search_backend
 from app.runtime.tools import skills_tools as _skills_tools
@@ -68,10 +71,14 @@ _BACKENDS: dict[str, ToolRunner] = {
     "session_search": _session_search_backend.run,
     "list_skills": _skills_tools.list_skills_run,
     "use_skill": _skills_tools.use_skill_run,
+    "manage_skill": _skills_tools.manage_skill_run,
     "clarify": _clarify_backend.run,
     "forget_memory": _forget_memory_backend.run,
     "recall": _recall_backend.run,
     "remember": _remember_backend.run,
+    "agent_state": _agent_state_backend.run,
+    "save_artifact": _save_artifact_backend.run,
+    "portal": _portal_backend.run,
 }
 
 

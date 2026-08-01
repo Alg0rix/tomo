@@ -100,6 +100,19 @@ def append_session_history(
             entry["ts"],
         ),
     )
+    msg_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    try:
+        from app.runtime.memory.fts import index_message_fts
+
+        index_message_fts(
+            conn,
+            msg_id=msg_id,
+            session_id=session_id,
+            msg_type=str(entry.get("type") or ""),
+            content=str(entry.get("content") or ""),
+        )
+    except Exception:
+        pass
     count = conn.execute(
         "SELECT COUNT(*) AS c FROM messages WHERE session_id=?", (session_id,)
     ).fetchone()["c"]
@@ -119,6 +132,14 @@ def append_session_history(
 
 def clear_session_history(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+    try:
+        conn.execute("DELETE FROM messages_fts WHERE session_id=?", (session_id,))
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("DELETE FROM session_summaries WHERE session_id=?", (session_id,))
+    except sqlite3.OperationalError:
+        pass
     conn.execute(
         "UPDATE sessions SET message_count=0, updated_at=? WHERE id=?",
         (_now(), session_id),
@@ -126,7 +147,7 @@ def clear_session_history(conn: sqlite3.Connection, session_id: str) -> None:
     conn.commit()
 
 
-def search_messages(
+def search_messages_like(
     conn: sqlite3.Connection,
     query: str,
     *,
@@ -155,3 +176,15 @@ def search_messages(
         }
         for r in rows
     ]
+
+
+def search_messages(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Hybrid message search (FTS + LIKE fallback)."""
+    from app.runtime.memory.retrieve import search_messages_hybrid
+
+    return search_messages_hybrid(conn, query, limit=limit)

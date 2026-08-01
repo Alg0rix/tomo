@@ -1,17 +1,20 @@
-"""Knowledge entries — SQLite CRUD + keyword search (Alpha Slice E).
+"""Knowledge entries — SQLite CRUD + hybrid search (FTS + semantic).
 
 Stores title/body/tags rows used by the ``recall`` / ``remember`` tools and
-the System → Memory UI. Search is LIKE-based (no vector DB).
+the System → Memory UI.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import time
 import uuid
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"[^a-z0-9_]+")
 
@@ -52,21 +55,35 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _slugify(text: str) -> str:
-    s = _SLUG_RE.sub("_", (text or "").strip().lower()).strip("_")
-    return s[:48] or "entry"
+def _index_entry(conn: sqlite3.Connection, entry: dict[str, Any]) -> None:
+    try:
+        from app.runtime.memory.fts import upsert_knowledge_fts
+
+        upsert_knowledge_fts(conn, entry)
+    except Exception as exc:
+        _logger.debug("knowledge fts index failed: %s", exc)
+    try:
+        from app.runtime.memory.embeddings import upsert_embedding
+
+        blob = f"{entry.get('title') or ''}\n{entry.get('body') or ''}"
+        upsert_embedding(conn, scope="knowledge", ref_id=entry["id"], text=blob)
+    except Exception as exc:
+        _logger.debug("knowledge embed failed: %s", exc)
 
 
-def _new_id(conn: sqlite3.Connection, title: str) -> str:
-    base = f"kb_{_slugify(title)}"
-    candidate = base
-    n = 0
-    while conn.execute("SELECT 1 FROM knowledge_entries WHERE id=?", (candidate,)).fetchone():
-        n += 1
-        candidate = f"{base}_{n}"
-        if n > 50:
-            return f"kb_{uuid.uuid4().hex[:12]}"
-    return candidate
+def _drop_index(conn: sqlite3.Connection, entry_id: str) -> None:
+    try:
+        from app.runtime.memory.fts import delete_knowledge_fts
+
+        delete_knowledge_fts(conn, entry_id)
+    except Exception:
+        pass
+    try:
+        from app.runtime.memory.embeddings import delete_embedding
+
+        delete_embedding(conn, scope="knowledge", ref_id=entry_id)
+    except Exception:
+        pass
 
 
 def list_entries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -110,7 +127,11 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         ),
     )
     conn.commit()
-    return get_entry(conn, eid)  # type: ignore[return-value]
+    entry = get_entry(conn, eid)
+    assert entry is not None
+    _index_entry(conn, entry)
+    conn.commit()
+    return entry
 
 
 def update_entry(
@@ -143,7 +164,11 @@ def update_entry(
             params,
         )
         conn.commit()
-    return get_entry(conn, entry_id)
+    entry = get_entry(conn, entry_id)
+    if entry:
+        _index_entry(conn, entry)
+        conn.commit()
+    return entry
 
 
 def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
@@ -152,17 +177,18 @@ def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
     ).fetchone():
         return False
     conn.execute("DELETE FROM knowledge_entries WHERE id=?", (entry_id,))
+    _drop_index(conn, entry_id)
     conn.commit()
     return True
 
 
-def search_entries(
+def search_entries_lexical(
     conn: sqlite3.Connection,
     query: str,
     *,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Keyword / LIKE search over title, body, and tags. Returns top-k hits."""
+    """Token-overlap scorer (fallback when FTS/semantic miss)."""
     text = (query or "").strip()
     if not text:
         return []
@@ -186,7 +212,6 @@ def search_entries(
         for tok in tokens:
             if tok in hay:
                 score += 1
-                # Prefer title hits slightly.
                 if tok in entry["title"].lower():
                     score += 1
         if score > 0:
@@ -196,6 +221,18 @@ def search_entries(
     return [e for _, e in scored[:k]]
 
 
+def search_entries(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Hybrid search (FTS + semantic + lexical fallback)."""
+    from app.runtime.memory.retrieve import search_knowledge_hybrid
+
+    return search_knowledge_hybrid(conn, query, limit=limit)
+
+
 __all__ = [
     "list_entries",
     "get_entry",
@@ -203,4 +240,5 @@ __all__ = [
     "update_entry",
     "delete_entry",
     "search_entries",
+    "search_entries_lexical",
 ]

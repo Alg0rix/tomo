@@ -17,9 +17,9 @@ What ships in Alpha (slices 0→H):
 | **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
 | **Models** | Multi-profile catalog, default + per-agent model |
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
-| **Tools** | `bash`, `read_file`, `write_file`, `str_replace`, `search_files`, `delete_file`, `web_fetch`, `web_search`, `process`, `todo`, `session_search`, `list_skills`, `use_skill`, `list_workplaces`, `clarify`, `forget_memory`, `recall`, `remember`, `delegate` |
-| **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) |
-| **Memory / KB** | SQLite knowledge entries + recall/remember tools |
+| **Tools** | File/shell/web/process tools, `todo`, `list_workplaces`, `portal`, `manage_skill`, `agent_state`, `save_artifact`, `recall` / `remember`, `delegate`, … |
+| **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) + **Portals** file bridge |
+| **Memory / KB** | FTS5 + optional embeddings; session summaries; learning loop; artifacts / agent state |
 | **Channels** | Web UI ready; Telegram in progress; WhatsApp planned |
 | **Scheduler** | Not ready — design in progress; interval schedules not wired |
 | **Platform** | Skills/plugins/schedules in SQLite |
@@ -117,11 +117,13 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 
 | Layer | What it stores | Example |
 |-------|----------------|---------|
-| **Conversation memory** | Recent turns, summarized history | "Last week we discussed the Q3 budget" |
-| **Knowledge base** | Documents, notes, wiki-style links | Company policies, API docs, personal preferences |
-| **Artifacts** | Files and outputs from past tasks | Generated reports, exported data |
+| **Conversation memory** | Recent turns + rolled session summaries | "Last week we discussed the Q3 budget" |
+| **Knowledge base** | Documents, notes (FTS + optional embeddings) | Company policies, API docs, personal preferences |
+| **Artifacts** | Files and outputs from past tasks (`save_artifact`) | Generated reports, exported data |
 | **Skills** | Reusable procedures distilled from experience | "How to onboard a new customer" playbook |
-| **Agent state** | Cross-session facts about users and context | Your timezone, preferred language, ongoing projects |
+| **Agent state** | Cross-session facts (`agent_state`) | Your timezone, preferred language, ongoing projects |
+
+Retrieval is hybrid: SQLite FTS5 lexical search fused with OpenAI-compatible embeddings when an API key is configured. Matching memory/skills are injected at turn start (Reuse).
 
 ### The learning loop
 
@@ -130,7 +132,7 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 3. **Reuse** — next time a matching task arrives, the agent loads the skill instead of reasoning from scratch
 4. **Refine** — feedback (explicit or implicit) updates the skill; bad paths get pruned
 
-Skills are inspectable files — not black-box weight updates. You can read, edit, share, or delete what the agent learned.
+Skills are inspectable files — not black-box weight updates. You can read, edit, share, or delete what the agent learned. Toggle **Settings → Learning loop** to enable/disable the background distill pass (agents can still call `manage_skill` / `remember` mid-turn).
 
 ### Cross-agent learning
 
@@ -210,6 +212,23 @@ For machines that already have SSH and you don't want to install a connector, To
 ### Portals — file bridge across workplaces
 
 The **portal** system lets agents copy files between workplaces and the coordinator workspace (`/_portal/<name>/...`), including large binary transfers with background jobs and progress polling. Handy for pulling build artifacts off a remote device or pushing configs to an edge node.
+
+Agents use the `portal` tool:
+
+```
+# Pull a build off a tunnel/SSH/local workplace into coordinator staging
+portal action=copy src=<workplace_id>:dist/app.tar.gz dst=/_portal/edge/app.tar.gz
+
+# Push a staged config onto another host
+portal action=copy src=/_portal/edge/app.toml dst=<workplace_id>:etc/app.toml
+
+# Large files return a transfer id — poll until done
+portal action=status id=xfer_1
+portal action=list
+portal action=cancel id=xfer_1
+```
+
+Locations are either `/_portal/<name>/relative/path` (on the Tomo host under `$TOMO_WORK/_portal/`) or `<workplace_id|name>:<path>`. Small copies finish inline; larger ones run in the background with byte progress.
 
 ---
 
@@ -350,10 +369,12 @@ General-purpose primitives — enable per agent based on your use case:
 | `read_file` / `write_file` / `str_replace` / `delete_file` / `search_files` | File ops under the agent sandbox |
 | `web_fetch` / `web_search` | Fetch URLs and search the web |
 | `todo` / `session_search` | Lightweight todos and message search |
-| `list_skills` / `use_skill` | Browse and load skill descriptions |
+| `list_skills` / `use_skill` / `manage_skill` | Browse, load, and distill skill playbooks |
 | `list_workplaces` | Catalog local / tunnel / SSH workplaces (not filesystem search) |
+| `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
-| `recall` / `remember` / `delegate` | Memory and swarm handoff |
+| `recall` / `remember` / `agent_state` / `save_artifact` | Memory layers and swarm handoff |
+| `delegate` | Hand a subtask to another agent |
 
 See the `app/tools/` directory for the full catalog.
 
@@ -374,8 +395,9 @@ tomo/
 │   ├── models/                   # DB layer (schema, mixins) — SQLite
 │   ├── runtime/                  # Agent execution core (loop, LLM, tools)
 │   │   ├── coordinator/          # Swarm routing and delegation
-│   │   ├── agent/                # LLM turn loop, context
-│   │   ├── memory/               # Recall and knowledge adapters
+│   │   ├── agent/                # LLM turn loop, context, learning
+│   │   ├── memory/               # FTS / embeddings / retrieval layers
+│   │   ├── portal/               # Cross-workplace file bridge
 │   │   ├── events/               # Internal event bus
 │   │   └── tools/                # Built-in Python tool backends
 │   ├── tools/                    # Declarative tool JSON (schema + backend ref)
@@ -546,15 +568,16 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 uv run pytest
 ```
 
-> **Note:** Alpha (slices 0→H) is complete. **Tomo Connector** (Go tunnel agent) is implemented — see `connector/README.md`. Next: deeper learning loop, more channels — see Roadmap.
+> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory engine, and portals are implemented — see Roadmap. Next: more channel adapters.
 
 ---
 
 ## Roadmap
 
 - [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Web UI
-- [ ] Learning loop — observe → distill → reuse → refine; autonomous skill creation
-- [ ] Memory engine — semantic search / vector retrieval beyond keyword KB
+- [x] Learning loop — observe → distill → reuse → refine; autonomous skill creation
+- [x] Memory engine — semantic search / vector retrieval beyond keyword KB
+- [x] Portals — file bridge across workplaces with chunked binary + progress
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
 - [ ] Channel adapters — Telegram, WhatsApp, Discord, Slack, CLI
 - [x] Skills — filesystem discover (`~/.agents/skills` + library), install CLI, `use_skill` body load

@@ -6,6 +6,7 @@ Mirrors connector RPC shapes as Python return values that
 
 from __future__ import annotations
 
+import base64
 import io
 import shlex
 import time
@@ -199,6 +200,81 @@ def write_file(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, A
     finally:
         client.close()
     return {"ok": True, "path": path, "mode": mode}
+
+
+def read_file_b64(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Chunked binary read — portal-compatible with the connector RPC."""
+    path = _remote_path(workplace, str(params.get("path") or ""))
+    offset = int(params.get("offset") or 0)
+    size = int(params.get("size") or 0)
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    client = connect(workplace)
+    try:
+        sftp = client.open_sftp()
+        try:
+            st = sftp.stat(path)
+            total = int(getattr(st, "st_size", 0) or 0)
+            with sftp.file(path, "rb") as f:
+                if offset:
+                    f.seek(offset)
+                if size > 0:
+                    data = f.read(size)
+                else:
+                    data = f.read()
+        finally:
+            sftp.close()
+    finally:
+        client.close()
+    if not isinstance(data, (bytes, bytearray)):
+        data = bytes(data or b"")
+    return {
+        "data": base64.b64encode(bytes(data)).decode("ascii"),
+        "bytes_read": len(data),
+        "total_size": total,
+        "path": path,
+    }
+
+
+def write_file_b64(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Chunked binary write with ``.part`` staging (portal-compatible)."""
+    path = _remote_path(workplace, str(params.get("path") or ""))
+    raw_b64 = params.get("data")
+    if not isinstance(raw_b64, str):
+        raise ValueError("'data' must be a base64 string")
+    try:
+        decoded = base64.b64decode(raw_b64)
+    except Exception as exc:
+        raise ValueError(f"invalid base64: {exc}") from exc
+    offset = int(params.get("offset") or 0)
+    is_last = True if params.get("is_last") is None else bool(params.get("is_last"))
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    part = path + ".part"
+    client = connect(workplace)
+    try:
+        sftp = client.open_sftp()
+        try:
+            if offset == 0:
+                parent = path.rsplit("/", 1)[0] if "/" in path else ""
+                if parent:
+                    _mkdir_p(sftp, parent)
+                with sftp.file(part, "wb") as f:
+                    f.write(decoded)
+            else:
+                with sftp.file(part, "ab") as f:
+                    f.write(decoded)
+            if is_last:
+                try:
+                    sftp.remove(path)
+                except OSError:
+                    pass
+                sftp.rename(part, path)
+        finally:
+            sftp.close()
+    finally:
+        client.close()
+    return {"ok": True, "path": path}
 
 
 def str_replace(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -415,6 +491,8 @@ _HANDLERS = {
     "exec_python": exec_python,
     "read_file": read_file,
     "write_file": write_file,
+    "read_file_b64": read_file_b64,
+    "write_file_b64": write_file_b64,
     "str_replace": str_replace,
     "patch": patch_file,
     "delete_file": delete_file,

@@ -82,6 +82,8 @@ def seed_settings() -> dict[str, Any]:
         "max_tool_iterations": 12,
         "concurrency_limit": 4,
         "learning_enabled": True,
+        "learning_memory_nudge_turns": 3,
+        "learning_skill_nudge_iters": 3,
         "public_history": False,
         "setup_complete": True,
         "eval_parallel_workers": 2,

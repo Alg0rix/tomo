@@ -1,0 +1,40 @@
+{
+  "id": "portal",
+  "name": "Portal",
+  "description": "Copy files between workplaces via the coordinator portal bridge.",
+  "backend": "app.runtime.tools.portal",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "portal",
+      "description": "File bridge across workplaces. Stage under /_portal/<name>/... on the Tomo host, or copy workplace_id:path ↔ portal / another workplace. Small files copy synchronously; large ones return a transfer id — poll with action=status.\n\nLocations:\n- /_portal/<name>/relative/path — coordinator staging\n- <workplace_id>:<path> — file on that workplace (local/tunnel/ssh)\n\nActions: copy, status, list, cancel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["copy", "status", "list", "cancel"],
+            "description": "copy | status | list | cancel"
+          },
+          "src": {
+            "type": "string",
+            "description": "Source location for copy."
+          },
+          "dst": {
+            "type": "string",
+            "description": "Destination location for copy."
+          },
+          "id": {
+            "type": "string",
+            "description": "Transfer id for status/cancel."
+          },
+          "background": {
+            "type": "boolean",
+            "description": "Force async transfer even for small files."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

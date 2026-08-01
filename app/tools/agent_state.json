@@ -1,0 +1,36 @@
+{
+  "id": "agent_state",
+  "name": "Agent State",
+  "description": "Cross-session facts about the user and ongoing context for this agent.",
+  "backend": "app.runtime.tools.agent_state",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "agent_state",
+      "description": "Read or write durable agent state (timezone, preferred language, ongoing projects). Use for cross-session facts — not for one-off task notes (use remember) or procedures (use manage_skill).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "get", "set", "delete"],
+            "description": "list | get | set | delete"
+          },
+          "key": {
+            "type": "string",
+            "description": "State key (e.g. timezone, preferred_language, active_project)."
+          },
+          "value": {
+            "type": "string",
+            "description": "Value for set."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Defaults to the bound agent."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "recall",
-      "description": "Search Tomo's knowledge base (title, body, tags) and return the top matching snippets.",
+      "description": "Hybrid search over Tomo's knowledge base (FTS lexical + semantic embeddings when available). Returns the top matching snippets.",
       "parameters": {
         "type": "object",
         "properties": {

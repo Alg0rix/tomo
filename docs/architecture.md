@@ -4,7 +4,7 @@
 - **Schemas vs models** — Pydantic at the edge; SQL mixins in `app/models` for persistence.
 - **Extensions at the root** — `skills/` and `plugins/` are installable trees; `app/extensions` loads them.
 - **Tools in two places** — JSON contracts in `app/tools/`; Python backends in `app/runtime/tools/`.
-- **Agent harness** — `run_turn` is the execution engine: permission-gated tools (HITL/smart/off), parallel read-only tool batches, parallel `delegate` fan-out, loop detection, context compression, LLM retry on transient failures, force-final on max iterations, prompt-gated `todo` planning (optional ATG via `enable_atg=True` only). Metrics are attached to the final event. See `docs/harness-improvement-report.md`.
+- **Agent harness** — `run_turn` is the execution engine: permission-gated tools (HITL/smart/off), parallel read-only tool batches, parallel `delegate` fan-out, loop detection, context compression, LLM retry on transient failures, force-final on max iterations, prompt-gated `todo` planning (optional ATG via `enable_atg=True` only), and active learning (`manage_skill` + post-turn review when Settings → Learning loop is on). Metrics are attached to the final event. See `docs/harness-improvement-report.md`.
 - **Foundation thin vertical (live)** — SQLite store → LLM → tools (bash/files/web/memory) → coordinator turn loop → web chat SSE. Spec: `docs/superpowers/specs/2026-07-26-foundation-thin-vertical-design.md`.
 - **Alpha kitchen-sink (complete)** — slices 0→H on top of foundation:
 

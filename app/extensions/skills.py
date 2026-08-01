@@ -334,6 +334,200 @@ def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str
     ]
 
 
+_MAX_SKILL_CHARS = 48_000
+_ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
+
+
+def _library_skill_dir(skill_id: str, home_root: Path | None = None) -> Path:
+    return home.library_skills_dir(home_root) / slugify_skill_id(skill_id)
+
+
+def _compose_skill_md(
+    *,
+    name: str,
+    description: str,
+    body: str,
+    version: str = "1.0",
+    extra_meta: dict[str, str] | None = None,
+) -> str:
+    meta_lines = [
+        f"name: {name.strip()}",
+        f"description: {description.strip()}",
+        f"version: {version.strip() or '1.0'}",
+    ]
+    if extra_meta:
+        for key, val in extra_meta.items():
+            if key and val is not None and str(val).strip():
+                meta_lines.append(f"{key}: {str(val).strip()}")
+    return "---\n" + "\n".join(meta_lines) + "\n---\n\n" + (body or "").strip() + "\n"
+
+
+def write_library_skill(
+    *,
+    skill_id: str,
+    name: str,
+    description: str,
+    body: str,
+    version: str = "1.0",
+    extra_meta: dict[str, str] | None = None,
+    home_root: Path | None = None,
+    overwrite: bool = False,
+) -> DiscoveredSkill:
+    """Create or overwrite a managed library skill (SKILL.md)."""
+    sid = slugify_skill_id(skill_id or name)
+    if not name.strip():
+        raise ValueError("name is required")
+    if not description.strip():
+        raise ValueError("description is required")
+    if not (body or "").strip():
+        raise ValueError("body is required")
+    content = _compose_skill_md(
+        name=name,
+        description=description,
+        body=body,
+        version=version,
+        extra_meta=extra_meta,
+    )
+    if len(content) > _MAX_SKILL_CHARS:
+        raise ValueError(f"SKILL.md exceeds {_MAX_SKILL_CHARS} characters")
+    dest = _library_skill_dir(sid, home_root)
+    if dest.exists() and not overwrite:
+        raise FileExistsError(f"skill already exists: {sid}")
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "SKILL.md").write_text(content, encoding="utf-8")
+    loaded = load_discovered_skill(dest / "SKILL.md", "library")
+    if loaded is None:
+        raise RuntimeError(f"failed to load written skill {sid}")
+    return loaded
+
+
+def edit_library_skill(
+    skill_id: str,
+    *,
+    content: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    body: str | None = None,
+    version: str | None = None,
+    home_root: Path | None = None,
+) -> DiscoveredSkill:
+    """Replace SKILL.md for an existing library skill."""
+    sid = slugify_skill_id(skill_id)
+    dest = _library_skill_dir(sid, home_root)
+    skill_md = dest / "SKILL.md"
+    if not skill_md.is_file():
+        raise FileNotFoundError(f"library skill not found: {sid}")
+    if content is not None:
+        text = content
+        if not text.strip().startswith("---"):
+            raise ValueError("content must include YAML frontmatter (--- ... ---)")
+        if len(text) > _MAX_SKILL_CHARS:
+            raise ValueError(f"SKILL.md exceeds {_MAX_SKILL_CHARS} characters")
+        skill_md.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+    else:
+        existing = load_discovered_skill(skill_md, "library")
+        if existing is None:
+            raise ValueError(f"could not parse skill {sid}")
+        meta, old_body = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+        text = _compose_skill_md(
+            name=name or existing.name,
+            description=description or existing.description,
+            body=body if body is not None else old_body,
+            version=version or existing.version,
+            extra_meta={
+                k: str(v)
+                for k, v in meta.items()
+                if k not in {"name", "description", "version"}
+            },
+        )
+        skill_md.write_text(text, encoding="utf-8")
+    loaded = load_discovered_skill(skill_md, "library")
+    if loaded is None:
+        raise RuntimeError(f"failed to reload skill {sid}")
+    return loaded
+
+
+def patch_library_skill(
+    skill_id: str,
+    *,
+    old_string: str,
+    new_string: str,
+    file_path: str = "SKILL.md",
+    home_root: Path | None = None,
+) -> DiscoveredSkill:
+    """Find-and-replace within SKILL.md or an allowed support file."""
+    if not old_string:
+        raise ValueError("old_string is required")
+    sid = slugify_skill_id(skill_id)
+    dest = _library_skill_dir(sid, home_root)
+    if not dest.is_dir():
+        raise FileNotFoundError(f"library skill not found: {sid}")
+    rel = (file_path or "SKILL.md").strip().lstrip("/")
+    if ".." in Path(rel).parts:
+        raise ValueError("path traversal is not allowed")
+    target = (dest / rel).resolve()
+    try:
+        target.relative_to(dest.resolve())
+    except ValueError as exc:
+        raise ValueError("file must stay inside the skill directory") from exc
+    if rel != "SKILL.md" and Path(rel).parts[0] not in _ALLOWED_SUPPORT_DIRS:
+        raise ValueError(
+            f"support files must be under {sorted(_ALLOWED_SUPPORT_DIRS)}"
+        )
+    if not target.is_file():
+        raise FileNotFoundError(f"file not found: {rel}")
+    text = target.read_text(encoding="utf-8")
+    count = text.count(old_string)
+    if count == 0:
+        raise ValueError("old_string not found")
+    if count > 1:
+        raise ValueError(f"old_string matched {count} times; make it unique")
+    updated = text.replace(old_string, new_string, 1)
+    if len(updated) > _MAX_SKILL_CHARS:
+        raise ValueError(f"result exceeds {_MAX_SKILL_CHARS} characters")
+    target.write_text(updated, encoding="utf-8")
+    loaded = load_discovered_skill(dest / "SKILL.md", "library")
+    if loaded is None:
+        raise RuntimeError(f"failed to reload skill {sid}")
+    return loaded
+
+
+def write_skill_support_file(
+    skill_id: str,
+    *,
+    file_path: str,
+    content: str,
+    home_root: Path | None = None,
+) -> Path:
+    """Write a support file under references/templates/scripts/assets."""
+    sid = slugify_skill_id(skill_id)
+    dest = _library_skill_dir(sid, home_root)
+    if not dest.is_dir():
+        raise FileNotFoundError(f"library skill not found: {sid}")
+    rel = (file_path or "").strip().lstrip("/")
+    if not rel or ".." in Path(rel).parts:
+        raise ValueError("invalid file_path")
+    if Path(rel).parts[0] not in _ALLOWED_SUPPORT_DIRS:
+        raise ValueError(
+            f"file_path must start with one of {sorted(_ALLOWED_SUPPORT_DIRS)}"
+        )
+    target = (dest / rel).resolve()
+    try:
+        target.relative_to(dest.resolve())
+    except ValueError as exc:
+        raise ValueError("file must stay inside the skill directory") from exc
+    if len(content or "") > _MAX_SKILL_CHARS:
+        raise ValueError(f"content exceeds {_MAX_SKILL_CHARS} characters")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content if content.endswith("\n") else content + "\n", encoding="utf-8")
+    return target
+
+
+def delete_library_skill(skill_id: str, home_root: Path | None = None) -> bool:
+    """Delete a managed library skill directory."""
+    return uninstall_library_skill(skill_id, home_root)
+
+
 __all__ = [
     "DiscoveredSkill",
     "parse_frontmatter",
@@ -345,4 +539,9 @@ __all__ = [
     "install_from_path",
     "uninstall_library_skill",
     "sync_skills_to_db",
+    "write_library_skill",
+    "edit_library_skill",
+    "patch_library_skill",
+    "write_skill_support_file",
+    "delete_library_skill",
 ]

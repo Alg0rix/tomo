@@ -208,6 +208,44 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at   REAL NOT NULL DEFAULT 0,
     last_used_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    scope      TEXT NOT NULL,
+    ref_id     TEXT NOT NULL,
+    model      TEXT NOT NULL DEFAULT '',
+    dims       INTEGER NOT NULL DEFAULT 0,
+    vector_json TEXT NOT NULL DEFAULT '[]',
+    text_hash  TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (scope, ref_id)
+);
+
+CREATE TABLE IF NOT EXISTS session_summaries (
+    session_id TEXT PRIMARY KEY,
+    summary    TEXT NOT NULL DEFAULT '',
+    message_count INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    path       TEXT NOT NULL DEFAULT '',
+    kind       TEXT NOT NULL DEFAULT 'file',
+    session_id TEXT NOT NULL DEFAULT '',
+    agent_id   TEXT NOT NULL DEFAULT '',
+    notes      TEXT NOT NULL DEFAULT '',
+    meta_json  TEXT NOT NULL DEFAULT '{}',
+    created_at REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS agent_state (
+    agent_id   TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (agent_id, key)
+);
 """
 
 
@@ -260,4 +298,36 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE skills ADD COLUMN path TEXT NOT NULL DEFAULT ''")
     if "source" not in skill_cols:
         conn.execute("ALTER TABLE skills ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+    if "use_count" not in skill_cols:
+        conn.execute(
+            "ALTER TABLE skills ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "last_used_at" not in skill_cols:
+        conn.execute(
+            "ALTER TABLE skills ADD COLUMN last_used_at REAL NOT NULL DEFAULT 0"
+        )
+
+    # FTS5 indexes for lexical retrieval (built into SQLite).
+    fts_names = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' OR type='virtual'"
+        )
+    }
+    if "knowledge_fts" not in fts_names:
+        conn.execute(
+            "CREATE VIRTUAL TABLE knowledge_fts USING fts5("
+            "id UNINDEXED, title, body, tags, tokenize='porter')"
+        )
+    if "messages_fts" not in fts_names:
+        conn.execute(
+            "CREATE VIRTUAL TABLE messages_fts USING fts5("
+            "msg_id UNINDEXED, session_id UNINDEXED, type UNINDEXED, "
+            "content, tokenize='porter')"
+        )
+
+    from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts
+
+    rebuild_knowledge_fts(conn)
+    rebuild_messages_fts(conn)
     conn.commit()

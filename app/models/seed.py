@@ -36,6 +36,12 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "clarify",
             "recall",
             "remember",
+            "agent_state",
+            "save_artifact",
+            "list_skills",
+            "use_skill",
+            "manage_skill",
+            "portal",
             "delegate",
         }
     ),
@@ -56,6 +62,12 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "clarify",
             "recall",
             "remember",
+            "agent_state",
+            "save_artifact",
+            "list_skills",
+            "use_skill",
+            "manage_skill",
+            "portal",
             "delegate",
         }
     ),
@@ -65,12 +77,17 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "web_fetch",
             "recall",
             "remember",
+            "agent_state",
+            "save_artifact",
             "todo",
             "clarify",
             "session_search",
             "list_workplaces",
             "read_file",
             "write_file",
+            "list_skills",
+            "use_skill",
+            "manage_skill",
             "delegate",
         }
     ),
@@ -263,6 +280,12 @@ def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
         "VALUES (?,?,?,?,?,?)",
         rows,
     )
+    try:
+        from app.runtime.memory.fts import rebuild_knowledge_fts
+
+        rebuild_knowledge_fts(conn)
+    except Exception:
+        pass
 
 
 def _seed_skills(conn: sqlite3.Connection) -> None:
