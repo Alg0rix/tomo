@@ -187,9 +187,10 @@ async def prune_draft_sessions(_: AuthDep, keep_id: str | None = None):
 
 @router.post("/sessions/home")
 async def create_home_session(body: HomeSessionIn, request: Request, _: AuthDep):
-    """Start a coordinator-only chat from the dashboard home composer.
+    """Start a full-swarm chat from the dashboard home composer.
 
-    No agent picker — always routes to the swarm coordinator (``is_super``).
+    No agent picker — members are all enabled agents so ``delegate`` works
+    immediately. Coordinator is the super agent (``is_super``).
     Optional ``message`` is returned so the client can deep-link
     ``/sessions?s=<id>&q=...`` and auto-send once.
     """

@@ -40,13 +40,14 @@ def test_create_local_and_connect(tmp_path: Path) -> None:
         {"id": "wp_local", "name": "Local", "kind": "local", "root_path": str(root)}
     )
     assert wp["kind"] == "local"
-    assert wp["status"] == "offline"
+    assert wp["status"] == "ready"
     assert wp["host"] == str(root)
     result = store.connect_workplace("wp_local")
     assert result is not None
     assert result["ok"] is True
     assert result["status"] == "connected"
-    assert store.get_workplace("wp_local")["status"] == "connected"
+    # Public view keeps local workplaces as "ready" (path present), not tunnel "connected".
+    assert store.get_workplace("wp_local")["status"] == "ready"
 
 
 def test_local_connect_fails_missing_path(tmp_path: Path) -> None:
