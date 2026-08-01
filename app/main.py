@@ -73,7 +73,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc: Exception):
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/") or request.url.path.startswith("/v1/"):
             return HTMLResponse(
                 json.dumps({"error": "not_found"}),
                 status_code=404,

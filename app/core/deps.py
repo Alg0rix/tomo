@@ -110,7 +110,7 @@ def require_auth(request: Request) -> None:
         return
     if _try_api_key_auth(request):
         return
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/v1/"):
         # Invalid Bearer that looks like our key → 401 (don't fall through).
         token = _extract_bearer_or_api_key(request)
         if token and token.startswith("tomo_"):

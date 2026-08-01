@@ -9,9 +9,23 @@ from typing import Annotated, AsyncIterator
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from pydantic import BaseModel, Field
+
 from app.core.deps import AuthDep, session_user_id
-from app.services import heartbeat_stream, run_turn, session_heartbeat_stream, store
+from app.services import (
+    heartbeat_stream,
+    run_session_turn,
+    run_turn,
+    session_heartbeat_stream,
+    store,
+)
 from app.services.chat import get_active_session_turn, start_session_turn
+
+
+class SessionChatStreamIn(BaseModel):
+    message: str = ""
+    attachment_ids: list[str] = Field(default_factory=list)
+
 
 router = APIRouter(prefix="/api")
 
@@ -49,6 +63,58 @@ async def _drain_queue_with_heartbeats(
         if await request.is_disconnected():
             return
         yield chunk
+
+
+@router.post("/sessions/{session_id}/chat/stream")
+async def session_chat_stream_post(
+    session_id: str,
+    body: SessionChatStreamIn,
+    request: Request,
+    _: AuthDep = None,
+):
+    """API integration: POST JSON body, stream Tomo SSE (Hermes-style)."""
+    if not store.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    message = (body.message or "").strip()
+    attachment_ids = list(body.attachment_ids or [])
+    if not message and not attachment_ids:
+        raise HTTPException(status_code=400, detail="Message is required")
+    uid = session_user_id(request)
+
+    async def event_source():
+        from app.channels.sse_map import fmt_sse
+
+        yield "retry: 4000\n\n"
+        async with contextlib.aclosing(
+            run_session_turn(
+                session_id,
+                message,
+                uid,
+                start_seq=0,
+                attachment_ids=attachment_ids,
+            )
+        ) as agen:
+            async for chunk in agen:
+                if await request.is_disconnected():
+                    return
+                yield chunk
+        yield fmt_sse(
+            {
+                "event": "turn.end",
+                "data": {"session_id": session_id, "ok": True},
+                "seq": 9999,
+            }
+        )
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/sessions/{session_id}/chat/stream")
