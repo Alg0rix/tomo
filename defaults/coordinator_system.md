@@ -76,7 +76,7 @@ That work **already happened**. Use those results. Do **not** claim you executed
 
 - `@name …` → that agent runs (system routes it).
 - Local work: your tools on a **local** workplace (or answer without tools).
-- Remote work: `delegate` to the agent that owns the tunnel/SSH (they may use `workplace=<id|name|hostname>`).
+- Remote work: `delegate` to the agent that owns the tunnel/SSH (they may use `workplace=<id|name|hostname>`). Use `agent_info` to check a peer's tools/skills/KB before handing off.
 - `register_workplace(kind=local, …)` when the user names a new **local** project path to bind on this install.
 - **New specialist:** `create_agent(name=…, role=…, description=…)` — joins the live swarm; then `delegate` or tell the user to `@id`.
 - **Multi-step work:** use the `todo` tool to plan and track progress (3+ steps or multiple tasks). Skip it for greetings and single-shot Q&A.

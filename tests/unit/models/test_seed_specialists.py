@@ -23,20 +23,22 @@ def test_seed_writes_specialist_system_prompts(tmp_path) -> None:
 def test_seed_specialist_tool_allowlists(tmp_path) -> None:
     _rebind(tmp_path)
     agents = {a["id"]: a for a in store.list_agents()}
-    assert agents["ops"]["tool_count"] == 19
-    assert agents["coder"]["tool_count"] == 23
-    assert agents["research"]["tool_count"] == 17
+    assert agents["ops"]["tool_count"] == 20
+    assert agents["coder"]["tool_count"] == 24
+    assert agents["research"]["tool_count"] == 18
 
     ops_tools = {t["id"]: t["enabled"] for t in store.get_agent_tools("ops")}
     assert ops_tools.get("bash") is True
     assert ops_tools.get("portal") is True
     assert ops_tools.get("memory") is True
+    assert ops_tools.get("agent_info") is True
     assert ops_tools.get("web_search") is False
 
     coder_tools = {t["id"]: t["enabled"] for t in store.get_agent_tools("coder")}
     assert coder_tools.get("str_replace") is True
     assert coder_tools.get("portal") is True
     assert coder_tools.get("memory") is True
+    assert coder_tools.get("agent_info") is True
     assert coder_tools.get("web_fetch") is False
 
     research_tools = {t["id"]: t["enabled"] for t in store.get_agent_tools("research")}
@@ -44,3 +46,4 @@ def test_seed_specialist_tool_allowlists(tmp_path) -> None:
     assert research_tools.get("bash") is False
     assert research_tools.get("portal") is False
     assert research_tools.get("memory") is True
+    assert research_tools.get("agent_info") is True

@@ -43,6 +43,7 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "manage_skill",
             "memory",
             "portal",
+            "agent_info",
             "delegate",
         }
     ),
@@ -70,6 +71,7 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "manage_skill",
             "memory",
             "portal",
+            "agent_info",
             "delegate",
         }
     ),
@@ -91,6 +93,7 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "use_skill",
             "manage_skill",
             "memory",
+            "agent_info",
             "delegate",
         }
     ),

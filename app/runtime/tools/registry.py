@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable
 
 from app.core import config
 from app.runtime.tools import agent_state as _agent_state_backend
+from app.runtime.tools import agent_info as _agent_info_backend
 from app.runtime.tools import bash as _bash_backend
 from app.runtime.tools import clarify as _clarify_backend
 from app.runtime.tools import create_agent as _create_agent_backend
@@ -81,6 +82,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "save_artifact": _save_artifact_backend.run,
     "portal": _portal_backend.run,
     "memory": _memory_backend.run,
+    "agent_info": _agent_info_backend.run,
 }
 
 

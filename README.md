@@ -139,11 +139,12 @@ Skills are inspectable files — not black-box weight updates. You can read, edi
 
 Knowledge isn't siloed. Agents in the swarm can:
 
-- Query each other's tools, skills, and KB via `agent_info`
-- Delegate subtasks to the agent best suited for them
-- Share artifacts and portal files across workplaces
+- Inspect peers with **`agent_info`** — roster (`action=list`), or one agent's enabled tools, linked/shared skills, shared KB sample, and curated memory/state (`action=get`)
+- **`delegate`** subtasks to the agent best suited for them
+- Share **artifacts** and **portal** files across workplaces
+- Use the **shared** skill catalog and knowledge base (`list_skills` / `recall`); each agent still has its own tool allowlist and `MEMORY.md`
 
-A general-purpose agent might hand off to a specialist — or pick up a skill another agent created.
+A general-purpose agent might hand off to a specialist — or load a skill another agent created.
 
 ---
 
@@ -372,7 +373,7 @@ General-purpose primitives — enable per agent based on your use case:
 | `todo` / `session_search` | Lightweight todos and message search |
 | `list_skills` / `use_skill` / `manage_skill` | Browse, load, and distill skill playbooks |
 | `memory` | Curated `USER.md` / `MEMORY.md` notes (always-on next session) |
-| `list_workplaces` | Catalog local / tunnel / SSH workplaces (not filesystem search) |
+| `list_workplaces` / `agent_info` | Catalog workplaces; inspect peer tools/skills/KB |
 | `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
 | `recall` / `remember` / `agent_state` / `save_artifact` | Searchable KB, KV state, artifacts |

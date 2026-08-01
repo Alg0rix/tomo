@@ -1,0 +1,32 @@
+{
+  "id": "agent_info",
+  "name": "Agent Info",
+  "description": "Inspect swarm agents — tools, skills, shared KB, and curated memory.",
+  "backend": "app.runtime.tools.agent_info",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "agent_info",
+      "description": "Cross-agent discovery. action=list → swarm roster (id, role, workplaces). action=get → one agent's enabled tools, linked/shared skills, shared knowledge-base sample, curated USER.md/MEMORY.md + agent_state. Use before delegate when you need to know who has bash/portal/web or which skills/KB exist. Knowledge base and skill catalog are swarm-wide; tool allowlists and MEMORY.md are per agent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "get"],
+            "description": "list = roster; get = detail for one agent (default get if agent set, else list)"
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agent id or name for get (defaults to current agent)."
+          },
+          "include": {
+            "type": "string",
+            "description": "Comma sections: tools,skills,kb,memory,artifacts (default tools,skills,kb,memory)."
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}
