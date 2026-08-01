@@ -259,12 +259,24 @@ async def _authorize_tool(
 
     The last yielded value is either a ``Decision`` (allowed or not) or a
     finished ``tool_result`` dict (clarify path / early error).
+
+    Nested delegate turns never prompt for tool approval — ``evaluate``
+    already auto-allows when ``current_depth() > 0`` (hardline / user_deny
+    still block). Session ``/auto``/``/smart`` still apply at the top level.
     """
     args = call.arguments if isinstance(call.arguments, dict) else {}
     work_root = sandbox.resolve_work_root()
     decision = evaluate(
         call.name, args, work_root=work_root, session_id=session_id
     )
+
+    # Belt-and-suspenders if evaluate was called without nested depth set.
+    if decision.needs_hitl and current_depth() > 0:
+        decision = apply_choice(decision, "once", session_id=session_id)
+        decision.grant = "*"
+        yield decision
+        return
+
     if decision.needs_hitl and get_effective_mode(session_id) == "smart":
         cmd = command_from_args(call.name, args)
         verdict = await smart_approve(
@@ -811,6 +823,7 @@ async def run_turn(
                             user_request=user_request,
                             parallel_index=idx + 1,
                             parallel_total=parallel_total,
+                            session_id=session_id,
                         )
                         for idx, (cid, call) in enumerate(delegate_calls)
                     )
@@ -830,6 +843,7 @@ async def run_turn(
                         user_request=user_request,
                         parallel_index=idx + 1,
                         parallel_total=max(parallel_total, 1),
+                        session_id=session_id,
                     )
                     for ev in events:
                         yield ev
@@ -928,6 +942,7 @@ async def _drain_delegate_bundle(
     user_request: str,
     parallel_index: int,
     parallel_total: int,
+    session_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """Run one delegate and return ``(cid, events, tool_result_text)``."""
     events: list[dict[str, Any]] = [
@@ -980,6 +995,7 @@ async def _drain_delegate_bundle(
                     reason=reason,
                     user_request=user_request,
                     history=None,
+                    session_id=session_id,
                 ):
                     events.append(ev)
                     sub_output = final

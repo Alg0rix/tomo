@@ -61,10 +61,19 @@ def toggle_auto(session_id: str) -> tuple[bool, str]:
             return False, f"AUTO off — using {restore}."
         _session_prev[session_id] = current
         _session_modes[session_id] = "off"
-        return (
-            True,
-            "AUTO on — approvals bypassed (hardline still blocks).",
-        )
+
+    # Unstick any in-flight HITL waiters for this chat (approve once).
+    try:
+        from app.runtime.permissions.hitl import cancel_session_pending
+
+        woken = cancel_session_pending(session_id, choice="once")
+    except Exception:
+        woken = 0
+    extra = f" Cleared {woken} pending approval(s)." if woken else ""
+    return (
+        True,
+        "AUTO on — approvals bypassed (hardline still blocks)." + extra,
+    )
 
 
 def clear_session_modes() -> None:

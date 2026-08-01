@@ -84,6 +84,7 @@ async def drain_subagent_turn(
     reason: str,
     user_request: str,
     history: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
     run_turn_fn=None,
     llm: LLMClient | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -95,6 +96,10 @@ async def drain_subagent_turn(
     carries the running ``final_output`` string (empty until the child emits
     a ``final`` or ``error`` event). The *last* pair carries the complete
     child output.
+
+    ``session_id`` is the parent chat session so ``/auto`` / ``/smart`` /
+    ``/manual`` and session allowlists apply to the child. Nested turns also
+    skip tool-approval HITL (see :func:`app.runtime.agent.loop._authorize_tool`).
 
     ``llm`` / ``tools`` default to ``None`` — the subagent resolves its own
     per-agent model and tool set from the store (production). Tests may
@@ -111,9 +116,9 @@ async def drain_subagent_turn(
         from_id=from_agent_id, reason=reason, user_request=user_request
     )
     _logger.info(
-        "subagent begin: target=%s from=%s depth=%d/%d reason=%s",
+        "subagent begin: target=%s from=%s depth=%d/%d session=%s reason=%s",
         target_agent_id, from_agent_id, depth, MAX_DELEGATE_DEPTH,
-        (reason or "")[:80],
+        session_id or "-", (reason or "")[:80],
     )
     final_output = ""
     try:
@@ -121,6 +126,7 @@ async def drain_subagent_turn(
             task_prompt,
             history=history,
             agent_id=target_agent_id,
+            session_id=session_id,
             llm=llm,
             tools=tools,
         ):

@@ -102,6 +102,21 @@ def evaluate(
     if not findings:
         return Decision(allowed=True, grant=None, findings=[])
 
+    # Nested delegates never HITL — full outside grant (policy A).
+    try:
+        from app.runtime.agent.subagent import current_depth
+
+        nested = current_depth() > 0
+    except Exception:
+        nested = False
+    if nested:
+        return Decision(
+            allowed=True,
+            grant="*",
+            findings=findings,
+            description=_describe(findings),
+        )
+
     if mode == "off":
         return Decision(
             allowed=True,

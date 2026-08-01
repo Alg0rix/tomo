@@ -228,6 +228,35 @@ def resolve_clarify(clarify_id: str, answer: str) -> None:
     pending.event.set()
 
 
+def cancel_session_pending(
+    session_id: str | None,
+    *,
+    choice: ApprovalChoice = "deny",
+) -> int:
+    """Resolve pending approvals/clarifies for a session; return how many woke.
+
+    Used to unstick a turn waiting on HITL (e.g. when ``/auto`` turns on, or
+    a nested-policy reload would otherwise leave a waiter hanging).
+    """
+    if not session_id:
+        return 0
+    n = 0
+    for pending in list(_approvals.values()):
+        if pending.session_id != session_id or pending.event.is_set():
+            continue
+        pending.choice = choice
+        pending.reason = "session_cancel"
+        pending.event.set()
+        n += 1
+    for pending in list(_clarifies.values()):
+        if pending.session_id != session_id or pending.event.is_set():
+            continue
+        pending.answer = ""
+        pending.event.set()
+        n += 1
+    return n
+
+
 def clear_all_pending() -> None:
     for p in list(_approvals.values()):
         p.choice = "deny"
@@ -248,6 +277,7 @@ __all__ = [
     "await_clarify",
     "request_clarify",
     "resolve_clarify",
+    "cancel_session_pending",
     "clear_all_pending",
     "ApprovalChoice",
 ]
