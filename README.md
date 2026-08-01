@@ -17,15 +17,15 @@ What ships in Alpha (slices 0→H):
 | **`$TOMO_HOME`** | Tree + encrypted secrets (`SOUL.md` / `SYSTEM.md`, `.secret_key`) |
 | **Models** | Multi-profile catalog, default + per-agent model |
 | **Swarm** | `@mention` and `delegate` handoff in chat (SSE) |
-| **Tools** | File/shell/web/process tools, `todo`, `list_workplaces`, `portal`, `manage_skill`, `agent_state`, `save_artifact`, `recall` / `remember`, `delegate`, … |
-| **Workplaces** | Local + SSH + **Tomo Connector** (WebSocket tunnel) + **Portals** file bridge |
+| **Tools** | File/shell/web/process tools, `todo`, `list_workplaces`, `portal`, `memory`, `agent_info`, `manage_skill`, `agent_state`, `save_artifact`, `recall` / `remember`, `delegate`, … |
+| **Workplaces** | Local (path-jailed host process) + SSH + **Tomo Connector** (WebSocket tunnel) + **Portals** file bridge |
 | **Memory / KB** | Curated MD (`USER.md` / `MEMORY.md`) + FTS5 session/KB search; embeddings optional |
-| **Channels** | Web UI ready; Telegram in progress; WhatsApp planned |
-| **Scheduler** | Not ready — design in progress; interval schedules not wired |
-| **Platform** | Skills/plugins/schedules in SQLite |
-| **Eval** | Hidden by default (`TOMO_EVAL_UI`) |
+| **Channels** | Web UI ready; Telegram implemented (long-poll; e2e not fully verified); WhatsApp planned |
+| **Scheduler** | Interval schedules ship (SQLite + background runner + UI) |
+| **Platform** | Skills in SQLite + filesystem discover; plugins/schedules catalog mostly stub |
+| **Eval** | Hidden by default (`TOMO_EVAL_UI`) — engine stub |
 
-**Demo path:** Dashboard home chat → session with Main+Ops handoff → tools on a workplace → ask a KB fact → Telegram ping → create a short-interval schedule.
+**Demo path:** Dashboard home chat → session with Main+Ops handoff → tools on a workplace → ask a KB fact → (optional) Telegram ping → create a short-interval schedule.
 
 
 
@@ -38,20 +38,20 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 | Goal | How Tomo approaches it |
 |------|------------------------|
 | **General first** | One platform for any task — automate workflows, answer questions, run commands, manage files. Specialize later with skills and agent roles |
-| **Agents that learn** | Memory, knowledge base, and a learning loop — agents observe tasks, distill reusable skills, and improve from feedback across sessions |
+| **Agents that learn** | Memory, knowledge base, and a learning loop — after successful turns, a background review can distill skills/facts; agents also save mid-turn via tools |
 | **Swarm coordination** | Multiple specialized agents delegate to each other; the coordinator routes work without a single bottleneck |
-| **Talk from anywhere** | Web UI today; Telegram in progress; WhatsApp planned — message your swarm from your phone while it works on a server |
-| **Reach any machine** | Workplaces over WebSocket tunnel, SSH, or local sandbox — same tools everywhere |
-| **Easy to extend** | Tools and skills are declarative — drop in JSON definitions, assign to agents, done |
+| **Talk from anywhere** | Web UI today; Telegram bot available (token in Settings); WhatsApp planned |
+| **Reach any machine** | Workplaces over WebSocket tunnel, SSH, or local path jail — same tools everywhere |
+| **Easy to extend** | Tools = JSON schema + Python backend (register in the tool registry); skills are filesystem playbooks |
 
 ---
 
 ## Architecture
 
 ```
-   Telegram    WhatsApp     Web UI      CLI
-       │           │           │          │
-       └───────────┴─────┬─────┴──────────┘
+   Telegram*   WhatsApp†    Web UI
+       │           │           │
+       └───────────┴─────┬─────┘
                          ▼
               ┌──────────────────────┐
               │       Channels       │
@@ -82,23 +82,25 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
               └──────────┬───────────┘
                          ▼
               ┌──────────────────────┐
-              │ Machines · Docker    │
+              │ Hosts · edge devices │
               └──────────────────────┘
 ```
 
-**Channels** — how users reach agents. Telegram, WhatsApp, web UI — same agent underneath, any interface you prefer.
+\* Telegram: implemented (Settings token + long-poll). † WhatsApp: planned.
+
+**Channels** — how users reach agents. Web UI today; Telegram available; WhatsApp later — same agent underneath.
 
 **Coordinator** — routes tasks, manages agent lifecycle, and tracks state across the swarm.
 
-**Agents** — independent workers. Each has its own model, tools, skills, memory, knowledge base, and channels. You define their role when you need to — or leave them general-purpose until a pattern emerges.
+**Agents** — independent workers. Each has its own model, tools, skills, and channels; curated memory and a shared KB. You define their role when you need to — or leave them general-purpose until a pattern emerges.
 
-**Memory & learning** — agents remember past conversations, store facts in a knowledge base, and can turn repeated workflows into reusable skills. See [Learning](#learning-agents-that-get-smarter).
+**Memory & learning** — agents remember past conversations, store facts in curated MD / KB, and can distill repeated workflows into skills (mid-turn tools + background review). See [Learning](#learning-agents-that-get-smarter).
 
-**Tools** — atomic actions (run a script, query data, send a file, search the web). Declarative JSON — add what your use case needs.
+**Tools** — atomic actions (run a script, edit files, search the web). JSON schema + Python backend registered in the tool registry.
 
-**Skills** — higher-level playbooks composed from tools + prompts. Install community skills or let agents create their own from experience.
+**Skills** — higher-level playbooks composed from tools + prompts. Install from disk or let agents distill them from experience.
 
-**Workplaces** — where execution happens. Local sandbox, WebSocket tunnel, or SSH — agents don't care which transport is used.
+**Workplaces** — where execution happens. Local path jail, WebSocket tunnel, or SSH — agents don't care which transport is used.
 
 ---
 
@@ -128,12 +130,12 @@ Curated memory is the hot path: short durable notes written with the `memory` to
 
 ### The learning loop
 
-1. **Observe** — agent completes a multi-step task (tool calls, decisions, your corrections)
-2. **Distill** — after similar tasks repeat, the agent proposes a skill or KB entry capturing the procedure
-3. **Reuse** — next time a matching task arrives, the agent loads the skill instead of reasoning from scratch
-4. **Refine** — feedback (explicit or implicit) updates the skill; bad paths get pruned
+1. **Observe** — agent completes a turn (tool calls, decisions, your corrections)
+2. **Distill** — a background review (counter-based nudges, not similarity search) may call `memory` / `remember` / `manage_skill` when durable prefs or procedures appear; agents can also save mid-turn
+3. **Reuse** — curated memory is in the next session's system prompt; matching KB/skills may be injected at turn start; agents can `use_skill` / `recall`
+4. **Refine** — later reviews can patch skills; you can edit or delete the Markdown / skill files by hand
 
-Skills are inspectable files — not black-box weight updates. You can read, edit, share, or delete what the agent learned. Toggle **Settings → Learning loop** to enable/disable the background distill pass (agents can still call `manage_skill` / `remember` mid-turn).
+Skills are inspectable files — not black-box weight updates. Toggle **Settings → Learning loop** to enable/disable the background distill pass (agents can still call `manage_skill` / `memory` / `remember` mid-turn).
 
 ### Cross-agent learning
 
@@ -181,7 +183,7 @@ Agent (coordinator)  ──── WebSocket (outbound) ──── Tomo Connect
 
 | Mode | Best for | How it works |
 |------|----------|--------------|
-| **Local** | Dev, sandboxed runs | Docker-isolated `bash` and `runpy` on the coordinator host |
+| **Local** | Dev, same-host work | `bash` / `runpy` / file tools as a **path-jailed host process** under `$TOMO_WORK/<agent>` or a bound local workplace root (not Docker) |
 | **Tunnel** | Home labs, edge devices, NAT/firewall | Lightweight connector binary makes an **outbound WebSocket** to the coordinator — no public IP, no port forwarding, no SSH |
 | **SSH** | Existing servers, jump hosts | Auto-connect with stored credentials; same tools, traditional transport |
 
@@ -209,7 +211,7 @@ Once paired, agents assigned to that workplace run `bash` / file tools on the de
 
 ### SSH as a fallback
 
-For machines that already have SSH and you don't want to install a connector, Tomo still supports direct SSH workplaces — or session-level `sshc` for ad-hoc connections. Useful for one-off ops on servers you already manage via keys.
+For machines that already have SSH and you don't want to install a connector, Tomo supports **SSH workplaces** with stored credentials. Same tool surface as local/tunnel.
 
 ### Portals — file bridge across workplaces
 
@@ -236,7 +238,7 @@ Locations are either `/_portal/<name>/relative/path` (on the Tomo host under `$T
 
 ## Channels — talk to your swarm from anywhere
 
-> **Alpha:** Web UI is live. Telegram bot is implemented and in progress; WhatsApp and other adapters remain planned.
+> **Alpha:** Web UI is live. Telegram bot is implemented (Settings token + long-poll; e2e not fully verified). WhatsApp and other adapters remain planned.
 
 Tomo agents aren't locked to a terminal. **Channels** bridge your swarm and the messaging apps you already use.
 
@@ -251,20 +253,19 @@ The agent doesn't change underneath. You pick the interface; Tomo handles routin
 
 ### Example flow
 
-1. Message on Telegram: *"Remind me about the vendor call tomorrow and pull last month's invoice"*
-2. Your agent checks memory/KB, uses tools to fetch the invoice, schedules the reminder
-3. Replies on Telegram — or sends the PDF as an attachment
-
-Same pattern works for ops deploys, research summaries, or code reviews. The channel is just how you talk to it.
+1. Message on Telegram: *"Check disk on the staging tunnel and summarize."*
+2. Your agent uses tools on that workplace and replies on Telegram
+3. (Planned) attachments / voice / multi-agent routing on one bot
 
 ### Channels today
 
 | Channel | Status | Notes |
 |---------|--------|-------|
 | **Web UI** | ✅ Alpha | Dashboard, swarm chat (SSE), agent studio |
-| **Telegram** | ✅ Alpha | Bot token in System → Channels; long-poll |
+| **Telegram** | ✅ Code shipped | Bot token in System → Channels; long-poll. Currently routes to the **coordinator**. E2e not fully verified. |
 | **WhatsApp** | 🔜 Planned | WhatsApp Web bridge |
-| **Discord / Slack / CLI** | 🔜 Planned | |
+| **Discord / Slack** | 🔜 Planned | |
+| **CLI as chat channel** | 🔜 Planned | Today's `tomo` CLI is install/update/skills only |
 
 ### The mobile pattern
 
@@ -279,46 +280,40 @@ Each channel will support two modes:
 | **Open** | Anyone who messages the bot |
 | **Restricted** | Only users on the allowlist (default for new channels) |
 
-Restricted mode uses **pairing codes** — a 6-character code a new user receives on first contact. An admin approves it; the user is added to the allowlist. Same flow for Telegram, WhatsApp, and future channels.
+Restricted mode will use **pairing codes** — a short code a new user receives on first contact; an admin approves it onto the allowlist. *(Not shipped yet. Workplace connector pairing codes are separate and already work.)*
 
-```bash
-# Approve a pending user
-tomo channel approve XK4M9Q
-```
+### Multi-agent on one channel (planned)
 
-### Multi-agent on one channel
+Today a Telegram bot talks to the **coordinator**. Planned: one bot/number serving a team of agents, with routing by skills/availability (or `@mention`).
 
-A single WhatsApp number or Telegram bot can serve a **team of agents**. When a message arrives, agents coordinate internally to decide who handles it based on skills and availability.
+### Channel-native tools (planned)
 
-### Channel-native tools
-
-Agents interact with messaging platforms through dedicated tools:
+Planned messaging tools (not in `app/tools/` yet):
 
 - **send_file** — deliver PDFs, images, spreadsheets as attachments
 - **read_attachment** — process files users upload via chat
 - **transcribe_audio** — voice memos → text
 - **describe_image** — vision on photos sent in chat
 
-Sessions are scoped per `(agent, channel, user)` — the same person on Telegram and WhatsApp gets separate conversation histories by design.
+Web chat already supports text attachments in-session. Telegram today is text-focused (`sendMessage`).
 
-### Primary channel
+Sessions are keyed by `(agent_id, user_id)` (Telegram uses `tg_<chat_id>` as the user). Separate histories per chat identity.
 
-Each agent can designate one channel as **primary** for outbound notifications. When an agent needs to proactively alert you (task done, escalation, cron reminder), it sends through the primary channel. If none is set, it replies on whichever channel you last used.
+### Primary channel (planned)
 
-### Adding a channel (target CLI)
+Each agent will be able to designate a **primary** channel for proactive outbound alerts (task done, escalation, cron). Not implemented yet — replies stay on the channel that received the message.
+
+### Adding a channel
+
+**Today:** configure Telegram under **System → Channels** (encrypted token; blank PUT keeps existing). Agents → Channels shows per-agent status.
+
+**Planned CLI** (not implemented):
 
 ```bash
-# Telegram — attach to any agent
-tomo channel add --agent main --type telegram \
-  --name "Tomo Bot" \
-  --token "123456:ABC-DEF..."
-
-# WhatsApp (scan QR on first connect)
-tomo channel add --agent main --type whatsapp \
-  --name "Tomo WhatsApp"
+# Not shipped — use System → Channels in the UI for Telegram today
+# tomo channel add --agent main --type telegram --token "…"
+# tomo channel approve XK4M9Q
 ```
-
-Configure Telegram under **System → Channels** (encrypted token; blank PUT keeps existing). Agents → Channels shows per-agent status.
 
 ---
 
@@ -328,36 +323,19 @@ Adding a new capability is intentionally boring (in a good way).
 
 ### 1. Define a tool
 
-Create a JSON file in `app/tools/`:
+1. Add `app/tools/<name>.json` (OpenAI-style function schema + `backend` module path).
+2. Implement `run(arguments) -> str` in `app/runtime/tools/<name>.py`.
+3. Register the backend in `app/runtime/tools/registry.py` (`_BACKENDS`).
 
-```json
-{
-  "id": "my_tool",
-  "name": "My Tool",
-  "description": "What this tool does.",
-  "function": {
-    "name": "my_tool",
-    "description": "Detailed description for the model.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": { "type": "string", "description": "Input parameter." }
-      },
-      "required": ["query"]
-    }
-  }
-}
-```
+JSON alone is not enough today — the registry map is still explicit (dynamic import is later).
 
 ### 2. Assign it to an agent
 
-Enable the tool in an agent's configuration. The coordinator and other agents can discover it via the agent-info introspection tool.
+Enable the tool in an agent's Tools panel (or seed allow-list). Peers can discover allowlists with `agent_info`.
 
 ### 3. Optionally add a skill
 
-Skills bundle tools + prompts into reusable workflows. Write them yourself, install from a registry, or let agents distill them from repeated tasks.
-
-No recompilation. No framework fork. Start general; specialize when you're ready.
+Skills bundle prompts (+ optional scripts) into reusable workflows. Write them yourself, `tomo skills install`, or let agents distill them via `manage_skill` / the learning loop.
 
 ---
 
@@ -367,13 +345,13 @@ General-purpose primitives — enable per agent based on your use case:
 
 | Tool | Purpose |
 |------|---------|
-| `bash` | Run shell commands (optional `background` + `process` for jobs) |
-| `read_file` / `write_file` / `str_replace` / `delete_file` / `search_files` | File ops under the agent sandbox |
+| `bash` / `runpy` / `process` | Shell, Python, background jobs |
+| `read_file` / `write_file` / `str_replace` / `patch` / `delete_file` / `search_files` / `list_dir` | File ops under the agent sandbox / workplace |
 | `web_fetch` / `web_search` | Fetch URLs and search the web |
-| `todo` / `session_search` | Lightweight todos and message search |
+| `todo` / `session_search` | Lightweight todos and message search (FTS) |
 | `list_skills` / `use_skill` / `manage_skill` | Browse, load, and distill skill playbooks |
 | `memory` | Curated `USER.md` / `MEMORY.md` notes (always-on next session) |
-| `list_workplaces` / `agent_info` | Catalog workplaces; inspect peer tools/skills/KB |
+| `list_workplaces` / `agent_info` / `register_workplace` / `create_agent` | Workplaces, peer inspect, register local path, spawn agents |
 | `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
 | `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
 | `recall` / `remember` / `agent_state` / `save_artifact` | Searchable KB, KV state, artifacts |
@@ -401,20 +379,19 @@ tomo/
 │   │   ├── agent/                # LLM turn loop, context, learning
 │   │   ├── memory/               # FTS / curated MD / retrieval layers
 │   │   ├── portal/               # Cross-workplace file bridge
-│   │   ├── events/               # Internal event bus
+│   │   ├── events/               # Event bus stub (placeholder)
 │   │   └── tools/                # Built-in Python tool backends
 │   ├── tools/                    # Declarative tool JSON (schema + backend ref)
 │   ├── channels/                 # Web + Telegram (WhatsApp later)
 │   ├── workplaces/               # Local / SSH / tunnel hub + pairing
-│   ├── extensions/               # Skill + plugin loaders
+│   ├── extensions/               # Skill loader; plugin loader stub
 │   ├── services/                 # Store facade + chat/SSE
 │   ├── static/                   # CSS + JS (Darkroom UI)
-│   ├── templates/                # Jinja pages + partials/
-│   └── data/                     # Local JSON persistence (dev)
+│   └── templates/                # Jinja pages + partials/
 │
-├── cli/                          # `tomo` CLI (update, uninstall, service)
+├── cli/                          # `tomo` CLI (update, uninstall, service, skills)
 ├── skills/                       # Installable skill packages
-├── plugins/                      # Event-driven platform extensions
+├── plugins/                      # Reserved for platform extensions (stub)
 ├── skillsets/                    # Preset agent profiles (JSON)
 ├── defaults/                     # Shipped prompts and KB seeds
 ├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
@@ -433,21 +410,21 @@ tomo/
 |-------|------|------|
 | **Surface** | `app/api/`, `app/web/` | HTTP APIs and server-rendered UI |
 | **Contracts** | `app/schemas/` | API validation and serialization |
-| **Persistence** | `app/models/` | SQLite (or other) via mixins — replaces JSON store long-term |
-| **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, built-in tools |
+| **Persistence** | `app/models/` | SQLite via mixins |
+| **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, portals, tools |
 | **Integrations** | `app/channels/`, `app/workplaces/` | Messaging and execution environments |
-| **Extensions** | `skills/`, `plugins/`, `app/extensions/` | Drop-in packages + loaders |
+| **Extensions** | `skills/`, `app/extensions/` | Skill packages + loaders (`plugins/` reserved) |
 | **Ops** | `cli/`, `scripts/` | Install/update/uninstall, systemd user unit, local tooling |
 
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
 
-See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/`.
+See `app/tools/` for declarative tool definitions; Python implementations go in `app/runtime/tools/` and must be listed in the registry.
 
 ---
 
 ## Getting started
 
-Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on workplaces, KB recall, Telegram, and interval scheduler. Configure models in System → Models; chat over SSE from the dashboard or Chat page.
+Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
 ### Install (Linux, systemd user)
 
@@ -522,16 +499,20 @@ $TOMO_HOME/
 ├── .env               # optional bootstrap secrets (dotfile; never auto-created)
 ├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
 ├── SOUL.md            # global default persona
+├── memories/USER.md   # curated user profile (memory tool)
 ├── library/{skills,memory}
-├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge,work}
+├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
 ├── workplaces/
 └── state/tomo.db      # SQLite (secret settings encrypted at rest)
 ```
 
+Agent tool cwd is **not** under Home — it is `$TOMO_WORK/<agent_id>` (default `~/tomo/<id>`), or a bound local workplace root.
+
 Persona/prompt files use the familiar names `SOUL.md` (persona) and `SYSTEM.md`
-(agent system prompt). Edit them under `$TOMO_HOME` to customize Tomo without
+(agent system prompt). Curated notes use `memories/USER.md` and
+`agents/<id>/MEMORY.md`. Edit them under `$TOMO_HOME` to customize Tomo without
 touching the git tree; the coordinator loads `$TOMO_HOME/SOUL.md` plus each
-agent's `SYSTEM.md` / `SOUL.md` at turn time.
+agent's `SYSTEM.md` / `SOUL.md` (and a frozen curated-memory snapshot) at turn time.
 
 **Secrets policy** — UI-managed secrets (LLM API key, …) are stored **encrypted
 at rest** in the SQLite `settings` table, never as plaintext. A master key
@@ -571,22 +552,25 @@ deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
 uv run pytest
 ```
 
-> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory engine, and portals are implemented — see Roadmap. Next: more channel adapters.
+> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (FTS-first + curated MD), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
 
 ---
 
 ## Roadmap
 
 - [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Web UI
-- [x] Learning loop — observe → distill → reuse → refine; autonomous skill creation
-- [x] Memory engine — semantic search / vector retrieval beyond keyword KB
+- [x] Learning loop — mid-turn tools + background review (counter nudges); `manage_skill` / `memory`
+- [x] Memory engine — curated MD + FTS5; optional embeddings when an API key is set
 - [x] Portals — file bridge across workplaces with chunked binary + progress
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
-- [ ] Channel adapters — Telegram, WhatsApp, Discord, Slack, CLI
+- [x] Interval scheduler — SQLite schedules + background runner + UI
+- [x] Telegram channel — Settings token + long-poll (routes to coordinator; e2e polish TBD)
+- [ ] Channel adapters — WhatsApp, Discord, Slack; CLI-as-chat; multi-agent routing; media tools
 - [x] Skills — filesystem discover (`~/.agents/skills` + library), install CLI, `use_skill` body load
 - [ ] Skill registry — community marketplace / remote install
 - [ ] Observability — traces, artifact browser, cost tracking per agent
 - [ ] Eval / evaluator UI (gated today via `TOMO_EVAL_UI`)
+- [ ] Local Docker isolation (today: path-jailed host process)
 
 ---
 
