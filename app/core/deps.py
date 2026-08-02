@@ -6,10 +6,35 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Form, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader
 
 from .config import EVAL_UI_ENABLED, TEMPLATE_DIR
 
-templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+def _module_template_prefixes() -> dict[str, FileSystemLoader]:
+    """``token_monitor/page.html`` → ``modules/token_monitor/templates/page.html``."""
+    from modules.paths import module_templates_dir
+    from modules.registry import all_metas
+
+    prefixes: dict[str, FileSystemLoader] = {}
+    for meta in all_metas():
+        tdir = module_templates_dir(meta.id)
+        if tdir.is_dir():
+            prefixes[meta.id] = FileSystemLoader(str(tdir))
+    return prefixes
+
+
+def _build_templates() -> Jinja2Templates:
+    t = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    prefixes = _module_template_prefixes()
+    loaders: list[Any] = [FileSystemLoader(str(TEMPLATE_DIR))]
+    if prefixes:
+        loaders.append(PrefixLoader(prefixes))
+    t.env.loader = ChoiceLoader(loaders)
+    return t
+
+
+templates = _build_templates()
 
 _AVATAR_HUES = [200, 260, 330, 160, 30, 290, 80, 10]
 
@@ -52,6 +77,10 @@ def ts(value: float | int | str) -> str:
 templates.env.globals["avatar_color"] = avatar_color
 templates.env.globals["ts"] = ts
 templates.env.globals["eval_ui_enabled"] = EVAL_UI_ENABLED
+
+from modules.paths import static_url as module_static  # noqa: E402
+
+templates.env.globals["module_static"] = module_static
 
 
 def _is_authenticated(request: Request) -> bool:

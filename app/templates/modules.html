@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Modules</h1>
+      <p class="page-sub">Optional Tomo surfaces — Token Monitor, Task Board, and more.</p>
+    </div>
+    <a class="btn ghost sm" href="/system#modules">Manage in System →</a>
+  </div>
+
+  <div class="tile-grid">
+    {% for m in modules %}
+    {% with module=m %}{% include 'partials/module_tile.html' %}{% endwith %}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/modules.js') }}"></script>{% endblock %}

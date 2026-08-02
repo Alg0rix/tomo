@@ -75,6 +75,20 @@ def create_app() -> FastAPI:
     )
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    try:
+        from modules.registry import (
+            mount_module_static,
+            register_module_pages,
+            register_module_routes,
+        )
+
+        register_module_pages(web_router)
+        register_module_routes(api_router)
+        mount_module_static(app)
+    except Exception:
+        logging.getLogger(__name__).exception("module registration failed")
+
     app.include_router(web_router)
     app.include_router(api_router)
 
