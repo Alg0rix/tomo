@@ -54,6 +54,9 @@
     openTabs: [],
     panelOpen: false,
     maximized: false,
+    // User closed the side panel (✕). Do not auto-open on later tool results
+    // or history replays until they open Files again.
+    userCollapsed: false,
     previewMode: "render", // render | source (html/csv/md)
   };
 
@@ -722,13 +725,16 @@
     el.querySelectorAll(".artifact-inline-open").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         e.preventDefault();
-        openPreview({
-          url: url,
-          filename: filename,
-          category: cat,
-          session_id: art.session_id,
-          size: size,
-        });
+        openPreview(
+          {
+            url: url,
+            filename: filename,
+            category: cat,
+            session_id: art.session_id,
+            size: size,
+          },
+          { userGesture: true }
+        );
       });
     });
 
@@ -791,6 +797,7 @@
     _state.view = "home";
     _state.art = null;
     _state.panelOpen = false;
+    _state.userCollapsed = true;
     var wrap = findChatWrap();
     if (wrap) setMaximized(wrap, false);
     document.querySelectorAll(".chat-agent-panel").forEach(function (p) {
@@ -1060,13 +1067,16 @@
             formatBytes(f.size) +
             "</span></span>";
           row.addEventListener("click", function () {
-            openPreview({
-              url: f.url,
-              filename: f.filename,
-              category: f.category,
-              size: f.size,
-              session_id: sid,
-            });
+            openPreview(
+              {
+                url: f.url,
+                filename: f.filename,
+                category: f.category,
+                size: f.size,
+                session_id: sid,
+              },
+              { userGesture: true }
+            );
           });
           list.appendChild(row);
         });
@@ -1235,6 +1245,10 @@
       (wrap && wrap.dataset && wrap.dataset.sessionId) ||
       _state.sessionId ||
       "";
+    if (opts.userGesture !== false) {
+      _state.userCollapsed = false;
+    }
+    setPanelOpen(wrap, true);
     if (!sid) {
       if (typeof Tomo !== "undefined" && Tomo.toast) {
         Tomo.toast("No active session yet", "err");
@@ -1261,13 +1275,15 @@
     renderPanel(wrap);
   }
 
-  function openPreview(art) {
+  function openPreview(art, opts) {
+    opts = opts || {};
     if (!art || !art.url) {
       if (art && art.session_id) {
         openFilesPane({ session_id: art.session_id, toggle: false });
       }
       return;
     }
+    if (opts.userGesture) _state.userCollapsed = false;
     var wrap = findChatWrap();
     if (!wrap) {
       window.open(art.url, "_blank", "noopener");
@@ -1285,6 +1301,7 @@
     rememberTab(_state.art);
     _state.view = "preview";
     _state.previewMode = "render";
+    setPanelOpen(wrap, true);
     renderPanel(wrap);
   }
 
@@ -1292,6 +1309,7 @@
     opts = opts || {};
     var wrap = opts.wrap || findChatWrap();
     if (!wrap) return;
+    if (opts.userGesture !== false) _state.userCollapsed = false;
     var sid =
       opts.session_id ||
       (wrap.dataset && wrap.dataset.sessionId) ||
@@ -1299,13 +1317,16 @@
       "";
     if (sid) _state.sessionId = sid;
     _state.view = "home";
+    setPanelOpen(wrap, true);
     renderPanel(wrap);
   }
 
   function parseSaveResult(toolName, resultText) {
     var name = (toolName || "").toString();
     var text = typeof resultText === "string" ? resultText : "";
-    if (name && name !== "save_artifact" && !/"filename"\s*:/.test(text)) return null;
+    // Only real save_artifact results — not other tools that happen to return JSON
+    // with a filename field (those used to false-trigger auto-open).
+    if (name !== "save_artifact") return null;
     if (text.indexOf("Error") === 0) return null;
     try {
       var parsed = JSON.parse(text);
@@ -1320,7 +1341,8 @@
 
   function maybeAutoOpen(art) {
     if (!art || !art.url) return;
-    // Open Files panel on the new artifact so the user sees it without another click.
+    // History replay and post-collapse turns must not yank the panel open.
+    if (_state.userCollapsed) return;
     try {
       openPreview(art);
     } catch (_) {}
