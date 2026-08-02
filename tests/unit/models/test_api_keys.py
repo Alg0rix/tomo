@@ -31,7 +31,7 @@ def test_revoke_api_key(tmp_path) -> None:
 
 def test_cascade_delete_with_user(tmp_path) -> None:
     store.rebind(tmp_path / "apikey-cascade.db")
-    store.create_user({"username": "bob", "password": "pass1"})
+    store.create_user({"username": "bob", "password": "password1"})
     bob = store.get_user_by_username("bob")
     created = store.create_api_key(bob["id"], "bob-key")
     token = created["token"]

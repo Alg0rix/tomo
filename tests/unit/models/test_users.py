@@ -11,9 +11,9 @@ from app.services import store
 
 
 def test_scrypt_roundtrip() -> None:
-    stored = hash_password("secret")
+    stored = hash_password("secret12")
     assert stored.startswith("scrypt$")
-    assert verify_password("secret", stored)
+    assert verify_password("secret12", stored)
     assert not verify_password("wrong", stored)
 
 
@@ -32,10 +32,10 @@ def test_bootstrap_admin(tmp_path) -> None:
 def test_create_and_auth_second_user(tmp_path) -> None:
     store.rebind(tmp_path / "users-create.db")
     u = store.create_user(
-        {"username": "alice", "password": "pass1", "display_name": "Alice"}
+        {"username": "alice", "password": "password1", "display_name": "Alice"}
     )
     assert u["username"] == "alice"
-    assert store.authenticate("alice", "pass1")["id"] == u["id"]
+    assert store.authenticate("alice", "password1")["id"] == u["id"]
     assert store.authenticate("alice", "wrong") is None
 
 
@@ -61,7 +61,7 @@ def test_cannot_disable_last_enabled(tmp_path) -> None:
 
 def test_delete_ok_when_another_enabled(tmp_path) -> None:
     store.rebind(tmp_path / "users-delete.db")
-    store.create_user({"username": "bob", "password": "pass1"})
+    store.create_user({"username": "bob", "password": "password1"})
     admin = store.get_user_by_username("admin")
     assert store.delete_user(admin["id"]) is True
     assert store.get_user_by_username("admin") is None
@@ -86,7 +86,7 @@ def test_users_api_crud(tmp_path) -> None:
 
         res = client.post(
             "/api/users",
-            json={"username": "carol", "password": "pass1", "display_name": "Carol"},
+            json={"username": "carol", "password": "password1", "display_name": "Carol"},
         )
         assert res.status_code == 200
         uid = res.json()["id"]
@@ -94,11 +94,11 @@ def test_users_api_crud(tmp_path) -> None:
 
         res = client.put(
             f"/api/users/{uid}",
-            json={"display_name": "Carol K", "password": "pass2"},
+            json={"display_name": "Carol K", "password": "password2"},
         )
         assert res.status_code == 200
         assert res.json()["display_name"] == "Carol K"
-        assert store.authenticate("carol", "pass2") is not None
+        assert store.authenticate("carol", "password2") is not None
 
         res = client.delete(f"/api/users/{uid}")
         assert res.status_code == 200

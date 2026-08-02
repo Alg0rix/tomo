@@ -181,8 +181,9 @@ def ensure_bootstrap_admin(conn: sqlite3.Connection, password: str) -> None:
     if count_users(conn) > 0:
         return
     now = _now()
-    pw = password if len(password) >= MIN_PASSWORD_LEN else "tomo"
-    pw_hash = hash_password(pw)
+    # Dev bootstrap may use a short seed password; API create/update still enforce MIN.
+    pw = password if password else "tomo"
+    pw_hash = hash_password(pw, allow_short=True)
     conn.execute(
         "INSERT INTO users (id, username, password_hash, display_name, role, enabled, "
         "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",

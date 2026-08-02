@@ -17,12 +17,12 @@ _P = 1
 _DKLEN = 32
 _SALT_LEN = 16
 
-MIN_PASSWORD_LEN = 4
+MIN_PASSWORD_LEN = 8
 
 
-def hash_password(password: str) -> str:
+def hash_password(password: str, *, allow_short: bool = False) -> str:
     """Return a scrypt hash string for storage."""
-    if len(password) < MIN_PASSWORD_LEN:
+    if not allow_short and len(password) < MIN_PASSWORD_LEN:
         raise ValueError(f"Password must be at least {MIN_PASSWORD_LEN} characters")
     salt = secrets.token_bytes(_SALT_LEN)
     dk = hashlib.scrypt(

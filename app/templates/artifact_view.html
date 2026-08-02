@@ -61,7 +61,9 @@
         data-category="{{ category }}"
         data-session-id="{{ session_id }}">
     {% if category == 'html' %}
-      <iframe class="av-frame" src="{{ file_url }}" title="{{ filename }}"></iframe>
+      <iframe class="av-frame" id="avHtmlFrame" title="{{ filename }}"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+              referrerpolicy="no-referrer"></iframe>
     {% elif category == 'image' %}
       <div class="av-img-wrap"><img src="{{ file_url }}" alt="{{ filename }}"></div>
     {% elif category == 'video' %}
@@ -75,7 +77,28 @@
     {% endif %}
   </main>
 </div>
-{% if category not in ('html', 'image', 'video', 'pdf', 'sound') %}
+{% if category == 'html' %}
+<script>
+(function () {
+  var stage = document.getElementById('artifactViewStage');
+  var frame = document.getElementById('avHtmlFrame');
+  if (!stage || !frame) return;
+  var url = stage.dataset.url;
+  fetch(url, { credentials: 'same-origin' })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function (text) {
+      frame.srcdoc = text;
+    })
+    .catch(function (err) {
+      frame.srcdoc = '<pre style="padding:16px;font:13px monospace">Could not load HTML: '
+        + String(err && err.message ? err.message : err) + '</pre>';
+    });
+})();
+</script>
+{% elif category not in ('image', 'video', 'pdf', 'sound') %}
 {% include 'partials/chat_assets.html' %}
 <script>
 (function () {
