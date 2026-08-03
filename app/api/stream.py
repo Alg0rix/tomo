@@ -280,7 +280,6 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     async def event_source():
-        from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
         async with contextlib.aclosing(
