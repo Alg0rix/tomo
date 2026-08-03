@@ -314,25 +314,11 @@ def _seed_skills(conn: sqlite3.Connection) -> None:
         )
 
 
-def _seed_plugins(conn: sqlite3.Connection) -> None:
-    from app.services.platform_data import seed_plugins
+def _seed_modules(conn: sqlite3.Connection) -> None:
+    """Sync discovered modules into the catalog (insert-missing only)."""
+    from modules.registry import sync_module_rows
 
-    base = _now()
-    for i, p in enumerate(seed_plugins()):
-        conn.execute(
-            "INSERT INTO plugins (id, name, description, version, enabled, has_ui, "
-            "ui_path, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (
-                p["id"],
-                p["name"],
-                p["description"],
-                p.get("version", "1.0"),
-                1 if p.get("enabled", True) else 0,
-                1 if p.get("has_ui") else 0,
-                p.get("ui_path") or "",
-                base - 86400 * (3 - i),
-            ),
-        )
+    sync_module_rows(conn)
 
 
 def _seed_schedules(conn: sqlite3.Connection) -> None:
@@ -383,8 +369,8 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
             _seed_knowledge_entries(conn)
         if _count(conn, "skills") == 0:
             _seed_skills(conn)
-        if _count(conn, "plugins") == 0:
-            _seed_plugins(conn)
+        # Always upsert missing discovered modules (safe for existing DBs).
+        _seed_modules(conn)
         if _count(conn, "schedules") == 0:
             _seed_schedules(conn)
         conn.commit()

@@ -332,6 +332,7 @@ async def stream_turn_sse(
     busy_ids: set[str] = set()
     ctx_token = None
     wp_tokens = None
+    primary_agent = coordinator_id
     turn_locked = store.try_begin_session_turn(session_id)
     if not turn_locked:
         logger.warning(
@@ -572,6 +573,7 @@ async def stream_turn_sse(
                     coordinator_id,
                     force_target,
                 )
+                primary_agent = force_target
                 async for chunk, seq in _emit_delegate(
                     session_id,
                     from_id=coordinator_id,
@@ -635,6 +637,16 @@ async def stream_turn_sse(
         store.set_busy(coordinator_id, False, session_id=session_id)
         if turn_locked:
             store.end_session_turn(session_id)
+            try:
+                store.dispatch_turn_end(
+                    session_id=session_id,
+                    agent_id=primary_agent,
+                    message=(message or "").strip(),
+                )
+            except Exception:
+                logger.exception(
+                    "turn_end dispatch failed session_id=%s", session_id
+                )
 
     seq += 1
     yield fmt_sse(

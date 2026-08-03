@@ -280,7 +280,6 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     async def event_source():
-
         yield "retry: 4000\n\n"
         async with contextlib.aclosing(
             heartbeat_stream(agent_id, start_seq=1000)

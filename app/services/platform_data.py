@@ -30,10 +30,20 @@ def seed_skills() -> list[dict[str, Any]]:
 
 
 def seed_plugins() -> list[dict[str, Any]]:
+    """Deprecated alias — modules are discovered from ``modules/`` packages."""
+    from modules.registry import all_metas
+
     return [
-        {"id": "kanban", "name": "Task Board", "description": "Kanban board for agent-driven task workflows", "version": "0.3", "enabled": True, "has_ui": True, "ui_path": "/board"},
-        {"id": "token_monitor", "name": "Token Monitor", "description": "LLM usage and cost tracking across agents", "version": "0.2", "enabled": True, "has_ui": True, "ui_path": "/usage"},
-        {"id": "connector", "name": "Tomo Connector", "description": "WebSocket tunnel for remote workplaces", "version": "1.0", "enabled": True, "has_ui": False},
+        {
+            "id": m.id,
+            "name": m.name,
+            "description": m.description,
+            "version": m.version,
+            "enabled": m.default_enabled,
+            "has_ui": m.has_ui,
+            "ui_path": m.ui_path,
+        }
+        for m in all_metas()
     ]
 
 

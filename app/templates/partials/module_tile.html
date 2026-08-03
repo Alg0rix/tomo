@@ -1,0 +1,13 @@
+{% from 'partials/toggle.html' import toggle %}
+
+<div class="tile" data-module-id="{{ module.id }}">
+  <div class="tile-head">
+    <div class="tile-title">{{ module.name }}</div>
+    {{ toggle(checked=module.enabled, disabled=false, extra_class='module-toggle', title='Enable or disable module') }}
+  </div>
+  <div class="tile-desc">{{ module.description }}</div>
+  <div class="tile-foot">
+    <span class="mono faint">v{{ module.version }}</span>
+    {% if module.has_ui and module.ui_path %}<a class="btn ghost sm" href="{{ module.ui_path }}">Open UI</a>{% endif %}
+  </div>
+</div>

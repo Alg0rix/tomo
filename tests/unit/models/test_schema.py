@@ -16,12 +16,13 @@ EXPECTED_TABLES = {
     "knowledge_entries",
     "skills",
     "agent_skills",
-    "plugins",
+    "modules",
     "schedules",
     "schedule_runs",
     "users",
     "llm_profiles",
     "api_keys",
+    "usage_events",
 }
 
 

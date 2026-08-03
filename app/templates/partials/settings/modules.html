@@ -1,0 +1,10 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-modules" class="sys-section" style="display:none">
+  {{ section_head('Modules', 'Optional surfaces. <a href="/modules">View module gallery →</a>') }}
+  <div class="tile-grid">
+    {% for m in modules %}
+    {% with module=m %}{% include 'partials/module_tile.html' %}{% endwith %}
+    {% endfor %}
+  </div>
+</section>
