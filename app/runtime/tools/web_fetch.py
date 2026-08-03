@@ -5,12 +5,13 @@ from __future__ import annotations
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
 _TIMEOUT = 15.0
 _MAX_CHARS = 100_000
+_MAX_REDIRECTS = 5
 
 
 def _is_blocked_host(hostname: str) -> str | None:
@@ -42,6 +43,16 @@ def _is_blocked_host(hostname: str) -> str | None:
     return None
 
 
+def _check_url(url: str) -> str | None:
+    """Validate scheme/host and SSRF blocklist. Return error string or None."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return "Error: only http and https URLs are allowed"
+    if not parsed.hostname:
+        return "Error: URL host is empty"
+    return _is_blocked_host(parsed.hostname)
+
+
 def run(arguments: dict[str, Any]) -> str:
     """Fetch ``url`` and return truncated response text; always returns a string."""
     if not isinstance(arguments, dict):
@@ -51,19 +62,32 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: 'url' argument must be a non-empty string"
     url = url.strip()
 
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        return "Error: only http and https URLs are allowed"
-    if not parsed.hostname:
-        return "Error: URL host is empty"
-
-    blocked = _is_blocked_host(parsed.hostname)
+    blocked = _check_url(url)
     if blocked:
         return blocked
 
     try:
-        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-            resp = client.get(url)
+        # Manual redirects so each hop is SSRF-checked (httpx follow_redirects
+        # would skip re-validation of Location targets).
+        with httpx.Client(timeout=_TIMEOUT, follow_redirects=False) as client:
+            current = url
+            resp: httpx.Response | None = None
+            for _ in range(_MAX_REDIRECTS + 1):
+                hop_err = _check_url(current)
+                if hop_err:
+                    return hop_err
+                resp = client.get(current)
+                status = int(getattr(resp, "status_code", 0) or 0)
+                if 300 <= status < 400:
+                    loc = (resp.headers.get("location") or "").strip()
+                    if not loc:
+                        return "Error: redirect with empty Location"
+                    current = urljoin(str(resp.url), loc)
+                    continue
+                break
+            else:
+                return "Error: too many redirects"
+            assert resp is not None
             resp.raise_for_status()
             text = resp.text
     except httpx.TimeoutException:

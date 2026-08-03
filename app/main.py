@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api import router as api_router
 from app.core.config import (
     BRAND,
+    COOKIE_HTTPS_ONLY,
     HOST,
     PORT,
     RELOAD,
@@ -21,6 +22,7 @@ from app.core.config import (
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE,
     STATIC_DIR,
+    assert_bind_safety,
 )
 from app.core.deps import templates
 from app.core.home import ensure_tomo_home
@@ -55,7 +57,12 @@ async def _lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title=BRAND, version="0.1.0", docs_url=None, redoc_url=None, lifespan=_lifespan
+        title=BRAND,
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=_lifespan,
     )
 
     app.add_middleware(
@@ -64,7 +71,7 @@ def create_app() -> FastAPI:
         session_cookie=SESSION_COOKIE_NAME,
         max_age=SESSION_MAX_AGE,
         same_site="lax",
-        https_only=False,
+        https_only=COOKIE_HTTPS_ONLY,
     )
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -124,6 +131,7 @@ _configure_logging()
 def main() -> None:
     import uvicorn
 
+    assert_bind_safety()
     uvicorn.run("app.main:app", host=HOST, port=PORT, reload=RELOAD)
 
 

@@ -128,6 +128,36 @@
     );
   }
 
+  /** Load HTML into a sandboxed iframe via srcdoc (never Tomo-origin src). */
+  function fillHtmlFrame(iframe, url, textOpt) {
+    if (!iframe) return;
+    var apply = function (text) {
+      iframe.removeAttribute("src");
+      iframe.srcdoc = text;
+    };
+    if (typeof textOpt === "string") {
+      apply(textOpt);
+      return;
+    }
+    if (!url) {
+      apply("<pre>No HTML content</pre>");
+      return;
+    }
+    fetch(url, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(apply)
+      .catch(function (err) {
+        apply(
+          "<pre style='padding:12px;font:12px monospace'>Could not load HTML: " +
+            esc(err && err.message ? err.message : "error") +
+            "</pre>"
+        );
+      });
+  }
+
   /** Minimal CSV/TSV parser → rows of string cells. */
   function parseDelimited(text, delim) {
     var rows = [];
@@ -682,7 +712,7 @@
     } else if (cat === "html" && url) {
       body +=
         '<div class="artifact-inline-html">' +
-        htmlFrame({ src: url, title: filename }) +
+        htmlFrame({ title: filename }) +
         "</div>";
     } else if (cat === "pdf" && url) {
       body +=
@@ -735,6 +765,10 @@
     var rich = el.querySelector(".artifact-inline-rich");
     if (rich) {
       fillInlineRich(rich, cat, url, filename);
+    }
+    var htmlIframe = el.querySelector(".artifact-inline-html iframe");
+    if (htmlIframe) {
+      fillHtmlFrame(htmlIframe, url);
     }
     return el;
   }
@@ -841,15 +875,11 @@
       }
     } else {
       stage.innerHTML = htmlFrame({
-        src: typeof textOpt === "string" ? "" : url,
         title: filename,
         tall: true,
       });
       var iframe = stage.querySelector("iframe");
-      if (iframe && typeof textOpt === "string") {
-        iframe.removeAttribute("src");
-        iframe.srcdoc = textOpt;
-      }
+      fillHtmlFrame(iframe, url, typeof textOpt === "string" ? textOpt : undefined);
     }
 
     body.querySelectorAll("[data-preview-mode]").forEach(function (btn) {
