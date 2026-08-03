@@ -6,6 +6,110 @@
 
   function esc(s) { return Tomo.escapeHtml(s); }
 
+  /**
+   * POST-based SSE client (EventSource cannot set method/body).
+   * Same addEventListener/close surface as EventSource for chat handlers.
+   */
+  function postEventSource(url, body) {
+    var listeners = {};
+    var closed = false;
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+
+    function emit(type, data) {
+      var list = listeners[type] || [];
+      for (var i = 0; i < list.length; i++) {
+        try {
+          list[i]({ data: data == null ? "" : String(data) });
+        } catch (_) {}
+      }
+    }
+
+    var api = {
+      addEventListener: function (type, fn) {
+        if (!listeners[type]) listeners[type] = [];
+        listeners[type].push(fn);
+      },
+      close: function () {
+        closed = true;
+        if (controller) controller.abort();
+      },
+    };
+
+    fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(body || {}),
+      signal: controller ? controller.signal : undefined,
+    })
+      .then(function (res) {
+        if (closed) return;
+        if (!res.ok) {
+          emit("error", JSON.stringify({ message: "HTTP " + res.status }));
+          emit("turn.end", "{}");
+          return null;
+        }
+        if (!res.body || !res.body.getReader) {
+          return res.text().then(function (text) {
+            if (closed) return;
+            parseSseBuffer(text, emit);
+            emit("turn.end", "{}");
+          });
+        }
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = "";
+        function pump() {
+          return reader.read().then(function (result) {
+            if (closed) return;
+            if (result.done) {
+              if (buf.trim()) parseSseBuffer(buf, emit);
+              return;
+            }
+            buf += decoder.decode(result.value, { stream: true });
+            var parts = buf.split("\n\n");
+            buf = parts.pop() || "";
+            for (var i = 0; i < parts.length; i++) {
+              dispatchSseBlock(parts[i], emit);
+            }
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function (err) {
+        if (closed) return;
+        var name = err && err.name;
+        if (name === "AbortError") return;
+        emit("error", JSON.stringify({ message: String(err && err.message ? err.message : err) }));
+        emit("turn.end", "{}");
+      });
+
+    return api;
+  }
+
+  function dispatchSseBlock(block, emit) {
+    var event = "message";
+    var dataLines = [];
+    var lines = String(block || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.indexOf("event:") === 0) event = line.slice(6).trim();
+      else if (line.indexOf("data:") === 0) dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+    if (dataLines.length) emit(event, dataLines.join("\n"));
+  }
+
+  function parseSseBuffer(text, emit) {
+    var parts = String(text || "").split("\n\n");
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].trim()) dispatchSseBlock(parts[i], emit);
+    }
+  }
+
   function renderMarkdown(el) {
     // Idempotent: already-parsed HTML must not be re-read via textContent
     // (that flattens markdown on history + re-init).
@@ -619,14 +723,17 @@
 
     function streamUrl(text, attachmentIds) {
       const sid = currentSessionId();
-      const params = new URLSearchParams();
-      params.set('user_id', userId);
-      params.set('message', text);
-      (attachmentIds || []).forEach(function (id) { params.append('attachment_ids', id); });
       if (sid) {
-        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream?' + params.toString();
+        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stream';
       }
-      return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream?' + params.toString();
+      return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stream';
+    }
+
+    function streamBody(text, attachmentIds) {
+      return {
+        message: text || '',
+        attachment_ids: attachmentIds || [],
+      };
     }
 
     function listenUrl() {
@@ -702,7 +809,7 @@
       const HARD_MS = 720000;
       const attachIds = attachmentIds || [];
 
-      es = new EventSource(streamUrl(text, attachIds));
+      es = postEventSource(streamUrl(text, attachIds), streamBody(text, attachIds));
 
       function clearWatchdogs() {
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }

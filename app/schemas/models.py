@@ -163,7 +163,7 @@ class UserCreate(BaseModel):
     """Create a login account."""
 
     username: str = Field(min_length=2, max_length=32, pattern=r"^[a-zA-Z0-9_]+$")
-    password: str = Field(min_length=4, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=80)
 
 

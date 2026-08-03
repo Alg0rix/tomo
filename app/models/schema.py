@@ -11,7 +11,8 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
 * ``knowledge_entries`` — title/body/tags KB rows (Slice E; keyword recall)
 * ``skills`` / ``agent_skills`` — skill catalog + per-agent links (Slice G)
-* ``plugins``        — plugin metadata enable/disable (Slice G)
+* ``modules``        — optional module catalog enable/disable
+* ``usage_events``   — Token Monitor turn/token ledger
 * ``schedules`` / ``schedule_runs`` — cron/interval jobs + run log (Slice G)
 * ``users``           — login accounts (username + scrypt password hash)
 * ``api_keys``        — per-account Bearer tokens for ``/api/*`` access
@@ -154,7 +155,7 @@ CREATE TABLE IF NOT EXISTS agent_skills (
     PRIMARY KEY (agent_id, skill_id)
 );
 
-CREATE TABLE IF NOT EXISTS plugins (
+CREATE TABLE IF NOT EXISTS modules (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -226,6 +227,24 @@ CREATE TABLE IF NOT EXISTS session_summaries (
     message_count INTEGER NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS usage_events (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id         TEXT NOT NULL,
+    agent_id           TEXT NOT NULL DEFAULT '',
+    created_at         REAL NOT NULL DEFAULT 0,
+    turns              INTEGER NOT NULL DEFAULT 1,
+    prompt_tokens      INTEGER NOT NULL DEFAULT 0,
+    completion_tokens  INTEGER NOT NULL DEFAULT 0,
+    message_preview    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_created
+    ON usage_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_events_agent
+    ON usage_events(agent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_events_session
+    ON usage_events(session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS artifacts (
     id         TEXT PRIMARY KEY,
@@ -310,6 +329,22 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE skills ADD COLUMN last_used_at REAL NOT NULL DEFAULT 0"
         )
+
+    # plugins → modules rename (Alpha catalog rename).
+    table_names = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "plugins" in table_names and "modules" not in table_names:
+        conn.execute("ALTER TABLE plugins RENAME TO modules")
+    # Connector is a first-class feature, not a catalog module.
+    if "modules" in {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }:
+        conn.execute("DELETE FROM modules WHERE id='connector'")
 
     # FTS5 indexes for lexical retrieval (built into SQLite).
     fts_names = {

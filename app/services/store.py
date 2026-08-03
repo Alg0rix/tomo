@@ -22,7 +22,7 @@ from app.models.mixins import agents as agents_store
 from app.models.mixins import attachments as attachments_store
 from app.models.mixins import knowledge_entries as knowledge_store
 from app.models.mixins import messages as messages_store
-from app.models.mixins import plugins as plugins_store
+from app.models.mixins import modules as modules_store
 from app.models.mixins import schedules as schedules_store
 from app.models.mixins import sessions as sessions_store
 from app.models.mixins import skills as skills_store
@@ -66,6 +66,17 @@ class Store:
         migrate(self._conn)
         seed_if_empty(self._conn)
         users_store.ensure_bootstrap_admin(self._conn, ADMIN_PASSWORD)
+        try:
+            from modules.registry import sync_module_rows
+
+            sync_module_rows(self._conn)
+        except Exception:
+            pass
+
+    def with_db(self, fn):
+        """Run ``fn(conn)`` under the store lock (for module ledger access)."""
+        with self._lock:
+            return fn(self._conn)
 
     def rebind(self, path: str | Path | None) -> None:
         """Reopen against ``path`` (temp DB in tests); re-migrate + re-seed."""
@@ -681,16 +692,66 @@ class Store:
         return removed
 
     def list_plugins(self) -> list[dict[str, Any]]:
+        """Deprecated alias for :meth:`list_modules`."""
+        return self.list_modules()
+
+    def list_modules(self) -> list[dict[str, Any]]:
         with self._lock:
-            return plugins_store.list_plugins(self._conn)
+            return modules_store.list_modules(self._conn)
+
+    def enabled_module_ids(self) -> set[str]:
+        with self._lock:
+            return {
+                m["id"]
+                for m in modules_store.list_modules(self._conn)
+                if m.get("enabled")
+            }
 
     def get_plugin(self, plugin_id: str) -> dict[str, Any] | None:
+        return self.get_module(plugin_id)
+
+    def get_module(self, module_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return plugins_store.get_plugin(self._conn, plugin_id)
+            return modules_store.get_module(self._conn, module_id)
 
     def update_plugin(self, plugin_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        return self.update_module(plugin_id, data)
+
+    def update_module(self, module_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         with self._lock:
-            return plugins_store.update_plugin(self._conn, plugin_id, data)
+            return modules_store.update_module(self._conn, module_id, data)
+
+    def is_plugin_enabled(self, plugin_id: str) -> bool:
+        return self.is_module_enabled(plugin_id)
+
+    def is_module_enabled(self, module_id: str) -> bool:
+        with self._lock:
+            return modules_store.is_module_enabled(self._conn, module_id)
+
+    def dispatch_turn_end(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        message: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> None:
+        """Notify enabled modules that a session turn finished."""
+        from modules.base import TurnEndContext
+        from modules.registry import on_turn_end
+
+        with self._lock:
+            on_turn_end(
+                self._conn,
+                TurnEndContext(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    message=message,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                ),
+            )
 
     def list_schedules(self) -> list[dict[str, Any]]:
         with self._lock:

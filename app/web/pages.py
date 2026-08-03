@@ -5,21 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.config import BRAND, EVAL_UI_ENABLED
-from app.core.deps import AuthDep, session_user_id, session_username, templates
+from app.core.config import EVAL_UI_ENABLED
+from app.core.deps import AuthDep, session_user_id, templates
 from app.services import store
+from app.web.context import page_ctx
 
 router = APIRouter()
-
-
-def _ctx(request: Request, page: str, **extra):
-    return {
-        "page": page,
-        "brand": BRAND,
-        "current_user_id": session_user_id(request),
-        "current_username": session_username(request),
-        **extra,
-    }
 
 
 def _eval_disabled_redirect() -> RedirectResponse | None:
@@ -32,12 +23,12 @@ def _eval_disabled_redirect() -> RedirectResponse | None:
 async def dashboard(request: Request, _: AuthDep):
     if not store.is_setup_complete():
         return RedirectResponse("/setup", status_code=303)
-    return templates.TemplateResponse(request, "index.html", _ctx(request, "dashboard"))
+    return templates.TemplateResponse(request, "index.html", page_ctx(request, "dashboard"))
 
 
 @router.get("/agents", response_class=HTMLResponse)
 async def agents_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "agents.html", _ctx(
+    return templates.TemplateResponse(request, "agents.html", page_ctx(
         request, "agents", agents=store.list_agents(), workplaces=store.list_workplaces(),
         llm_profiles=store.list_llm_profiles(),
     ))
@@ -47,13 +38,13 @@ async def agents_page(request: Request, _: AuthDep):
 async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
     agent = store.get_agent(agent_id)
     if not agent:
-        return templates.TemplateResponse(request, "error.html", _ctx(
+        return templates.TemplateResponse(request, "error.html", page_ctx(
             request, "error", code=404, message=f"Agent “{agent_id}” not found.",
         ), status_code=404)
     uid = session_user_id(request)
     history = store.get_history(agent_id, uid)
     session_id = store.get_or_create_session(agent_id, uid)
-    return templates.TemplateResponse(request, "agent_detail.html", _ctx(
+    return templates.TemplateResponse(request, "agent_detail.html", page_ctx(
         request, "agent", agent=agent, history=history, session_id=session_id,
         tools=store.get_agent_tools(agent_id),
         skills=store.get_agent_skills(agent_id),
@@ -65,7 +56,7 @@ async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
 
 @router.get("/sessions", response_class=HTMLResponse)
 async def sessions_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "sessions.html", _ctx(
+    return templates.TemplateResponse(request, "sessions.html", page_ctx(
         request, "sessions", agents_list=store.list_agents(),
     ))
 
@@ -78,7 +69,7 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
         return templates.TemplateResponse(
             request,
             "error.html",
-            _ctx(request, "error", code=404, message="Session not found."),
+            page_ctx(request, "error", code=404, message="Session not found."),
             status_code=404,
         )
     from app.runtime.artifacts.fs import (
@@ -93,7 +84,7 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
         return templates.TemplateResponse(
             request,
             "error.html",
-            _ctx(request, "error", code=400, message=err),
+            page_ctx(request, "error", code=400, message=err),
             status_code=400,
         )
     base = artifacts_dir(session_id).resolve()
@@ -104,14 +95,14 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
         return templates.TemplateResponse(
             request,
             "error.html",
-            _ctx(request, "error", code=400, message="Invalid artifact path."),
+            page_ctx(request, "error", code=400, message="Invalid artifact path."),
             status_code=400,
         )
     if not path.is_file():
         return templates.TemplateResponse(
             request,
             "error.html",
-            _ctx(request, "error", code=404, message=f"Artifact “{filename}” not found."),
+            page_ctx(request, "error", code=404, message=f"Artifact “{filename}” not found."),
             status_code=404,
         )
     category = category_for(filename)
@@ -120,7 +111,7 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
     return templates.TemplateResponse(
         request,
         "artifact_view.html",
-        _ctx(
+        page_ctx(
             request,
             "artifact_view",
             session_id=session_id,
@@ -134,7 +125,7 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
 
 @router.get("/workplaces", response_class=HTMLResponse)
 async def workplaces_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "workplaces.html", _ctx(
+    return templates.TemplateResponse(request, "workplaces.html", page_ctx(
         request, "workplaces", workplaces=store.list_workplaces(),
     ))
 
@@ -143,17 +134,17 @@ async def workplaces_page(request: Request, _: AuthDep):
 async def workplace_detail_page(request: Request, workplace_id: str, _: AuthDep):
     wp = store.get_workplace(workplace_id)
     if not wp:
-        return templates.TemplateResponse(request, "error.html", _ctx(
+        return templates.TemplateResponse(request, "error.html", page_ctx(
             request, "error", code=404, message=f"Workplace “{workplace_id}” not found.",
         ), status_code=404)
-    return templates.TemplateResponse(request, "workplace_detail.html", _ctx(
+    return templates.TemplateResponse(request, "workplace_detail.html", page_ctx(
         request, "workplace", workplace=wp, agents=store.list_agents(),
     ))
 
 
 @router.get("/skills", response_class=HTMLResponse)
 async def skills_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "skills.html", _ctx(
+    return templates.TemplateResponse(request, "skills.html", page_ctx(
         request, "skills", skills=store.list_skills(),
     ))
 
@@ -162,45 +153,40 @@ async def skills_page(request: Request, _: AuthDep):
 async def skill_detail_page(request: Request, skill_id: str, _: AuthDep):
     skill = store.get_skill(skill_id)
     if not skill:
-        return templates.TemplateResponse(request, "error.html", _ctx(
+        return templates.TemplateResponse(request, "error.html", page_ctx(
             request, "error", code=404, message=f"Skill “{skill_id}” not found.",
         ), status_code=404)
-    return templates.TemplateResponse(request, "skill_detail.html", _ctx(request, "skill", skill=skill))
+    return templates.TemplateResponse(request, "skill_detail.html", page_ctx(request, "skill", skill=skill))
 
 
-@router.get("/plugins", response_class=HTMLResponse)
-async def plugins_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "plugins.html", _ctx(
-        request, "plugins", plugins=store.list_plugins(),
+@router.get("/modules", response_class=HTMLResponse)
+async def modules_page(request: Request, _: AuthDep):
+    return templates.TemplateResponse(request, "modules.html", page_ctx(
+        request, "modules", modules=store.list_modules(),
     ))
 
 
-@router.get("/board", response_class=HTMLResponse)
-async def board_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "board.html", _ctx(request, "board"))
-
-
-@router.get("/usage", response_class=HTMLResponse)
-async def usage_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "usage.html", _ctx(request, "usage"))
+@router.get("/plugins", response_class=HTMLResponse)
+async def plugins_page_redirect(_: AuthDep):
+    return RedirectResponse("/modules", status_code=303)
 
 
 @router.get("/scheduler", response_class=HTMLResponse)
 async def scheduler_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "scheduler.html", _ctx(
+    return templates.TemplateResponse(request, "scheduler.html", page_ctx(
         request, "scheduler", schedules=store.list_schedules(), agents=store.list_agents(),
     ))
 
 
 @router.get("/system", response_class=HTMLResponse)
 async def system_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "system.html", _ctx(
+    return templates.TemplateResponse(request, "system.html", page_ctx(
         request, "system",
         settings=store.get_public_settings(),
         tools=store.list_tools(),
         llm_profiles=store.list_llm_profiles(),
         default_model_id=store.get_default_llm_profile_id(),
-        plugins=store.list_plugins(),
+        modules=store.list_modules(),
         shared_channels=store.list_shared_channels(),
         users=store.list_users(),
     ))
@@ -210,7 +196,7 @@ async def system_page(request: Request, _: AuthDep):
 async def evaluate_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
-    return templates.TemplateResponse(request, "evaluate.html", _ctx(
+    return templates.TemplateResponse(request, "evaluate.html", page_ctx(
         request, "evaluate", eval_page="runner",
         domains=store.list_eval_domains(), models=store.list_models(),
     ))
@@ -220,7 +206,7 @@ async def evaluate_page(request: Request, _: AuthDep):
 async def evaluate_domains_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
-    return templates.TemplateResponse(request, "evaluate_domains.html", _ctx(
+    return templates.TemplateResponse(request, "evaluate_domains.html", page_ctx(
         request, "evaluate", eval_page="domains", domains=store.list_eval_domains(),
     ))
 
@@ -229,7 +215,7 @@ async def evaluate_domains_page(request: Request, _: AuthDep):
 async def evaluate_evaluators_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
-    return templates.TemplateResponse(request, "evaluate_evaluators.html", _ctx(
+    return templates.TemplateResponse(request, "evaluate_evaluators.html", page_ctx(
         request, "evaluate", eval_page="evaluators", evaluators=store.list_evaluators(),
     ))
 
@@ -238,7 +224,7 @@ async def evaluate_evaluators_page(request: Request, _: AuthDep):
 async def evaluate_settings_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
-    return templates.TemplateResponse(request, "evaluate_settings.html", _ctx(
+    return templates.TemplateResponse(request, "evaluate_settings.html", page_ctx(
         request, "evaluate", eval_page="settings", settings=store.get_public_settings(),
     ))
 
@@ -247,7 +233,7 @@ async def evaluate_settings_page(request: Request, _: AuthDep):
 async def history_page(request: Request, _: AuthDep):
     if (redir := _eval_disabled_redirect()) is not None:
         return redir
-    return templates.TemplateResponse(request, "history.html", _ctx(
+    return templates.TemplateResponse(request, "history.html", page_ctx(
         request, "evaluate", eval_page="history", runs=store.list_eval_runs(),
     ))
 
@@ -258,10 +244,10 @@ async def history_detail_page(request: Request, run_id: str, _: AuthDep):
         return redir
     run = store.get_eval_run(run_id)
     if not run:
-        return templates.TemplateResponse(request, "error.html", _ctx(
+        return templates.TemplateResponse(request, "error.html", page_ctx(
             request, "error", code=404, message=f"Run “{run_id}” not found.",
         ), status_code=404)
-    return templates.TemplateResponse(request, "history_detail.html", _ctx(
+    return templates.TemplateResponse(request, "history_detail.html", page_ctx(
         request, "evaluate", eval_page="history", run=run,
     ))
 
@@ -270,14 +256,14 @@ async def history_detail_page(request: Request, run_id: str, _: AuthDep):
 async def setup_page(request: Request):
     if request.session.get("auth") and store.is_setup_complete():
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request, "setup.html", _ctx(request, "setup"))
+    return templates.TemplateResponse(request, "setup.html", page_ctx(request, "setup"))
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if request.session.get("auth"):
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request, "login.html", _ctx(request, "login", error=None))
+    return templates.TemplateResponse(request, "login.html", page_ctx(request, "login", error=None))
 
 
 @router.get("/logout")

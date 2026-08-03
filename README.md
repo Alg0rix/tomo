@@ -518,7 +518,7 @@ tomo/
 │
 ├── cli/                          # `tomo` CLI (update, uninstall, service, skills)
 ├── skills/                       # Installable skill packages
-├── plugins/                      # Reserved for platform extensions (stub)
+├── modules/                      # Optional product modules (Token Monitor, …)
 ├── skillsets/                    # Preset agent profiles (JSON)
 ├── defaults/                     # Shipped prompts and KB seeds
 ├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
@@ -540,7 +540,7 @@ tomo/
 | **Persistence** | `app/models/` | SQLite via mixins |
 | **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, portals, tools |
 | **Integrations** | `app/channels/`, `app/workplaces/` | Messaging and execution environments |
-| **Extensions** | `skills/`, `app/extensions/` | Skill packages + loaders (`plugins/` reserved) |
+| **Extensions** | `skills/`, `modules/`, `app/extensions/` | Skill packages + optional modules |
 | **Ops** | `cli/`, `scripts/` | Install/update/uninstall, systemd user unit, local tooling |
 
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.

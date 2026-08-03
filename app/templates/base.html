@@ -19,6 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}?v=chat-center1">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
 <div class="app-shell">
@@ -36,6 +37,9 @@
       <a href="/agents" class="{{ 'active' if page in ('agents','agent') }}">Agents</a>
       <a href="/workplaces" class="{{ 'active' if page in ('workplaces','workplace') }}">Workplaces</a>
       <a href="/skills" class="{{ 'active' if page in ('skills','skill') }}">Skills</a>
+      {% for item in module_nav|default([]) %}
+      <a href="{{ item.path }}" class="{{ 'active' if page == item.page }}">{{ item.label }}</a>
+      {% endfor %}
       {% if eval_ui_enabled %}
       <a href="/evaluate" class="{{ 'active' if page == 'evaluate' }}">Evaluate</a>
       {% endif %}

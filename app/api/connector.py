@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.core.config import TRUST_PROXY
 from app.services import store
 from app.workplaces.hub import ConnectorSession, client_supports_replay, hub
 from app.workplaces.pairing import rate_limiter
@@ -36,17 +37,11 @@ def _err(message: str) -> dict[str, Any]:
 
 
 def _client_ip(request: Request | WebSocket) -> str:
-    if isinstance(request, Request):
+    """Peer IP for rate limits. X-Forwarded-For only when TOMO_TRUST_PROXY=1."""
+    if TRUST_PROXY:
         forwarded = request.headers.get("x-forwarded-for", "")
         if forwarded:
             return forwarded.split(",")[0].strip()
-        if request.client:
-            return request.client.host or ""
-        return ""
-    # WebSocket
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host or ""
     return ""

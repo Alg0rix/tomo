@@ -21,8 +21,11 @@ def _reset() -> None:
 def test_web_fetch_returns_text(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {}
     mock_resp.text = "hello from web"
     mock_resp.raise_for_status = MagicMock()
+    mock_resp.url = "https://example.com/page"
 
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
@@ -36,6 +39,34 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
 
 def test_web_fetch_blocks_loopback() -> None:
     result = execute("web_fetch", {"url": "http://127.0.0.1/"})
+    assert result.startswith("Error")
+    assert "blocked" in result.lower() or "private" in result.lower() or "loopback" in result.lower()
+
+
+def test_web_fetch_blocks_redirect_to_loopback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_fetch,
+        "_is_blocked_host",
+        lambda host: (
+            "Error: blocked"
+            if host in {"127.0.0.1", "localhost"}
+            else None
+        ),
+    )
+
+    redirect = httpx.Response(
+        302,
+        headers={"location": "http://127.0.0.1/secret"},
+        request=httpx.Request("GET", "https://example.com/go"),
+    )
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.get.return_value = redirect
+
+    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+        result = execute("web_fetch", {"url": "https://example.com/go"})
     assert result.startswith("Error")
     assert "blocked" in result.lower() or "private" in result.lower() or "loopback" in result.lower()
 

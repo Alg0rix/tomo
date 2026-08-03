@@ -468,14 +468,24 @@ async def get_session_artifact(session_id: str, filename: str, _: AuthDep):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    if filename.lower().endswith((".html", ".htm")):
-        mime = "text/html"
-    # Inline so chat/img/iframe can display without forced download (Kimi-style).
+    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff"}
+    # Never serve agent-authored HTML as an active document on Tomo origin.
+    # UI previews load via sandboxed srcdoc instead.
+    lower = filename.lower()
+    if lower.endswith((".html", ".htm")):
+        return FileResponse(
+            path,
+            media_type="text/plain; charset=utf-8",
+            filename=filename,
+            content_disposition_type="attachment",
+            headers=headers,
+        )
     return FileResponse(
         path,
         media_type=mime,
         filename=filename,
         content_disposition_type="inline",
+        headers=headers,
     )
 
 

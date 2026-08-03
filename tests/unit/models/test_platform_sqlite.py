@@ -33,8 +33,9 @@ def test_seed_skills_plugins_schedules(tmp_path: Path) -> None:
     _install_demo_skills()
     skills = store.list_skills()
     assert {s["id"] for s in skills} >= {"onboarding", "deploy", "research_brief"}
-    plugins = store.list_plugins()
-    assert {p["id"] for p in plugins} >= {"kanban", "token_monitor", "connector"}
+    modules = store.list_modules()
+    assert {m["id"] for m in modules} >= {"kanban", "token_monitor"}
+    assert "connector" not in {m["id"] for m in modules}
     schedules = store.list_schedules()
     assert {s["id"] for s in schedules} >= {"sch_001", "sch_002", "sch_003"}
 
@@ -53,7 +54,7 @@ def test_skills_plugins_schedules_survive_rebind(tmp_path: Path) -> None:
             "enabled": True,
         }
     )
-    store.update_plugin("kanban", {"enabled": False})
+    store.update_module("kanban", {"enabled": False})
     store.set_agent_skills("ops", ["deploy", "onboarding"])
 
     store.rebind(db)
@@ -63,7 +64,7 @@ def test_skills_plugins_schedules_survive_rebind(tmp_path: Path) -> None:
     assert sch is not None
     assert sch["name"] == "User job"
     assert sch["interval_seconds"] == 120
-    assert store.get_plugin("kanban")["enabled"] is False
+    assert store.get_module("kanban")["enabled"] is False
     assigned = {s["id"] for s in store.get_agent_skills("ops") if s["assigned"]}
     assert assigned == {"deploy", "onboarding"}
     assert store.get_skill("onboarding") is not None

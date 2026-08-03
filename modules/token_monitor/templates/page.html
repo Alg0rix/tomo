@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ module_static('token_monitor', 'page.css') }}?v=3">
+{% endblock %}
+{% block content %}
+<div class="page usage-page" id="usagePage">
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Usage</h1>
+      <p class="page-sub">Token Monitor — turns like commits, tokens on hover. <span class="badge muted">module</span></p>
+    </div>
+  </div>
+
+  <div class="usage-hero">
+    <section class="usage-hero-stat" id="usageStats" aria-label="Usage summary">
+      <div class="usage-hero-k">This week</div>
+      <div class="usage-hero-v" data-stat="week">—</div>
+      <div class="usage-hero-sub">
+        <span><span class="faint">Today</span> <strong data-stat="today">—</strong></span>
+        <span><span class="faint">Active (1h)</span> <strong data-stat="active">—</strong></span>
+      </div>
+    </section>
+
+    <section class="usage-hero-heat" aria-label="Activity">
+      <h2 class="usage-h">Activity</h2>
+      <p class="page-sub usage-heat-sub">Last 12 months · cell = turns · hover for tokens</p>
+      <div class="usage-heat-wrap">
+        <div class="usage-heat" id="usageHeat" aria-label="Usage heatmap"></div>
+      </div>
+      <div class="usage-heat-legend">
+        <span class="faint">Less</span>
+        <span class="uh-cell l0"></span><span class="uh-cell l1"></span>
+        <span class="uh-cell l2"></span><span class="uh-cell l3"></span>
+        <span class="uh-cell l4"></span>
+        <span class="faint">More</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="usage-cols">
+    <section class="usage-section">
+      <h2 class="usage-h">Top agents</h2>
+      <ol class="usage-board" id="usageAgents"></ol>
+    </section>
+    <section class="usage-section">
+      <h2 class="usage-h">Top sessions</h2>
+      <ol class="usage-board" id="usageSessions"></ol>
+    </section>
+  </div>
+
+  <section class="usage-section">
+    <h2 class="usage-h">Recent activity</h2>
+    <ul class="usage-feed" id="usageFeed"></ul>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ module_static('token_monitor', 'page.js') }}?v=3"></script>
+{% endblock %}

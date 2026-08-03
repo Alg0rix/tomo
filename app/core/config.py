@@ -71,18 +71,51 @@ DB_PATH = Path(os.environ.get("TOMO_DB_PATH", str(VAR_DIR / "tomo.db")))
 HOST = os.environ.get("TOMO_HOST", "127.0.0.1")
 PORT = int(os.environ.get("TOMO_PORT", "8787"))
 RELOAD = _env_bool("TOMO_RELOAD", default=False)
+# Trust X-Forwarded-For only behind a known reverse proxy that strips client spoofing.
+TRUST_PROXY = _env_bool("TOMO_TRUST_PROXY", default=False)
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_DEFAULT_SESSION_SECRET = "tomo-dev-secret-change-me"
+_DEFAULT_ADMIN_PASSWORD = "tomo"
 
 # --- Auth ---
 # Session-cookie signing secret (NOT the at-rest master key). The master key for
 # encrypting SQLite secrets is TOMO_SECRET_KEY (see app.core.secrets). Set
 # TOMO_SESSION_SECRET to a stable value in any real deploy; the dev default is
 # single-user only.
-SESSION_SECRET = os.environ.get("TOMO_SESSION_SECRET", "tomo-dev-secret-change-me")
+SESSION_SECRET = os.environ.get("TOMO_SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 # Seed password for the bootstrap ``admin`` account when the users table is empty.
 # After bootstrap, change passwords via System → Accounts (env is seed-only).
-ADMIN_PASSWORD = os.environ.get("TOMO_ADMIN_PASSWORD", "tomo")
+ADMIN_PASSWORD = os.environ.get("TOMO_ADMIN_PASSWORD", _DEFAULT_ADMIN_PASSWORD)
 SESSION_COOKIE_NAME = "tomo_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+# Secure cookie when explicitly requested, or when not binding loopback (prod-ish).
+COOKIE_HTTPS_ONLY = _env_bool(
+    "TOMO_COOKIE_SECURE",
+    default=HOST not in _LOOPBACK_HOSTS,
+)
+# Admin filesystem browse jail (default: operator home, not `/`).
+FS_BROWSE_ROOT = Path(
+    os.environ.get("TOMO_FS_BROWSE_ROOT", str(Path.home()))
+).expanduser()
+
+
+def assert_bind_safety() -> None:
+    """Refuse non-loopback bind with known insecure defaults."""
+    if HOST in _LOOPBACK_HOSTS:
+        return
+    problems: list[str] = []
+    if SESSION_SECRET == _DEFAULT_SESSION_SECRET:
+        problems.append("TOMO_SESSION_SECRET is still the dev default")
+    if ADMIN_PASSWORD == _DEFAULT_ADMIN_PASSWORD:
+        problems.append("TOMO_ADMIN_PASSWORD is still the dev default")
+    if problems:
+        raise SystemExit(
+            "Refusing to bind "
+            f"{HOST}:{PORT} with insecure defaults: "
+            + "; ".join(problems)
+            + ". Set strong secrets or bind 127.0.0.1."
+        )
 
 # --- Brand ---
 BRAND = "Tomo"

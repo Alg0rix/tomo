@@ -7,13 +7,13 @@
     {% include 'partials/settings/models.html' %}
     {% include 'partials/settings/memory.html' %}
     {% include 'partials/settings/tools.html' %}
-    {% include 'partials/settings/plugins.html' %}
+    {% include 'partials/settings/modules.html' %}
     {% include 'partials/settings/shared_channel.html' %}
     {% include 'partials/settings/users.html' %}
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', path='js/plugins.js') }}"></script>
-<script src="{{ url_for('static', path='js/system.js') }}?v=apikey1"></script>
+<script src="{{ url_for('static', path='js/modules.js') }}"></script>
+<script src="{{ url_for('static', path='js/system.js') }}?v=modules1"></script>
 {% endblock %}

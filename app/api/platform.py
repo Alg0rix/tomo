@@ -1,14 +1,13 @@
-"""Platform API — tools, skills, plugins, workplaces, schedules, settings."""
+"""Platform API — tools, skills, modules, workplaces, schedules, settings."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.core.config import EVAL_UI_ENABLED
+from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
 from app.core.deps import AuthDep, session_user_id
 from app.schemas import (
     KnowledgeEntryCreate,
@@ -56,8 +55,8 @@ def _resolve_browse_path(raw: str | None) -> Path:
     from app.core.paths import ensure_under
 
     text = (raw or "").strip() or str(Path.home())
-    # Admin FS browse: jail under configurable root (default filesystem root).
-    browse_root = Path(os.environ.get("TOMO_FS_BROWSE_ROOT", "/")).expanduser()
+    # Admin FS browse: jail under configurable root (default: home).
+    browse_root = FS_BROWSE_ROOT
     try:
         browse_root = browse_root.resolve()
         p = ensure_under(browse_root, Path(text).expanduser())
@@ -166,25 +165,48 @@ async def get_skill(skill_id: str, _: AuthDep):
     return {**skill, "body": body or skill.get("description") or ""}
 
 
+@router.get("/modules")
+async def list_modules(_: AuthDep):
+    return {"modules": store.list_modules()}
+
+
+@router.get("/modules/{module_id}")
+async def get_module(module_id: str, _: AuthDep):
+    module = store.get_module(module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return module
+
+
+@router.put("/modules/{module_id}")
+async def update_module(module_id: str, body: dict, _: AuthDep):
+    module = store.update_module(module_id, body)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return module
+
+
+# Back-compat aliases for older clients
 @router.get("/plugins")
-async def list_plugins(_: AuthDep):
-    return {"plugins": store.list_plugins()}
+async def list_plugins_alias(_: AuthDep):
+    mods = store.list_modules()
+    return {"plugins": mods, "modules": mods}
 
 
 @router.get("/plugins/{plugin_id}")
-async def get_plugin(plugin_id: str, _: AuthDep):
-    plugin = store.get_plugin(plugin_id)
-    if not plugin:
-        raise HTTPException(status_code=404, detail="Plugin not found")
-    return plugin
+async def get_plugin_alias(plugin_id: str, _: AuthDep):
+    module = store.get_module(plugin_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return module
 
 
 @router.put("/plugins/{plugin_id}")
-async def update_plugin(plugin_id: str, body: dict, _: AuthDep):
-    plugin = store.update_plugin(plugin_id, body)
-    if not plugin:
-        raise HTTPException(status_code=404, detail="Plugin not found")
-    return plugin
+async def update_plugin_alias(plugin_id: str, body: dict, _: AuthDep):
+    module = store.update_module(plugin_id, body)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return module
 
 
 @router.put("/skills/{skill_id}")
@@ -260,7 +282,7 @@ async def ensure_local_workplace(body: EnsureLocalWorkplaceIn, _: AuthDep):
     """Create or reuse a local workplace for an absolute path (VS Code open-folder)."""
     from app.core.paths import ensure_under
 
-    browse_root = Path(os.environ.get("TOMO_FS_BROWSE_ROOT", "/")).expanduser()
+    browse_root = FS_BROWSE_ROOT
     try:
         browse_root = browse_root.resolve()
         p = ensure_under(browse_root, Path(body.path).expanduser())
@@ -568,10 +590,21 @@ async def update_settings(body: dict, _: AuthDep):
     return store.update_settings(body)
 
 
+def _is_loopback_client(request: Request) -> bool:
+    """True when the TCP peer is loopback (ignores X-Forwarded-For)."""
+    host = (request.client.host if request.client else "") or ""
+    return host in {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
 @router.post("/setup")
-async def complete_setup(body: dict):
+async def complete_setup(request: Request, body: dict):
     if store.is_setup_complete():
         raise HTTPException(status_code=403, detail="Setup already complete")
+    # First-run wizard is intentionally unauthenticated, but only from local peers.
+    if not _is_loopback_client(request):
+        raise HTTPException(
+            status_code=403, detail="Setup is only allowed from localhost"
+        )
     base_url = (body.get("base_url") or "").strip()
     api_key = (body.get("api_key") or "").strip()
     model = (body.get("model") or "").strip()
