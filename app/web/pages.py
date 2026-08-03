@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import EVAL_UI_ENABLED
-from app.core.deps import AuthDep, templates
+from app.core.deps import AuthDep, session_user_id, templates
 from app.services import store
 from app.web.context import page_ctx
 
