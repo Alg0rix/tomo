@@ -499,6 +499,11 @@
     if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
   }
 
+  function stickChatScrollBottom(scroll) {
+    if (window.Tomo && Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll);
+    else if (scroll) scroll.scrollTop = scroll.scrollHeight;
+  }
+
   function renderHistory(entries) {
     const scroll = chatWrap.querySelector('.chat-scroll');
     scroll.innerHTML = '';
@@ -888,8 +893,9 @@
           if (!e.error && window.TomoArtifacts) {
             var parsedArt = TomoArtifacts.parseSaveResult(e.function || '', resultText);
             if (parsedArt) {
+              // Inline card only — never auto-open the side panel while
+              // replaying history (that re-opens closed panels on every refresh).
               turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
-              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
             }
           }
         }
@@ -952,7 +958,7 @@
       if (reopen) openDetailPanel(reopen);
     }
 
-    scroll.scrollTop = scroll.scrollHeight;
+    stickChatScrollBottom(scroll);
   }
 
   async function selectSession(sessionId, opts) {
@@ -995,6 +1001,8 @@
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
+      // init may re-touch markdown; stick again after layout settles
+      stickChatScrollBottom(chatWrap.querySelector('.chat-scroll'));
 
       // Mid-turn refresh: history shows unpaired tools as running; re-attach
       // to the live session stream so status stays busy and results update.

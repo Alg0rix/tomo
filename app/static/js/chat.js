@@ -638,7 +638,8 @@
     }
 
     scroll.querySelectorAll('.prose').forEach(renderMarkdown);
-    atBottom();
+    if (Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll);
+    else atBottom();
 
     function resize() {
       input.style.height = 'auto';

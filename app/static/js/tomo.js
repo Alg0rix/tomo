@@ -86,6 +86,56 @@
   };
   Tomo.truncate = function (s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
 
+  /**
+   * Keep a scroll container pinned to the bottom while async layout (images,
+   * mermaid) grows content. Stops if the user scrolls away from the bottom.
+   */
+  Tomo.stickScrollBottom = function (el, opts) {
+    if (!el) return;
+    opts = opts || {};
+    var gap = opts.userGap != null ? opts.userGap : 140;
+    var times = opts.times || [50, 200, 500, 1200];
+    var holdMs = opts.holdMs != null ? opts.holdMs : 1500;
+    var cancelled = false;
+    var sticking = false;
+    var timers = [];
+
+    function go() {
+      if (cancelled) return;
+      sticking = true;
+      el.scrollTop = el.scrollHeight;
+      requestAnimationFrame(function () { sticking = false; });
+    }
+
+    function onUserScroll() {
+      if (sticking) return;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
+        cancelled = true;
+        cleanup();
+      }
+    }
+
+    function cleanup() {
+      el.removeEventListener('scroll', onUserScroll);
+      timers.forEach(function (t) { clearTimeout(t); });
+      timers = [];
+    }
+
+    go();
+    requestAnimationFrame(function () {
+      go();
+      requestAnimationFrame(go);
+    });
+    el.querySelectorAll('img').forEach(function (img) {
+      if (img.complete) return;
+      img.addEventListener('load', go, { once: true });
+      img.addEventListener('error', go, { once: true });
+    });
+    el.addEventListener('scroll', onUserScroll, { passive: true });
+    times.forEach(function (ms) { timers.push(setTimeout(go, ms)); });
+    timers.push(setTimeout(cleanup, holdMs));
+  };
+
   /** Line-level LCS ops for synthetic str_replace diffs. */
   Tomo._computeLineDiff = function (oldLines, newLines) {
     var m = oldLines.length, n = newLines.length;
