@@ -1,6 +1,6 @@
 [project]
 name = "tomo"
-version = "0.1.5"
+version = "0.1.6"
 description = "Tomo (友達) — a general-purpose agent swarm that learns, coordinates, and acts on your behalf."
 readme = "README.md"
 license = { file = "LICENSE" }
