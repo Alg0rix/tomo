@@ -313,22 +313,34 @@
 }
 .cp-bond-part span { color: var(--text-dim); }
 
-/* Heatmap */
+/* Heatmap — GitHub-style, centered block */
 .cp-heatmap-wrap {
+  display: flex;
+  justify-content: center;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 8px 0 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.cp-heatmap-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
 }
 .cp-heatmap {
-  display: inline-grid;
+  display: grid;
   grid-auto-flow: column;
-  grid-template-rows: repeat(7, 11px);
-  grid-auto-columns: 11px;
+  grid-template-rows: repeat(7, 12px);
+  grid-auto-columns: 12px;
   gap: 3px;
-  min-width: 100%;
+  width: max-content;
+  margin: 0 auto;
 }
 .cp-heat-cell {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   border-radius: 2px;
   background: var(--surface-3);
   border: 1px solid transparent;
@@ -351,28 +363,26 @@
 .cp-heat-legend {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 11px;
   color: var(--text-faint);
 }
-.cp-heat-legend .cp-heat-cell { cursor: default; }
+.cp-heat-legend .cp-heat-cell { cursor: default; flex-shrink: 0; }
 .cp-heat-months {
-  display: flex;
-  gap: 0;
-  margin-bottom: 6px;
+  position: relative;
+  height: 16px;
+  margin: 0 auto 8px;
   font-size: 10px;
   color: var(--text-faint);
   font-family: var(--font-mono);
-  min-height: 14px;
-  position: relative;
-  height: 14px;
 }
 .cp-heat-month {
   position: absolute;
   top: 0;
   white-space: nowrap;
+  transform: translateX(0);
 }
 
 /* ── Growth log bento ──────────────────────────────────────────── */

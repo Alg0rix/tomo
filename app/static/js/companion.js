@@ -113,11 +113,14 @@
       })
       .join('');
 
-    // Month labels: approximate column index → px (11 cell + 3 gap)
+    // Cell 12px + gap 3px = 15px per week column
+    var cellStep = 15;
+    var cols = Math.max(1, Math.ceil(days.length / 7));
+    var gridW = cols * 12 + Math.max(0, cols - 1) * 3;
     var monthsHtml = (hm.months || [])
       .map(function (m) {
         var col = Math.floor((m.index || 0) / 7);
-        var left = col * 14;
+        var left = col * cellStep;
         return (
           '<span class="cp-heat-month" style="left:' +
           left +
@@ -130,14 +133,15 @@
 
     return (
       '<div class="cp-heatmap-wrap">' +
+      '<div class="cp-heatmap-inner">' +
       '<div class="cp-heat-months" style="width:' +
-      Math.max(200, Math.ceil(days.length / 7) * 14) +
+      gridW +
       'px">' +
       monthsHtml +
       '</div>' +
       '<div class="cp-heatmap" role="img" aria-label="Activity heatmap">' +
       cells +
-      '</div></div>' +
+      '</div>' +
       '<div class="cp-heat-legend">' +
       '<span>Less</span>' +
       '<div class="cp-heat-cell lv-0"></div>' +
@@ -145,7 +149,8 @@
       '<div class="cp-heat-cell lv-2"></div>' +
       '<div class="cp-heat-cell lv-3"></div>' +
       '<div class="cp-heat-cell lv-4"></div>' +
-      '<span>More</span></div>'
+      '<span>More</span></div>' +
+      '</div></div>'
     );
   }
 

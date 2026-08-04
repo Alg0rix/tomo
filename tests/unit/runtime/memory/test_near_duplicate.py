@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.runtime.memory.curated import add_entry, near_duplicate, read_entries, user_path, write_entries
+from app.runtime.memory.curated import add_entry, near_duplicate, read_entries, user_path
 
 
 def test_near_duplicate_exact(tmp_path, monkeypatch) -> None:
