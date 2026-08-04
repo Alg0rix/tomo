@@ -83,8 +83,8 @@
         if (monitorEs) { try { monitorEs.close(); } catch (e) {} monitorEs = null; }
         var statusEl = chatWrap.querySelector('.chat-status');
         if (statusEl) {
-          statusEl.className = 'badge ok';
-          statusEl.innerHTML = '<span class="pulse"></span>online';
+          statusEl.className = 'composer-status chat-status';
+          statusEl.innerHTML = '<span class="composer-status-dot" aria-hidden="true"></span>Online';
         }
         refetchHistory(sessionId);
       });
@@ -103,8 +103,8 @@
           stopHistoryPoll();
           var statusEl = chatWrap.querySelector('.chat-status');
           if (statusEl) {
-            statusEl.className = 'badge ok';
-            statusEl.innerHTML = '<span class="pulse"></span>online';
+            statusEl.className = 'composer-status chat-status';
+            statusEl.innerHTML = '<span class="composer-status-dot" aria-hidden="true"></span>Online';
           }
         }
         if (entries.length !== lastCount) {
@@ -1036,8 +1036,8 @@
         var tryResume = function () {
           var statusEl = chatWrap.querySelector('.chat-status');
           if (statusEl) {
-            statusEl.className = 'badge amber';
-            statusEl.innerHTML = '<span class="pulse"></span>busy';
+            statusEl.className = 'composer-status chat-status warn';
+            statusEl.innerHTML = '<span class="composer-status-dot" aria-hidden="true"></span>Busy';
           }
           if (!chatHandle.resume()) startHistoryPoll(sessionId);
         };

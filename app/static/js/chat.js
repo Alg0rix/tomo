@@ -531,26 +531,31 @@
     }
     function setStatus(badge, label) {
       if (!statusEl) return;
-      statusEl.className = 'badge ' + badge;
-      statusEl.innerHTML = '<span class="pulse"></span>' + esc(label);
+      // Map legacy badge tones → composer pill modifiers
+      var tone = '';
+      if (badge === 'amber' || badge === 'warn') tone = ' warn';
+      else if (badge === 'err' || badge === 'danger') tone = ' err';
+      else if (badge && badge !== 'ok') tone = ' ' + badge;
+      statusEl.className = 'composer-status chat-status' + tone;
+      var pretty = String(label || '').replace(/^./, function (c) {
+        return c.toUpperCase();
+      });
+      statusEl.innerHTML =
+        '<span class="composer-status-dot" aria-hidden="true"></span>' + esc(pretty);
     }
 
     function syncGeneratingUi() {
+      // Single action slot: .is-generating toggles Send ↔ Stop in CSS
+      // (do not use [hidden] — display:grid overrides it).
       if (composerEl) {
         if (sending) composerEl.classList.add('is-generating');
         else composerEl.classList.remove('is-generating');
       }
-      if (stopBtn) {
-        stopBtn.disabled = !sending;
-        if (sending) stopBtn.removeAttribute('hidden');
-        else stopBtn.setAttribute('hidden', '');
-      }
+      if (stopBtn) stopBtn.disabled = !sending;
     }
 
     function refreshSendBtn() {
-      // While a turn is running, send is still allowed so messages enqueue
-      // (Enter key / programmatic send). The stop button replaces the send
-      // control visually via .is-generating.
+      // While a turn is running, Enter still enqueues; primary control shows Stop.
       sendBtn.disabled = uploading || (!input.value.trim() && !uploadedAttachments.length);
       syncGeneratingUi();
     }
@@ -676,8 +681,10 @@
     else atBottom();
 
     function resize() {
+      if (!input) return;
       input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+      var next = Math.max(80, Math.min(input.scrollHeight, 200));
+      input.style.height = next + 'px';
     }
 
     function appendUserBubble(value, queued, attachments) {

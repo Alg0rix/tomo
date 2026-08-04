@@ -6,10 +6,71 @@
     return window.Tomo && Tomo.escapeHtml ? Tomo.escapeHtml(s) : String(s == null ? "" : s);
   }
 
+  var APPROVAL_LABELS = {
+    once: "Allowed once",
+    session: "Allowed this session",
+    always: "Always allowed",
+    deny: "Denied",
+  };
+
+  function approvalStatusLabel(choice) {
+    var c = (choice || "").trim().toLowerCase();
+    return APPROVAL_LABELS[c] || (c ? "Chose “" + c + "”" : "Resolved");
+  }
+
+  function approvalTone(choice) {
+    var c = (choice || "").trim().toLowerCase();
+    if (c === "deny") return "deny";
+    if (c === "always" || c === "session" || c === "once") return "allow";
+    return "neutral";
+  }
+
+  /**
+   * Collapse a live HITL card into a compact status row after the user acts.
+   * Removes action buttons / previews so the turn timeline stays scannable.
+   */
+  function collapseCard(card, opts) {
+    opts = opts || {};
+    if (!card || card.classList.contains("is-collapsed")) return;
+    var tool = opts.tool || card.dataset.tool || "";
+    var status = opts.status || "Resolved";
+    var tone = opts.tone || "neutral";
+    var detail = opts.detail || "";
+    var kicker = opts.kicker || (card.classList.contains("clarify-card") ? "Clarify" : "Permission");
+
+    card.classList.add("resolved", "is-collapsed");
+    card.dataset.choice = opts.choice || card.dataset.choice || "";
+    card.dataset.tone = tone;
+    card.setAttribute(
+      "aria-label",
+      kicker + (tool ? " " + tool : "") + ": " + status
+    );
+
+    card.innerHTML =
+      '<div class="hitl-rail" aria-hidden="true"></div>' +
+      '<div class="hitl-body hitl-body-collapsed">' +
+      '<div class="hitl-summary">' +
+      '<span class="hitl-kicker">' +
+      esc(kicker) +
+      "</span>" +
+      (tool ? '<span class="hitl-tool">' + esc(tool) + "</span>" : "") +
+      '<span class="hitl-status hitl-status-' +
+      esc(tone) +
+      '">' +
+      esc(status) +
+      "</span>" +
+      "</div>" +
+      (detail
+        ? '<p class="hitl-summary-detail">' + esc(detail) + "</p>"
+        : "") +
+      "</div>";
+  }
+
   function buildApprovalCard(d) {
     var card = document.createElement("div");
     card.className = "hitl-card approval-card";
     card.dataset.id = d.id || "";
+    card.dataset.tool = d.tool || "tool";
     card.setAttribute("role", "region");
     card.setAttribute("aria-label", "Tool approval required");
     var findings = (d.findings || [])
@@ -88,12 +149,18 @@
       "</div>";
     card.querySelectorAll(".hitl-btn[data-choice]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var choice = btn.getAttribute("data-choice");
-        card.classList.add("resolved");
-        card.dataset.choice = choice || "";
+        if (card.classList.contains("is-collapsed")) return;
+        var choice = btn.getAttribute("data-choice") || "";
+        // Disable immediately to prevent double-submit
         card.querySelectorAll(".hitl-btn").forEach(function (b) {
           b.disabled = true;
-          if (b === btn) b.classList.add("is-chosen");
+        });
+        collapseCard(card, {
+          choice: choice,
+          tool: d.tool || "tool",
+          status: approvalStatusLabel(choice),
+          tone: approvalTone(choice),
+          kicker: "Permission",
         });
         fetch("/api/approvals/" + encodeURIComponent(d.id), {
           method: "POST",
@@ -140,10 +207,18 @@
       "</div>" +
       "</div>";
     function submit(answer) {
-      if (!answer) return;
-      card.classList.add("resolved");
+      if (!answer || card.classList.contains("is-collapsed")) return;
       card.querySelectorAll("button,input").forEach(function (el) {
         el.disabled = true;
+      });
+      var short =
+        answer.length > 72 ? answer.slice(0, 69).trim() + "…" : answer;
+      collapseCard(card, {
+        choice: "answered",
+        status: "Answered",
+        tone: "allow",
+        kicker: "Clarify",
+        detail: short,
       });
       fetch("/api/clarify/" + encodeURIComponent(d.id), {
         method: "POST",
@@ -248,6 +323,7 @@
   window.TomoHitl = {
     buildApprovalCard: buildApprovalCard,
     buildClarifyCard: buildClarifyCard,
+    collapseCard: collapseCard,
     showCard: showCard,
     bindStream: bindStream,
     rehydrate: rehydrate,
