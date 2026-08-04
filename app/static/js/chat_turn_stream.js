@@ -903,6 +903,11 @@
           ctx.scheduleQueueDrain(700);
           return;
         }
+        if (code === 'cancelled') {
+          errorBubble('<span class="faint">' + ctx.esc(msg || 'Stopped') + '</span>');
+          endTurn();
+          return;
+        }
         errorBubble('<span style="color:var(--danger)">' + ctx.esc(msg) + '</span>');
         endTurn();
         return;

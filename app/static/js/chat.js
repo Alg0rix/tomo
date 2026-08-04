@@ -217,6 +217,7 @@
     const scroll = wrap.querySelector('.chat-scroll');
     const input = wrap.querySelector('.chat-input');
     const sendBtn = wrap.querySelector('.chat-send');
+    const stopBtn = wrap.querySelector('.chat-stop');
     const clearBtn = wrap.querySelector('.chat-clear');
     const statusEl = wrap.querySelector('.chat-status');
     const mentionMenu = wrap.querySelector('.mention-menu');
@@ -534,9 +535,24 @@
       statusEl.innerHTML = '<span class="pulse"></span>' + esc(label);
     }
 
+    function syncGeneratingUi() {
+      if (composerEl) {
+        if (sending) composerEl.classList.add('is-generating');
+        else composerEl.classList.remove('is-generating');
+      }
+      if (stopBtn) {
+        stopBtn.disabled = !sending;
+        if (sending) stopBtn.removeAttribute('hidden');
+        else stopBtn.setAttribute('hidden', '');
+      }
+    }
+
     function refreshSendBtn() {
-      // While a turn is running, send is still allowed so messages enqueue.
+      // While a turn is running, send is still allowed so messages enqueue
+      // (Enter key / programmatic send). The stop button replaces the send
+      // control visually via .is-generating.
       sendBtn.disabled = uploading || (!input.value.trim() && !uploadedAttachments.length);
+      syncGeneratingUi();
     }
 
     function formatSize(bytes) {
@@ -735,6 +751,7 @@
     function finishTurn() {
       if (es) { es.close(); es = null; }
       sending = false;
+      syncGeneratingUi();
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
 
       // Keep pin briefly after the stream ends (layout may still settle).
@@ -756,6 +773,39 @@
         });
         return;
       }
+      setStatus('ok', 'online');
+      refreshSendBtn();
+      input.focus();
+    }
+
+    /**
+     * Stop the in-flight server turn and clear any local queue.
+     * Disconnect alone does not cancel the background agent loop.
+     */
+    async function stopTurn() {
+      if (!sending && !es) return;
+      // Drop queued follow-ups — stop means stop.
+      while (messageQueue.length) {
+        var dropped = messageQueue.shift();
+        if (dropped && dropped.el) {
+          var t = dropped.el.closest ? dropped.el.closest('.turn') : null;
+          if (t) t.remove();
+          else dropped.el.remove();
+        }
+      }
+      var url = stopUrl();
+      try {
+        if (url) await Tomo.api(url, { method: 'POST' });
+      } catch (e) {
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast((e && e.message) || 'Could not stop', 'err');
+        }
+      }
+      if (es) { es.close(); es = null; }
+      sending = false;
+      delete wrap.dataset.liveStream;
+      wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
+      wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
       setStatus('ok', 'online');
       refreshSendBtn();
       input.focus();
@@ -801,6 +851,17 @@
         return '/api/sessions/' + encodeURIComponent(sid) + '/chat/clear';
       }
       return '/api/agents/' + encodeURIComponent(agentId) + '/chat/clear?user_id=' + encodeURIComponent(userId);
+    }
+
+    function stopUrl() {
+      const sid = currentSessionId();
+      if (sid) {
+        return '/api/sessions/' + encodeURIComponent(sid) + '/chat/stop';
+      }
+      if (agentId) {
+        return '/api/agents/' + encodeURIComponent(agentId) + '/chat/stop';
+      }
+      return '';
     }
 
     async function ensureSession() {
@@ -853,7 +914,7 @@
         closeStream: closeStream,
         finishTurn: finishTurn,
         scheduleQueueDrain: scheduleQueueDrain,
-        setSending: function (v) { sending = !!v; },
+        setSending: function (v) { sending = !!v; syncGeneratingUi(); },
         getSending: function () { return sending; },
         messageQueue: messageQueue,
         currentSessionId: currentSessionId,
@@ -1056,7 +1117,11 @@
       setTimeout(hidePopups, 150);
     });
     sendBtn.addEventListener('click', function () { send(); });
+    if (stopBtn) {
+      stopBtn.addEventListener('click', function () { stopTurn(); });
+    }
     resize();
+    syncGeneratingUi();
 
     function flashActBtn(btn) {
       if (!btn) return;
@@ -1144,6 +1209,7 @@
         messageQueue = [];
         if (es) { es.close(); es = null; }
         sending = false;
+        syncGeneratingUi();
         if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(wrap);
         if (!currentSessionId() && !agentId) {
           wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
@@ -1204,9 +1270,11 @@
         messageQueue = [];
         if (es) { es.close(); es = null; }
         sending = false;
+        syncGeneratingUi();
         delete wrap.dataset.liveStream;
       },
       send: send,
+      stop: stopTurn,
       resume: resumeActiveTurn,
       rehydratePending: rehydratePendingHitl,
     };

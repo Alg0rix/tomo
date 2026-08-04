@@ -145,6 +145,53 @@ class SessionTurnBusy(Exception):
     """Raised when a session already has an in-flight background turn."""
 
 
+def cancel_session_turn(session_id: str) -> bool:
+    """Request cancellation of the active background turn for *session_id*.
+
+    Broadcasts a ``cancelled`` error to SSE subscribers, wakes HITL waiters
+    with deny, and cancels the asyncio task. Cleanup (busy flags, registry,
+    session-turn lease) still runs in the runner ``finally``.
+
+    Returns ``True`` if a live turn was found and cancel was requested.
+    """
+    sid = (session_id or "").strip()
+    if not sid:
+        return False
+    turn = get_active_session_turn(sid)
+    if turn is None:
+        return False
+
+    turn._broadcast(
+        _fmt_sse(
+            {
+                "event": "error",
+                "data": {
+                    "message": "Stopped",
+                    "code": "cancelled",
+                    "session_id": sid,
+                },
+                "seq": 9997,
+            }
+        )
+    )
+
+    try:
+        from app.runtime.permissions.hitl import cancel_session_pending
+
+        cancel_session_pending(sid, choice="deny")
+    except Exception:
+        logger.exception("cancel HITL pending failed session_id=%s", sid)
+
+    task = turn.task
+    if task is not None and not task.done():
+        task.cancel()
+        logger.info("cancel requested session_id=%s", sid)
+        return True
+
+    # Task already finishing — still count as handled so the client cleans up.
+    return True
+
+
 async def start_session_turn(
     session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
@@ -589,6 +636,7 @@ __all__ = [
     "attachment_meta_for_ids",
     "expand_slash_skill",
     "expand_user_content_for_llm",
+    "cancel_session_turn",
     "get_active_session_turn",
     "heartbeat_stream",
     "prepend_attachment_info",

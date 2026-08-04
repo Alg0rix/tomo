@@ -18,7 +18,12 @@ from app.services import (
     store,
 )
 from app.channels.sse_map import session_busy_sse
-from app.services.chat import SessionTurnBusy, get_active_session_turn, start_session_turn
+from app.services.chat import (
+    SessionTurnBusy,
+    cancel_session_turn,
+    get_active_session_turn,
+    start_session_turn,
+)
 
 
 class SessionChatStreamIn(BaseModel):
@@ -148,6 +153,15 @@ async def session_chat_stream_post(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/sessions/{session_id}/chat/stop")
+async def session_chat_stop(session_id: str, _: AuthDep = None):
+    """Cancel the in-flight background turn for this session (if any)."""
+    if not store.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    stopped = cancel_session_turn(session_id)
+    return {"ok": True, "stopped": stopped, "session_id": session_id}
 
 
 @router.get("/sessions/{session_id}/chat/stream")
@@ -291,6 +305,23 @@ async def chat_stream_post(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/agents/{agent_id}/chat/stop")
+async def agent_chat_stop(
+    agent_id: str,
+    request: Request,
+    _: AuthDep = None,
+):
+    """Cancel the in-flight turn on this agent's solo session (if any)."""
+    if not store.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    uid = session_user_id(request)
+    session_id = store.find_session(agent_id, uid)
+    if not session_id:
+        return {"ok": True, "stopped": False, "session_id": None}
+    stopped = cancel_session_turn(session_id)
+    return {"ok": True, "stopped": stopped, "session_id": session_id}
 
 
 @router.get("/agents/{agent_id}/chat/stream")

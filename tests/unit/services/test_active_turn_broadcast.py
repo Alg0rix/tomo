@@ -75,6 +75,51 @@ async def test_start_session_turn_rejects_when_already_active() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_session_turn_cancels_running_task() -> None:
+    chat_mod._active_turns.clear()
+    fake_session = {
+        "id": "ses_stop",
+        "coordinator_id": "main",
+        "agent_id": "main",
+        "agent_ids": ["main"],
+    }
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _blocking_sse(*_a, **_k):
+        started.set()
+        yield 'event: state\ndata: {"busy":true}\n\n'
+        await release.wait()
+        yield 'event: done\ndata: {}\n\n'
+
+    with (
+        patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod.store, "try_begin_session_turn", return_value=True),
+        patch.object(chat_mod.store, "end_session_turn"),
+        patch.object(chat_mod, "stream_turn_sse", _blocking_sse),
+    ):
+        turn, q = await chat_mod.start_session_turn("ses_stop", "hi", "web")
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        assert get_active_session_turn("ses_stop") is turn
+
+        assert chat_mod.cancel_session_turn("ses_stop") is True
+        if turn.task:
+            with pytest.raises(asyncio.CancelledError):
+                await turn.task
+
+        # Sentinel still delivered so SSE drains exit.
+        got_none = False
+        while not q.empty():
+            if q.get_nowait() is None:
+                got_none = True
+        assert got_none
+        assert get_active_session_turn("ses_stop") is None
+
+    assert chat_mod.cancel_session_turn("ses_missing") is False
+    chat_mod._active_turns.clear()
+
+
+@pytest.mark.asyncio
 async def test_start_session_turn_finally_keeps_newer_registry_slot() -> None:
     """A finished runner must not pop a newer turn that replaced its registry slot."""
     chat_mod._active_turns.clear()

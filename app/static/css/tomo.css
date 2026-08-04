@@ -3040,9 +3040,25 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   resize: none; min-height: 26px; max-height: 160px; padding: 0; border: 0;
   background: transparent; color: var(--text); line-height: 1.5; outline: none;
 }
-.composer .send { width: 44px; height: 44px; border-radius: var(--r); flex-shrink: 0; display: grid; place-items: center; }
-.composer .send svg { width: 19px; height: 19px; }
+.composer .send,
+.composer .stop { width: 44px; height: 44px; border-radius: var(--r); flex-shrink: 0; display: grid; place-items: center; }
+.composer .send svg,
+.composer .stop svg { width: 19px; height: 19px; }
 .composer .send:disabled { opacity: .45; cursor: not-allowed; }
+.composer .stop {
+  background: color-mix(in srgb, var(--danger, #e85d4c) 18%, var(--surface-2));
+  color: var(--danger, #e85d4c);
+  border: 1px solid color-mix(in srgb, var(--danger, #e85d4c) 35%, var(--border));
+}
+.composer .stop:hover {
+  background: color-mix(in srgb, var(--danger, #e85d4c) 28%, var(--surface-2));
+  color: var(--danger, #e85d4c);
+}
+.composer .stop:focus-visible {
+  outline: 2px solid var(--danger, #e85d4c);
+  outline-offset: 2px;
+}
+.composer.is-generating .chat-send { display: none; }
 
 /* sessions chat — floating composer over the thread */
 .sessions-chat .chat-main {
@@ -3094,7 +3110,8 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .sessions-chat .composer.composer-float .attach-btn,
-.sessions-chat .composer.composer-float .send {
+.sessions-chat .composer.composer-float .send,
+.sessions-chat .composer.composer-float .stop {
   width: 36px;
   height: 36px;
   border-radius: 6px;
@@ -3116,6 +3133,14 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .sessions-chat .composer.composer-float .send:disabled {
   background: var(--surface-3);
   color: var(--text-faint);
+}
+.sessions-chat .composer.composer-float .stop {
+  background: color-mix(in srgb, var(--danger, #e85d4c) 22%, var(--surface));
+  color: var(--danger, #e85d4c);
+  border: 1px solid color-mix(in srgb, var(--danger, #e85d4c) 40%, var(--border));
+}
+.sessions-chat .composer.composer-float .stop:hover {
+  background: color-mix(in srgb, var(--danger, #e85d4c) 32%, var(--surface));
 }
 .sessions-chat .composer.composer-float .composer-footer {
   margin-top: 8px;
