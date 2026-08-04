@@ -75,6 +75,43 @@ async def test_text_only_path_yields_single_final() -> None:
     assert "".join(e["content"] for e in events if e["kind"] == "delta") == _DEFAULT_REPLY
 
 
+async def test_metrics_accumulate_provider_usage_across_rounds() -> None:
+    """Final metrics sum prompt/completion tokens from every LLM round."""
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(id="c1", name="bash", arguments={"command": "echo 1"})
+                ],
+                prompt_tokens=100,
+                completion_tokens=10,
+            ),
+            LLMResponse(
+                content=_BASH_FINAL,
+                tool_calls=[],
+                prompt_tokens=150,
+                completion_tokens=20,
+            ),
+        ]
+    )
+    events = await _collect("run: echo 1", llm=llm, tools=_bash_tools())
+    metrics = _final(events).get("metrics") or {}
+    assert metrics.get("prompt_tokens") == 250
+    assert metrics.get("completion_tokens") == 30
+    assert metrics.get("tokens") == 280
+    assert metrics.get("llm_rounds") == 2
+
+
+async def test_metrics_estimate_usage_when_provider_omits() -> None:
+    """When LLMResponse has 0 usage, loop estimates in/out from messages."""
+    llm = ScriptedLLM([text_reply("ok")])
+    events = await _collect("hello world from usage test", llm=llm, tools=[])
+    metrics = _final(events).get("metrics") or {}
+    assert int(metrics.get("prompt_tokens") or 0) > 0
+    assert int(metrics.get("completion_tokens") or 0) > 0
+
+
 async def test_bash_path_emits_tool_then_result_then_final() -> None:
     llm = ScriptedLLM(tool_then_text(bash_call("echo 4"), _BASH_FINAL))
     events = await _collect("run: echo 4", llm=llm, tools=_bash_tools())

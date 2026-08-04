@@ -32,6 +32,9 @@ class TokenMonitorModule:
             return
         from modules.token_monitor import ledger
 
+        # Prefer real cumulative in/out from the agent loop (all LLM rounds
+        # this turn, including nested subagents). Fall back to a rough
+        # estimate of the user message only when the runtime reported nothing.
         prompt = int(ctx.prompt_tokens or 0)
         completion = int(ctx.completion_tokens or 0)
         if prompt <= 0 and completion <= 0 and (ctx.message or "").strip():

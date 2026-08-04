@@ -465,6 +465,44 @@ def _parse_tool_calls(raw: list[Any]) -> list[ToolCall]:
     return calls
 
 
+# ── Usage ─────────────────────────────────────────────────────────
+
+
+def parse_usage(usage: Any) -> tuple[int, int]:
+    """Extract ``(prompt_tokens, completion_tokens)`` from a provider usage object.
+
+    Accepts OpenAI SDK objects or plain dicts. Also recognizes Anthropic-style
+    ``input_tokens`` / ``output_tokens`` aliases. Returns ``(0, 0)`` when absent.
+    """
+    if usage is None:
+        return 0, 0
+
+    def _get(key: str, *alts: str) -> int:
+        keys = (key, *alts)
+        if isinstance(usage, dict):
+            for k in keys:
+                val = usage.get(k)
+                if val is not None:
+                    try:
+                        return max(0, int(val))
+                    except (TypeError, ValueError):
+                        continue
+            return 0
+        for k in keys:
+            val = getattr(usage, k, None)
+            if val is not None:
+                try:
+                    return max(0, int(val))
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    return (
+        _get("prompt_tokens", "input_tokens"),
+        _get("completion_tokens", "output_tokens"),
+    )
+
+
 # ── Client ────────────────────────────────────────────────────────
 
 
@@ -566,9 +604,12 @@ class OpenAICompatClient:
                 len(content or ""),
             )
 
+        prompt_tok, completion_tok = parse_usage(getattr(resp, "usage", None))
         return LLMResponse(
             content=content,
             tool_calls=_parse_tool_calls(tool_calls or []),
+            prompt_tokens=prompt_tok,
+            completion_tokens=completion_tok,
         )
 
     async def stream_complete(
@@ -586,11 +627,15 @@ class OpenAICompatClient:
         accumulated per-index so arguments never collide across calls.
         When a provider omits ``index``, we auto-assign sequential indices
         based on new ``id``/``name`` arrivals.
+
+        Requests ``stream_options.include_usage`` so the final chunk can carry
+        token counts (OpenAI + most OpenAI-compatible proxies).
         """
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
@@ -599,10 +644,16 @@ class OpenAICompatClient:
         tool_acc: dict[int, dict[str, str]] = {}
         next_auto_idx = 0
         seen_ids: set[str] = set()
+        prompt_tok = 0
+        completion_tok = 0
 
         try:
             stream = await self._client.chat.completions.create(**payload)
             async for chunk in stream:
+                # Usage often arrives on a trailing chunk with empty choices.
+                u_prompt, u_completion = parse_usage(getattr(chunk, "usage", None))
+                if u_prompt or u_completion:
+                    prompt_tok, completion_tok = u_prompt, u_completion
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -686,6 +737,8 @@ class OpenAICompatClient:
             "response": LLMResponse(
                 content=text,
                 tool_calls=_parse_tool_calls(raw_tools),
+                prompt_tokens=prompt_tok,
+                completion_tokens=completion_tok,
             ),
         }
 
@@ -765,5 +818,6 @@ __all__ = [
     "format_llm_error",
     "default_llm_timeout_seconds",
     "extract_context_window",
+    "parse_usage",
     "_match_model_context",
 ]

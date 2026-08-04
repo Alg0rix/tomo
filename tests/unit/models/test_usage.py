@@ -37,6 +37,10 @@ def test_record_and_dashboard(tmp_path) -> None:
 
     dash = store.with_db(ledger.dashboard)
     assert dash["summary"]["today"]["turns"] >= 2
+    # Cumulative in+out across both events: (40+60) + (10+5) = 115
+    assert dash["summary"]["today"]["tokens"] >= 115
+    assert dash["summary"]["today"]["prompt_tokens"] >= 50
+    assert dash["summary"]["today"]["completion_tokens"] >= 65
     assert any(d["turns"] > 0 for d in dash["heatmap"])
     assert dash["sessions"][0]["session_id"] == sid
     assert dash["activity"]

@@ -17,6 +17,7 @@ from app.runtime.llm.openai_compat import (
     LLMRequestError,
     OpenAICompatClient,
     _repair_json,
+    parse_usage,
 )
 
 _BASE = "https://example.test/v1"
@@ -34,17 +35,32 @@ def _client(transport: httpx.MockTransport, **kw) -> OpenAICompatClient:
     )
 
 
-def _completion_body(*, content: str | None = None, tool_calls=None) -> dict:
+def _completion_body(
+    *,
+    content: str | None = None,
+    tool_calls=None,
+    usage: dict | None = None,
+) -> dict:
     message: dict = {}
     if content is not None:
         message["content"] = content
     if tool_calls is not None:
         message["tool_calls"] = tool_calls
-    return {
+    body: dict = {
         "id": "chatcmpl-x",
         "object": "chat.completion",
         "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
     }
+    if usage is not None:
+        body["usage"] = usage
+    return body
+
+
+def test_parse_usage_openai_and_aliases() -> None:
+    assert parse_usage(None) == (0, 0)
+    assert parse_usage({"prompt_tokens": 10, "completion_tokens": 20}) == (10, 20)
+    assert parse_usage({"input_tokens": 3, "output_tokens": 7}) == (3, 7)
+    assert parse_usage({"prompt_tokens": "bad"}) == (0, 0)
 
 
 def test_missing_api_key_raises() -> None:
@@ -60,13 +76,21 @@ async def test_plain_content_mapped_and_request_shape() -> None:
         assert body["model"] == _MODEL
         assert body["messages"] == [{"role": "user", "content": "hi"}]
         assert "tools" not in body
-        return httpx.Response(200, json=_completion_body(content="hello back"))
+        return httpx.Response(
+            200,
+            json=_completion_body(
+                content="hello back",
+                usage={"prompt_tokens": 12, "completion_tokens": 4},
+            ),
+        )
 
     resp = await _client(httpx.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert resp.content == "hello back"
     assert resp.tool_calls == []
+    assert resp.prompt_tokens == 12
+    assert resp.completion_tokens == 4
 
 
 async def test_tools_forwarded_and_tool_calls_mapped() -> None:
@@ -405,6 +429,35 @@ async def test_malformed_arguments_repaired_via_stream() -> None:
     resp = events[-1]["response"]
     assert len(resp.tool_calls) == 1
     assert resp.tool_calls[0].arguments == {"command": "ls"}
+    await client.aclose()
+
+
+async def test_stream_include_usage_on_trailing_chunk() -> None:
+    """stream_options.include_usage + trailing usage chunk populate tokens."""
+    chunks = [
+        {"choices": [{"delta": {"content": "hi"}}]},
+        {"choices": [{"delta": {}}]},
+        {
+            "choices": [],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 2},
+        },
+    ]
+    sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body.get("stream") is True
+        assert body.get("stream_options") == {"include_usage": True}
+        return httpx.Response(
+            200, content=sse_body, headers={"content-type": "text/event-stream"}
+        )
+
+    client = _client(httpx.MockTransport(handler))
+    events = [ev async for ev in client.stream_complete([{"role": "user", "content": "x"}])]
+    resp = events[-1]["response"]
+    assert resp.content == "hi"
+    assert resp.prompt_tokens == 40
+    assert resp.completion_tokens == 2
     await client.aclose()
 
 

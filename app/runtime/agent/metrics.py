@@ -28,9 +28,16 @@ class TurnMetrics:
     compressed: bool = False
     force_final: bool = False
     ended_kind: str | None = None  # final | error
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     def mark_llm_round(self) -> None:
         self.llm_rounds += 1
+
+    def add_usage(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+        """Accumulate provider (or estimated) tokens from one LLM round."""
+        self.prompt_tokens += max(0, int(prompt_tokens or 0))
+        self.completion_tokens += max(0, int(completion_tokens or 0))
 
     def mark_tools(self, n: int, *, errors: int = 0, parallel: int = 0) -> None:
         self.tool_calls += n
@@ -59,6 +66,9 @@ class TurnMetrics:
             "compressed": self.compressed,
             "force_final": self.force_final,
             "ended_kind": self.ended_kind,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "tokens": self.prompt_tokens + self.completion_tokens,
         }
 
     def log_summary(self) -> None:
@@ -66,7 +76,7 @@ class TurnMetrics:
         _logger.info(
             "turn metrics agent=%s session=%s elapsed_ms=%d rounds=%d "
             "tools=%d errors=%d delegates=%d parallel_peak=%d "
-            "retries=%d atg=%s ended=%s",
+            "retries=%d atg=%s ended=%s prompt_tok=%d completion_tok=%d",
             d["agent_id"],
             d["session_id"],
             d["elapsed_ms"],
@@ -78,6 +88,8 @@ class TurnMetrics:
             d["llm_retries"],
             d["atg_status"] or ("on" if d["atg_used"] else "off"),
             d["ended_kind"],
+            d["prompt_tokens"],
+            d["completion_tokens"],
         )
 
 

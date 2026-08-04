@@ -55,7 +55,11 @@
         (d.turns === 1 ? "" : "s") +
         " · " +
         fmtNum(d.tokens) +
-        " tokens";
+        " tok (in " +
+        fmtNum(d.prompt_tokens) +
+        " / out " +
+        fmtNum(d.completion_tokens) +
+        ")";
       cells.push(
         '<div class="uh-cell l' +
           lv +
@@ -87,7 +91,11 @@
           fmtNum(r.turns) +
           " turns · " +
           fmtNum(r.tokens) +
-          " tok</span></li>"
+          " tok (in " +
+          fmtNum(r.prompt_tokens) +
+          " / out " +
+          fmtNum(r.completion_tokens) +
+          ")</span></li>"
         );
       })
       .join("");
@@ -113,7 +121,11 @@
           fmtNum(r.turns) +
           " turns · " +
           fmtNum(r.tokens) +
-          " tok</span></li>"
+          " tok (in " +
+          fmtNum(r.prompt_tokens) +
+          " / out " +
+          fmtNum(r.completion_tokens) +
+          ")</span></li>"
         );
       })
       .join("");
@@ -147,7 +159,11 @@
           fmtNum(r.turns) +
           " turn · " +
           fmtNum(r.tokens) +
-          " tokens</div></li>"
+          " tok (in " +
+          fmtNum(r.prompt_tokens) +
+          " / out " +
+          fmtNum(r.completion_tokens) +
+          ")</div></li>"
         );
       })
       .join("");
@@ -161,9 +177,26 @@
     var elA = root.querySelector('[data-stat="active"]');
     if (elW) {
       elW.textContent =
-        fmtNum(week.turns) + " turns · " + fmtNum(week.tokens) + " tok";
+        fmtNum(week.turns) +
+        " turns · " +
+        fmtNum(week.tokens) +
+        " tok (in " +
+        fmtNum(week.prompt_tokens) +
+        " / out " +
+        fmtNum(week.completion_tokens) +
+        ")";
     }
-    if (elT) elT.textContent = fmtNum(today.turns) + " / " + fmtNum(today.tokens);
+    if (elT) {
+      elT.textContent =
+        fmtNum(today.turns) +
+        " / " +
+        fmtNum(today.tokens) +
+        " (in " +
+        fmtNum(today.prompt_tokens) +
+        " / out " +
+        fmtNum(today.completion_tokens) +
+        ")";
+    }
     if (elA) elA.textContent = String(summary.active_sessions_1h || 0);
   }
 

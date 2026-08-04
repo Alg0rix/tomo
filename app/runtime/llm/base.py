@@ -31,10 +31,15 @@ class LLMResponse:
 
     ``content`` is the model's textual answer (``None`` when the model
     only emitted tool calls). ``tool_calls`` is empty for plain-text turns.
+
+    ``prompt_tokens`` / ``completion_tokens`` come from the provider ``usage``
+    object when available (0 when the backend omitted them).
     """
 
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     @property
     def has_tool_calls(self) -> bool:

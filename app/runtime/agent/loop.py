@@ -127,6 +127,47 @@ def _should_run_atg(goal: str, *, enable_atg: bool | None) -> bool:
 
     return is_atg_eligible(enable_atg=True)
 
+def _estimate_round_usage(
+    messages: list[dict[str, Any]], resp: LLMResponse
+) -> tuple[int, int]:
+    """Rough in/out token estimate when the provider omitted ``usage``."""
+    from app.runtime.agent.context_usage import estimate_tokens
+
+    prompt_parts: list[str] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str) and content:
+            prompt_parts.append(content)
+        elif content is not None:
+            prompt_parts.append(str(content))
+        if msg.get("tool_calls"):
+            prompt_parts.append(str(msg["tool_calls"]))
+    prompt = estimate_tokens("\n".join(prompt_parts)) if prompt_parts else 0
+
+    out_parts: list[str] = []
+    if resp.content:
+        out_parts.append(resp.content)
+    for call in resp.tool_calls or []:
+        out_parts.append(f"{call.name} {call.arguments!s}")
+    completion = estimate_tokens("\n".join(out_parts)) if out_parts else 0
+    return prompt, completion
+
+
+def _record_response_usage(
+    metrics: TurnMetrics | None,
+    messages: list[dict[str, Any]],
+    resp: LLMResponse,
+) -> None:
+    """Accumulate prompt/completion tokens for one LLM round onto *metrics*."""
+    if metrics is None:
+        return
+    prompt = int(getattr(resp, "prompt_tokens", 0) or 0)
+    completion = int(getattr(resp, "completion_tokens", 0) or 0)
+    if prompt <= 0 and completion <= 0:
+        prompt, completion = _estimate_round_usage(messages, resp)
+    metrics.add_usage(prompt, completion)
+
+
 async def _llm_round(
     client: LLMClient,
     messages: list[dict[str, Any]],
@@ -623,6 +664,8 @@ async def run_turn(
                 }
                 return
 
+            _record_response_usage(metrics, messages, resp)
+
             if resp.has_tool_calls and resp.content:
                 yield {"kind": "thinking", "content": resp.content}
 
@@ -958,6 +1001,7 @@ async def run_turn(
                 elif piece["kind"] == "_response":
                     resp_final = piece["response"]
             if resp_final is not None:
+                _record_response_usage(metrics, messages, resp_final)
                 content = (resp_final.content or "").strip()
                 if resp_final.has_tool_calls and not content:
                     content = (

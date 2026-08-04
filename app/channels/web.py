@@ -203,6 +203,26 @@ async def _emit_member_turn_start(
     )
 
 
+def _accumulate_turn_tokens(
+    token_acc: dict[str, int] | None, ev: dict[str, Any]
+) -> None:
+    """Fold prompt/completion totals from a final (or subagent final) event."""
+    if token_acc is None:
+        return
+    kind = ev.get("kind")
+    if kind not in ("final", "subagent_final"):
+        return
+    metrics = ev.get("metrics")
+    if not isinstance(metrics, dict):
+        return
+    token_acc["prompt"] = int(token_acc.get("prompt") or 0) + int(
+        metrics.get("prompt_tokens") or 0
+    )
+    token_acc["completion"] = int(token_acc.get("completion") or 0) + int(
+        metrics.get("completion_tokens") or 0
+    )
+
+
 async def _drain_agent_turn(
     session_id: str,
     agent_id: str,
@@ -212,6 +232,7 @@ async def _drain_agent_turn(
     seq: int,
     turn_id: str,
     busy_ids: set[str],
+    token_acc: dict[str, int] | None = None,
 ) -> AsyncIterator[tuple[str, int]]:
     """Run ``run_turn`` for ``agent_id``, mapping/persisting events.
 
@@ -220,6 +241,10 @@ async def _drain_agent_turn(
     are re-emitted tagged with the target ``agent_id``. This function just
     maps every event (resolving per-event attribution) and persists history.
     Yields ``(sse_chunk, seq)``.
+
+    When ``token_acc`` is provided (``{"prompt": 0, "completion": 0}``),
+    cumulative in/out tokens from this drain (including nested subagents)
+    are added onto it for Token Monitor.
     """
     agent_name = _agent_label(agent_id)
     store.set_busy(agent_id, True, session_id=session_id)
@@ -234,6 +259,7 @@ async def _drain_agent_turn(
         agent_id=agent_id,
         session_id=session_id,
     ):
+        _accumulate_turn_tokens(token_acc, ev)
         # Nested subagent events carry their own agent_id for attribution.
         ev_agent_id = ev.get("agent_id") or agent_id
         if ev_agent_id != agent_id:
@@ -340,6 +366,11 @@ async def stream_turn_sse(
     wp_tokens = None
     primary_agent = coordinator_id
     turn_locked = False
+    # True once this generator actually runs a turn (not a busy reject).
+    # Background callers pass acquire_lock=False but still need Token Monitor.
+    should_dispatch_turn_end = False
+    # Cumulative prompt/completion tokens for Token Monitor (all agents this turn).
+    token_acc: dict[str, int] = {"prompt": 0, "completion": 0}
     if acquire_lock:
         turn_locked = store.try_begin_session_turn(session_id)
         if not turn_locked:
@@ -352,9 +383,11 @@ async def stream_turn_sse(
                 agent_id=coordinator_id, session_id=session_id, seq=seq
             )
             return
+        should_dispatch_turn_end = True
     else:
         # Caller holds the lease for the full background turn lifetime.
         turn_locked = False
+        should_dispatch_turn_end = True
 
     logger.info(
         "turn begin session_id=%s coordinator_id=%s start_seq=%s message=%r",
@@ -606,6 +639,7 @@ async def stream_turn_sse(
                     seq=seq,
                     turn_id=turn_id,
                     busy_ids=busy_ids,
+                    token_acc=token_acc,
                 ):
                     yield chunk
             else:
@@ -617,6 +651,7 @@ async def stream_turn_sse(
                     seq=seq,
                     turn_id=turn_id,
                     busy_ids=busy_ids,
+                    token_acc=token_acc,
                 ):
                     yield chunk
 
@@ -637,11 +672,14 @@ async def stream_turn_sse(
         store.set_busy(coordinator_id, False, session_id=session_id)
         if turn_locked:
             store.end_session_turn(session_id)
+        if should_dispatch_turn_end:
             try:
                 store.dispatch_turn_end(
                     session_id=session_id,
                     agent_id=primary_agent,
                     message=(message or "").strip(),
+                    prompt_tokens=int(token_acc.get("prompt") or 0),
+                    completion_tokens=int(token_acc.get("completion") or 0),
                 )
             except Exception:
                 logger.exception(

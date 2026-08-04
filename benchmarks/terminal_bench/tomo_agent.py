@@ -170,6 +170,12 @@ class TomoHarborAgent(BaseAgent):
                         metrics = ev.get("metrics")
                         if isinstance(metrics, dict):
                             meta["turn_metrics"] = metrics
+                            self._n_input_tokens = int(
+                                metrics.get("prompt_tokens") or 0
+                            )
+                            self._n_output_tokens = int(
+                                metrics.get("completion_tokens") or 0
+                            )
                     elif kind == "metrics":
                         meta["turn_metrics"] = ev
             if exit_code is None:
