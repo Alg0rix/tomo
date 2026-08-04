@@ -54,7 +54,12 @@ import logging
 from typing import Any, AsyncIterator
 
 from app.runtime.agent.compress import maybe_compress_messages
-from app.runtime.agent.context import build_messages, build_system_prompt
+from app.runtime.agent.context import (
+    build_messages,
+    build_system_prompt,
+    freeze_prompt_clock,
+    reset_prompt_clock,
+)
 from app.runtime.agent.metrics import TurnMetrics
 from app.runtime.agent.retry import is_transient_llm_error
 from app.runtime.agent.subagent import (
@@ -546,6 +551,8 @@ async def run_turn(
     from app.runtime.artifacts import fs as artifacts_fs
 
     arts_token = artifacts_fs.bind_session(session_id)
+    # Stable system-prompt clock for this turn (hour precision + freeze).
+    clock_token = freeze_prompt_clock()
     skills_touched: list[str] = []
     try:
         try:
@@ -1049,6 +1056,7 @@ async def run_turn(
             ),
         }
     finally:
+        reset_prompt_clock(clock_token)
         artifacts_fs.reset_session(arts_token)
         todo_mod.reset_session(todo_token)
         sandbox.reset_agent(sandbox_token)

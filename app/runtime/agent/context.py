@@ -33,6 +33,7 @@ dangling; surplus outputs beyond the number of calls are dropped.
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,87 @@ _FALLBACK_PROMPT = (
     "You are Tomo, a helpful agent. Answer the user clearly and concisely, "
     "and use tools when they help."
 )
+_CURRENT_TIME_HEADER = "## Current time"
+
+# Turn-scoped freeze so build_system_prompt + build_messages see one stable stamp
+# (avoids mid-turn hour-boundary flips and double-inject churn).
+_frozen_time_block: ContextVar[str | None] = ContextVar(
+    "tomo_sys_time_block", default=None
+)
+
+
+def _format_time_section(now_local: object) -> str:
+    """One-shot wall clock for the system prompt (not a live ticker).
+
+    Injected **once per turn** (see :func:`freeze_prompt_clock`). For a live
+    clock the agent should run ``date`` / ``date -u`` via bash.
+    """
+    from datetime import datetime, timezone
+
+    if not isinstance(now_local, datetime):
+        now_local = datetime.now().astimezone()
+    now_utc = now_local.astimezone(timezone.utc)
+    local_s = now_local.strftime("%A, %Y-%m-%d %H:%M %Z").strip()
+    if not now_local.tzname() or local_s.endswith(" "):
+        local_s = now_local.strftime("%A, %Y-%m-%d %H:%M %z")
+    utc_s = now_utc.strftime("%A, %Y-%m-%d %H:%M UTC")
+    return (
+        f"{_CURRENT_TIME_HEADER}\n"
+        f"Local: {local_s}\n"
+        f"UTC: {utc_s}\n"
+        f"This stamp is fixed for this turn. For a live clock, run bash: `date` or `date -u`."
+    )
+
+
+def _current_time_section() -> str:
+    frozen = _frozen_time_block.get()
+    if frozen is not None:
+        return frozen
+    from datetime import datetime
+
+    return _format_time_section(datetime.now().astimezone())
+
+
+def freeze_prompt_clock() -> object:
+    """Snapshot wall clock once for this turn; later injects reuse it.
+
+    Returns a ContextVar token for :func:`reset_prompt_clock`.
+    """
+    from datetime import datetime
+
+    # If already frozen in this context, keep the same stamp.
+    existing = _frozen_time_block.get()
+    if existing is not None:
+        return _frozen_time_block.set(existing)
+    block = _format_time_section(datetime.now().astimezone())
+    return _frozen_time_block.set(block)
+
+
+def reset_prompt_clock(token: object | None) -> None:
+    if token is None:
+        return
+    try:
+        _frozen_time_block.reset(token)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        _frozen_time_block.set(None)
+
+
+def inject_current_time(prompt: str | None) -> str:
+    """Ensure *prompt* ends with the (turn-frozen) current-time block.
+
+    Idempotent: will not stack duplicate sections. Within a frozen turn the
+    stamp never changes so system text stays stable for the whole turn.
+    """
+    block = _current_time_section()
+    text = (prompt or "").rstrip()
+    if not text:
+        return block
+    marker = f"\n\n{_CURRENT_TIME_HEADER}\n"
+    if marker in text:
+        text = text.rsplit(marker, 1)[0].rstrip()
+    elif text.startswith(f"{_CURRENT_TIME_HEADER}\n"):
+        return block
+    return f"{text}\n\n{block}"
 
 
 def coordinator_system_prompt(path: Path | None = None) -> str:
@@ -100,6 +182,8 @@ def build_system_prompt(
        ``use_skill``).
     6. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
        this session (file-backed; refreshes next session).
+    7. **Current time** — local + UTC, stamped once per turn (use bash ``date``
+       for a live clock).
 
     Sections are joined with a blank line. No secrets are read from files.
     ``home_root`` overrides the home root (tests); it defaults to
@@ -148,7 +232,8 @@ def build_system_prompt(
     except Exception:
         pass
 
-    return "\n\n".join(parts)
+    # Time last so the stable prefix stays cache-friendly when the host supports it.
+    return inject_current_time("\n\n".join(parts))
 
 
 def _agent_has_memory_tool(agent_id: str | None) -> bool:
@@ -858,6 +943,8 @@ def build_messages(
                 prompt = f"{prompt.rstrip()}\n\n{block}"
         except Exception:
             pass
+    # Always stamp a fresh clock (covers custom system_prompt callers too).
+    prompt = inject_current_time(prompt)
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
     messages.extend(
         history_to_messages(history, for_agent_id=for_agent_id)
@@ -882,6 +969,9 @@ def _dumps_args(params: Any) -> str:
 __all__ = [
     "coordinator_system_prompt",
     "build_system_prompt",
+    "inject_current_time",
+    "freeze_prompt_clock",
+    "reset_prompt_clock",
     "history_to_messages",
     "build_messages",
 ]

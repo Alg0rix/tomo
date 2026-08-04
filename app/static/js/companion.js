@@ -31,7 +31,23 @@
   };
 
   function esc(s) {
-    return Tomo.escapeHtml(s == null ? '' : s);
+    var t = s == null ? '' : String(s);
+    if (window.Tomo && typeof Tomo.escapeHtml === 'function') {
+      return Tomo.escapeHtml(t);
+    }
+    return t
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function firstLine(s, maxLen) {
+    var line = String(s == null ? '')
+      .split(/\r?\n/)[0]
+      .trim();
+    maxLen = maxLen || 80;
+    return line.length > maxLen ? line.slice(0, maxLen) : line;
   }
 
   function fmtDate(ts) {
@@ -224,7 +240,7 @@
     if (ev.review_memory) items.push('Memory focus');
     if (ev.review_skills) items.push('Skills focus');
     (ev.actions || []).slice(0, 3).forEach(function (a) {
-      items.push(String(a).splitlines()[0].slice(0, 80));
+      items.push(firstLine(a, 80));
     });
     if (!items.length) return '';
     return (
@@ -608,9 +624,22 @@
   async function boot() {
     try {
       var data = await Tomo.api('/api/companion');
+      if (!data || typeof data !== 'object') {
+        throw new Error('empty companion payload');
+      }
       render(data);
     } catch (e) {
-      root.innerHTML = '<div class="cp-empty">Could not load companion data.</div>';
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('companion render failed', e);
+      }
+      root.innerHTML =
+        '<div class="cp-empty">Could not load companion data.' +
+        (e && e.message
+          ? '<br><span class="mono faint" style="font-size:12px">' +
+            esc(e.message) +
+            '</span>'
+          : '') +
+        '</div>';
     }
   }
 

@@ -60,6 +60,44 @@ def test_system_prompt_uses_file_contents(tmp_path: Path) -> None:
     assert coordinator_system_prompt(path=f) == "You are a test agent."
 
 
+def test_build_system_prompt_always_includes_current_time(tmp_path: Path) -> None:
+    from app.runtime.agent.context import build_system_prompt, inject_current_time
+
+    text = build_system_prompt(None, home_root=tmp_path)
+    assert "## Current time" in text
+    assert "UTC:" in text
+    assert "Local:" in text
+    assert "date" in text.lower()  # points agents at bash for live clock
+    # Idempotent: second inject does not stack sections
+    twice = inject_current_time(inject_current_time("You are Tomo."))
+    assert twice.count("## Current time") == 1
+
+
+def test_prompt_clock_freeze_is_stable_within_turn(tmp_path: Path) -> None:
+    from app.runtime.agent.context import (
+        freeze_prompt_clock,
+        inject_current_time,
+        reset_prompt_clock,
+    )
+
+    tok = freeze_prompt_clock()
+    try:
+        a = inject_current_time("base")
+        b = inject_current_time("base")
+        assert a == b  # once per turn — not re-stamped mid-turn
+        assert a.count("## Current time") == 1
+        assert "bash" in a.lower() or "`date`" in a
+    finally:
+        reset_prompt_clock(tok)
+
+
+def test_build_messages_stamps_time_on_custom_system_prompt() -> None:
+    msgs = build_messages([], user_message="hi", system_prompt="Custom agent.")
+    assert msgs[0]["role"] == "system"
+    assert "## Current time" in msgs[0]["content"]
+    assert "Custom agent." in msgs[0]["content"]
+
+
 # --- history_to_messages ------------------------------------------------
 
 
@@ -269,8 +307,10 @@ def test_missing_params_default_to_empty_object(tmp_path: Path) -> None:
 def test_build_messages_assembles_system_history_user(tmp_path: Path) -> None:
     history = _hist(tmp_path, {"type": "user", "content": "earlier"}, db_name="build1.db")
     msgs = build_messages(history, "now", system_prompt="be brief")
-    assert msgs == [
-        {"role": "system", "content": "be brief"},
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"].startswith("be brief")
+    assert "## Current time" in msgs[0]["content"]
+    assert msgs[1:] == [
         {"role": "user", "content": "earlier"},
         {"role": "user", "content": "now"},
     ]
