@@ -43,7 +43,7 @@
   }
 
   function firstLine(s, maxLen) {
-    var line = String(s == null ? '')
+    var line = String(s == null ? '' : s)
       .split(/\r?\n/)[0]
       .trim();
     maxLen = maxLen || 80;
