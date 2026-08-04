@@ -356,6 +356,7 @@ async def delete_attachment_api(attachment_id: str, _: AuthDep):
 @router.get("/sessions/{session_id}/context")
 async def session_context_usage(session_id: str, _: AuthDep):
     from app.runtime.agent.context_usage import compute_context_usage
+    from app.runtime.llm.context_window import resolve_context_window
 
     session = store.get_session(session_id)
     if not session:
@@ -368,7 +369,8 @@ async def session_context_usage(session_id: str, _: AuthDep):
     if not agent_id:
         raise HTTPException(status_code=400, detail="Session has no coordinator")
     history = store.get_session_history(session_id)
-    return compute_context_usage(agent_id, history)
+    limit = await resolve_context_window(agent_id)
+    return compute_context_usage(agent_id, history, limit=limit)
 
 
 @router.post("/sessions/{session_id}/chat/clear")
@@ -391,12 +393,14 @@ async def chat_history(agent_id: str, request: Request, _: AuthDep):
 @router.get("/agents/{agent_id}/context")
 async def agent_context_usage(agent_id: str, request: Request, _: AuthDep):
     from app.runtime.agent.context_usage import compute_context_usage
+    from app.runtime.llm.context_window import resolve_context_window
 
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     user_id = _uid(request, request.query_params.get("user_id"))
     history = store.get_history(agent_id, user_id)
-    return compute_context_usage(agent_id, history)
+    limit = await resolve_context_window(agent_id)
+    return compute_context_usage(agent_id, history, limit=limit)
 
 
 @router.post("/agents/{agent_id}/chat")

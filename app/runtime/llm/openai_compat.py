@@ -30,6 +30,110 @@ from app.runtime.llm.base import LLMResponse, ToolCall
 
 _logger = logging.getLogger(__name__)
 
+# ── Context window extraction ─────────────────────────────────────
+
+# Common field names used by OpenAI-compatible providers (vLLM, LiteLLM,
+# Ollama-proxy, OpenRouter extras, etc.) to advertise context length.
+_CONTEXT_FIELD_NAMES = (
+    "context_window",
+    "context_length",
+    "max_model_len",
+    "max_context_length",
+    "max_input_tokens",
+    "max_seq_len",
+    "n_ctx",
+    "num_ctx",
+    "context",
+)
+
+# Nested dict keys where providers commonly hide model metadata.
+_CONTEXT_NEST_KEYS = (
+    "model_info",
+    "meta",
+    "metadata",
+    "info",
+    "architecture",
+)
+
+_MIN_CTX = 1024
+_MAX_CTX = 50_000_000
+
+
+def extract_context_window(obj: dict) -> int | None:
+    """Pull a positive context window int from a model dict.
+
+    Checks top-level keys, then recurses into common nested dicts
+    (``model_info``, ``meta``, ``metadata``, ``info``, ``architecture``).
+    Returns ``None`` when no plausible value is found.
+    """
+    if not isinstance(obj, dict):
+        return None
+
+    def _check(d: dict) -> int | None:
+        for key in _CONTEXT_FIELD_NAMES:
+            val = d.get(key)
+            if isinstance(val, (int, float)) and _MIN_CTX <= val <= _MAX_CTX:
+                return int(val)
+            if isinstance(val, str):
+                try:
+                    n = int(val)
+                except (ValueError, TypeError):
+                    continue
+                if _MIN_CTX <= n <= _MAX_CTX:
+                    return n
+        return None
+
+    # Top-level
+    result = _check(obj)
+    if result is not None:
+        return result
+
+    # Nested
+    for nest_key in _CONTEXT_NEST_KEYS:
+        nested = obj.get(nest_key)
+        if isinstance(nested, dict):
+            result = _check(nested)
+            if result is not None:
+                return result
+
+    return None
+
+
+def _match_model_context(items: list[Any], model: str) -> int | None:
+    """Find the context window for *model* in a /models response list.
+
+    Match order:
+      1. exact ``id == model``
+      2. ``id`` endswith ``/{model}`` or ``:{model}``
+      3. ``model`` startswith ``id`` or ``id`` startswith ``model``
+         (longest id wins — items should be pre-sorted by id length desc)
+    """
+    # Sort longest id first so specific matches beat short prefixes.
+    sorted_items: list[tuple[str, dict]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        mid = str(item.get("id") or "")
+        if mid:
+            sorted_items.append((mid, item))
+    sorted_items.sort(key=lambda t: len(t[0]), reverse=True)
+
+    for mid, item in sorted_items:
+        if mid == model:
+            return extract_context_window(item)
+
+    model_suffix = "/" + model
+    model_colon = ":" + model
+    for mid, item in sorted_items:
+        if mid.endswith(model_suffix) or mid.endswith(model_colon):
+            return extract_context_window(item)
+
+    for mid, item in sorted_items:
+        if model.startswith(mid) or mid.startswith(model):
+            return extract_context_window(item)
+
+    return None
+
 
 class LLMConfigError(RuntimeError):
     """Raised when the OpenAI-compatible client is misconfigured."""
@@ -248,6 +352,7 @@ class OpenAICompatClient:
         self._api_key = resolved_key
         self._model = model or "gpt-4o-mini"
         self._timeout = timeout
+        self._transport = transport
 
         http_client = None
         if transport is not None:
@@ -414,9 +519,79 @@ class OpenAICompatClient:
             ),
         }
 
+    async def _get_json(self, path: str) -> Any:
+        """GET *path* on the same base URL and return parsed JSON.
+
+        Uses a short-lived ``httpx.AsyncClient`` with the stored transport
+        (if any) so extra provider fields are preserved — the OpenAI SDK
+        ``Model`` type strips them.
+        """
+        kwargs: dict[str, Any] = {"timeout": min(float(self._timeout), 15.0)}
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        async with httpx.AsyncClient(base_url=self._base_url, **kwargs) as http:
+            r = await http.get(path, headers=headers)
+            r.raise_for_status()
+            return r.json()
+
+    async def fetch_model_context_window(self) -> int | None:
+        """GET ``/models`` and extract context window for ``self._model``.
+
+        Match order for model id:
+          1. exact ``id == self._model``
+          2. ``id`` endswith ``/{model}`` or ``:{model}``
+          3. ``model`` startswith ``id`` or ``id`` startswith ``model``
+             (longest id wins)
+
+        Falls back to ``GET /models/{model}`` when the list has no match.
+
+        Returns ``int`` or ``None`` on any failure (network, 404, missing
+        field).  Never raises for "not found" — logs at debug/info.
+        """
+        model = self._model
+
+        # ── Try listing all models ────────────────────────────────
+        try:
+            payload = await self._get_json("/models")
+        except Exception as exc:
+            _logger.info("GET /models failed (%s); skipping provider lookup", exc)
+            return None
+
+        data: list[Any] = []
+        if isinstance(payload, dict):
+            data = payload.get("data") or payload.get("models") or []
+        elif isinstance(payload, list):
+            data = payload
+
+        if data:
+            ctx = _match_model_context(data, model)
+            if ctx is not None:
+                return ctx
+
+        # ── Try single-model endpoint ─────────────────────────────
+        try:
+            single = await self._get_json(f"/models/{model}")
+        except Exception:
+            pass
+        else:
+            if isinstance(single, dict):
+                ctx = extract_context_window(single)
+                if ctx is not None:
+                    return ctx
+
+        _logger.debug("no context window found for %s via /models", model)
+        return None
+
     async def aclose(self) -> None:
         """Close the underlying client and release connections."""
         await self._client.close()
 
 
-__all__ = ["OpenAICompatClient", "LLMConfigError", "LLMRequestError"]
+__all__ = [
+    "OpenAICompatClient",
+    "LLMConfigError",
+    "LLMRequestError",
+    "extract_context_window",
+    "_match_model_context",
+]

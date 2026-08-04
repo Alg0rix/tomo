@@ -406,3 +406,75 @@ async def test_malformed_arguments_repaired_via_stream() -> None:
     assert len(resp.tool_calls) == 1
     assert resp.tool_calls[0].arguments == {"command": "ls"}
     await client.aclose()
+
+
+# ── fetch_model_context_window ────────────────────────────────────
+
+
+async def test_fetch_model_context_window_from_list() -> None:
+    """fetch_model_context_window extracts context from /models list."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={
+                "data": [
+                    {"id": _MODEL, "max_model_len": 16384},
+                    {"id": "other", "context_window": 4096},
+                ]
+            })
+        return httpx.Response(404)
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        ctx = await client.fetch_model_context_window()
+        assert ctx == 16384
+    finally:
+        await client.aclose()
+
+
+async def test_fetch_model_context_window_network_error_returns_none() -> None:
+    """Network failure returns None, not an exception."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        ctx = await client.fetch_model_context_window()
+        assert ctx is None
+    finally:
+        await client.aclose()
+
+
+async def test_fetch_model_context_window_no_match_returns_none() -> None:
+    """Model not in /models list and no context field → None."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "other", "context_window": 4096}]})
+        return httpx.Response(404)
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        ctx = await client.fetch_model_context_window()
+        assert ctx is None
+    finally:
+        await client.aclose()
+
+
+async def test_fetch_model_context_window_slash_suffix_match() -> None:
+    """Model id 'org/gpt-4o' matches 'gpt-4o' via /{model} suffix."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={
+                "data": [{"id": f"org/{_MODEL}", "context_window": 8192}]
+            })
+        return httpx.Response(404)
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        ctx = await client.fetch_model_context_window()
+        assert ctx == 8192
+    finally:
+        await client.aclose()

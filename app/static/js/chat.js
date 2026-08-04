@@ -509,7 +509,12 @@
     let messageQueue = [];
     const MAX_QUEUE = 20;
 
-    function atBottom() { scroll.scrollTop = scroll.scrollHeight; }
+    function atBottom() {
+      const prev = scroll.style.scrollBehavior;
+      scroll.style.scrollBehavior = 'auto';
+      scroll.scrollTop = scroll.scrollHeight;
+      scroll.style.scrollBehavior = prev;
+    }
     function setStatus(badge, label) {
       if (!statusEl) return;
       statusEl.className = 'badge ' + badge;

@@ -89,51 +89,109 @@
   /**
    * Keep a scroll container pinned to the bottom while async layout (images,
    * mermaid) grows content. Stops if the user scrolls away from the bottom.
+   *
+   * Idempotent: calling this again on the same element cleans up any prior
+   * active stick first. Programmatic scrolls are forced instant so CSS
+   * `scroll-behavior: smooth` never animates them; the stick cancels when the
+   * user scrolls away from the bottom (gap check while not mid-programmatic
+   * stick), and re-anchors on ResizeObserver / image load until holdMs or
+   * cancel.
    */
   Tomo.stickScrollBottom = function (el, opts) {
     if (!el) return;
     opts = opts || {};
-    var gap = opts.userGap != null ? opts.userGap : 140;
-    var times = opts.times || [50, 200, 500, 1200];
-    var holdMs = opts.holdMs != null ? opts.holdMs : 1500;
+    var gap = opts.userGap != null ? opts.userGap : 200;
+    var times = opts.times || [50, 200, 500];
+    var holdMs = opts.holdMs != null ? opts.holdMs : 12000;
     var cancelled = false;
     var sticking = false;
     var timers = [];
+    var rafIds = [];
+    var ro = null;
+    var cleanupFn = null;
+    var stickGen = 0;
+
+    // Replace any prior stick on this element.
+    if (el._tomoStickCleanup) {
+      el._tomoStickCleanup();
+    }
 
     function go() {
       if (cancelled) return;
       sticking = true;
+      // Force instant scroll so CSS `scroll-behavior: smooth` never animates.
+      var prev = el.style.scrollBehavior;
+      el.style.scrollBehavior = 'auto';
       el.scrollTop = el.scrollHeight;
-      requestAnimationFrame(function () { sticking = false; });
+      el.style.scrollBehavior = prev;
+      // Hold `sticking` across two rAFs so residual scroll events from the
+      // instant jump don't get mistaken for a user gesture. Bump the stick
+      // generation each go() so an overlapping earlier jump can't clear
+      // `sticking` while a later jump is still settling.
+      var gen = ++stickGen;
+      rafIds.push(requestAnimationFrame(function () {
+        rafIds.push(requestAnimationFrame(function () {
+          if (gen === stickGen) sticking = false;
+        }));
+      }));
     }
 
-    function onUserScroll() {
+    function cancelOnUserScroll() {
       if (sticking) return;
       if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
-        cancelled = true;
-        cleanup();
+        cleanupFn();
       }
     }
 
-    function cleanup() {
-      el.removeEventListener('scroll', onUserScroll);
-      timers.forEach(function (t) { clearTimeout(t); });
-      timers = [];
+    function onContentResize() {
+      if (cancelled) return;
+      go();
     }
 
+    cleanupFn = function () {
+      if (cancelled) return;
+      cancelled = true;
+      el.removeEventListener('scroll', cancelOnUserScroll);
+      timers.forEach(function (t) { clearTimeout(t); });
+      timers = [];
+      rafIds.forEach(function (id) { cancelAnimationFrame(id); });
+      rafIds = [];
+      if (ro) {
+        ro.disconnect();
+        ro = null;
+      }
+      if (el._tomoStickCleanup === cleanupFn) {
+        el._tomoStickCleanup = null;
+      }
+    };
+
     go();
-    requestAnimationFrame(function () {
+    // Double-rAF go so late layout settles before we stop re-anchoring.
+    rafIds.push(requestAnimationFrame(function () {
       go();
-      requestAnimationFrame(go);
-    });
+      rafIds.push(requestAnimationFrame(go));
+    }));
+
     el.querySelectorAll('img').forEach(function (img) {
       if (img.complete) return;
       img.addEventListener('load', go, { once: true });
       img.addEventListener('error', go, { once: true });
     });
-    el.addEventListener('scroll', onUserScroll, { passive: true });
+
+    el.addEventListener('scroll', cancelOnUserScroll, { passive: true });
+
+    // Grow content below the pinned position while we're still sticking.
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(onContentResize);
+      Array.prototype.forEach.call(el.children, function (child) {
+        ro.observe(child);
+      });
+    }
+
     times.forEach(function (ms) { timers.push(setTimeout(go, ms)); });
-    timers.push(setTimeout(cleanup, holdMs));
+    timers.push(setTimeout(cleanupFn, holdMs));
+
+    el._tomoStickCleanup = cleanupFn;
   };
 
   /** Line-level LCS ops for synthetic str_replace diffs. */
