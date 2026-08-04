@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
@@ -24,6 +26,7 @@ from app.schemas import (
 )
 from app.services import store
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
@@ -377,6 +380,92 @@ async def create_knowledge(body: KnowledgeEntryCreate, _: AuthDep):
         return store.create_knowledge_entry(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+_MAX_KB_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB
+_KB_READ_CHUNK = 64 * 1024
+_MAX_KB_TITLE_CHARS = 200
+
+
+async def _read_upload_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read upload in chunks; reject as soon as size exceeds max_bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_KB_READ_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=400, detail="file too large (max 20MB)")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _dedupe_tags(tags: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tags:
+        key = t.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    return out
+
+
+@router.post("/knowledge/upload")
+async def upload_knowledge(
+    _: AuthDep,
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    tags: str | None = Form(None),  # comma-separated optional
+):
+    from app.services.doc_parse import parse_document
+
+    data = await _read_upload_capped(file, _MAX_KB_UPLOAD_BYTES)
+    if not data:
+        raise HTTPException(status_code=400, detail="file is empty")
+
+    safe_name = Path(file.filename or "upload").name[:120] or "upload"
+    try:
+        parsed = await asyncio.to_thread(parse_document, safe_name, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("knowledge upload parse failed for %s", safe_name)
+        raise HTTPException(
+            status_code=400, detail=f"failed to parse file: {e}"
+        ) from e
+
+    entry_title = ((title or "").strip() or parsed.title)[:_MAX_KB_TITLE_CHARS]
+    if not entry_title:
+        entry_title = "Untitled"
+
+    tag_list = _dedupe_tags(
+        [t.strip() for t in (tags or "").split(",") if t.strip()]
+        + ["uploaded", parsed.source_type]
+    )
+    try:
+        entry = store.create_knowledge_entry(
+            {
+                "title": entry_title,
+                "body": parsed.body,
+                "tags": tag_list,
+            }
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        **entry,
+        "upload": {
+            "filename": safe_name,
+            "source_type": parsed.source_type,
+            "truncated": parsed.truncated,
+            "warnings": parsed.warnings,
+        },
+    }
 
 
 @router.get("/knowledge/{entry_id}")

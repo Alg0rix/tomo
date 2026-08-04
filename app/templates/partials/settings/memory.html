@@ -1,10 +1,14 @@
 {% from 'partials/page_head.html' import section_head %}
 
 <section id="sec-memory" class="sys-section" style="display:none">
-  {{ section_head('Memory', 'Knowledge base entries. Agents retrieve these via the recall tool (keyword search).') }}
+  {{ section_head('Memory', 'Knowledge base entries. Agents retrieve these via the recall tool. Upload PDF, DOCX, or text files, or add entries manually.') }}
   <div class="card" style="margin-bottom:16px">
     <div class="card-head"><h3>Knowledge entries</h3>
-      <button class="btn primary sm" type="button" id="addKnowledgeBtn">+ Add entry</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn ghost sm" type="button" id="uploadKnowledgeBtn">Upload file</button>
+        <input type="file" id="kbFileInput" accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" hidden>
+        <button class="btn primary sm" type="button" id="addKnowledgeBtn">+ Add entry</button>
+      </div>
     </div>
     <div class="card-body" id="knowledgeList" style="padding:8px 18px">
       <div class="empty">Loading…</div>

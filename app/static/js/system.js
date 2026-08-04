@@ -218,6 +218,52 @@
   var cancelKb = document.getElementById('kbCancel');
   if (cancelKb) cancelKb.addEventListener('click', function () { kbFormCard.classList.add('hidden'); });
 
+  var uploadKbBtn = document.getElementById('uploadKnowledgeBtn');
+  var kbFileInput = document.getElementById('kbFileInput');
+  var KB_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  var KB_ALLOWED_EXT = { pdf: 1, docx: 1, txt: 1, md: 1, markdown: 1 };
+  if (uploadKbBtn && kbFileInput) {
+    uploadKbBtn.addEventListener('click', function () { kbFileInput.click(); });
+    kbFileInput.addEventListener('change', async function () {
+      var f = kbFileInput.files && kbFileInput.files[0];
+      kbFileInput.value = '';
+      if (!f) return;
+      var ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (!KB_ALLOWED_EXT[ext]) {
+        Tomo.toast('Unsupported file type. Allowed: PDF, DOCX, TXT, MD', 'err');
+        return;
+      }
+      if (f.size > KB_MAX_UPLOAD_BYTES) {
+        Tomo.toast('File too large (max 20MB)', 'err');
+        return;
+      }
+      if (f.size === 0) {
+        Tomo.toast('File is empty', 'err');
+        return;
+      }
+      var fd = new FormData();
+      fd.append('file', f, f.name);
+      uploadKbBtn.disabled = true;
+      Tomo.toast('Parsing upload…', 'ok');
+      try {
+        var created = await Tomo.api('/api/knowledge/upload', { method: 'POST', body: fd });
+        var msg = 'Uploaded "' + (created && created.title ? created.title : f.name) + '"';
+        if (created && created.upload && created.upload.truncated) msg += ' (truncated)';
+        Tomo.toast(msg, 'ok');
+        var warns = created && created.upload && created.upload.warnings;
+        if (warns && warns.length) {
+          Tomo.toast(warns.slice(0, 2).join('; '), 'err');
+        }
+        loadKnowledge();
+      } catch (err) {
+        var detail = err && err.body && err.body.detail;
+        Tomo.toast((typeof detail === 'string' ? detail : null) || (err && err.message) || 'Upload failed', 'err');
+      } finally {
+        uploadKbBtn.disabled = false;
+      }
+    });
+  }
+
   if (kbList) {
     kbList.addEventListener('click', async function (e) {
       var btn = e.target.closest('button[data-act]'); if (!btn) return;
