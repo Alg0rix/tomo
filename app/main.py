@@ -12,13 +12,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import router as api_router
+from app.core import config
 from app.core.config import (
     BRAND,
     COOKIE_HTTPS_ONLY,
     HOST,
     PORT,
     RELOAD,
-    SESSION_SECRET,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE,
     STATIC_DIR,
@@ -29,10 +29,29 @@ from app.core.home import ensure_tomo_home
 from app.web import router as web_router
 
 
+def _bootstrap_runtime() -> None:
+    """Create $TOMO_HOME and seed bootstrap secrets before the app binds.
+
+    Must run before :func:`create_app` so SessionMiddleware signs cookies with
+    a non-default secret when install/update left ``$TOMO_HOME/.env`` ready —
+    or so first start can generate that file itself.
+    """
+    try:
+        ensure_tomo_home()
+    except Exception:
+        logging.getLogger(__name__).exception("ensure_tomo_home failed")
+    try:
+        from app.core.bootstrap import apply_bootstrap_to_config, ensure_bootstrap_secrets
+
+        ensure_bootstrap_secrets()
+        apply_bootstrap_to_config()
+    except Exception:
+        logging.getLogger(__name__).exception("bootstrap secrets failed")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # Ensure $TOMO_HOME exists once on server start (non-fatal). Tests that
-    # need a specific home call ensure_tomo_home() directly with a temp root.
+    # Home + secrets already ensured at import; keep a best-effort refresh.
     try:
         ensure_tomo_home()
     except Exception:
@@ -67,7 +86,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         SessionMiddleware,
-        secret_key=SESSION_SECRET,
+        secret_key=config.SESSION_SECRET,
         session_cookie=SESSION_COOKIE_NAME,
         max_age=SESSION_MAX_AGE,
         same_site="lax",
@@ -120,6 +139,7 @@ def create_app() -> FastAPI:
     return app
 
 
+_bootstrap_runtime()
 app = create_app()
 
 

@@ -22,10 +22,11 @@ Agent tool cwd (when no local workplace is bound) lives under
 ``tomo.yaml`` from the shipped ``defaults/`` (copy, never bind-mount the repo as
 live config). The master ``.secret_key`` is auto-created (chmod 600) only when
 ``TOMO_SECRET_KEY`` is unset and no key file exists — it is never overwritten.
-No API keys or secrets are written into home files; the optional ``.env`` is
-never auto-created. Allowed familiar names: ``SOUL.md``, ``SYSTEM.md``,
-``MEMORY.md``, ``USER.md``, ``.env``, ``.secret_key``; no ``secrets.env`` /
-``identity.md`` / ``prompt.md``.
+Bootstrap session/admin secrets live in ``.env`` via
+:func:`app.core.bootstrap.ensure_bootstrap_secrets` (install script, ``tomo
+update``, and process start). Allowed familiar names: ``SOUL.md``,
+``SYSTEM.md``, ``MEMORY.md``, ``USER.md``, ``.env``, ``.secret_key``; no
+``secrets.env`` / ``identity.md`` / ``prompt.md``.
 """
 
 from __future__ import annotations

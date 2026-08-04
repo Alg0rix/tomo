@@ -109,7 +109,7 @@ Set `export TOMO_HOME=/path/to/tomo` (and optionally `TOMO_WORK`) to relocate. O
 ```text
 $TOMO_HOME/
 ├── tomo.yaml          # non-secret prefs only (never API keys / master key)
-├── .env               # optional bootstrap secrets (dotfile; never auto-created)
+├── .env               # bootstrap secrets (TOMO_SESSION_SECRET, TOMO_ADMIN_PASSWORD; install/update/start seed if missing)
 ├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
 ├── SOUL.md            # global default persona
 ├── memories/USER.md   # curated user profile (memory tool)
@@ -139,9 +139,11 @@ encrypts/decrypts them (Fernet, `cryptography`):
   existing key. Decrypted secrets never travel over HTTP/HTML.
 - **Back up `.secret_key` / `TOMO_SECRET_KEY`** with the same care as the DB —
   losing it makes encrypted secrets unrecoverable.
-- Optional `$TOMO_HOME/.env` (dotfile, `0600`) may hold plaintext bootstrap
-  values (loaded with `override=False`, process env wins). Prefer moving durable
-  secrets into encrypted SQLite via the UI. Never name it `secrets.env`.
+- `$TOMO_HOME/.env` (dotfile, `0600`) holds plaintext bootstrap values
+  (`TOMO_SESSION_SECRET`, `TOMO_ADMIN_PASSWORD`). `scripts/install.sh`,
+  `tomo update`, and process start seed missing keys (never overwrite). Loaded
+  with `override=False` (process env wins). Prefer moving durable secrets into
+  encrypted SQLite via the UI. Never name it `secrets.env`.
 
 **LLM** — open **System → Models** and set Base URL, API key, and model id
 (e.g. `gpt-4o-mini`). The API key is encrypted before it touches SQLite. Until a
@@ -155,9 +157,10 @@ first run. To keep a legacy `var/tomo.db`, set
 
 **Server** — `TOMO_HOST` (default `127.0.0.1`), `TOMO_PORT` (default `8787`),
 `TOMO_RELOAD` (default `false`). Session cookies are signed with
-`TOMO_SESSION_SECRET` (default dev value; set a stable secret in any real
-deploy). Admin password: `TOMO_ADMIN_PASSWORD`. Note: `TOMO_SECRET_KEY` is the
-**at-rest master key** (see Secrets policy), not the session secret.
+`TOMO_SESSION_SECRET` (managed installs auto-generate into `$TOMO_HOME/.env`).
+Bootstrap admin password: `TOMO_ADMIN_PASSWORD` (same). Non-loopback bind
+refuses known insecure defaults. Note: `TOMO_SECRET_KEY` is the **at-rest
+master key** (see Secrets policy), not the session secret.
 
 ### Tests
 

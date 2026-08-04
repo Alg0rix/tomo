@@ -40,6 +40,25 @@ def cmd_update(*, assume_yes: bool = False, home: Path | None = None) -> int:
         print("✗ uv sync failed", file=sys.stderr)
         return uv_code
 
+    # Seed missing session/admin/.secret_key for installs that predate hardening.
+    try:
+        from app.core.bootstrap import ensure_bootstrap_secrets
+        from cli.paths import default_tomo_home
+
+        boot = ensure_bootstrap_secrets(default_tomo_home(home))
+        for note in boot.notes:
+            if note.startswith("Generated"):
+                print(f"→ {note}")
+        if boot.created_admin_password and boot.admin_password:
+            print("")
+            print("Bootstrap admin password (save this — shown once):")
+            print(f"  user:     admin")
+            print(f"  password: {boot.admin_password}")
+            print(f"  file:     {boot.env_path}")
+            print("")
+    except Exception as exc:
+        print(f"⚠ Could not ensure bootstrap secrets: {exc}", file=sys.stderr)
+
     restart = systemctl_user("restart", "tomo")
     if restart.returncode != 0:
         print("⚠ Could not restart tomo.service (is the user unit installed?)")

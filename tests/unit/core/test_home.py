@@ -2,8 +2,9 @@
 
 Verifies :func:`ensure_tomo_home` creates the locked §2.1 tree, seeds
 ``SOUL.md`` / ``tomo.yaml`` from ``defaults/``, auto-creates ``.secret_key``
-(chmod 600) only when ``TOMO_SECRET_KEY`` is unset, never creates ``.env`` /
-``secrets.env``, and is idempotent. Also covers the path helpers.
+(chmod 600) only when ``TOMO_SECRET_KEY`` is unset, never creates
+``secrets.env``, and is idempotent. ``.env`` bootstrap is covered by
+``test_bootstrap`` (install / process start). Also covers the path helpers.
 """
 
 from __future__ import annotations

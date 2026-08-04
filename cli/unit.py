@@ -20,6 +20,8 @@ Restart=on-failure
 RestartSec=5
 Environment=TOMO_HOME=%h/.tomo
 Environment=TOMO_WORK=%h/tomo
+# Optional: process env from bootstrap file (app also loads it in config).
+EnvironmentFile=-%h/.tomo/.env
 StandardOutput=journal
 StandardError=journal
 
