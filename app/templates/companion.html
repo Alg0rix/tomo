@@ -1,21 +1,15 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ url_for('static', path='css/companion.css') }}?v=companion2">
+<link rel="stylesheet" href="{{ url_for('static', path='css/companion.css') }}?v=companion3">
 {% endblock %}
 {% block content %}
 <div class="page companion-page">
-  <div class="page-head">
-    <div>
-      <h1 class="page-title">Companion</h1>
-      <p class="page-sub">How Tomo grows with you — bond, lessons learned, and what it remembers.</p>
-    </div>
-  </div>
-
-  <div id="companionRoot" class="companion-root" aria-live="polite">
+  <div id="companionRoot" class="companion-root" aria-live="polite"
+       data-username="{{ current_username or '' }}">
     <div class="empty">Loading companion…</div>
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', path='js/companion.js') }}?v=companion2"></script>
+<script src="{{ url_for('static', path='js/companion.js') }}?v=companion3"></script>
 {% endblock %}

@@ -27,6 +27,9 @@ def test_companion_snapshot_shape(tmp_path) -> None:
         assert "recent_events" in data
         assert "learning_enabled" in data
         assert "user_profile_preview" in data
+        assert "heatmap" in data
+        assert isinstance(data["heatmap"].get("days"), list)
+        assert "streak" in data
     finally:
         app.dependency_overrides.pop(require_auth, None)
 

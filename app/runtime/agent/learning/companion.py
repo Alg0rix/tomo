@@ -96,6 +96,100 @@ def session_user_id(conn: sqlite3.Connection, session_id: str | None) -> str:
     return (sess.get("user_id") or "web").strip() or "web"
 
 
+def _activity_day_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
+    """Per UTC day: chats (user msgs) and saves (learning_events.saved=1)."""
+    days: dict[str, dict[str, int]] = {}
+
+    def bucket(key: str) -> dict[str, int]:
+        if key not in days:
+            days[key] = {"chats": 0, "saves": 0, "reviews": 0}
+        return days[key]
+
+    for row in conn.execute(
+        "SELECT ts FROM messages WHERE type='user' AND ts > 0"
+    ):
+        key = datetime.fromtimestamp(float(row["ts"]), tz=timezone.utc).strftime(
+            "%Y-%m-%d"
+        )
+        bucket(key)["chats"] += 1
+    for row in conn.execute(
+        "SELECT created_at, saved FROM learning_events WHERE created_at > 0"
+    ):
+        key = datetime.fromtimestamp(
+            float(row["created_at"]), tz=timezone.utc
+        ).strftime("%Y-%m-%d")
+        b = bucket(key)
+        b["reviews"] += 1
+        if row["saved"]:
+            b["saves"] += 1
+    return days
+
+
+def activity_heatmap(
+    conn: sqlite3.Connection, *, weeks: int = 26
+) -> dict[str, Any]:
+    """GitHub-style day grid for the last ``weeks`` (Mon-start columns)."""
+    from datetime import date, timedelta
+
+    n_weeks = max(4, min(int(weeks or 26), 52))
+    today = datetime.now(timezone.utc).date()
+    end = today
+    start = end - timedelta(days=end.weekday()) - timedelta(weeks=n_weeks - 1)
+    counts = _activity_day_counts(conn)
+
+    days_out: list[dict[str, Any]] = []
+    cur = start
+    while cur <= end:
+        key = cur.isoformat()
+        c = counts.get(key) or {"chats": 0, "saves": 0, "reviews": 0}
+        # Intensity for bond-oriented view: chats + 2*saves + reviews
+        intensity = int(c["chats"]) + 2 * int(c["saves"]) + int(c["reviews"])
+        days_out.append(
+            {
+                "date": key,
+                "weekday": cur.weekday(),  # 0=Mon
+                "chats": int(c["chats"]),
+                "saves": int(c["saves"]),
+                "reviews": int(c["reviews"]),
+                "intensity": intensity,
+            }
+        )
+        cur += timedelta(days=1)
+
+    # Month labels for columns (first day of each month appearing)
+    months: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for i, d in enumerate(days_out):
+        ym = d["date"][:7]
+        if ym in seen:
+            continue
+        if date.fromisoformat(d["date"]).day > 7 and i > 0:
+            continue
+        seen.add(ym)
+        months.append({"month": ym, "index": i})
+
+    # Current streak: consecutive days ending today/yesterday with intensity>0
+    streak = 0
+    check = today
+    active_keys = {d["date"] for d in days_out if d["intensity"] > 0}
+    # Allow streak to continue if today is empty but yesterday had activity
+    if check.isoformat() not in active_keys:
+        check = today - timedelta(days=1)
+    while check.isoformat() in active_keys:
+        streak += 1
+        check -= timedelta(days=1)
+
+    return {
+        "weeks": n_weeks,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "days": days_out,
+        "months": months,
+        "streak": streak,
+        "max_intensity": max((d["intensity"] for d in days_out), default=0),
+    }
+
+
 def companion_snapshot(conn: sqlite3.Connection, *, recent_limit: int = 20) -> dict[str, Any]:
     """Full payload for GET /api/companion (single connection)."""
     settings = settings_store.get_settings(conn)
@@ -104,6 +198,7 @@ def companion_snapshot(conn: sqlite3.Connection, *, recent_limit: int = 20) -> d
     stats_ev = le.learning_event_stats(conn)
     growth = le.learning_events_by_month(conn, months=12)
     recent = le.list_learning_events(conn, limit=recent_limit)
+    heatmap = activity_heatmap(conn, weeks=26)
 
     chats = count_user_messages(conn)
     first_seen = first_activity_at(conn)
@@ -130,12 +225,14 @@ def companion_snapshot(conn: sqlite3.Connection, *, recent_limit: int = 20) -> d
         "days_together": _days_together(first_seen),
         "first_seen_at": first_seen,
         "learning_enabled": learning_on,
+        "streak": int(heatmap.get("streak") or 0),
         "stats": {
             **stats_ev,
             "skills_library": library_skills,
             "user_entries": user_entry_count,
         },
         "growth": growth,
+        "heatmap": heatmap,
         "recent_events": recent,
         "user_profile_preview": preview,
         "generated_at": time.time(),
@@ -147,5 +244,6 @@ __all__ = [
     "first_activity_at",
     "distinct_active_days",
     "session_user_id",
+    "activity_heatmap",
     "companion_snapshot",
 ]
