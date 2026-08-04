@@ -76,6 +76,44 @@ def _user_excerpts(messages: list[dict[str, Any]]) -> list[str]:
     return out[-_MAX_USER_EXCERPTS:]
 
 
+_MAX_CATALOG_CHARS = 2_000
+_MAX_USER_SNIPPET = 800
+_MAX_CATALOG_SKILLS = 40
+
+
+def format_skill_catalog(
+    skills: list[dict[str, Any]] | None, *, limit: int = _MAX_CATALOG_SKILLS
+) -> str:
+    """Compact id + description listing for the reviewer (no full bodies)."""
+    if not skills:
+        return "(empty catalog)"
+    lines: list[str] = []
+    for s in skills[: max(1, limit)]:
+        if not isinstance(s, dict):
+            continue
+        sid = (s.get("id") or s.get("name") or "").strip()
+        if not sid:
+            continue
+        desc = (s.get("description") or "").strip().replace("\n", " ")
+        if len(desc) > 80:
+            desc = desc[:77] + "…"
+        lines.append(f"- {sid}: {desc}" if desc else f"- {sid}")
+    text = "\n".join(lines) if lines else "(empty catalog)"
+    if len(text) > _MAX_CATALOG_CHARS:
+        text = text[: _MAX_CATALOG_CHARS - 20] + "\n…(truncated)"
+    return text
+
+
+def format_user_snippet(entries: list[str] | None, *, limit: int = _MAX_USER_SNIPPET) -> str:
+    cleaned = [e.strip() for e in (entries or []) if (e or "").strip()]
+    if not cleaned:
+        return "(empty)"
+    text = "\n§\n".join(cleaned)
+    if len(text) > limit:
+        text = text[: limit - 12] + "\n…(truncated)"
+    return text
+
+
 def build_review_digest(
     *,
     messages: list[dict[str, Any]],
@@ -84,6 +122,8 @@ def build_review_digest(
     skills_touched: list[str],
     tool_calls: int = 0,
     plan_reason: str = "",
+    skill_catalog: str | None = None,
+    user_snippet: str | None = None,
 ) -> str:
     """Structured digest the reviewer consumes as its sole user message body."""
     trail = compact_tool_trail(messages)
@@ -109,6 +149,16 @@ def build_review_digest(
         "## Skills touched this turn\n"
         + (", ".join(skills_touched) if skills_touched else "(none)")
     )
+    if skills_touched:
+        parts.append(
+            "## Refine-first\n"
+            "These skills were used this turn — call `use_skill` on each before "
+            "creating anything new. Prefer `manage_skill` patch over create."
+        )
+    if skill_catalog is not None:
+        parts.append(f"## Existing skill catalog\n{skill_catalog}")
+    if user_snippet is not None:
+        parts.append(f"## USER profile (current)\n{user_snippet}")
     final = (final_content or "").strip()[:_MAX_FINAL_CHARS] or "(empty)"
     parts.append(f"## Final answer (excerpt)\n{final}")
     parts.append(
@@ -123,5 +173,7 @@ def build_review_digest(
 
 __all__ = [
     "compact_tool_trail",
+    "format_skill_catalog",
+    "format_user_snippet",
     "build_review_digest",
 ]

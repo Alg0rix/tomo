@@ -84,6 +84,31 @@ def parse_entries(raw: str) -> list[str]:
     return [p for p in parts if p]
 
 
+def _normalize_memory_text(text: str) -> str:
+    return " ".join((text or "").casefold().split())
+
+
+def near_duplicate(entries: list[str], content: str) -> str | None:
+    """Return an existing entry that is effectively the same fact, or None.
+
+    Match when normalized forms are equal, or one contains the other and the
+    shorter side is at least 24 chars (avoids tiny substring false positives).
+    """
+    needle = _normalize_memory_text(content)
+    if not needle:
+        return None
+    for entry in entries:
+        hay = _normalize_memory_text(entry)
+        if not hay:
+            continue
+        if hay == needle:
+            return entry
+        shorter, longer = (hay, needle) if len(hay) <= len(needle) else (needle, hay)
+        if len(shorter) >= 24 and shorter in longer:
+            return entry
+    return None
+
+
 def serialize_entries(entries: list[str]) -> str:
     cleaned = [e.strip() for e in entries if (e or "").strip()]
     if not cleaned:
@@ -202,6 +227,14 @@ def add_entry(
     entries = read_entries(path, home_root=home_root)
     if text in entries:
         return {"ok": True, "message": "already present", "count": len(entries)}
+    dup = near_duplicate(entries, text)
+    if dup is not None:
+        return {
+            "ok": True,
+            "message": "near-duplicate already present",
+            "count": len(entries),
+            "existing": dup[:120],
+        }
     limit = _char_limit(target)
     trial = entries + [text]
     if _char_count(trial) > limit:
@@ -333,6 +366,7 @@ __all__ = [
     "remove_entry",
     "list_entries",
     "parse_entries",
+    "near_duplicate",
     "read_entries",
     "write_entries",
 ]

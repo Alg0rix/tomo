@@ -73,12 +73,17 @@ def test_digest_includes_goal_trail_skills() -> None:
         skills_touched=["python-unit-testing"],
         tool_calls=1,
         plan_reason="skill_touched",
+        skill_catalog="- python-unit-testing: pytest patterns",
+        user_snippet="Prefers concise answers",
     )
     assert "fix the flaky test" in d
     assert "bash" in d
     assert "python-unit-testing" in d
     assert "skill_touched" in d
     assert "Patched the race" in d
+    assert "Existing skill catalog" in d
+    assert "USER profile" in d
+    assert "Refine-first" in d
 
 
 def test_cooldown_does_not_burn_nudge() -> None:
@@ -147,6 +152,32 @@ async def test_review_saves_via_memory_tool() -> None:
     assert result is not None
     assert result["saved"] is True
     assert any("memory" in a for a in result["actions"])
+    assert result.get("diary")
+    events = store.list_learning_events(limit=5)
+    assert any(e.get("saved") for e in events)
+
+
+async def test_review_idle_still_records_event() -> None:
+    client = ScriptedLLM([text_reply("Nothing to save.")])
+    _ = observe_turn(agent_id="idle-a", tool_calls=0, ended_kind="final")
+    plan = observe_turn(agent_id="idle-a", tool_calls=0, ended_kind="final")
+    assert plan and plan.review_memory
+    metrics = TurnMetrics(
+        agent_id="idle-a", session_id="s-idle", ended_kind="final", tool_calls=0
+    )
+    result = await run_learning_review(
+        client=client,
+        messages=[{"role": "user", "content": "hi"}],
+        metrics=metrics,
+        user_message="hi",
+        final_content="hello",
+        plan=plan,
+    )
+    assert result is not None
+    assert result["saved"] is False
+    events = store.list_learning_events(limit=10, agent_id="idle-a")
+    assert events
+    assert events[0]["saved"] is False
 
 
 def test_review_scope_blocks_nested_observe() -> None:

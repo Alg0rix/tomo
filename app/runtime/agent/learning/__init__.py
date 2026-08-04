@@ -20,6 +20,9 @@ Hardening:
 
 from __future__ import annotations
 
+from app.runtime.agent.learning.bond import compute_bond
+from app.runtime.agent.learning.companion import companion_snapshot
+from app.runtime.agent.learning.diary import derive_diary, extract_diary_line
 from app.runtime.agent.learning.digest import build_review_digest, compact_tool_trail
 from app.runtime.agent.learning.runner import run_learning_review, schedule_learning_review
 from app.runtime.agent.learning.state import (
@@ -35,6 +38,7 @@ from app.runtime.agent.learning.state import (
     skill_nudge_iters,
     snapshot,
 )
+
 
 
 def decide_review(
@@ -97,4 +101,8 @@ __all__ = [
     "reset_learning_cooldowns",
     "reset_learning_state",
     "snapshot",
+    "compute_bond",
+    "companion_snapshot",
+    "derive_diary",
+    "extract_diary_line",
 ]

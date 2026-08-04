@@ -16,6 +16,7 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``schedules`` / ``schedule_runs`` — cron/interval jobs + run log (Slice G)
 * ``users``           — login accounts (username + scrypt password hash)
 * ``api_keys``        — per-account Bearer tokens for ``/api/*`` access
+* ``learning_events`` — Companion growth ledger (active-learning reviews)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -273,6 +274,27 @@ CREATE TABLE IF NOT EXISTS agent_state (
     updated_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (agent_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS learning_events (
+    id              TEXT PRIMARY KEY,
+    created_at      REAL NOT NULL,
+    agent_id        TEXT NOT NULL DEFAULT '',
+    session_id      TEXT NOT NULL DEFAULT '',
+    user_id         TEXT NOT NULL DEFAULT 'web',
+    reason          TEXT NOT NULL DEFAULT '',
+    review_memory   INTEGER NOT NULL DEFAULT 0,
+    review_skills   INTEGER NOT NULL DEFAULT 0,
+    saved           INTEGER NOT NULL DEFAULT 0,
+    actions_json    TEXT NOT NULL DEFAULT '[]',
+    diary           TEXT NOT NULL DEFAULT '',
+    note            TEXT NOT NULL DEFAULT '',
+    plan_json       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_events_created
+    ON learning_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_events_agent
+    ON learning_events(agent_id, created_at DESC);
 """
 
 

@@ -23,11 +23,17 @@ Do NOT capture:
 
 Rules:
 1. Prefer PATCHING an existing class-level skill over creating a narrow one-off.
+   Before create: use the catalog in the digest and/or call list_skills; load
+   candidates with use_skill.
 2. Skill names must be class-level (e.g. python-unit-testing), never today's ticket.
 3. Memory = who the user is / durable prefs. Skills = how to do this class of task.
+   If a similar preference already exists in USER profile, replace or skip —
+   do not stack near-duplicates.
 4. Style/workflow complaints belong in the governing skill body, not only memory.
 5. If genuinely nothing durable stands out, reply exactly: Nothing to save.
 6. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
+7. After any successful write tool, your final text MUST include a line:
+   Diary: <1–3 sentences, past tense, what future sessions should know>
 """
 
 _FOCUS_MEMORY = """

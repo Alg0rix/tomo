@@ -77,6 +77,12 @@
         </span>
         <span class="app-rail-label">Skills</span>
       </a>
+      <a class="app-rail-item {{ 'active' if page == 'companion' }}" href="/companion" title="Companion">
+        <span class="app-rail-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 11c0 5.6-7 10-7 10z"/></svg>
+        </span>
+        <span class="app-rail-label">Companion</span>
+      </a>
       {% for item in module_nav|default([]) %}
       <a class="app-rail-item {{ 'active' if page == item.page }}" href="{{ item.path }}" title="{{ item.label }}">
         <span class="app-rail-ico" aria-hidden="true">

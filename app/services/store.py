@@ -1190,5 +1190,33 @@ class Store:
             )
             self._conn.commit()
 
+    # -- learning events / companion -------------------------------------
+    def insert_learning_event(self, **kwargs: Any) -> dict[str, Any]:
+        from app.models.mixins import learning_events as le
+
+        with self._lock:
+            return le.insert_learning_event(self._conn, **kwargs)
+
+    def list_learning_events(
+        self,
+        *,
+        limit: int = 30,
+        before: float | None = None,
+        agent_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        from app.models.mixins import learning_events as le
+
+        with self._lock:
+            return le.list_learning_events(
+                self._conn, limit=limit, before=before, agent_id=agent_id
+            )
+
+    def companion_snapshot(self, *, recent_limit: int = 20) -> dict[str, Any]:
+        """Bond + growth log + profile for the Companion page."""
+        from app.runtime.agent.learning.companion import companion_snapshot as snap
+
+        with self._lock:
+            return snap(self._conn, recent_limit=recent_limit)
+
 
 store = Store()

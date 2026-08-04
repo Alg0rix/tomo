@@ -44,6 +44,29 @@ async def dashboard_data(_: AuthDep):
     return data
 
 
+@router.get("/companion")
+async def companion_snapshot_api(_: AuthDep):
+    """Bond, growth ledger, profile preview for the Companion page."""
+    return store.companion_snapshot()
+
+
+@router.get("/companion/events")
+async def companion_events_api(
+    _: AuthDep,
+    limit: int = Query(30, ge=1, le=200),
+    before: float | None = Query(None),
+    agent_id: str | None = Query(None),
+):
+    """Paginated growth log (learning events)."""
+    events = store.list_learning_events(
+        limit=limit, before=before, agent_id=agent_id
+    )
+    next_before = None
+    if events and len(events) >= limit:
+        next_before = float(events[-1].get("created_at") or 0) or None
+    return {"events": events, "next_before": next_before}
+
+
 @router.get("/dashboard/sidebar")
 async def dashboard_sidebar(_: AuthDep):
     return {"agents": store.list_agents()}

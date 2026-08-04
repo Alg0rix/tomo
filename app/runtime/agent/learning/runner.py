@@ -8,7 +8,12 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from app.runtime.agent.learning.digest import build_review_digest
+from app.runtime.agent.learning.diary import derive_diary
+from app.runtime.agent.learning.digest import (
+    build_review_digest,
+    format_skill_catalog,
+    format_user_snippet,
+)
 from app.runtime.agent.learning.prompts import system_prompt
 from app.runtime.agent.learning.state import (
     ReviewPlan,
@@ -25,6 +30,78 @@ from app.runtime.llm.base import LLMClient, LLMResponse
 _logger = logging.getLogger(__name__)
 
 _MAX_REVIEW_ROUNDS = 5
+
+_ALLOWED_REVIEW_TOOLS = frozenset(
+    {
+        "remember",
+        "memory",
+        "agent_state",
+        "list_skills",
+        "use_skill",
+        "manage_skill",
+        "list_artifacts",
+        "save_artifact",
+    }
+)
+
+
+def _gather_digest_context() -> tuple[str, str]:
+    """Skill catalog + USER snippet for the review digest (best-effort)."""
+    catalog = "(empty catalog)"
+    user_snip = "(empty)"
+    try:
+        from app.services import store
+
+        skills = store.list_skills() or []
+        catalog = format_skill_catalog(skills)
+    except Exception as exc:
+        _logger.debug("learning catalog gather failed: %s", exc)
+    try:
+        from app.runtime.memory import curated
+
+        entries = curated.read_entries(curated.user_path())
+        user_snip = format_user_snippet(entries)
+    except Exception as exc:
+        _logger.debug("learning USER snippet gather failed: %s", exc)
+    return catalog, user_snip
+
+
+def _record_learning_event(
+    *,
+    metrics: TurnMetrics,
+    plan: ReviewPlan,
+    result: dict[str, Any],
+) -> str:
+    """Append a growth-ledger row. Returns diary text. Never raises."""
+    actions = list(result.get("actions") or [])
+    note = str(result.get("note") or "")
+    saved = bool(result.get("saved"))
+    diary = derive_diary(saved=saved, note=note, actions=actions)
+    try:
+        from app.models.mixins import learning_events as le
+        from app.runtime.agent.learning.companion import session_user_id
+        from app.services import store
+
+        def _insert(conn: Any) -> None:
+            le.insert_learning_event(
+                conn,
+                agent_id=metrics.agent_id or plan.agent_id or "",
+                session_id=metrics.session_id or "",
+                user_id=session_user_id(conn, metrics.session_id),
+                reason=plan.reason or str(result.get("reason") or ""),
+                review_memory=bool(plan.review_memory),
+                review_skills=bool(plan.review_skills),
+                saved=saved,
+                actions=actions,
+                diary=diary,
+                note=note,
+                plan=plan.as_dict(),
+            )
+
+        store.with_db(_insert)
+    except Exception as exc:
+        _logger.warning("learning event insert failed: %s", exc)
+    return diary
 
 
 @contextmanager
@@ -48,27 +125,9 @@ def _review_isolation(agent_id: str | None) -> Iterator[None]:
             _logger.debug("sandbox reset failed", exc_info=True)
         exit_review_scope(scope_token)
 
-_ALLOWED_REVIEW_TOOLS = frozenset(
-    {
-        "remember",
-        "memory",
-        "agent_state",
-        "list_skills",
-        "use_skill",
-        "manage_skill",
-        "list_artifacts",
-        "save_artifact",
-    }
-)
-
 
 def _resolve_review_client(fallback: LLMClient) -> tuple[LLMClient, bool]:
-    """Optionally route review to a dedicated cheaper profile.
-
-    Settings:
-      learning_review_profile_id — LLM profile id (empty = use turn client)
-    Returns (client, routed).
-    """
+    """Optionally route review to a dedicated cheaper profile."""
     try:
         from app.services import store
 
@@ -286,6 +345,7 @@ async def run_learning_review(
         return None
 
     review_client, routed = _resolve_review_client(client)
+    catalog, user_snip = _gather_digest_context()
     digest = build_review_digest(
         messages=messages,
         user_message=user_message,
@@ -293,35 +353,39 @@ async def run_learning_review(
         skills_touched=skills_touched or plan.skills_touched,
         tool_calls=metrics.tool_calls,
         plan_reason=plan.reason,
+        skill_catalog=catalog,
+        user_snippet=user_snip,
     )
 
+    result: dict[str, Any] = {
+        "saved": False,
+        "actions": [],
+        "note": "",
+        "review_memory": plan.review_memory,
+        "review_skills": plan.review_skills,
+        "reason": plan.reason,
+        "routed": routed,
+        "plan": plan.as_dict(),
+    }
     try:
-        result = await _run_review_llm(
+        llm_out = await _run_review_llm(
             review_client,
             digest=digest,
             agent_id=metrics.agent_id,
             review_memory=plan.review_memory,
             review_skills=plan.review_skills,
         )
+        result["saved"] = bool(llm_out.get("saved"))
+        result["actions"] = list(llm_out.get("actions") or [])
+        result["note"] = str(llm_out.get("note") or "")
     except Exception as exc:
         _logger.warning("learning review failed: %s", exc)
-        finish_review(metrics.agent_id, saved=False)
-        return {
-            "saved": False,
-            "actions": [],
-            "note": f"error: {exc}",
-            "review_memory": plan.review_memory,
-            "review_skills": plan.review_skills,
-            "reason": plan.reason,
-            "routed": routed,
-        }
-
-    finish_review(metrics.agent_id, saved=bool(result.get("saved")))
-    result["review_memory"] = plan.review_memory
-    result["review_skills"] = plan.review_skills
-    result["reason"] = plan.reason
-    result["routed"] = routed
-    result["plan"] = plan.as_dict()
+        result["note"] = f"error: {exc}"
+    finally:
+        finish_review(metrics.agent_id, saved=bool(result.get("saved")))
+        result["diary"] = _record_learning_event(
+            metrics=metrics, plan=plan, result=result
+        )
 
     _update_session_summary(
         metrics.session_id,
@@ -332,13 +396,14 @@ async def run_learning_review(
 
     if result.get("saved"):
         _logger.info(
-            "learning saved agent=%s memory=%s skills=%s routed=%s reason=%s actions=%s",
+            "learning saved agent=%s memory=%s skills=%s routed=%s reason=%s actions=%s diary=%s",
             metrics.agent_id,
             plan.review_memory,
             plan.review_skills,
             routed,
             plan.reason,
             result.get("actions"),
+            (result.get("diary") or "")[:80],
         )
     else:
         _logger.info(
@@ -352,9 +417,6 @@ async def run_learning_review(
 
 def schedule_learning_review(**kwargs: Any) -> None:
     """Fire-and-forget review on the running event loop (never blocks the turn)."""
-    # Hydrate counters once per session before observing (inside the task so
-    # we don't block the turn path on DB reads more than necessary — actually
-    # hydrate is cheap; do it sync before spawn so observe sees seeded state).
     metrics = kwargs.get("metrics")
     if isinstance(metrics, TurnMetrics):
         hydrate_from_session(metrics.session_id, metrics.agent_id)
@@ -365,7 +427,6 @@ def schedule_learning_review(**kwargs: Any) -> None:
         _logger.debug("learning review skipped: no running loop")
         return
 
-    # Observe on the main path so counters advance even if the task is delayed.
     plan = observe_turn(
         agent_id=metrics.agent_id if isinstance(metrics, TurnMetrics) else None,
         tool_calls=metrics.tool_calls if isinstance(metrics, TurnMetrics) else 0,

@@ -61,6 +61,14 @@ async def sessions_page(request: Request, _: AuthDep):
     ))
 
 
+@router.get("/companion", response_class=HTMLResponse)
+async def companion_page(request: Request, _: AuthDep):
+    """Companion — bond, growth log, and what Tomo has learned."""
+    return templates.TemplateResponse(
+        request, "companion.html", page_ctx(request, "companion")
+    )
+
+
 @router.get("/sessions/{session_id}/artifacts/{filename}/view", response_class=HTMLResponse)
 async def artifact_view_page(request: Request, session_id: str, filename: str, _: AuthDep):
     """Full-page artifact viewer (HTML/media chrome-light; text via artifacts.js)."""
