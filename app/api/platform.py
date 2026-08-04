@@ -559,6 +559,39 @@ async def list_schedule_runs(schedule_id: str, _: AuthDep):
     return {"runs": store.list_schedule_runs(schedule_id)}
 
 
+@router.post("/schedules/{schedule_id}/run")
+async def run_schedule(schedule_id: str, _: AuthDep):
+    """Fire a schedule immediately (outside the normal due window)."""
+    from app.scheduler.runner import run_schedule_now
+
+    if not store.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    try:
+        result = await run_schedule_now(schedule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@router.post("/schedules/{schedule_id}/pause")
+async def pause_schedule(schedule_id: str, _: AuthDep):
+    sch = store.pause_schedule(schedule_id)
+    if not sch:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return sch
+
+
+@router.post("/schedules/{schedule_id}/resume")
+async def resume_schedule(schedule_id: str, _: AuthDep):
+    try:
+        sch = store.resume_schedule(schedule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not sch:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return sch
+
+
 @router.get("/models")
 async def list_models(_: AuthDep):
     return {"models": store.list_models(), "providers": store.list_providers()}

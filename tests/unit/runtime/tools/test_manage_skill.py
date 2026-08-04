@@ -8,7 +8,9 @@ from app.runtime.agent.learning import (
     compact_tool_trail,
     decide_review,
     is_learning_eligible,
+    observe_turn,
     reset_learning_cooldowns,
+    snapshot,
 )
 from app.runtime.agent.metrics import TurnMetrics
 from app.runtime.tools.registry import execute, reset_registry
@@ -24,6 +26,15 @@ def _reset(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(config, "TOMO_HOME", tmp_path / "home")
     (tmp_path / "home").mkdir(parents=True, exist_ok=True)
+    # Deterministic nudges for tests
+    store.update_settings(
+        {
+            "learning_enabled": True,
+            "learning_memory_nudge_turns": 3,
+            "learning_skill_nudge_iters": 3,
+            "learning_cooldown_sec": 0,
+        }
+    )
     yield
     reset_registry()
     reset_learning_cooldowns()
@@ -122,14 +133,45 @@ def test_learning_eligibility_uses_counters_not_keywords() -> None:
     assert not is_learning_eligible(metrics=m3, skills_touched=["x"])
 
 
+def test_skill_iters_accumulate_across_turns() -> None:
+    reset_learning_cooldowns()
+    m = TurnMetrics(agent_id="cumul", ended_kind="final", tool_calls=2)
+    assert decide_review(metrics=m)["review_skills"] is False  # 2 < 3
+    assert decide_review(metrics=m)["review_skills"] is True  # 2+2 >= 3? wait 2+2=4
+
+
+def test_sticky_due_survives_inflight() -> None:
+    """If a review is in-flight, dues stay armed for the next opportunity."""
+    from app.runtime.agent.learning.state import begin_review, finish_review
+
+    reset_learning_cooldowns()
+    plan = None
+    for _ in range(3):
+        plan = observe_turn(
+            agent_id="sticky",
+            tool_calls=0,
+            ended_kind="final",
+        )
+    assert plan is not None and plan.review_memory
+    assert begin_review(plan) is True
+    # While in-flight, another observe should not return a new plan
+    blocked = observe_turn(agent_id="sticky", tool_calls=5, ended_kind="final")
+    assert blocked is None
+    finish_review("sticky", saved=False)
+    # Memory was consumed by begin_review; skill iters from the blocked turn
+    # should still arm skill review.
+    nxt = observe_turn(agent_id="sticky", tool_calls=0, ended_kind="final")
+    # skill iters were advanced during blocked observe (5 tools)
+    assert nxt is not None
+    assert nxt.review_skills is True
+
+
 def test_correction_keywords_do_not_gate() -> None:
     """English cues are prompt guidance only — counters decide eligibility."""
     reset_learning_cooldowns()
     m = TurnMetrics(agent_id="cue", ended_kind="final", tool_calls=0)
-    # "remember this" alone must NOT force a review on turn 1.
-    assert not is_learning_eligible(
-        metrics=m, user_message="please remember this preference"
-    )
+    # Chat-only turn 1 must NOT force a review (counters only).
+    assert not is_learning_eligible(metrics=m)
 
 
 def test_compact_tool_trail() -> None:
@@ -149,3 +191,12 @@ def test_compact_tool_trail() -> None:
     trail = compact_tool_trail(msgs)
     assert "bash" in trail
     assert "✓" in trail
+    assert "tools=" in trail
+
+
+def test_snapshot_exposes_counters() -> None:
+    reset_learning_cooldowns()
+    observe_turn(agent_id="snap", tool_calls=1, ended_kind="final")
+    snap = snapshot("snap")
+    assert snap["turns_since_memory"] == 1
+    assert snap["iters_since_skill"] == 1

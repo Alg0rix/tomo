@@ -1,9 +1,10 @@
-"""In-process interval scheduler — fires due schedules as agent turns.
+"""In-process schedule harness — fires due jobs as agent turns.
 
-Alpha Slice G: a lightweight asyncio loop (started from app lifespan) polls
-SQLite for enabled schedules with ``next_run <= now``, then drains
-:func:`app.services.chat.run_session_turn` for the target agent. Interval
-schedules are enough for Alpha; cron strings are display/seed helpers.
+Hermes-inspired hardening:
+* claim-before-fire CAS (no double-fire across overlapping ticks)
+* real next_run via parse.compute_next_run (interval / cron / one-shot)
+* one-shot and repeat_times auto-complete after the last successful claim
+* concurrent due jobs run in parallel (bounded gather)
 """
 
 from __future__ import annotations
@@ -19,32 +20,57 @@ logger = logging.getLogger(__name__)
 _runner_task: asyncio.Task[None] | None = None
 _runner_stop: asyncio.Event | None = None
 
-# Poll period for the background loop (seconds). Tests call fire_due_* directly.
 DEFAULT_POLL_SECONDS = 5.0
+MAX_PARALLEL_FIRES = 4
 
 
 async def fire_schedule(
     schedule: dict[str, Any],
     *,
     now: float | None = None,
+    skip_claim: bool = False,
 ) -> dict[str, Any]:
-    """Fire one schedule: begin run → session turn → finish run."""
+    """Fire one schedule: claim → begin run → session turn → finish run.
+
+    When ``skip_claim`` is True (manual run-now), still records a run without
+    the due-window claim gate.
+    """
     from app.services.chat import run_session_turn
     from app.services.store import store
 
     ts = now if now is not None else time.time()
     schedule_id = schedule["id"]
     agent_id = schedule["agent_id"]
-    message = (schedule.get("message") or "").strip() or f"[schedule] {schedule.get('name', schedule_id)}"
+    message = (schedule.get("message") or "").strip() or (
+        f"[schedule] {schedule.get('name', schedule_id)}"
+    )
+
+    claimed = not skip_claim
+    if claimed:
+        claimed_row = store.claim_schedule_for_fire(schedule_id, now=ts)
+        if not claimed_row:
+            return {
+                "run_id": "",
+                "schedule_id": schedule_id,
+                "session_id": "",
+                "status": "skipped",
+                "error": "not claimed (already running, paused, or not due)",
+                "claimed": False,
+            }
+        schedule = claimed_row
 
     session_id = store.get_or_create_session(agent_id, "scheduler")
-    run_id = store.begin_schedule_run(schedule_id, session_id=session_id, now=ts)
+    run_id = store.begin_schedule_run(
+        schedule_id, session_id=session_id, now=ts, claimed=claimed
+    )
+
     result: dict[str, Any] = {
         "run_id": run_id,
         "schedule_id": schedule_id,
         "session_id": session_id,
         "status": "ok",
         "error": "",
+        "claimed": claimed,
     }
     try:
         async with contextlib.aclosing(
@@ -70,15 +96,44 @@ async def fire_schedule(
 
 
 async def fire_due_schedules(*, now: float | None = None) -> list[dict[str, Any]]:
-    """Fire all due schedules once. Safe to call from tests."""
+    """Claim and fire all due schedules. Safe to call from tests."""
     from app.services.store import store
 
     ts = now if now is not None else time.time()
     due = store.list_due_schedules(ts)
-    results: list[dict[str, Any]] = []
-    for sch in due:
-        results.append(await fire_schedule(sch, now=ts))
-    return results
+    if not due:
+        return []
+
+    sem = asyncio.Semaphore(MAX_PARALLEL_FIRES)
+
+    async def _one(sch: dict[str, Any]) -> dict[str, Any]:
+        async with sem:
+            try:
+                return await fire_schedule(sch, now=ts)
+            except Exception as exc:
+                logger.exception("schedule fire failed id=%s", sch.get("id"))
+                return {
+                    "run_id": "",
+                    "schedule_id": sch.get("id", ""),
+                    "session_id": "",
+                    "status": "error",
+                    "error": str(exc),
+                    "claimed": False,
+                }
+
+    return list(await asyncio.gather(*[_one(s) for s in due]))
+
+
+async def run_schedule_now(schedule_id: str) -> dict[str, Any]:
+    """Manual trigger — runs immediately outside the due window."""
+    from app.services.store import store
+
+    sch = store.get_schedule(schedule_id)
+    if not sch:
+        raise ValueError(f"Schedule not found: {schedule_id}")
+    if sch.get("state") == "completed":
+        raise ValueError("Schedule is completed; create a new one to run again.")
+    return await fire_schedule(sch, skip_claim=True)
 
 
 async def _runner_loop(stop: asyncio.Event, poll_seconds: float) -> None:
@@ -122,8 +177,10 @@ async def stop_scheduler() -> None:
 
 __all__ = [
     "DEFAULT_POLL_SECONDS",
+    "MAX_PARALLEL_FIRES",
     "fire_schedule",
     "fire_due_schedules",
+    "run_schedule_now",
     "start_scheduler",
     "stop_scheduler",
 ]

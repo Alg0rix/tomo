@@ -40,6 +40,7 @@ from app.runtime.tools import runpy as _runpy_backend
 from app.runtime.tools import fetch_artifact as _fetch_artifact_backend
 from app.runtime.tools import list_artifacts as _list_artifacts_backend
 from app.runtime.tools import save_artifact as _save_artifact_backend
+from app.runtime.tools import schedule as _schedule_backend
 from app.runtime.tools import search_files as _search_files_backend
 from app.runtime.tools import session_search as _session_search_backend
 from app.runtime.tools import skills_tools as _skills_tools
@@ -73,6 +74,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "process": _process_backend.run,
     "todo": _todo_backend.run,
     "session_search": _session_search_backend.run,
+    "schedule": _schedule_backend.run,
     "list_skills": _skills_tools.list_skills_run,
     "use_skill": _skills_tools.use_skill_run,
     "manage_skill": _skills_tools.manage_skill_run,

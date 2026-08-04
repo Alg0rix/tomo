@@ -233,25 +233,33 @@ class KnowledgeEntryUpdate(BaseModel):
 
 
 class ScheduleCreate(BaseModel):
-    """Create an interval/cron schedule (Alpha Slice G)."""
+    """Create an interval / cron / one-shot schedule."""
 
     id: str | None = Field(
         default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$"
     )
     name: str = Field(min_length=1, max_length=120)
     agent_id: str = Field(min_length=1, max_length=64)
+    schedule: str | None = Field(
+        default=None,
+        max_length=120,
+        description="Hermes-style schedule: 'every 1h', '30m', '0 9 * * *', ISO time",
+    )
     cron: str = ""
-    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 30)
+    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 90)
     message: str = Field(default="", max_length=4000)
     enabled: bool = True
+    repeat_times: int | None = Field(default=None, ge=1, le=1_000_000)
 
 
 class ScheduleUpdate(BaseModel):
-    """Update a schedule (enable/disable, interval, message, …)."""
+    """Update a schedule (enable/disable, schedule string, message, …)."""
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    schedule: str | None = Field(default=None, max_length=120)
     cron: str | None = None
-    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 30)
+    interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 90)
     message: str | None = Field(default=None, max_length=4000)
     enabled: bool | None = None
+    repeat_times: int | None = Field(default=None, ge=0, le=1_000_000)

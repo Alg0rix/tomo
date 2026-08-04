@@ -798,13 +798,19 @@ class Store:
                 ),
             )
 
-    def list_schedules(self) -> list[dict[str, Any]]:
+    def list_schedules(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         with self._lock:
-            return schedules_store.list_schedules(self._conn)
+            return schedules_store.list_schedules(
+                self._conn, include_disabled=include_disabled
+            )
 
     def get_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         with self._lock:
             return schedules_store.get_schedule(self._conn, schedule_id)
+
+    def resolve_schedule(self, ref: str) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.resolve_schedule_ref(self._conn, ref)
 
     def create_schedule(self, data: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -816,6 +822,18 @@ class Store:
         with self._lock:
             return schedules_store.update_schedule(self._conn, schedule_id, data)
 
+    def pause_schedule(
+        self, schedule_id: str, *, reason: str = ""
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.pause_schedule(
+                self._conn, schedule_id, reason=reason
+            )
+
+    def resume_schedule(self, schedule_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.resume_schedule(self._conn, schedule_id)
+
     def delete_schedule(self, schedule_id: str) -> bool:
         with self._lock:
             return schedules_store.delete_schedule(self._conn, schedule_id)
@@ -824,16 +842,30 @@ class Store:
         with self._lock:
             return schedules_store.list_due(self._conn, now)
 
+    def claim_schedule_for_fire(
+        self,
+        schedule_id: str,
+        *,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return schedules_store.claim_for_fire(self._conn, schedule_id, now=now)
+
     def begin_schedule_run(
         self,
         schedule_id: str,
         *,
         session_id: str | None = None,
         now: float | None = None,
+        claimed: bool = False,
     ) -> str:
         with self._lock:
             return schedules_store.begin_run(
-                self._conn, schedule_id, session_id=session_id, now=now
+                self._conn,
+                schedule_id,
+                session_id=session_id,
+                now=now,
+                claimed=claimed,
             )
 
     def finish_schedule_run(

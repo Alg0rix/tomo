@@ -4,7 +4,7 @@
   <div class="page-head">
     <div>
       <h1 class="page-title">Scheduler</h1>
-      <p class="page-sub">Interval jobs that wake agents and run a turn.</p>
+      <p class="page-sub">Interval, cron, and one-shot jobs that wake agents and run a turn.</p>
     </div>
     <button class="btn primary" type="button" id="newScheduleBtn">New schedule</button>
   </div>
@@ -23,8 +23,8 @@
             {% endfor %}
           </select>
         </div>
-        <div class="config-row"><div class="lbl">Interval (seconds)</div>
-          <input class="input" type="number" id="schInterval" min="5" value="3600" style="max-width:140px">
+        <div class="config-row"><div class="lbl">Schedule</div>
+          <input class="input" id="schSchedule" placeholder="every 1h · 0 9 * * * · 30m · ISO time" style="max-width:320px" value="every 1h">
         </div>
         <div class="config-row"><div class="lbl">Message</div>
           <input class="input" id="schMessage" placeholder="Prompt sent to the agent" style="max-width:420px">
@@ -35,6 +35,9 @@
             <span class="faint">Run when due</span>
           </label>
         </div>
+        <p class="faint" style="font-size:12px;margin:8px 0 0">
+          Forms: <code>every 30m</code>, <code>2h</code> (one-shot), <code>0 9 * * *</code> (cron), <code>2026-06-01T09:00:00</code>
+        </p>
         <div style="margin-top:16px;display:flex;gap:10px">
           <button class="btn ghost" type="button" id="schCancel">Cancel</button>
           <button class="btn primary sm" type="button" id="schSave">Create</button>
@@ -57,18 +60,27 @@
             <a href="/agents/{{ s.agent_id }}" class="dim">{{ ag.name if ag else s.agent_id }}</a>
           </td>
           <td class="mono faint">
-            {% if s.interval_seconds %}every {{ s.interval_seconds }}s{% else %}{{ s.cron }}{% endif %}
-            {% if s.cron and s.interval_seconds %}<span class="faint"> · {{ s.cron }}</span>{% endif %}
+            {{ s.schedule_display or s.cron or ('every ' ~ s.interval_seconds ~ 's') }}
+            {% if s.schedule_kind and s.schedule_kind != 'interval' %}
+            <span class="badge muted" style="margin-left:6px">{{ s.schedule_kind }}</span>
+            {% endif %}
           </td>
           <td>
-            {% if s.enabled %}<span class="badge ok">on</span>{% else %}<span class="badge muted">off</span>{% endif %}
+            {% if s.state == 'completed' %}<span class="badge muted">done</span>
+            {% elif s.state == 'paused' or not s.enabled %}<span class="badge muted">paused</span>
+            {% else %}<span class="badge ok">on</span>{% endif %}
           </td>
           <td class="faint mono" style="font-size:12px">{% if s.next_run %}{{ ts(s.next_run) }}{% else %}—{% endif %}</td>
-          <td>
+          <td style="white-space:nowrap">
+            {% if s.state != 'completed' %}
+            <button class="btn ghost sm sch-run" type="button" data-id="{{ s.id }}">Run</button>
             <button class="btn ghost sm sch-toggle" type="button"
               data-id="{{ s.id }}" data-enabled="{{ '1' if s.enabled else '0' }}">
-              {{ 'Disable' if s.enabled else 'Enable' }}
+              {{ 'Pause' if s.enabled else 'Resume' }}
             </button>
+            {% else %}
+            <span class="faint">—</span>
+            {% endif %}
           </td>
         </tr>
         {% else %}

@@ -13,7 +13,6 @@
       <div class="config-row"><div class="lbl">Learning loop</div>
         <div class="config-control">
           {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
-          <p class="config-hint">Background distill after successful turns (memory every {{ settings.learning_memory_nudge_turns | default(3) }} turns; skills after {{ settings.learning_skill_nudge_iters | default(3) }}+ tool calls).</p>
         </div>
       </div>
       <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveGeneral">Save changes</button></div>

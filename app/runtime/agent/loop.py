@@ -38,10 +38,11 @@ model decides when to track multi-step work). Optional ATG: pass
 ``enable_atg=True`` to front-load a compiled DAG that seeds the same
 checklist; default is off (no word/length heuristic).
 
-**Active learning.** After eligible multi-step turns, a background review may
-distill durable facts (``remember``) and procedural skills (``manage_skill``)
-when Settings → Learning loop is on. Mid-turn the agent can also call those
-tools directly.
+**Active learning.** After eligible top-level finals, a background review may
+distill durable facts (``memory`` / ``remember``) and procedural skills
+(``manage_skill``). Triggers: every N turns (memory) and cumulative tool
+iters / skill-touch (skills). Mid-turn the agent can also call those tools
+directly.
 """
 from __future__ import annotations
 

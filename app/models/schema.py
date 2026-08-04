@@ -176,7 +176,15 @@ CREATE TABLE IF NOT EXISTS schedules (
     enabled           INTEGER NOT NULL DEFAULT 1,
     last_run          REAL,
     next_run          REAL,
-    created_at        REAL NOT NULL DEFAULT 0
+    created_at        REAL NOT NULL DEFAULT 0,
+    schedule_kind     TEXT NOT NULL DEFAULT 'interval',
+    schedule_display  TEXT NOT NULL DEFAULT '',
+    schedule_expr     TEXT NOT NULL DEFAULT '',
+    state             TEXT NOT NULL DEFAULT 'scheduled',
+    pause_reason      TEXT NOT NULL DEFAULT '',
+    repeat_times      INTEGER,
+    run_count         INTEGER NOT NULL DEFAULT 0,
+    claim_until       REAL
 );
 
 CREATE TABLE IF NOT EXISTS schedule_runs (
@@ -363,6 +371,35 @@ def migrate(conn: sqlite3.Connection) -> None:
             "CREATE VIRTUAL TABLE messages_fts USING fts5("
             "msg_id UNINDEXED, session_id UNINDEXED, type UNINDEXED, "
             "content, tokenize='porter')"
+        )
+
+    # Schedule harness columns (hermes-inspired; idempotent ALTER).
+    sch_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedules)")}
+    _sch_alters = {
+        "schedule_kind": "ALTER TABLE schedules ADD COLUMN schedule_kind TEXT NOT NULL DEFAULT 'interval'",
+        "schedule_display": "ALTER TABLE schedules ADD COLUMN schedule_display TEXT NOT NULL DEFAULT ''",
+        "schedule_expr": "ALTER TABLE schedules ADD COLUMN schedule_expr TEXT NOT NULL DEFAULT ''",
+        "state": "ALTER TABLE schedules ADD COLUMN state TEXT NOT NULL DEFAULT 'scheduled'",
+        "pause_reason": "ALTER TABLE schedules ADD COLUMN pause_reason TEXT NOT NULL DEFAULT ''",
+        "repeat_times": "ALTER TABLE schedules ADD COLUMN repeat_times INTEGER",
+        "run_count": "ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
+        "claim_until": "ALTER TABLE schedules ADD COLUMN claim_until REAL",
+    }
+    for col, ddl in _sch_alters.items():
+        if col not in sch_cols:
+            conn.execute(ddl)
+    # Backfill state from enabled for pre-harness rows.
+    # Freshly-added `state` has DEFAULT 'scheduled' for all existing rows.
+    if "state" not in sch_cols and "state" in {
+        r[1] for r in conn.execute("PRAGMA table_info(schedules)")
+    }:
+        conn.execute(
+            "UPDATE schedules SET state='paused' WHERE enabled=0 AND state='scheduled'"
+        )
+    if "schedule_display" not in sch_cols:
+        conn.execute(
+            "UPDATE schedules SET schedule_display=cron "
+            "WHERE (schedule_display IS NULL OR schedule_display='') AND cron != ''"
         )
 
     from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts

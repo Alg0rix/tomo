@@ -1,0 +1,60 @@
+{
+  "id": "schedule",
+  "name": "Schedule",
+  "description": "Create and manage recurring or one-shot agent schedules.",
+  "backend": "app.runtime.tools.schedule",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "schedule",
+      "description": "Manage scheduled agent jobs (interval, cron, or one-shot).\n\nActions:\n- create — schedule a new job (requires schedule + message)\n- list — list jobs (include_disabled to see paused/completed)\n- update — change name/message/schedule/repeat on an existing job\n- pause / resume — stop or restart a job\n- remove — delete a job\n- run — fire immediately (outside the normal tick)\n- runs — recent run history for a job\n\nSchedule forms:\n- Duration one-shot: '30m', '2h', '1d'\n- Interval: 'every 30m', 'every 2h'\n- Cron (5-field): '0 9 * * *' (daily 09:00)\n- ISO one-shot: '2026-06-01T09:00:00'\n\nJobs run in a fresh scheduler session with no chat context — the message must be self-contained. Default agent_id is the calling agent. Cron-run sessions should not recursively schedule more jobs unless the user explicitly asks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["create", "list", "update", "pause", "resume", "remove", "run", "runs"],
+            "description": "Operation to perform. create requires schedule + message."
+          },
+          "schedule_id": {
+            "type": "string",
+            "description": "Job id or unique name. Required for update/pause/resume/remove/run/runs."
+          },
+          "schedule": {
+            "type": "string",
+            "description": "When to run. Examples: 'every 1h', '30m', '0 9 * * *', '2026-06-01T09:00:00'. Required for create."
+          },
+          "message": {
+            "type": "string",
+            "description": "Self-contained prompt delivered to the agent when the job fires. Required for create."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional human-friendly name (defaults from message)."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Target agent id. Defaults to the calling agent."
+          },
+          "repeat": {
+            "type": "integer",
+            "description": "Optional max run count. Omit for forever (recurring) or once (one-shot). 0/negative = forever."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional pause reason."
+          },
+          "include_disabled": {
+            "type": "boolean",
+            "description": "For list: include paused/disabled/completed jobs. Default false."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "For runs: max rows (default 20)."
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}
