@@ -369,7 +369,17 @@ async def issue_pairing_code(workplace_id: str, _: AuthDep):
 
 
 @router.get("/knowledge")
-async def list_knowledge(_: AuthDep):
+async def list_knowledge(
+    _: AuthDep,
+    q: str | None = Query(None, max_length=500),
+    limit: int = Query(50, ge=1, le=200),
+):
+    query = (q or "").strip()
+    if query:
+        return {
+            "entries": store.search_knowledge(query, limit=limit),
+            "query": query,
+        }
     return {"entries": store.list_knowledge_entries()}
 
 

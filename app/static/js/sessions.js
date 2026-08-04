@@ -516,6 +516,27 @@
       detailPanel = null;
     }
 
+    // Render a primary-agent assistant message bubble in place (same structure
+    // as the `final` handler) so intermediate `thinking` rows stay interleaved
+    // between tool cards in DB order.
+    function appendAssistantMessage(aid, text) {
+      var who = agentName(aid);
+      var row = document.createElement('div');
+      row.className = 'msg assistant';
+      var avStyle = ' style="background:' + agentColor(aid) + '"';
+      row.innerHTML = '<div class="av"' + avStyle + '>' + esc(who.slice(0, 1).toUpperCase()) + '</div>' +
+        '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose chat-prose"></div>' +
+        (window.TomoChat && TomoChat.msgActionsHtml ? TomoChat.msgActionsHtml('assistant') : '') + '</div>';
+      var body = row.querySelector('.bubble-body');
+      if (window.TomoChat && TomoChat.setMarkdown) {
+        TomoChat.setMarkdown(body, text);
+      } else {
+        body.dataset.raw = text;
+        body.textContent = text;
+      }
+      turn.appendChild(row);
+    }
+
     function ensureSwarmCard() {
       if (swarmCard) return swarmCard;
       swarmCard = document.createElement('div');
@@ -872,7 +893,13 @@
           var key = keyForAid(aid);
           bufferEvent(key, 'thinking', { content: e.content });
           bumpSwarmProgress(key);
+          return;
         }
+        // Primary agent: render intermediate text as an assistant bubble in
+        // place so it stays interleaved with the tool cards that follow.
+        var text = (e.content || '').trim();
+        if (!text || text.indexOf('[Swarm]') === 0) return;
+        appendAssistantMessage(aid, text);
         return;
       }
 
@@ -884,21 +911,7 @@
           var key = keyForAid(aid);
           bufferEvent(key, 'final', { content: text });
         } else {
-          var who = agentName(aid);
-          var row = document.createElement('div');
-          row.className = 'msg assistant';
-          var avStyle = ' style="background:' + agentColor(aid) + '"';
-          row.innerHTML = '<div class="av"' + avStyle + '>' + esc(who.slice(0, 1).toUpperCase()) + '</div>' +
-            '<div class="bubble"><div class="who">' + esc(who) + '</div><div class="bubble-body prose chat-prose"></div>' +
-            (window.TomoChat && TomoChat.msgActionsHtml ? TomoChat.msgActionsHtml('assistant') : '') + '</div>';
-          var body = row.querySelector('.bubble-body');
-          if (window.TomoChat && TomoChat.setMarkdown) {
-            TomoChat.setMarkdown(body, text);
-          } else {
-            body.dataset.raw = text;
-            body.textContent = text;
-          }
-          turn.appendChild(row);
+          appendAssistantMessage(aid, text);
         }
         return;
       }

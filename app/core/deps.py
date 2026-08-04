@@ -36,7 +36,8 @@ def _build_templates() -> Jinja2Templates:
 
 templates = _build_templates()
 
-_AVATAR_HUES = [200, 260, 330, 160, 30, 290, 80, 10]
+# Darkroom signal hues: sky / rose / jade / amber / warm-earth (no indigo/violet)
+_AVATAR_HUES = [200, 350, 160, 30, 12, 85, 195, 45]
 
 
 def _hash(s: str) -> int:

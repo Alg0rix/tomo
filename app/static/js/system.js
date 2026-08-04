@@ -177,6 +177,10 @@
   var kbTitle = document.getElementById('kbTitle');
   var kbBody = document.getElementById('kbBody');
   var kbTags = document.getElementById('kbTags');
+  var kbSearch = document.getElementById('kbSearch');
+  var kbSearchMeta = document.getElementById('kbSearchMeta');
+  var kbSearchTimer = null;
+  var kbSearchSeq = 0;
 
   function parseTags(s) {
     return String(s || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
@@ -189,17 +193,55 @@
     return '<div class="row" data-id="' + esc(e.id) + '"><div class="meta"><div class="title">' + esc(e.title) + ' <span class="faint mono">' + esc(e.id) + '</span></div><div class="desc">' + esc(preview) + (tags ? ' · ' + tags : '') + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-act="edit">Edit</button> <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
-  function renderKnowledge(entries) {
+  function renderKnowledge(entries, opts) {
     if (!kbList) return;
-    if (!entries.length) { kbList.innerHTML = '<div class="empty">No knowledge entries yet.</div>'; return; }
+    opts = opts || {};
+    var q = (opts.query || '').trim();
+    if (kbSearchMeta) {
+      if (q) {
+        kbSearchMeta.hidden = false;
+        kbSearchMeta.textContent = entries.length + ' hit' + (entries.length === 1 ? '' : 's');
+      } else {
+        kbSearchMeta.hidden = true;
+        kbSearchMeta.textContent = '';
+      }
+    }
+    if (!entries.length) {
+      kbList.innerHTML = q
+        ? '<div class="empty">No entries match “' + esc(q) + '”.</div>'
+        : '<div class="empty">No knowledge entries yet.</div>';
+      return;
+    }
     kbList.innerHTML = entries.map(kbRowHtml).join('');
   }
 
-  async function loadKnowledge() {
+  async function loadKnowledge(query) {
+    var q = (query != null ? query : (kbSearch && kbSearch.value) || '').trim();
+    var seq = ++kbSearchSeq;
     try {
-      var d = await Tomo.api('/api/knowledge');
-      if (d) renderKnowledge(d.entries || []);
-    } catch (e) { if (kbList) kbList.innerHTML = '<div class="empty">Could not load knowledge entries.</div>'; }
+      var path = q
+        ? '/api/knowledge?q=' + encodeURIComponent(q) + '&limit=50'
+        : '/api/knowledge';
+      var d = await Tomo.api(path);
+      if (seq !== kbSearchSeq) return;
+      if (d) renderKnowledge(d.entries || [], { query: q });
+    } catch (e) {
+      if (seq !== kbSearchSeq) return;
+      if (kbList) kbList.innerHTML = '<div class="empty">Could not load knowledge entries.</div>';
+    }
+  }
+
+  if (kbSearch) {
+    kbSearch.addEventListener('input', function () {
+      clearTimeout(kbSearchTimer);
+      kbSearchTimer = setTimeout(function () { loadKnowledge(kbSearch.value); }, 220);
+    });
+    kbSearch.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') {
+        kbSearch.value = '';
+        loadKnowledge('');
+      }
+    });
   }
 
   function openKbForm(mode, e) {

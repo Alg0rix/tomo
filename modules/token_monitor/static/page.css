@@ -1,4 +1,4 @@
-/* Token Monitor dashboard (heatmap + leaderboards + feed) */
+/* Token Monitor dashboard (heatmap + leaderboards + feed) — Darkroom */
 .usage-section { margin: 28px 0; }
 .usage-h { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
 .usage-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
@@ -21,41 +21,31 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 28px 26px;
-  border-radius: var(--radius, 12px);
+  padding: 24px 22px;
+  border-radius: 4px;
   border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
   background: var(--surface);
   overflow: hidden;
   min-height: 180px;
 }
-.usage-hero-stat::after {
-  content: "";
-  position: absolute;
-  right: -30px;
-  bottom: -40px;
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent, #3fb950) 35%, transparent);
-  filter: blur(36px);
-  opacity: 0.55;
-  pointer-events: none;
-}
+.usage-hero-stat::after { display: none; }
 .usage-hero-k {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.1em;
   font-weight: 600;
 }
 .usage-hero-v {
-  font-family: var(--font-display);
-  font-size: clamp(34px, 4.2vw, 48px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-family: var(--font-mono);
+  font-size: clamp(30px, 4vw, 42px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
   line-height: 1.05;
   margin-top: 10px;
-  color: var(--accent, #3fb950);
+  color: var(--accent);
 }
 .usage-hero-sub {
   display: flex;
@@ -74,7 +64,7 @@
 .usage-hero-heat {
   min-width: 0;
   padding: 18px 18px 14px;
-  border-radius: var(--radius, 12px);
+  border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--surface);
 }
@@ -106,12 +96,14 @@
   flex-shrink: 0;
 }
 .uh-cell.empty { visibility: hidden; border: none; background: transparent; }
-.uh-cell.l1 { background: color-mix(in srgb, var(--accent, #3fb950) 28%, var(--surface-2)); }
-.uh-cell.l2 { background: color-mix(in srgb, var(--accent, #3fb950) 48%, var(--surface-2)); }
-.uh-cell.l3 { background: color-mix(in srgb, var(--accent, #3fb950) 70%, var(--surface-2)); }
-.uh-cell.l4 { background: color-mix(in srgb, var(--accent, #3fb950) 92%, #1a3d24); }
+/* Amber activity ramp (Darkroom), not GitHub green */
+.uh-cell.l1 { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 12%, var(--border)); }
+.uh-cell.l2 { background: color-mix(in srgb, var(--accent) 42%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
+.uh-cell.l3 { background: color-mix(in srgb, var(--accent) 68%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.uh-cell.l4 { background: color-mix(in srgb, var(--accent) 92%, var(--accent-2)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .usage-heat-legend {
   display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px;
+  font-family: var(--font-mono); color: var(--text-faint);
 }
 .usage-heat-legend .uh-cell { width: 10px; height: 10px; }
 

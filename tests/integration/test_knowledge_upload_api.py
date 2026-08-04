@@ -166,3 +166,29 @@ def test_existing_knowledge_crud_still_works(tmp_path) -> None:
         assert client.delete(f"/api/knowledge/{eid}").status_code == 200
     finally:
         _cleanup()
+
+
+def test_knowledge_list_search_query(tmp_path) -> None:
+    client = _client(tmp_path)
+    try:
+        client.post(
+            "/api/knowledge",
+            json={"title": "Alpha vendor deadline", "body": "Q3 onboarding", "tags": ["vendors"]},
+        )
+        client.post(
+            "/api/knowledge",
+            json={"title": "Beta staging notes", "body": "cluster layout", "tags": ["ops"]},
+        )
+        all_entries = client.get("/api/knowledge").json()["entries"]
+        assert len(all_entries) >= 2
+        hit = client.get("/api/knowledge", params={"q": "vendor", "limit": 20})
+        assert hit.status_code == 200
+        body = hit.json()
+        assert body.get("query") == "vendor"
+        titles = [e["title"] for e in body["entries"]]
+        assert any("vendor" in t.lower() for t in titles)
+        empty = client.get("/api/knowledge", params={"q": "zzzz-no-match-xyz"})
+        assert empty.status_code == 200
+        assert empty.json()["entries"] == []
+    finally:
+        _cleanup()

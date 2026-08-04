@@ -25,14 +25,17 @@
 
     var skipTools = 0;
     var skipResults = 0;
+    var skipAssistants = 0;
     var toolSeen = 0;
     var resultSeen = 0;
+    var assistantSeen = 0;
 
     if (!isLive) {
       skipTools = ctx.turn.querySelectorAll('.tool').length;
       ctx.turn.querySelectorAll('.tool').forEach(function (c) {
         if (c._res && c._res.textContent) skipResults++;
       });
+      skipAssistants = ctx.turn.querySelectorAll('.msg.assistant').length;
     }
 
     var subagentSet = new Set();
@@ -93,15 +96,10 @@
     function ensureAssistantBubble() {
       clearPending();
       if (asstEl) return asstEl;
-      if (!isLive) {
-        var existing = ctx.turn.querySelector('.msg.assistant');
-        if (existing) {
-          asstEl = existing;
-          asstBody = existing.querySelector('.bubble-body');
-          raw = (asstBody && asstBody.textContent) || '';
-          return asstEl;
-        }
-      }
+      // Always create a fresh bubble — never reuse a history bubble. History
+      // already has completed segments rendered; new text must never merge
+      // into them. (Resume reuse previously merged the final answer into a
+      // trailing history bubble, which is exactly what caused duplicates.)
       var tmp = document.createElement('div');
       tmp.innerHTML = ctx.bubbleHtml('assistant', turnAgentName, turnAgentId);
       asstEl = tmp.firstElementChild;
@@ -115,6 +113,22 @@
       var body = (asstBody && asstBody.textContent || '').trim();
       if (body) return;
       asstEl.remove();
+      asstEl = null;
+      asstBody = null;
+      raw = '';
+    }
+
+    // "Commit" the current text segment so the next text creates a NEW bubble
+    // after whatever comes next (tools). Empty bubbles are removed; otherwise
+    // the streaming class is dropped. Always nulls out the active bubble refs.
+    function sealAssistantBubble() {
+      if (!asstEl) return;
+      var body = (asstBody && asstBody.textContent || '').trim();
+      if (!body) {
+        asstEl.remove();
+      } else {
+        asstEl.classList.remove('streaming');
+      }
       asstEl = null;
       asstBody = null;
       raw = '';
@@ -167,10 +181,7 @@
         if (nextName) turnAgentName = nextName;
         if (switched) {
           clearPending();
-          dropEmptyAssistant();
-          asstEl = null;
-          asstBody = null;
-          raw = '';
+          sealAssistantBubble();
         }
       } else {
         if (id) turnAgentId = id;
@@ -663,8 +674,33 @@
       }
       adoptAgent(d.agent_id, d.agent);
       clearPending();
-      if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; ctx.turn.appendChild(thinkEl); }
-      thinkEl.textContent += d.content || '';
+      var content = d.content || '';
+      if (!content.trim() || /^\s*\[Swarm\]/.test(content)) return;
+      if (!isLive) {
+        // Skip assistant segments already rendered in history. History shows
+        // completed thinking rows as bubbles; replaying them would add a
+        // duplicate bubble per segment.
+        assistantSeen++;
+        if (assistantSeen <= skipAssistants) return;
+      }
+      if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+      var hasStreamed = !!(asstEl && asstBody && (asstBody.textContent || '').trim());
+      if (hasStreamed) {
+        // Thinking `content` is canonical (what gets persisted). Deltas may
+        // have streamed a truncated/partial version into the current bubble —
+        // always apply the full canonical content, then seal. Never show a
+        // second block.
+        raw = content;
+        ctx.setMarkdown(asstBody, raw);
+        sealAssistantBubble();
+      } else {
+        // No streamed content yet (or an empty leftover bubble) — render the
+        // thinking text as an assistant bubble, then seal it.
+        if (!asstEl) ensureAssistantBubble();
+        raw = content;
+        ctx.setMarkdown(asstBody, raw);
+        sealAssistantBubble();
+      }
       ctx.atBottom();
     });
 
@@ -697,7 +733,7 @@
       }
       adoptAgent(d.agent_id, d.agent);
       clearPending();
-      dropEmptyAssistant();
+      sealAssistantBubble();
       ctx.turn.appendChild(buildToolCard(d));
       ctx.atBottom();
     });
@@ -745,6 +781,14 @@
         bumpSwarmProgress(d.agent_id);
         return;
       }
+      if (!isLive) {
+        // Resume replays the full SSE buffer including all past deltas, but
+        // history already rendered completed segments from `thinking` rows and
+        // the final from `done`. Replaying deltas would duplicate text in the
+        // wrong place. `thinking`/`done` carry full segment content, so on
+        // resume we render only from those. (sawTurnEvent already set above.)
+        return;
+      }
       adoptAgent(d.agent_id, d.agent);
       var piece = d.content || '';
       if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
@@ -778,6 +822,23 @@
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
       var content = (d.content != null ? String(d.content) : '').trim();
       if (content.indexOf('[Swarm]') === 0) content = '';
+      if (!isLive && content) {
+        // History may already contain the final assistant bubble (e.g. refresh
+        // after a complete turn). If the last meaningful child is an assistant
+        // bubble whose rendered content matches the final, it is already
+        // rendered — skip to avoid a duplicate. Otherwise render fresh below.
+        var kids = ctx.turn.children;
+        for (var i = kids.length - 1; i >= 0; i--) {
+          var c = kids[i];
+          if (c.classList && c.classList.contains('turn-pending')) continue;
+          if (c.classList && c.classList.contains('msg') && c.classList.contains('assistant')) {
+            var body = c.querySelector('.bubble-body');
+            var existing = (body && (body.dataset.raw || body.textContent) || '').trim();
+            if (existing === content) return; // already rendered
+          }
+          break;
+        }
+      }
       if (content) {
         ensureAssistantBubble();
         raw = content;

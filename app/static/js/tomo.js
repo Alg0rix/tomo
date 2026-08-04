@@ -593,8 +593,10 @@
         '<span class="chevron" aria-hidden="true"></span>' +
       '</button>' +
       '<div class="tool-body">' +
-        (presented.detailHtml ? '<div class="tdetail">' + presented.detailHtml + '</div>' : '') +
-        '<pre class="tres"></pre>' +
+        (presented.detailHtml
+          ? '<div class="tdetail"><span class="tool-sec-label">Input</span>' + presented.detailHtml + '</div>'
+          : '') +
+        '<div class="tres-wrap"><span class="tool-sec-label">Output</span><pre class="tres"></pre></div>' +
       '</div>';
     card._res = card.querySelector('.tres');
     card._chip = card.querySelector('.tchip');

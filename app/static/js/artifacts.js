@@ -1,4 +1,4 @@
-/* artifacts.js — session artifacts + Claude-style artifact side panel. */
+/* artifacts.js — session artifacts + Darkroom artifact side panel. */
 (function (global) {
   "use strict";
 
@@ -422,7 +422,7 @@
 
   function modeToolbar(modes, active, artOrUrl) {
     // Legacy/embedded toolbar (kept for rare non-panel hosts). Panel chrome
-    // uses the Claude-style Code | Preview segment in the header instead.
+    // uses the Code | Preview segment in the header instead.
     var art =
       artOrUrl && typeof artOrUrl === "object"
         ? artOrUrl
@@ -765,7 +765,7 @@
     }
   }
 
-  /** Inline Claude-style artifact chip in the chat turn (opens side canvas). */
+  /** Inline artifact chip in the chat turn (opens side canvas). */
   function buildSavedCard(art) {
     var filename = art.filename || "file";
     var url = art.url || "";

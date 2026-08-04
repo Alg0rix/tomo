@@ -10,9 +10,12 @@
     var card = document.createElement("div");
     card.className = "hitl-card approval-card";
     card.dataset.id = d.id || "";
+    card.setAttribute("role", "region");
+    card.setAttribute("aria-label", "Tool approval required");
     var findings = (d.findings || [])
       .map(function (f) {
-        return "<li>" + esc(f.description || f.kind || "") + "</li>";
+        var kind = f.kind ? '<span class="hitl-finding-kind">' + esc(f.kind) + "</span> " : "";
+        return "<li>" + kind + esc(f.description || f.kind || "") + "</li>";
       })
       .join("");
     var preview = "";
@@ -25,11 +28,27 @@
       preview = String(d.args_preview || "");
     }
     var choices = d.choices || ["once", "session", "always", "deny"];
-    var labels = { once: "Once", session: "Session", always: "Always", deny: "Deny" };
-    var btns = choices
+    var labels = {
+      once: "Allow once",
+      session: "This session",
+      always: "Always allow",
+      deny: "Deny",
+    };
+    var variants = {
+      once: "hitl-btn hitl-btn-primary",
+      session: "hitl-btn hitl-btn-secondary",
+      always: "hitl-btn hitl-btn-ghost",
+      deny: "hitl-btn hitl-btn-danger",
+    };
+    var allow = choices
+      .filter(function (c) {
+        return c !== "deny";
+      })
       .map(function (c) {
         return (
-          '<button type="button" class="hitl-btn" data-choice="' +
+          '<button type="button" class="' +
+          (variants[c] || "hitl-btn hitl-btn-secondary") +
+          '" data-choice="' +
           esc(c) +
           '">' +
           esc(labels[c] || c) +
@@ -37,26 +56,44 @@
         );
       })
       .join("");
+    var deny = choices.indexOf("deny") >= 0
+      ? '<button type="button" class="hitl-btn hitl-btn-danger" data-choice="deny">' +
+        esc(labels.deny) +
+        "</button>"
+      : "";
     card.innerHTML =
-      '<div class="hitl-title">Approval required · ' +
+      '<div class="hitl-rail" aria-hidden="true"></div>' +
+      '<div class="hitl-body">' +
+      '<header class="hitl-hd">' +
+      '<span class="hitl-kicker">Permission</span>' +
+      '<span class="hitl-tool">' +
       esc(d.tool || "tool") +
-      "</div>" +
-      '<div class="hitl-desc">' +
-      esc(d.description || "") +
-      "</div>" +
+      "</span>" +
+      "</header>" +
+      (d.description
+        ? '<p class="hitl-desc">' + esc(d.description) + "</p>"
+        : "") +
       (findings ? '<ul class="hitl-findings">' + findings + "</ul>" : "") +
-      '<pre class="hitl-preview">' +
-      esc(preview).slice(0, 800) +
-      "</pre>" +
+      (preview
+        ? '<pre class="hitl-preview" tabindex="0">' +
+          esc(preview).slice(0, 800) +
+          "</pre>"
+        : "") +
       '<div class="hitl-actions">' +
-      btns +
+      '<div class="hitl-allow">' +
+      allow +
+      "</div>" +
+      (deny ? '<div class="hitl-deny">' + deny + "</div>" : "") +
+      "</div>" +
       "</div>";
-    card.querySelectorAll(".hitl-btn").forEach(function (btn) {
+    card.querySelectorAll(".hitl-btn[data-choice]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var choice = btn.getAttribute("data-choice");
         card.classList.add("resolved");
+        card.dataset.choice = choice || "";
         card.querySelectorAll(".hitl-btn").forEach(function (b) {
           b.disabled = true;
+          if (b === btn) b.classList.add("is-chosen");
         });
         fetch("/api/approvals/" + encodeURIComponent(d.id), {
           method: "POST",
@@ -73,11 +110,13 @@
     var card = document.createElement("div");
     card.className = "hitl-card clarify-card";
     card.dataset.id = d.id || "";
+    card.setAttribute("role", "region");
+    card.setAttribute("aria-label", "Clarification needed");
     var choices = d.choices || [];
     var btns = choices
       .map(function (c) {
         return (
-          '<button type="button" class="hitl-btn" data-answer="' +
+          '<button type="button" class="hitl-btn hitl-btn-secondary" data-answer="' +
           esc(c) +
           '">' +
           esc(c) +
@@ -86,16 +125,19 @@
       })
       .join("");
     card.innerHTML =
-      '<div class="hitl-title">Question</div>' +
-      '<div class="hitl-desc">' +
+      '<div class="hitl-rail" aria-hidden="true"></div>' +
+      '<div class="hitl-body">' +
+      '<header class="hitl-hd">' +
+      '<span class="hitl-kicker">Clarify</span>' +
+      "</header>" +
+      '<p class="hitl-desc hitl-question">' +
       esc(d.question || "") +
-      "</div>" +
-      '<div class="hitl-actions">' +
-      btns +
-      "</div>" +
+      "</p>" +
+      (btns ? '<div class="hitl-actions"><div class="hitl-allow">' + btns + "</div></div>" : "") +
       '<div class="hitl-other">' +
-      '<input type="text" class="hitl-input" placeholder="Other…" />' +
-      '<button type="button" class="hitl-btn hitl-send">Send</button>' +
+      '<input type="text" class="hitl-input" placeholder="Or type a reply…" aria-label="Custom answer" />' +
+      '<button type="button" class="hitl-btn hitl-btn-primary hitl-send">Send</button>' +
+      "</div>" +
       "</div>";
     function submit(answer) {
       if (!answer) return;
