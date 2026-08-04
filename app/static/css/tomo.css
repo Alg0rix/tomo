@@ -3984,6 +3984,53 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .workplace-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; line-height: 1.35; }
 .workplace-check input { margin-top: 2px; accent-color: var(--accent); }
 .workplace-check .muted { color: var(--text-faint); font-weight: 400; }
+.skills-assign-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.skills-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.skills-assign-list {
+  max-height: min(62vh, 640px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.skills-assign-list .skill-row {
+  margin: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.skills-assign-list .skill-row:last-child { border-bottom: 0; }
+.skill-row-assign { cursor: pointer; }
+.skill-row-assign:hover { background: var(--surface-2); }
+.skills-assign-foot {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0 2px;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
 .tool-row, .skill-row, .channel-row {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px;
   border: 1px solid var(--border); border-radius: var(--r-sm); margin-bottom: 8px; background: var(--surface);

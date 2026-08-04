@@ -1,11 +1,34 @@
 <div class="agent-studio-panel hidden" id="panel-skills" data-agent-id="{{ agent.id }}">
-  <p class="faint" style="margin:0 0 12px">Assign skills from the library to this agent. Changes apply on Save.</p>
-  {% for s in skills %}
-  {% with skill=s %}{% include 'partials/skill_row.html' %}{% endwith %}
+  <p class="faint" style="margin:0 0 12px">Assign skills from the library to this agent. Filter, bulk-select, then Save.</p>
+
+  {% if skills %}
+  <div class="skills-assign-bar" id="skillsAssignBar">
+    <div class="kb-search-row" style="margin:0;flex:1;min-width:0">
+      <input class="input" id="agentSkillsSearch" type="search"
+             placeholder="Filter skills…" autocomplete="off" spellcheck="false"
+             aria-label="Filter skills">
+      <span class="kb-search-meta faint mono" id="agentSkillsMeta" hidden></span>
+    </div>
+    <div class="skills-bulk-actions">
+      <button class="btn ghost sm" type="button" id="skillsSelectVisible" title="Assign all skills currently shown">Select visible</button>
+      <button class="btn ghost sm" type="button" id="skillsClearVisible" title="Unassign all skills currently shown">Clear visible</button>
+      <button class="btn ghost sm" type="button" id="skillsSelectAll" title="Assign every skill">Select all</button>
+      <button class="btn ghost sm" type="button" id="skillsClearAll" title="Unassign every skill">Clear all</button>
+    </div>
+    <span class="faint mono" id="skillsAssignedCount" style="font-size:12px;white-space:nowrap"></span>
+  </div>
+
+  <div class="skills-assign-list" id="agentSkillsList">
+    {% for s in skills %}
+    {% with skill=s %}{% include 'partials/skill_row.html' %}{% endwith %}
+    {% endfor %}
+  </div>
+  <div class="empty hidden" id="agentSkillsEmpty" hidden>No skills match.</div>
   {% else %}
   <div class="empty">No skills in the library yet.</div>
-  {% endfor %}
-  <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+  {% endif %}
+
+  <div class="skills-assign-foot">
     <button class="btn primary sm" type="button" id="skillsSave">Save</button>
     <a class="btn ghost sm" href="/skills">Browse skills library →</a>
   </div>

@@ -244,24 +244,149 @@
       } catch (e) { Tomo.toast((e && e.message) || 'Could not save tools', 'err'); }
     });
   }
-  var skillsSave = document.getElementById('skillsSave');
-  if (skillsSave) {
-    skillsSave.addEventListener('click', async function () {
-      var panel = document.getElementById('panel-skills');
-      var agentId = panel ? panel.dataset.agentId : '';
-      var skillIds = [];
-      panel.querySelectorAll('.skill-row[data-skill-id]').forEach(function (row) {
-        var input = row.querySelector('input[type="checkbox"]');
-        if (input && input.checked) skillIds.push(row.dataset.skillId);
+  var skillsPanel = document.getElementById('panel-skills');
+  if (skillsPanel) {
+    var skillsList = document.getElementById('agentSkillsList');
+    var skillsSearch = document.getElementById('agentSkillsSearch');
+    var skillsMeta = document.getElementById('agentSkillsMeta');
+    var skillsEmpty = document.getElementById('agentSkillsEmpty');
+    var skillsCount = document.getElementById('skillsAssignedCount');
+    var skillRows = skillsList
+      ? Array.prototype.slice.call(skillsList.querySelectorAll('.skill-row[data-skill-id]'))
+      : [];
+
+    function skillHay(row) {
+      return (row.getAttribute('data-search') || row.textContent || '').toLowerCase();
+    }
+
+    function skillVisible(row) {
+      return !row.hidden && row.style.display !== 'none';
+    }
+
+    function skillInput(row) {
+      return row.querySelector('input[type="checkbox"]');
+    }
+
+    function updateSkillsCount() {
+      if (!skillsCount) return;
+      var on = 0;
+      skillRows.forEach(function (row) {
+        var input = skillInput(row);
+        if (input && input.checked) on++;
       });
-      try {
-        await Tomo.api('/api/agents/' + encodeURIComponent(agentId) + '/skills', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skill_ids: skillIds }),
+      skillsCount.textContent = on + ' / ' + skillRows.length + ' assigned';
+    }
+
+    function filterSkills() {
+      if (!skillsSearch) return;
+      var q = (skillsSearch.value || '').trim().toLowerCase();
+      var n = 0;
+      skillRows.forEach(function (row) {
+        var show = !q || skillHay(row).indexOf(q) !== -1;
+        row.hidden = !show;
+        row.style.display = show ? '' : 'none';
+        if (show) n++;
+      });
+      if (skillsMeta) {
+        if (q) {
+          skillsMeta.hidden = false;
+          skillsMeta.textContent = n + ' shown';
+        } else {
+          skillsMeta.hidden = true;
+          skillsMeta.textContent = '';
+        }
+      }
+      if (skillsEmpty) {
+        var none = q && n === 0;
+        skillsEmpty.hidden = !none;
+        skillsEmpty.classList.toggle('hidden', !none);
+        skillsEmpty.textContent = none ? 'No skills match “' + q + '”.' : '';
+      }
+    }
+
+    function setRowsChecked(rows, checked) {
+      rows.forEach(function (row) {
+        var input = skillInput(row);
+        if (input && !input.disabled) {
+          input.checked = !!checked;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      updateSkillsCount();
+    }
+
+    if (skillsSearch) {
+      skillsSearch.addEventListener('input', filterSkills);
+      skillsSearch.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') {
+          skillsSearch.value = '';
+          filterSkills();
+        }
+      });
+    }
+
+    var btnSelectVisible = document.getElementById('skillsSelectVisible');
+    if (btnSelectVisible) {
+      btnSelectVisible.addEventListener('click', function () {
+        setRowsChecked(skillRows.filter(skillVisible), true);
+      });
+    }
+    var btnClearVisible = document.getElementById('skillsClearVisible');
+    if (btnClearVisible) {
+      btnClearVisible.addEventListener('click', function () {
+        setRowsChecked(skillRows.filter(skillVisible), false);
+      });
+    }
+    var btnSelectAll = document.getElementById('skillsSelectAll');
+    if (btnSelectAll) {
+      btnSelectAll.addEventListener('click', function () {
+        setRowsChecked(skillRows, true);
+      });
+    }
+    var btnClearAll = document.getElementById('skillsClearAll');
+    if (btnClearAll) {
+      btnClearAll.addEventListener('click', function () {
+        setRowsChecked(skillRows, false);
+      });
+    }
+
+    // Click row (outside toggle) to flip assignment.
+    if (skillsList) {
+      skillsList.addEventListener('click', function (ev) {
+        if (ev.target.closest('input, label, .toggle, button, a')) return;
+        var row = ev.target.closest('.skill-row[data-skill-id]');
+        if (!row || !skillVisible(row)) return;
+        var input = skillInput(row);
+        if (!input || input.disabled) return;
+        input.checked = !input.checked;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        updateSkillsCount();
+      });
+      skillsList.addEventListener('change', function (ev) {
+        if (ev.target && ev.target.matches('input[type="checkbox"]')) updateSkillsCount();
+      });
+    }
+
+    updateSkillsCount();
+
+    var skillsSave = document.getElementById('skillsSave');
+    if (skillsSave) {
+      skillsSave.addEventListener('click', async function () {
+        var agentId = skillsPanel.dataset.agentId || '';
+        var skillIds = [];
+        skillRows.forEach(function (row) {
+          var input = skillInput(row);
+          if (input && input.checked) skillIds.push(row.dataset.skillId);
         });
-        Tomo.toast('Skills saved', 'ok');
-      } catch (e) { Tomo.toast((e && e.message) || 'Could not save skills', 'err'); }
-    });
+        try {
+          await Tomo.api('/api/agents/' + encodeURIComponent(agentId) + '/skills', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skill_ids: skillIds }),
+          });
+          Tomo.toast('Skills saved (' + skillIds.length + ')', 'ok');
+        } catch (e) { Tomo.toast((e && e.message) || 'Could not save skills', 'err'); }
+      });
+    }
   }
   var wrap = document.querySelector('.chat-wrap');
   // chat.js auto-inits + rehydrates HITL / mid-turn resume on load.
