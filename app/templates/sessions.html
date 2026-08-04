@@ -1,16 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="sessions-page" id="sessionsPage">
-  <script>
-    (function () {
-      try {
-        if (localStorage.getItem('tomo-sessions-sidebar') === 'collapsed') {
-          document.currentScript.parentElement.classList.add('is-sidebar-collapsed');
-        }
-      } catch (e) {}
-    })();
-  </script>
-  {% include 'partials/sessions/sidebar.html' %}
   {% include 'partials/sessions/main.html' %}
 </div>
 {% include 'partials/sessions/modals.html' %}
@@ -22,5 +12,5 @@
 <script src="{{ url_for('static', path='js/hitl_ui.js') }}?v=1"></script>
 <script src="{{ url_for('static', path='js/chat_turn_stream.js') }}?v=1"></script>
 <script src="{{ url_for('static', path='js/chat.js') }}?v=scroll-pin3"></script>
-<script src="{{ url_for('static', path='js/sessions.js') }}?v=scroll-pin3"></script>
+<script src="{{ url_for('static', path='js/sessions.js') }}?v=app-rail1"></script>
 {% endblock %}

@@ -16,6 +16,40 @@
   }
   Tomo.applyTheme = applyTheme;
 
+  var RAIL_KEY = 'tomo-app-rail';
+
+  function railCollapsed() {
+    return document.documentElement.classList.contains('is-rail-collapsed');
+  }
+
+  function setRailCollapsed(collapsed) {
+    document.documentElement.classList.toggle('is-rail-collapsed', !!collapsed);
+    document.documentElement.classList.remove('is-rail-open');
+    var collapseBtn = document.getElementById('railCollapseBtn');
+    var expandBtn = document.getElementById('railExpandBtn');
+    if (expandBtn) expandBtn.classList.toggle('hidden', !collapsed);
+    if (collapseBtn) {
+      collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      collapseBtn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+      collapseBtn.setAttribute('aria-label', collapseBtn.title);
+    }
+    if (expandBtn) {
+      expandBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    try {
+      localStorage.setItem(RAIL_KEY, collapsed ? 'collapsed' : 'open');
+    } catch (e) {}
+  }
+
+  function setRailOpen(open) {
+    document.documentElement.classList.toggle('is-rail-open', !!open);
+    var backdrop = document.getElementById('railBackdrop');
+    if (backdrop) {
+      if (open) backdrop.removeAttribute('hidden');
+      else backdrop.setAttribute('hidden', '');
+    }
+  }
+
   function bindChrome() {
     applyTheme(localStorage.getItem('tomo-theme') || 'dark');
     const themeBtn = document.getElementById('themeBtn');
@@ -26,12 +60,46 @@
         applyTheme(cur === 'dark' ? 'light' : 'dark');
       });
     }
-    const navToggle = document.getElementById('navToggle'), nav = document.getElementById('nav');
-    if (navToggle && nav && !navToggle.dataset.tomoBound) {
-      navToggle.dataset.tomoBound = '1';
-      navToggle.addEventListener('click', function () { nav.classList.toggle('open'); });
+
+    // Sync expand button with anti-flash class from <head>.
+    setRailCollapsed(railCollapsed());
+
+    var collapseBtn = document.getElementById('railCollapseBtn');
+    var expandBtn = document.getElementById('railExpandBtn');
+    var mobileOpen = document.getElementById('railMobileOpen');
+    var mobileClose = document.getElementById('navToggle');
+    var backdrop = document.getElementById('railBackdrop');
+    if (collapseBtn && !collapseBtn.dataset.tomoBound) {
+      collapseBtn.dataset.tomoBound = '1';
+      collapseBtn.addEventListener('click', function () {
+        if (window.matchMedia('(max-width: 760px)').matches) {
+          setRailOpen(false);
+        } else {
+          setRailCollapsed(!railCollapsed());
+        }
+      });
+    }
+    if (expandBtn && !expandBtn.dataset.tomoBound) {
+      expandBtn.dataset.tomoBound = '1';
+      expandBtn.addEventListener('click', function () { setRailCollapsed(false); });
+    }
+    if (mobileOpen && !mobileOpen.dataset.tomoBound) {
+      mobileOpen.dataset.tomoBound = '1';
+      mobileOpen.addEventListener('click', function () {
+        setRailCollapsed(false);
+        setRailOpen(true);
+      });
+    }
+    if (mobileClose && !mobileClose.dataset.tomoBound) {
+      mobileClose.dataset.tomoBound = '1';
+      mobileClose.addEventListener('click', function () { setRailOpen(false); });
+    }
+    if (backdrop && !backdrop.dataset.tomoBound) {
+      backdrop.dataset.tomoBound = '1';
+      backdrop.addEventListener('click', function () { setRailOpen(false); });
     }
   }
+  Tomo.setRailCollapsed = setRailCollapsed;
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bindChrome);
   } else {
