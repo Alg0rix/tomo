@@ -52,7 +52,7 @@ def cmd_update(*, assume_yes: bool = False, home: Path | None = None) -> int:
         if boot.created_admin_password and boot.admin_password:
             print("")
             print("Bootstrap admin password (save this — shown once):")
-            print(f"  user:     admin")
+            print("  user:     admin")
             print(f"  password: {boot.admin_password}")
             print(f"  file:     {boot.env_path}")
             print("")
