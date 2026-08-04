@@ -58,10 +58,10 @@
       '%"></span>' +
       "</div>" +
       '<div class="usage-track-nums">' +
-      '<span class="io-in">↓ ' +
+      '<span class="io-in">↑ ' +
       fmtNum(p) +
       "</span>" +
-      '<span class="io-out">↑ ' +
+      '<span class="io-out">↓ ' +
       fmtNum(c) +
       "</span>" +
       '<span class="io-total">' +
