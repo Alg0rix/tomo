@@ -9,12 +9,74 @@
     </div>
   </div>
 
-  <div class="tile-grid">
+  <div class="page-toolbar">
+    <div class="kb-search-row">
+      <input class="input" id="skillsSearch" type="search"
+             placeholder="Search skills…" autocomplete="off" spellcheck="false"
+             aria-label="Search skills"{% if not skills %} disabled{% endif %}>
+      <span class="kb-search-meta faint mono" id="skillsSearchMeta" hidden></span>
+    </div>
+  </div>
+
+  <div class="tile-grid" id="skillsGrid">
     {% for s in skills %}
     {% with skill=s %}{% include 'partials/skill_tile.html' %}{% endwith %}
     {% else %}
     {{ empty_state('No skills in library yet.') }}
     {% endfor %}
   </div>
+  <div class="empty hidden" id="skillsSearchEmpty" hidden>No skills match.</div>
 </div>
+{% endblock %}
+{% block scripts %}
+{% if skills %}
+<script>
+(function () {
+  var input = document.getElementById('skillsSearch');
+  var grid = document.getElementById('skillsGrid');
+  var meta = document.getElementById('skillsSearchMeta');
+  var empty = document.getElementById('skillsSearchEmpty');
+  if (!input || !grid) return;
+  var tiles = Array.prototype.slice.call(grid.querySelectorAll('.tile'));
+
+  function hay(el) {
+    return (el.getAttribute('data-search') || el.textContent || '').toLowerCase();
+  }
+
+  function run() {
+    var q = (input.value || '').trim().toLowerCase();
+    var n = 0;
+    tiles.forEach(function (t) {
+      var show = !q || hay(t).indexOf(q) !== -1;
+      t.hidden = !show;
+      t.style.display = show ? '' : 'none';
+      if (show) n++;
+    });
+    if (meta) {
+      if (q) {
+        meta.hidden = false;
+        meta.textContent = n + ' hit' + (n === 1 ? '' : 's');
+      } else {
+        meta.hidden = true;
+        meta.textContent = '';
+      }
+    }
+    if (empty) {
+      var none = q && n === 0;
+      empty.hidden = !none;
+      empty.classList.toggle('hidden', !none);
+      empty.textContent = none ? 'No skills match “' + q + '”.' : '';
+    }
+  }
+
+  input.addEventListener('input', run);
+  input.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') {
+      input.value = '';
+      run();
+    }
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

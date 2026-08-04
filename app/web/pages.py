@@ -156,7 +156,21 @@ async def skill_detail_page(request: Request, skill_id: str, _: AuthDep):
         return templates.TemplateResponse(request, "error.html", page_ctx(
             request, "error", code=404, message=f"Skill “{skill_id}” not found.",
         ), status_code=404)
-    return templates.TemplateResponse(request, "skill_detail.html", page_ctx(request, "skill", skill=skill))
+    from app.extensions.skills import list_skill_support_files, read_skill_body
+
+    body = read_skill_body(skill_id) or skill.get("description") or ""
+    support = list_skill_support_files(skill_id)
+    return templates.TemplateResponse(
+        request,
+        "skill_detail.html",
+        page_ctx(
+            request,
+            "skill",
+            skill=skill,
+            skill_body=body,
+            skill_support=support,
+        ),
+    )
 
 
 @router.get("/modules", response_class=HTMLResponse)

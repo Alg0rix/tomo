@@ -5,19 +5,69 @@
     <div>
       <a class="faint back-link" href="/skills">← Skills</a>
       <h1 class="page-title">{{ skill.name }}</h1>
-      <p class="page-sub">v{{ skill.version }} · {{ skill.tool_count }} tools</p>
+      <p class="page-sub">v{{ skill.version }} · {{ skill.tool_count }} tools{% if skill.source %} · {{ skill.source }}{% endif %}</p>
     </div>
     <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'enabled' if skill.enabled else 'disabled' }}</span>
   </div>
 
-  <div class="card">
+  <div class="card" style="margin-bottom:16px">
     <div class="card-head"><h3>Overview</h3></div>
     <div class="card-body card-body-pad">
+      {% if skill.description %}
       <p class="skill-overview">{{ skill.description }}</p>
+      {% endif %}
       <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ skill.id }}</div></div>
       <div class="config-row"><div class="lbl">Agents using</div><div>{{ skill.agent_count }}</div></div>
-      <div class="config-row"><div class="lbl">System prompt</div><div class="faint">Configured when coordinator runtime is connected</div></div>
+      {% if skill.path %}
+      <div class="config-row"><div class="lbl">Path</div><div class="mono faint" style="word-break:break-all">{{ skill.path }}</div></div>
+      {% endif %}
     </div>
   </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head">
+      <h3>Skill body</h3>
+      <span class="faint mono" style="font-size:12px">SKILL.md</span>
+    </div>
+    <div class="card-body card-body-pad">
+      {% if skill_body %}
+      <div class="skill-body chat-prose" id="skillBody" aria-label="Skill instructions"></div>
+      <script type="application/json" id="skillBodyJson">{{ skill_body|tojson }}</script>
+      {% else %}
+      <div class="empty">No SKILL.md body found for this skill.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if skill_support %}
+  <div class="card">
+    <div class="card-head"><h3>Support files</h3></div>
+    <div class="card-body" style="padding:8px 18px">
+      {% for rel in skill_support %}
+      <div class="row"><div class="meta"><div class="title mono" style="font-size:13px">{{ rel }}</div></div></div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+{% if skill_body %}
+{% include 'partials/chat_assets.html' %}
+<script>
+(function () {
+  var el = document.getElementById('skillBody');
+  var raw = document.getElementById('skillBodyJson');
+  if (!el || !raw) return;
+  var text = '';
+  try { text = JSON.parse(raw.textContent || '""'); } catch (_) { text = raw.textContent || ''; }
+  if (window.TomoMarkdown && TomoMarkdown.renderInto) {
+    TomoMarkdown.renderInto(el, text);
+  } else {
+    el.innerHTML = '<pre class="skill-body-fallback"></pre>';
+    el.querySelector('pre').textContent = text;
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -1,4 +1,5 @@
-<a class="tile tile-link" href="/skills/{{ skill.id }}">
+<a class="tile tile-link" href="/skills/{{ skill.id }}"
+   data-search="{{ (skill.name ~ ' ' ~ skill.description ~ ' ' ~ skill.id ~ ' ' ~ (skill.source or '') ~ ' ' ~ (skill.version or ''))|e }}">
   <div class="tile-head">
     <div class="tile-title">{{ skill.name }}</div>
     <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'on' if skill.enabled else 'off' }}</span>
