@@ -1,4 +1,5 @@
 {% macro chat_composer(placeholder='Message…', hint='', toolbar=False) %}
+{# hint kept for call-site compat; footer tip text removed #}
 <div class="composer{% if toolbar %} composer-float{% endif %}">
   <div class="composer-inner mention-host">
     <input type="file" class="attachment-input" multiple tabindex="-1" aria-hidden="true">
@@ -30,7 +31,6 @@
       <button class="btn ghost sm chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>
       {% endif %}
     </div>
-    <div class="chat-hint">{% if hint %}{{ hint }} · {% endif %}Queued while busy. Attach via paperclip or drop.</div>
   </div>
 </div>
 {% endmacro %}

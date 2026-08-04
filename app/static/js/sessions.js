@@ -1223,10 +1223,15 @@
   });
   chatWrap.addEventListener('tomo:turn-end', function () {
     var sid = chatWrap.dataset.sessionId;
-    if (sid) {
-      lastHistLen = -1;
-      refetchHistory(sid);
-    }
+    if (!sid) return;
+    // Live stream already painted this turn. Forcing renderHistory() here
+    // clears .chat-scroll (scroll jumps to top) then rebuilds — that is the
+    // "thrown upward" kick after the agent finishes responding.
+    // Only sync the length marker so a later poll won't wipe either.
+    Tomo.api('/api/sessions/' + encodeURIComponent(sid) + '/chat').then(function (hist) {
+      if (chatWrap.dataset.sessionId !== sid) return;
+      lastHistLen = (hist.entries || []).length;
+    }).catch(function () {});
   });
   chatWrap.addEventListener('tomo:session-title', function (ev) {
     const d = ev.detail || {};

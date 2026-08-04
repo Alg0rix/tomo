@@ -1,4 +1,4 @@
-/* artifacts.js — session artifacts + Cursor-style agent side panel. */
+/* artifacts.js — session artifacts + Claude-style artifact side panel. */
 (function (global) {
   "use strict";
 
@@ -18,6 +18,25 @@
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">' +
     '<path d="M3.5 2.5h6l3 3v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/>' +
     '<path d="M9.5 2.5v3h3"/></svg>';
+
+  var ICO_REFRESH =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M13.5 8a5.5 5.5 0 1 1-1.4-3.6"/><path d="M13.5 3.5v3h-3"/></svg>';
+  var ICO_EXPAND =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4 4M2.5 13.5l4-4"/></svg>';
+  var ICO_COMPRESS =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M9.5 6.5h4v-4M6.5 9.5h-4v4M13.5 2.5l-4 4M2.5 13.5l4-4"/></svg>';
+  var ICO_EXTERNAL =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M9 3h4v4M13 3 8 8"/><path d="M11 9.5V12a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 12V6A1.5 1.5 0 0 1 3.5 4.5H6"/></svg>';
+  var ICO_CLOSE =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">' +
+    '<path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  var ICO_BACK =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M10 3.5 5.5 8 10 12.5"/></svg>';
 
   var HTML_SANDBOX = "allow-scripts allow-forms allow-popups allow-modals allow-downloads";
 
@@ -364,10 +383,15 @@
       document.querySelector(".chat-agent-panel.is-maximized") ||
       document;
     scope.querySelectorAll("[data-cap-max-toggle]").forEach(function (el) {
-      el.textContent = maximized ? "Minimize" : "Full page";
       el.title = maximized ? "Restore side panel" : "Open as full page";
       el.setAttribute("aria-label", el.title);
       el.classList.toggle("is-max", maximized);
+      // Icon buttons keep their SVG; text buttons get a label.
+      if (el.classList.contains("cap-art-btn")) {
+        el.innerHTML = maximized ? ICO_COMPRESS : ICO_EXPAND;
+        return;
+      }
+      el.textContent = maximized ? "Minimize" : "Full page";
     });
   }
 
@@ -384,7 +408,21 @@
     );
   }
 
+  function supportsCodePreview(art) {
+    var cat = (art && art.category) || category((art && art.filename) || "");
+    return (
+      cat === "html" ||
+      cat === "markdown" ||
+      cat === "csv" ||
+      cat === "json" ||
+      cat === "code" ||
+      cat === "text"
+    );
+  }
+
   function modeToolbar(modes, active, artOrUrl) {
+    // Legacy/embedded toolbar (kept for rare non-panel hosts). Panel chrome
+    // uses the Claude-style Code | Preview segment in the header instead.
     var art =
       artOrUrl && typeof artOrUrl === "object"
         ? artOrUrl
@@ -395,13 +433,14 @@
       '<div class="ap-html-toolbar">' +
       modes
         .map(function (m) {
+          var label = m.id === "source" ? "Code" : m.id === "render" ? "Preview" : m.label;
           return (
             '<button type="button" class="ap-html-mode' +
             (active === m.id ? " active" : "") +
             '" data-preview-mode="' +
             esc(m.id) +
             '">' +
-            esc(m.label) +
+            esc(label) +
             "</button>"
           );
         })
@@ -474,15 +513,15 @@
     if (!panel) {
       panel = document.createElement("aside");
       panel.className = "chat-agent-panel";
-      panel.setAttribute("aria-label", "On tomo");
+      panel.setAttribute("aria-label", "Artifacts");
       panel.dataset.capOpen = "0";
       panel.innerHTML =
         '<div class="cap-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" title="Drag to resize" tabindex="0"></div>' +
-        '<button type="button" class="cap-expand-strip" title="Open panel" aria-label="Open On tomo panel">' +
+        '<button type="button" class="cap-expand-strip" title="Open artifacts" aria-label="Open artifacts panel">' +
         '<span class="cap-expand-ico" aria-hidden="true">' +
         ICO_FILE +
         "</span>" +
-        '<span class="cap-expand-label">Files</span>' +
+        '<span class="cap-expand-label">Artifacts</span>' +
         "</button>" +
         '<div class="cap-body" data-cap-root></div>';
       wrap.appendChild(panel);
@@ -492,16 +531,46 @@
     return panel;
   }
 
-  var CAP_WIDTH_KEY = "tomo.agentPanelWidth";
+  var CAP_WIDTH_KEY = "tomo.agentPanelWidth.v5";
   var CAP_HEIGHT_KEY = "tomo.agentPanelHeight";
-  var CAP_MIN_W = 200;
-  var CAP_MAX_W = 900;
-  var CAP_DEFAULT_W = 280;
+  var CAP_MIN_W = 380;
+  var CAP_MAX_W = 1200;
+  var CAP_DEFAULT_W = 640;
+  var CAP_CHAT_MIN = 340;
+  var CAP_GAP = 24;
   var CAP_MIN_H = 180;
   var CAP_DEFAULT_H = 360;
 
   function clamp(n, lo, hi) {
     return Math.max(lo, Math.min(hi, n));
+  }
+
+  function wrapInnerWidth(panel) {
+    var wrap = panel && panel.closest ? panel.closest(".chat-wrap") : null;
+    return (wrap && wrap.clientWidth) || window.innerWidth || 1100;
+  }
+
+  function maxPanelWidthPx(panel) {
+    return Math.max(
+      CAP_MIN_W,
+      Math.min(CAP_MAX_W, wrapInnerWidth(panel) - CAP_CHAT_MIN - CAP_GAP)
+    );
+  }
+
+  function defaultPanelWidthPx(panel) {
+    var w = wrapInnerWidth(panel);
+    // Gemini-like: canvas ~55% of the chat shell, chat keeps ≥340px.
+    return clamp(Math.round(w * 0.55), CAP_MIN_W, maxPanelWidthPx(panel));
+  }
+
+  function syncCapWidthVar(panel, px) {
+    if (!panel) return;
+    var capped = clamp(px, CAP_MIN_W, maxPanelWidthPx(panel));
+    var val = Math.round(capped) + "px";
+    panel.style.setProperty("--cap-width", val);
+    var wrap = panel.closest(".chat-wrap");
+    if (wrap) wrap.style.setProperty("--cap-width", val);
+    return capped;
   }
 
   function applyStoredPanelWidth(panel) {
@@ -510,8 +579,9 @@
     try {
       stored = parseInt(localStorage.getItem(CAP_WIDTH_KEY) || "", 10);
     } catch (_) {}
-    var w = stored >= CAP_MIN_W ? stored : CAP_DEFAULT_W;
-    panel.style.setProperty("--cap-width", w + "px");
+    var w = stored >= CAP_MIN_W ? stored : defaultPanelWidthPx(panel);
+    w = syncCapWidthVar(panel, w);
+    savePanelWidth(w);
 
     var hStored = 0;
     try {
@@ -534,10 +604,9 @@
     } catch (_) {}
   }
 
-  function isPanelStacked(panel) {
-    var wrap = panel && panel.closest(".chat-wrap");
-    if (!wrap) return false;
-    return getComputedStyle(wrap).flexDirection === "column";
+  function isPanelStacked() {
+    // Floating canvas is never a bottom sheet — always width-resize.
+    return false;
   }
 
   function wirePanelResize(panel) {
@@ -553,10 +622,10 @@
       var pt = e.touches && e.touches[0] ? e.touches[0] : e;
       if (drag.mode === "col") {
         var wrap = panel.closest(".chat-wrap");
-        var wrapRight = wrap ? wrap.getBoundingClientRect().right : window.innerWidth;
-        var maxW = Math.min(CAP_MAX_W, Math.floor((wrap ? wrap.clientWidth : window.innerWidth) * 0.72));
-        var next = clamp(wrapRight - pt.clientX, CAP_MIN_W, maxW);
-        panel.style.setProperty("--cap-width", next + "px");
+        var panelRight = panel.getBoundingClientRect().right;
+        var maxW = maxPanelWidthPx(panel);
+        var next = clamp(panelRight - pt.clientX, CAP_MIN_W, maxW);
+        syncCapWidthVar(panel, next);
         drag.last = next;
       } else {
         var wrapEl = panel.closest(".chat-wrap");
@@ -623,8 +692,9 @@
         panel.style.setProperty("--cap-height", CAP_DEFAULT_H + "px");
         savePanelHeight(CAP_DEFAULT_H);
       } else {
-        panel.style.setProperty("--cap-width", CAP_DEFAULT_W + "px");
-        savePanelWidth(CAP_DEFAULT_W);
+        var dw = defaultPanelWidthPx(panel);
+        syncCapWidthVar(panel, dw);
+        savePanelWidth(dw);
       }
     });
 
@@ -635,8 +705,12 @@
       var step = e.shiftKey ? 40 : 16;
       if (!stacked && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         var cur = panel.getBoundingClientRect().width;
-        var next = clamp(cur + (e.key === "ArrowLeft" ? step : -step), CAP_MIN_W, CAP_MAX_W);
-        panel.style.setProperty("--cap-width", next + "px");
+        var next = clamp(
+          cur + (e.key === "ArrowLeft" ? step : -step),
+          CAP_MIN_W,
+          maxPanelWidthPx(panel)
+        );
+        syncCapWidthVar(panel, next);
         savePanelWidth(next);
         e.preventDefault();
       } else if (stacked && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
@@ -650,8 +724,9 @@
           panel.style.setProperty("--cap-height", CAP_DEFAULT_H + "px");
           savePanelHeight(CAP_DEFAULT_H);
         } else {
-          panel.style.setProperty("--cap-width", CAP_DEFAULT_W + "px");
-          savePanelWidth(CAP_DEFAULT_W);
+          var homeW = defaultPanelWidthPx(panel);
+          syncCapWidthVar(panel, homeW);
+          savePanelWidth(homeW);
         }
         e.preventDefault();
       }
@@ -685,106 +760,77 @@
         applyStoredPanelWidth(panel);
       } else {
         setMaximized(wrap, false);
+        if (wrap) wrap.style.removeProperty("--cap-width");
       }
     }
   }
 
-  /** Inline card shown in the chat turn after save_artifact. */
+  /** Inline Claude-style artifact chip in the chat turn (opens side canvas). */
   function buildSavedCard(art) {
     var filename = art.filename || "file";
     var url = art.url || "";
     var size = art.size;
     var cat = art.category || category(filename);
-    var el = document.createElement("div");
-    el.className = "artifact-inline";
+    var title = prettyTitle(filename);
+    var kindLabel =
+      cat === "html"
+        ? "Canvas · HTML"
+        : cat === "markdown"
+          ? "Canvas · Markdown"
+          : cat === "image"
+            ? "Image"
+            : cat === "pdf"
+              ? "PDF"
+              : cat === "csv"
+                ? "Table · CSV"
+                : cat === "code" || cat === "json"
+                  ? "Code"
+                  : "File";
+
+    var el = document.createElement("button");
+    el.type = "button";
+    el.className = "artifact-chip artifact-inline-open";
     el.dataset.filename = filename;
     el.dataset.url = url;
     el.dataset.category = cat;
+    el.setAttribute("aria-label", "Open " + title);
 
-    var head =
-      '<div class="artifact-inline-head">' +
-      '<span class="artifact-inline-label">Saved</span> ' +
-      '<button type="button" class="artifact-inline-name artifact-inline-open">' +
-      esc(prettyTitle(filename)) +
-      "</button>" +
-      (size != null ? ' <span class="faint">(' + formatBytes(size) + ")</span>" : "") +
-      '<button type="button" class="btn sm primary artifact-inline-open">Open</button>' +
-      "</div>";
-
-    var body = '<div class="artifact-inline-body">';
+    var thumb = "";
     if (cat === "image" && url) {
-      body +=
-        '<button type="button" class="artifact-inline-media artifact-inline-open">' +
-        '<img class="artifact-inline-img md-img" src="' +
+      thumb =
+        '<span class="artifact-chip-thumb"><img src="' +
         esc(url) +
-        '" alt="' +
-        esc(filename) +
-        '" loading="lazy">' +
-        "</button>";
-    } else if (cat === "html" && url) {
-      body +=
-        '<div class="artifact-inline-html">' +
-        htmlFrame({ title: filename }) +
-        "</div>";
-    } else if (cat === "pdf" && url) {
-      body +=
-        '<iframe class="artifact-inline-pdf" src="' +
-        esc(url) +
-        '" title="' +
-        esc(filename) +
-        '"></iframe>';
-    } else if ((cat === "markdown" || cat === "csv" || cat === "json" || cat === "code") && url) {
-      body +=
-        '<div class="artifact-inline-rich" data-inline-kind="' +
-        esc(cat) +
-        '" data-inline-url="' +
-        esc(url) +
-        '" data-inline-name="' +
-        esc(filename) +
-        '"><div class="cap-msg faint">Loading preview…</div></div>';
-    } else if (cat === "video" && url) {
-      body +=
-        '<video class="artifact-inline-video" src="' +
-        esc(url) +
-        '" controls preload="metadata"></video>';
-    } else if (cat === "sound" && url) {
-      body += '<audio class="artifact-inline-audio" src="' + esc(url) + '" controls></audio>';
+        '" alt="" loading="lazy"></span>';
     } else {
-      body +=
-        '<div class="artifact-inline-file">' +
-        '<span class="badge muted">' +
-        esc(cat) +
-        "</span> " +
-        '<button type="button" class="btn sm artifact-inline-open">Open in panel</button>' +
-        "</div>";
+      thumb = '<span class="artifact-chip-ico" aria-hidden="true">' + ICO_FILE + "</span>";
     }
-    body += "</div>";
-    el.innerHTML = head + body;
 
-    el.querySelectorAll(".artifact-inline-open").forEach(function (btn) {
-      btn.addEventListener("click", function (e) {
-        e.preventDefault();
-        openPreview(
-          {
-            url: url,
-            filename: filename,
-            category: cat,
-            session_id: art.session_id,
-            size: size,
-          },
-          { userGesture: true }
-        );
-      });
+    el.innerHTML =
+      thumb +
+      '<span class="artifact-chip-meta">' +
+      '<span class="artifact-chip-title">' +
+      esc(title) +
+      "</span>" +
+      '<span class="artifact-chip-kind">' +
+      esc(kindLabel) +
+      (size != null ? " · " + formatBytes(size) : "") +
+      "</span>" +
+      "</span>" +
+      '<span class="artifact-chip-go" aria-hidden="true">↗</span>';
+
+    el.addEventListener("click", function (e) {
+      e.preventDefault();
+      openPreview(
+        {
+          url: url,
+          filename: filename,
+          category: cat,
+          session_id: art.session_id,
+          size: size,
+        },
+        { userGesture: true }
+      );
     });
-
-    var rich = el.querySelector(".artifact-inline-rich");
-    if (rich) {
-      fillInlineRich(rich, cat, url, filename);
-    }
-    var htmlIframe = el.querySelector(".artifact-inline-html iframe");
-    if (htmlIframe) {
-      fillHtmlFrame(htmlIframe, url);
-    }
     return el;
   }
 
@@ -842,13 +888,17 @@
     _state.panelOpen = false;
     _state.userCollapsed = true;
     var wrap = findChatWrap();
-    if (wrap) setMaximized(wrap, false);
+    if (wrap) {
+      setMaximized(wrap, false);
+      wrap.style.removeProperty("--cap-width");
+    }
     document.querySelectorAll(".chat-agent-panel").forEach(function (p) {
       p.dataset.capOpen = "0";
       p.classList.remove("is-maximized");
     });
     document.querySelectorAll(".chat-wrap.is-artifact-max").forEach(function (w) {
       w.classList.remove("is-artifact-max");
+      w.style.removeProperty("--cap-width");
     });
   }
 
@@ -857,15 +907,7 @@
     var filename = art.filename || "file";
     var mode = _state.previewMode === "source" ? "source" : "render";
 
-    body.innerHTML =
-      modeToolbar(
-        [
-          { id: "render", label: "Render" },
-          { id: "source", label: "Source" },
-        ],
-        mode,
-        art
-      ) + '<div class="ap-html-stage"></div>';
+    body.innerHTML = '<div class="ap-html-stage"></div>';
     var stage = body.querySelector(".ap-html-stage");
 
     if (mode === "source") {
@@ -897,18 +939,9 @@
       var iframe = stage.querySelector("iframe");
       fillHtmlFrame(iframe, url, typeof textOpt === "string" ? textOpt : undefined);
     }
-
-    body.querySelectorAll("[data-preview-mode]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        _state.previewMode = btn.getAttribute("data-preview-mode") || "render";
-        renderHtmlPreview(body, art, textOpt);
-      });
-    });
-    wireMaxToggle(body, findChatWrap());
   }
 
   function renderTextualPreview(body, art, text) {
-    var url = art.url || "";
     var filename = art.filename || "file";
     var cat = art.category || category(filename);
     var mode = _state.previewMode === "source" ? "source" : "render";
@@ -931,15 +964,9 @@
 
     var hasRender =
       kind === "markdown" || kind === "csv" || kind === "json" || kind === "code";
-    var modes = hasRender
-      ? [
-          { id: "render", label: kind === "csv" ? "Table" : kind === "markdown" ? "Preview" : "Pretty" },
-          { id: "source", label: "Source" },
-        ]
-      : [{ id: "source", label: "Source" }];
     if (!hasRender) mode = "source";
 
-    body.innerHTML = modeToolbar(modes, mode, art) + '<div class="ap-html-stage"></div>';
+    body.innerHTML = '<div class="ap-html-stage"></div>';
     var stage = body.querySelector(".ap-html-stage");
 
     if (mode === "render" && kind === "markdown") {
@@ -957,26 +984,16 @@
       stage.appendChild(renderPrettyJson(text));
     } else if (mode === "render" && kind === "code") {
       stage.appendChild(renderHighlightedCode(text, filename));
+    } else if (kind === "json") {
+      stage.appendChild(renderPrettyJson(text));
+    } else if (kind === "code" || kind === "markdown" || kind === "csv") {
+      stage.appendChild(renderHighlightedCode(text, filename, langFor(filename)));
     } else {
-      // Source / plain text
-      if (kind === "json") stage.appendChild(renderPrettyJson(text));
-      else if (kind === "code" || kind === "markdown" || kind === "csv")
-        stage.appendChild(renderHighlightedCode(text, filename, langFor(filename)));
-      else {
-        var pre = document.createElement("pre");
-        pre.className = "ap-pre";
-        pre.textContent = text;
-        stage.appendChild(pre);
-      }
+      var pre = document.createElement("pre");
+      pre.className = "ap-pre";
+      pre.textContent = text;
+      stage.appendChild(pre);
     }
-
-    body.querySelectorAll("[data-preview-mode]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        _state.previewMode = btn.getAttribute("data-preview-mode") || "render";
-        renderTextualPreview(body, art, text);
-      });
-    });
-    wireMaxToggle(body, findChatWrap());
   }
 
   function renderPreviewInto(body, art) {
@@ -992,40 +1009,32 @@
 
     if (cat === "image") {
       body.innerHTML =
-        modeToolbar([], "render", art) +
         '<div class="ap-media"><img class="ap-img" src="' +
         esc(url) +
         '" alt="' +
         esc(filename) +
         '"></div>';
-      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "video") {
       body.innerHTML =
-        modeToolbar([], "render", art) +
         '<div class="ap-media"><video class="ap-video" src="' +
         esc(url) +
         '" controls></video></div>';
-      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "sound") {
       body.innerHTML =
-        modeToolbar([], "render", art) +
         '<div class="ap-audio"><audio src="' + esc(url) + '" controls></audio></div>';
-      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "pdf") {
       body.innerHTML =
-        modeToolbar([], "render", art) +
         '<iframe class="ap-iframe ap-iframe-tall" src="' +
         esc(url) +
         '" title="' +
         esc(filename) +
         '"></iframe>';
-      wireMaxToggle(body, findChatWrap());
       return;
     }
     if (cat === "html") {
@@ -1168,14 +1177,14 @@
       "</div>" +
       "</section>" +
       '<section class="cap-section">' +
-      '<h3 class="cap-section-title">On tomo</h3>' +
+      '<h3 class="cap-section-title">Library</h3>' +
       '<div class="cap-rows">' +
       '<button type="button" class="cap-row' +
       (_state.view === "files" ? " active" : "") +
       '" data-cap-nav="files">' +
       '<span class="cap-ico">' +
       ICO_FILE +
-      '</span><span class="cap-label">Files</span>' +
+      '</span><span class="cap-label">All files</span>' +
       "</button>" +
       "</div>" +
       "</section>" +
@@ -1203,36 +1212,93 @@
   }
 
   function renderDrill(root, wrap, kind) {
-    var title = kind === "files" ? "Files" : (_state.art && (_state.art.title || prettyTitle(_state.art.filename))) || "Preview";
+    var title =
+      kind === "files"
+        ? "Files"
+        : (_state.art && (_state.art.title || prettyTitle(_state.art.filename))) || "Preview";
+    var art = _state.art || {};
+    var mode = _state.previewMode === "source" ? "source" : "render";
+    var showSeg = kind === "preview" && supportsCodePreview(art);
+    var viewUrl = kind === "preview" ? fullPageUrl(art) : "";
     var maximized = !!_state.maximized;
-    var full =
-      kind === "preview" && _state.art && (_state.art.url || _state.art.filename)
-        ? '<button type="button" class="btn ghost sm cap-fullpage' +
-          (maximized ? " is-max" : "") +
-          '" data-cap-max-toggle="1" title="' +
-          (maximized ? "Restore side panel" : "Open as full page") +
-          '">' +
-          (maximized ? "Minimize" : "Full page") +
-          "</button>"
-        : "";
-    var ext =
-      _state.art && _state.art.url
-        ? '<a class="cap-icon-btn" href="' +
-          esc(fullPageUrl(_state.art)) +
-          '" target="_blank" rel="noopener" title="Open in new browser tab">↗</a>'
-        : "";
+
+    var segHtml = "";
+    if (showSeg) {
+      segHtml =
+        '<div class="cap-art-seg" role="tablist" aria-label="View mode">' +
+        '<button type="button" role="tab" class="cap-seg-btn' +
+        (mode === "source" ? " active" : "") +
+        '" data-preview-mode="source" aria-selected="' +
+        (mode === "source" ? "true" : "false") +
+        '">Code</button>' +
+        '<button type="button" role="tab" class="cap-seg-btn' +
+        (mode === "render" ? " active" : "") +
+        '" data-preview-mode="render" aria-selected="' +
+        (mode === "render" ? "true" : "false") +
+        '">Preview</button>' +
+        "</div>";
+    }
+
+    var actionsHtml = "";
+    if (kind === "preview") {
+      actionsHtml =
+        '<div class="cap-art-actions">' +
+        '<button type="button" class="cap-art-btn" data-cap-refresh="1" title="Refresh" aria-label="Refresh">' +
+        ICO_REFRESH +
+        "</button>" +
+        '<button type="button" class="cap-art-btn' +
+        (maximized ? " is-max" : "") +
+        '" data-cap-max-toggle="1" title="' +
+        (maximized ? "Restore side panel" : "Open as full page") +
+        '">' +
+        (maximized ? ICO_COMPRESS : ICO_EXPAND) +
+        "</button>" +
+        (viewUrl && viewUrl !== "#"
+          ? '<a class="cap-art-btn" href="' +
+            esc(viewUrl) +
+            '" target="_blank" rel="noopener" title="Open in new tab" aria-label="Open in new tab">' +
+            ICO_EXTERNAL +
+            "</a>"
+          : "") +
+        '<button type="button" class="cap-art-btn cap-collapse" title="Close" aria-label="Close">' +
+        ICO_CLOSE +
+        "</button>" +
+        "</div>";
+    } else {
+      actionsHtml =
+        '<button type="button" class="cap-icon-btn cap-collapse" title="Collapse panel" aria-label="Collapse">' +
+        ICO_CLOSE +
+        "</button>";
+    }
 
     root.innerHTML =
-      '<div class="cap-drill">' +
-      '<div class="cap-panel-head">' +
-      '<button type="button" class="cap-icon-btn cap-back" title="Back" aria-label="Back">‹</button>' +
-      '<span class="cap-panel-title">' +
-      esc(title) +
-      "</span>" +
-      full +
-      ext +
-      '<button type="button" class="cap-icon-btn cap-collapse" title="Collapse panel" aria-label="Collapse">✕</button>' +
-      "</div>" +
+      '<div class="cap-drill' +
+      (kind === "preview" ? " cap-artifact" : "") +
+      '">' +
+      (kind === "preview"
+        ? '<div class="cap-art-chrome">' +
+          '<div class="cap-art-lead">' +
+          '<button type="button" class="cap-art-btn cap-back" title="Back" aria-label="Back">' +
+          ICO_BACK +
+          "</button>" +
+          '<span class="cap-art-title" title="' +
+          esc(title) +
+          '">' +
+          esc(title) +
+          "</span>" +
+          "</div>" +
+          '<div class="cap-art-trail">' +
+          segHtml +
+          actionsHtml +
+          "</div>" +
+          "</div>"
+        : '<div class="cap-panel-head">' +
+          '<button type="button" class="cap-icon-btn cap-back" title="Back" aria-label="Back">‹</button>' +
+          '<span class="cap-panel-title">' +
+          esc(title) +
+          "</span>" +
+          actionsHtml +
+          "</div>") +
       '<div class="cap-drill-body"></div>' +
       "</div>";
 
@@ -1241,17 +1307,43 @@
       _state.view = "home";
       renderPanel(wrap);
     });
-    root.querySelector(".cap-collapse").addEventListener("click", function () {
-      setMaximized(wrap, false);
-      closePanel();
+    root.querySelectorAll(".cap-collapse").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setMaximized(wrap, false);
+        closePanel();
+      });
     });
     wireMaxToggle(root, wrap);
 
     var body = root.querySelector(".cap-drill-body");
     if (kind === "files") {
       renderFilesList(body, _state.sessionId, _state.art);
-    } else {
+      return;
+    }
+
+    function fillStage() {
       renderPreviewInto(body, _state.art || {});
+    }
+    fillStage();
+
+    root.querySelectorAll("[data-preview-mode]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var next = btn.getAttribute("data-preview-mode") || "render";
+        if (_state.previewMode === next) return;
+        _state.previewMode = next;
+        root.querySelectorAll("[data-preview-mode]").forEach(function (b) {
+          var on = b.getAttribute("data-preview-mode") === next;
+          b.classList.toggle("active", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        fillStage();
+      });
+    });
+    var refreshBtn = root.querySelector("[data-cap-refresh]");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        fillStage();
+      });
     }
   }
 

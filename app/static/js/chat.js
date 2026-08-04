@@ -737,7 +737,7 @@
       sending = false;
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
 
-      // Re-stick briefly so post-turn history rebuild lands at bottom.
+      // Keep pin briefly after the stream ends (layout may still settle).
       if (Tomo.stickScrollBottom) {
         Tomo.stickScrollBottom(scroll, { holdMs: 8000, times: [0, 50, 200, 500, 1500, 3000] });
       }
