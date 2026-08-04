@@ -118,6 +118,27 @@ def test_api_rejects_delete_last_enabled(tmp_path) -> None:
         _cleanup()
 
 
+def test_login_page_does_not_hint_default_credentials(tmp_path) -> None:
+    """Login UI must not advertise bootstrap username/password env names."""
+    store.rebind(tmp_path / "users-login-page.db")
+    client = TestClient(app)
+    res = client.get("/login")
+    assert res.status_code == 200
+    body = res.text
+    assert "TOMO_ADMIN_PASSWORD" not in body
+    assert "placeholder=\"admin\"" not in body
+    assert "placeholder='admin'" not in body
+
+
+def test_openapi_docs_disabled(tmp_path) -> None:
+    """Swagger/OpenAPI must not be public (create_app sets docs_url=None)."""
+    store.rebind(tmp_path / "users-docs.db")
+    client = TestClient(app)
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        res = client.get(path)
+        assert res.status_code == 404, path
+
+
 def test_login_post_success_and_fail(tmp_path) -> None:
     store.rebind(tmp_path / "users-login.db")
     # Real session middleware — no auth override.
