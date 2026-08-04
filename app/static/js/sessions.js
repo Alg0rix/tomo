@@ -500,8 +500,12 @@
   }
 
   function stickChatScrollBottom(scroll) {
-    if (window.Tomo && Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll);
-    else if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    if (window.Tomo && Tomo.stickScrollBottom) {
+      Tomo.stickScrollBottom(scroll, { holdMs: 15000, times: [50, 200, 500, 1000, 2000, 4000, 8000] });
+    } else if (scroll) {
+      if (Tomo.scrollToBottomInstant) Tomo.scrollToBottomInstant(scroll);
+      else scroll.scrollTop = scroll.scrollHeight;
+    }
   }
 
   function renderHistory(entries) {
@@ -510,6 +514,7 @@
     if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(chatWrap);
     if (!entries.length) {
       scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
+      stickChatScrollBottom(scroll);
       return;
     }
 

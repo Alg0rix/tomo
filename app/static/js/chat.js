@@ -510,10 +510,23 @@
     const MAX_QUEUE = 20;
 
     function atBottom() {
-      const prev = scroll.style.scrollBehavior;
-      scroll.style.scrollBehavior = 'auto';
-      scroll.scrollTop = scroll.scrollHeight;
-      scroll.style.scrollBehavior = prev;
+      if (Tomo.nudgeScrollBottom) {
+        // If a stick is active, go() through the RO path without restarting the stick.
+        // Otherwise fall through to a one-shot instant scroll (don't start a stick on
+        // every token).
+        if (typeof scroll._tomoStickGo === 'function') {
+          scroll._tomoStickGo();
+          return;
+        }
+      }
+      if (window.Tomo && Tomo.scrollToBottomInstant) {
+        Tomo.scrollToBottomInstant(scroll);
+      } else {
+        var prev = scroll.style.scrollBehavior;
+        scroll.style.scrollBehavior = 'auto';
+        scroll.scrollTop = scroll.scrollHeight;
+        scroll.style.scrollBehavior = prev;
+      }
     }
     function setStatus(badge, label) {
       if (!statusEl) return;
@@ -643,7 +656,7 @@
     }
 
     scroll.querySelectorAll('.prose').forEach(renderMarkdown);
-    if (Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll);
+    if (Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll, { holdMs: 15000, times: [50, 200, 500, 1000, 2000, 4000] });
     else atBottom();
 
     function resize() {
@@ -723,6 +736,12 @@
       if (es) { es.close(); es = null; }
       sending = false;
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+
+      // Re-stick briefly so post-turn history rebuild lands at bottom.
+      if (Tomo.stickScrollBottom) {
+        Tomo.stickScrollBottom(scroll, { holdMs: 8000, times: [0, 50, 200, 500, 1500, 3000] });
+      }
+
       if (messageQueue.length) {
         const next = messageQueue.shift();
         markBubbleDequeued(next.el);
@@ -857,6 +876,14 @@
         turn.className = 'turn';
         scroll.appendChild(turn);
       }
+
+      // Pin for the entire streaming turn — new .turn nodes, images, and
+      // artifact panels are observed by MutationObserver inside stickScrollBottom.
+      if (Tomo.stickScrollBottom) {
+        Tomo.stickScrollBottom(scroll, { holdMs: 120000, times: [50, 200, 500, 1000, 2000, 4000] });
+      }
+      atBottom();
+
       var attachIds = attachmentIds || [];
       es = postEventSource(streamUrl(text, attachIds), streamBody(text, attachIds));
       if (!window.TomoTurnStream || !TomoTurnStream.attach) {

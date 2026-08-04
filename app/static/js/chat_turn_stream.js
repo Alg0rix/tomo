@@ -234,6 +234,12 @@
       }
       if (!asstEl && !pendingEl) showPending();
       ctx.atBottom();
+      // Re-pin through artifact panel width transition and async preview/image growth.
+      // If a long-lived stick is already active this just re-pins it (go) instead of
+      // replacing it with a short-lived stick that would die mid-stream.
+      if (window.Tomo && Tomo.nudgeScrollBottom && ctx.scroll) {
+        Tomo.nudgeScrollBottom(ctx.scroll, { holdMs: 5000, times: [0, 100, 300, 800, 1600] });
+      }
     }
 
     // ── Full-featured subagent infrastructure (live) ────────────────

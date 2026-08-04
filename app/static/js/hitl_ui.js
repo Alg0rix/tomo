@@ -140,7 +140,16 @@
     if (existing) return existing;
     var card = kind === "clarify" ? buildClarifyCard(d) : buildApprovalCard(d);
     host.appendChild(card);
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+    if (scrollEl) {
+      if (window.Tomo && Tomo.scrollToBottomInstant) {
+        Tomo.scrollToBottomInstant(scrollEl);
+      } else {
+        var prev = scrollEl.style.scrollBehavior;
+        scrollEl.style.scrollBehavior = 'auto';
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+        scrollEl.style.scrollBehavior = prev;
+      }
+    }
     return card;
   }
 

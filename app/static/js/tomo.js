@@ -87,27 +87,51 @@
   Tomo.truncate = function (s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
 
   /**
+   * Force-instant scroll to bottom, bypassing CSS scroll-behavior: smooth.
+   * Exported so other modules can use it without duplicating the pattern.
+   */
+  Tomo.scrollToBottomInstant = function (el) {
+    if (!el) return;
+    var prev = el.style.scrollBehavior;
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = el.scrollHeight;
+    el.style.scrollBehavior = prev;
+  };
+
+  /**
    * Keep a scroll container pinned to the bottom while async layout (images,
-   * mermaid) grows content. Stops if the user scrolls away from the bottom.
+   * mermaid, streaming turns, artifact panels) grows content. Stops if the
+   * user scrolls away from the bottom.
    *
    * Idempotent: calling this again on the same element cleans up any prior
    * active stick first. Programmatic scrolls are forced instant so CSS
-   * `scroll-behavior: smooth` never animates them; the stick cancels when the
-   * user scrolls away from the bottom (gap check while not mid-programmatic
-   * stick), and re-anchors on ResizeObserver / image load until holdMs or
-   * cancel.
+   * `scroll-behavior: smooth` never animates them.
+   *
+   * Deferred cancel: scroll events that show a gap > userGap are verified
+   * via rAF before cleanup — a single transient gap from layout thrash
+   * will not kill the stick.
+   *
+   * MutationObserver watches for new child nodes so ResizeObserver + img
+   * load binds extend to elements added after stick start (streaming turns).
+   *
+   * @param {Element} el  Scroll container
+   * @param {object}  [opts]
+   * @param {number}  [opts.userGap=120]    px gap that counts as user scroll-away
+   * @param {number[]} [opts.times=[50,200,500,1000,2000]]  delayed go() timings
+   * @param {number}  [opts.holdMs=15000]   auto-cleanup after this many ms
    */
   Tomo.stickScrollBottom = function (el, opts) {
     if (!el) return;
     opts = opts || {};
-    var gap = opts.userGap != null ? opts.userGap : 200;
-    var times = opts.times || [50, 200, 500];
-    var holdMs = opts.holdMs != null ? opts.holdMs : 12000;
+    var gap = opts.userGap != null ? opts.userGap : 120;
+    var times = opts.times || [50, 200, 500, 1000, 2000];
+    var holdMs = opts.holdMs != null ? opts.holdMs : 15000;
     var cancelled = false;
     var sticking = false;
     var timers = [];
     var rafIds = [];
     var ro = null;
+    var mo = null;
     var cleanupFn = null;
     var stickGen = 0;
 
@@ -119,11 +143,7 @@
     function go() {
       if (cancelled) return;
       sticking = true;
-      // Force instant scroll so CSS `scroll-behavior: smooth` never animates.
-      var prev = el.style.scrollBehavior;
-      el.style.scrollBehavior = 'auto';
-      el.scrollTop = el.scrollHeight;
-      el.style.scrollBehavior = prev;
+      Tomo.scrollToBottomInstant(el);
       // Hold `sticking` across two rAFs so residual scroll events from the
       // instant jump don't get mistaken for a user gesture. Bump the stick
       // generation each go() so an overlapping earlier jump can't clear
@@ -135,17 +155,34 @@
         }));
       }));
     }
+    // Expose the active go() so callers can re-pin without replacing the stick.
+    el._tomoStickGo = go;
 
     function cancelOnUserScroll() {
-      if (sticking) return;
+      if (sticking || cancelled) return;
       if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
-        cleanupFn();
+        // Deferred cancel: verify after one rAF that the gap persists.
+        // Kills false cancels from layout thrash (ResizeObserver firing,
+        // lazy images settling, artifact panel width transition, etc.).
+        var id = requestAnimationFrame(function () {
+          if (cancelled || sticking) return;
+          if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
+            cleanupFn();
+          }
+        });
+        rafIds.push(id);
       }
     }
 
     function onContentResize() {
       if (cancelled) return;
       go();
+    }
+
+    function bindImgEvents(node) {
+      if (node.tagName !== 'IMG' || node.complete) return;
+      node.addEventListener('load', go, { once: true });
+      node.addEventListener('error', go, { once: true });
     }
 
     cleanupFn = function () {
@@ -160,8 +197,15 @@
         ro.disconnect();
         ro = null;
       }
+      if (mo) {
+        mo.disconnect();
+        mo = null;
+      }
       if (el._tomoStickCleanup === cleanupFn) {
         el._tomoStickCleanup = null;
+      }
+      if (el._tomoStickGo === go) {
+        el._tomoStickGo = null;
       }
     };
 
@@ -172,15 +216,14 @@
       rafIds.push(requestAnimationFrame(go));
     }));
 
+    // Bind incomplete images already present.
     el.querySelectorAll('img').forEach(function (img) {
-      if (img.complete) return;
-      img.addEventListener('load', go, { once: true });
-      img.addEventListener('error', go, { once: true });
+      bindImgEvents(img);
     });
 
     el.addEventListener('scroll', cancelOnUserScroll, { passive: true });
 
-    // Grow content below the pinned position while we're still sticking.
+    // ResizeObserver on all current children.
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(onContentResize);
       Array.prototype.forEach.call(el.children, function (child) {
@@ -188,10 +231,49 @@
       });
     }
 
+    // MutationObserver: watch for new child nodes (streaming .turn elements,
+    // artifact cards, lazy images) so RO + img binds extend dynamically.
+    if (typeof MutationObserver !== 'undefined') {
+      mo = new MutationObserver(function (mutations) {
+        if (cancelled) return;
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            var node = added[j];
+            if (node.nodeType !== 1) continue;
+            if (ro) ro.observe(node);
+            // Bind incomplete images inside the added subtree.
+            if (node.tagName === 'IMG') {
+              bindImgEvents(node);
+            }
+            node.querySelectorAll && node.querySelectorAll('img').forEach(function (img) {
+              bindImgEvents(img);
+            });
+          }
+        }
+        go();
+      });
+      mo.observe(el, { childList: true, subtree: true });
+    }
+
     times.forEach(function (ms) { timers.push(setTimeout(go, ms)); });
     timers.push(setTimeout(cleanupFn, holdMs));
 
     el._tomoStickCleanup = cleanupFn;
+  };
+
+  /**
+   * Re-pin if a stick is already active; otherwise start a short stick.
+   * @param {Element} el  Scroll container
+   * @param {object}  [opts]  start options when no stick is active
+   */
+  Tomo.nudgeScrollBottom = function (el, opts) {
+    if (!el) return;
+    if (typeof el._tomoStickGo === 'function') {
+      el._tomoStickGo();
+      return;
+    }
+    Tomo.stickScrollBottom(el, opts);
   };
 
   /** Line-level LCS ops for synthetic str_replace diffs. */
