@@ -228,6 +228,24 @@ def resolve_clarify(clarify_id: str, answer: str) -> None:
     pending.event.set()
 
 
+def list_pending_for_session(session_id: str | None) -> dict[str, list[dict[str, Any]]]:
+    """Return unresolved approval/clarify payloads for *session_id* (refresh rehydrate)."""
+    sid = (session_id or "").strip()
+    if not sid:
+        return {"approvals": [], "clarifies": []}
+    approvals: list[dict[str, Any]] = []
+    for pending in _approvals.values():
+        if pending.session_id != sid or pending.event.is_set():
+            continue
+        approvals.append(dict(pending.payload))
+    clarifies: list[dict[str, Any]] = []
+    for pending in _clarifies.values():
+        if pending.session_id != sid or pending.event.is_set():
+            continue
+        clarifies.append(dict(pending.payload))
+    return {"approvals": approvals, "clarifies": clarifies}
+
+
 def cancel_session_pending(
     session_id: str | None,
     *,
@@ -277,6 +295,7 @@ __all__ = [
     "await_clarify",
     "request_clarify",
     "resolve_clarify",
+    "list_pending_for_session",
     "cancel_session_pending",
     "clear_all_pending",
     "ApprovalChoice",

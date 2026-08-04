@@ -1004,18 +1004,27 @@
       // init may re-touch markdown; stick again after layout settles
       stickChatScrollBottom(chatWrap.querySelector('.chat-scroll'));
 
-      // Mid-turn refresh: history shows unpaired tools as running; re-attach
-      // to the live session stream so status stays busy and results update.
-      var entries = hist.entries || [];
-      var last = entries[entries.length - 1];
-      if (last && last.type !== 'final' && last.type !== 'error' && !pending) {
-        var statusEl = chatWrap.querySelector('.chat-status');
-        if (statusEl) {
-          statusEl.className = 'badge amber';
-          statusEl.innerHTML = '<span class="pulse"></span>busy';
+      // Mid-turn / HITL wait: rehydrate cards + re-attach listen stream.
+      // resume() always rehydrates pending; history "complete" can still have HITL.
+      if (!pending && chatHandle && chatHandle.resume) {
+        var entries = hist.entries || [];
+        var last = entries[entries.length - 1];
+        var maybeMidTurn = last && last.type !== 'final' && last.type !== 'error';
+        var tryResume = function () {
+          var statusEl = chatWrap.querySelector('.chat-status');
+          if (statusEl) {
+            statusEl.className = 'badge amber';
+            statusEl.innerHTML = '<span class="pulse"></span>busy';
+          }
+          if (!chatHandle.resume()) startHistoryPoll(sessionId);
+        };
+        if (maybeMidTurn) {
+          tryResume();
+        } else if (chatHandle.rehydratePending) {
+          chatHandle.rehydratePending().then(function (needs) {
+            if (needs) tryResume();
+          });
         }
-        var resumed = chatHandle && chatHandle.resume && chatHandle.resume();
-        if (!resumed) startHistoryPoll(sessionId);
       }
 
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);

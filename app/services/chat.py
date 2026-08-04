@@ -141,13 +141,20 @@ def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
     return None
 
 
+class SessionTurnBusy(Exception):
+    """Raised when a session already has an in-flight background turn."""
+
+
 async def start_session_turn(
     session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
     """Start a background agent turn and return ``(turn, subscription_queue)``.
 
-    The turn runs independently of any SSE connection.  Multiple clients
-    can subscribe to the same turn (e.g. after a page refresh).
+    Owns the session-turn **lease** (store lock + registry) for the full
+    turn lifetime so refresh can reconnect and concurrent POSTs get
+    ``SessionTurnBusy``.  ``stream_turn_sse`` runs with ``acquire_lock=False``.
+
+    Raises :class:`SessionTurnBusy` if this session already has a live turn.
     """
     session = store.get_session(session_id)
     if not session:
@@ -156,12 +163,25 @@ async def start_session_turn(
     if not coordinator_id:
         raise ValueError(f"No coordinator for session: {session_id}")
 
+    if get_active_session_turn(session_id) is not None:
+        raise SessionTurnBusy(session_id)
+    if not store.try_begin_session_turn(session_id):
+        raise SessionTurnBusy(session_id)
+
     turn = _ActiveTurn(session_id=session_id)
+    _active_turns[session_id] = turn
 
     async def _runner() -> None:
         try:
             async with contextlib.aclosing(
-                stream_turn_sse(session_id, coordinator_id, message, start_seq, attachment_ids=attachment_ids)
+                stream_turn_sse(
+                    session_id,
+                    coordinator_id,
+                    message,
+                    start_seq,
+                    attachment_ids=attachment_ids,
+                    acquire_lock=False,
+                )
             ) as agen:
                 async for chunk in agen:
                     turn._broadcast(chunk)
@@ -178,11 +198,13 @@ async def start_session_turn(
             )
         finally:
             turn.finish()
-            _active_turns.pop(session_id, None)
+            store.end_session_turn(session_id)
+            # Only clear registry if we still own this slot (never clobber a newer turn).
+            if _active_turns.get(session_id) is turn:
+                _active_turns.pop(session_id, None)
             logger.info("background turn done session_id=%s", session_id)
 
     turn.task = asyncio.create_task(_runner())
-    _active_turns[session_id] = turn
     return turn, turn.subscribe()
 
 
@@ -562,6 +584,7 @@ async def session_heartbeat_stream(
 
 __all__ = [
     "_fmt_sse",
+    "SessionTurnBusy",
     "attachment_info_lines",
     "attachment_meta_for_ids",
     "expand_slash_skill",

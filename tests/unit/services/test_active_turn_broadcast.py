@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 
-from app.services.chat import _ActiveTurn
+from app.services import chat as chat_mod
+from app.services.chat import SessionTurnBusy, _ActiveTurn, get_active_session_turn
 
 
 @pytest.mark.asyncio
@@ -41,3 +43,74 @@ async def test_put_none_on_full_queue_makes_room() -> None:
     while not q.empty():
         items.append(q.get_nowait())
     assert None in items
+
+
+@pytest.mark.asyncio
+async def test_start_session_turn_rejects_when_already_active() -> None:
+    chat_mod._active_turns.clear()
+    fake_session = {
+        "id": "ses_busy",
+        "coordinator_id": "main",
+        "agent_id": "main",
+        "agent_ids": ["main"],
+    }
+
+    async def _empty_sse(*_a, **_k):
+        if False:  # pragma: no cover
+            yield ""
+        return
+
+    with (
+        patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod, "stream_turn_sse", _empty_sse),
+    ):
+        turn, _q = await chat_mod.start_session_turn("ses_busy", "hi", "web")
+        assert get_active_session_turn("ses_busy") is turn
+        with pytest.raises(SessionTurnBusy):
+            await chat_mod.start_session_turn("ses_busy", "again", "web")
+        # Finish the first turn cleanly.
+        if turn.task:
+            await turn.task
+        assert get_active_session_turn("ses_busy") is None
+
+
+@pytest.mark.asyncio
+async def test_start_session_turn_finally_keeps_newer_registry_slot() -> None:
+    """A finished runner must not pop a newer turn that replaced its registry slot."""
+    chat_mod._active_turns.clear()
+    fake_session = {
+        "id": "ses_x",
+        "coordinator_id": "main",
+        "agent_id": "main",
+        "agent_ids": ["main"],
+    }
+    release = asyncio.Event()
+
+    async def _blocking_sse(*_a, **_k):
+        yield 'event: state\ndata: {"busy":true}\n\n'
+        await release.wait()
+
+    with (
+        patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod, "stream_turn_sse", _blocking_sse),
+    ):
+        old, _ = await chat_mod.start_session_turn("ses_x", "one", "web")
+        assert chat_mod._active_turns.get("ses_x") is old
+
+        # Force-replace registry as a racing second start would (after checks).
+        newer = _ActiveTurn(session_id="ses_x")
+
+        async def _noop() -> None:
+            return None
+
+        newer.task = asyncio.create_task(_noop())
+        chat_mod._active_turns["ses_x"] = newer
+
+        release.set()
+        if old.task:
+            await old.task
+
+        assert chat_mod._active_turns.get("ses_x") is newer
+        await newer.task
+
+    chat_mod._active_turns.clear()

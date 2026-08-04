@@ -686,6 +686,34 @@
       // Do not clear sending here — finishTurn owns the queue drain.
     }
 
+    function hitlHost(turnEl) {
+      var host = turnEl || scroll.querySelector('.turn:last-child');
+      if (host) return host;
+      host = document.createElement('div');
+      host.className = 'turn';
+      scroll.appendChild(host);
+      return host;
+    }
+
+    function bindHitl(es, turnEl, onEvent) {
+      if (!window.TomoHitl || !TomoHitl.bindStream) return;
+      TomoHitl.bindStream(es, {
+        turn: hitlHost(turnEl),
+        scroll: scroll,
+        onEvent: onEvent,
+        clearPending: null,
+        setBusy: function () { setStatus('amber', busyStatusLabel()); },
+      });
+    }
+
+    function rehydratePendingHitl(turnEl) {
+      if (!window.TomoHitl || !TomoHitl.rehydrate) return Promise.resolve(false);
+      return TomoHitl.rehydrate(currentSessionId(), hitlHost(turnEl), scroll).then(function (needs) {
+        if (needs) setStatus('amber', busyStatusLabel());
+        return needs;
+      });
+    }
+
     function finishTurn() {
       if (es) { es.close(); es = null; }
       sending = false;
@@ -781,759 +809,61 @@
       return data.session_id;
     }
 
+    function turnStreamCtx(mode, turn, extra) {
+      extra = extra || {};
+      return Object.assign({
+        mode: mode,
+        wrap: wrap,
+        scroll: scroll,
+        turn: turn,
+        agentId: agentId || '',
+        defaultAgentName: defaultAgentName,
+        esc: esc,
+        bubbleHtml: bubbleHtml,
+        agentColor: agentColor,
+        setMarkdown: setMarkdown,
+        atBottom: atBottom,
+        setStatus: setStatus,
+        busyStatusLabel: busyStatusLabel,
+        refreshSendBtn: refreshSendBtn,
+        closeStream: closeStream,
+        finishTurn: finishTurn,
+        scheduleQueueDrain: scheduleQueueDrain,
+        setSending: function (v) { sending = !!v; },
+        getSending: function () { return sending; },
+        messageQueue: messageQueue,
+        currentSessionId: currentSessionId,
+        onBindHitl: function (stream, turnEl, onEvent) {
+          bindHitl(stream, turnEl, onEvent);
+        },
+      }, extra);
+    }
+
     function streamTurn(text, turnEl, attachmentIds) {
-      // Clean up any leftover detail panel from a previous turn.
       var oldPanel = wrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
 
       wrap.dataset.liveStream = '1';
       wrap.dispatchEvent(new CustomEvent('tomo:turn-start', { bubbles: true }));
 
-      // Reuse the turn that already holds this user bubble (matches history layout).
-      let turn = turnEl;
+      var turn = turnEl;
       if (!turn || !turn.classList || !turn.classList.contains('turn')) {
         turn = document.createElement('div');
         turn.className = 'turn';
         scroll.appendChild(turn);
       }
-      let thinkEl = null, asstEl = null, asstBody = null, pendingEl = null, raw = '', closed = false;
-      let turnAgentName = defaultAgentName;
-      let turnAgentId = agentId || '';
-      let turnActive = false;
-      let sawDone = false;
-      let idleTimer = null;
-      let hardTimer = null;
-      // Mid-turn stall (LLM hang after tool_result). Post-done wait for title.
-      const IDLE_MS = 180000;
-      const POST_DONE_MS = 20000;
-      const HARD_MS = 720000;
-      const attachIds = attachmentIds || [];
-
+      var attachIds = attachmentIds || [];
       es = postEventSource(streamUrl(text, attachIds), streamBody(text, attachIds));
-
-      function clearWatchdogs() {
-        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-        if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
-      }
-
-      function armIdle(ms) {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(function () {
-          if (closed) return;
-          console.warn('[tomo] turn idle timeout', sawDone ? 'post-done' : 'mid-turn');
-          if (!sawDone && !(asstBody && (asstBody.textContent || '').trim())) {
-            errorBubble('<span style="color:var(--danger)">Turn stalled (no response). You can send again.</span>');
-          }
-          endTurn();
-        }, ms || IDLE_MS);
-      }
-
-      function bumpActivity() {
-        armIdle(sawDone ? POST_DONE_MS : IDLE_MS);
-      }
-
-      hardTimer = setTimeout(function () {
-        if (closed) return;
-        console.warn('[tomo] turn hard timeout');
-        errorBubble('<span style="color:var(--danger)">Turn timed out. You can send again.</span>');
-        endTurn();
-      }, HARD_MS);
-      armIdle(IDLE_MS);
-
-      // Log every wire event (browser console) for debugging streams / titles.
-      [
-        'state', 'turn.start', 'session', 'thinking', 'tool', 'tool_result',
-        'delta', 'done', 'delegate', 'error', 'heartbeat', 'turn.end', 'auth_expired',
-        'subagent_start', 'subagent_done', 'approval_required', 'clarify_required',
-        'todos',
-      ].forEach(function (name) {
-        es.addEventListener(name, function (e) {
-          var payload = e && e.data;
-          try { payload = JSON.parse(e.data || '{}'); } catch (_) {}
-          console.log('[tomo sse]', name, payload);
-        });
-      });
-
-      function clearPending() {
-        if (pendingEl) { pendingEl.remove(); pendingEl = null; }
-      }
-
-      function showPending() {
-        clearPending();
-        pendingEl = document.createElement('div');
-        pendingEl.className = 'turn-pending';
-        const style = turnAgentId ? ' style="background:' + agentColor(turnAgentId) + '"' : '';
-        pendingEl.innerHTML =
-          '<div class="av"' + style + '>' + esc((turnAgentName || 'A').slice(0, 1).toUpperCase()) + '</div>' +
-          '<div class="meta"><span class="name">' + esc(turnAgentName || 'Agent') + '</span>' +
-          '<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span></div>';
-        turn.appendChild(pendingEl);
-      }
-
-      function ensureAssistantBubble() {
-        clearPending();
-        if (asstEl) return asstEl;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-        asstEl = tmp.firstElementChild;
-        turn.appendChild(asstEl);
-        asstBody = asstEl.querySelector('.bubble-body');
-        return asstEl;
-      }
-
-      function dropEmptyAssistant() {
-        if (!asstEl) return;
-        const body = (asstBody && asstBody.textContent || '').trim();
-        if (body) return;
-        asstEl.remove();
-        asstEl = null;
-        asstBody = null;
-        raw = '';
-      }
-
-      function errorBubble(bodyHtml) {
-        clearPending();
-        dropEmptyAssistant();
-        const tmp = document.createElement('div');
-        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-        const b = tmp.firstElementChild;
-        turn.appendChild(b);
-        b.querySelector('.bubble-body').innerHTML = bodyHtml;
-        atBottom();
-      }
-
-      function endTurn() {
-        if (closed) return;
-        clearWatchdogs();
-        clearPending();
-        dropEmptyAssistant();
-        closed = true;
+      if (!window.TomoTurnStream || !TomoTurnStream.attach) {
+        console.error('[tomo] TomoTurnStream missing');
         closeStream();
-        delete wrap.dataset.liveStream;
-        wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
         finishTurn();
+        return;
       }
-
-      function adoptAgent(id, name) {
-        var nextId = id || turnAgentId;
-        var nextName = name || turnAgentName;
-        var switched = (nextId && nextId !== turnAgentId) ||
-          (nextName && nextName !== turnAgentName);
-        if (nextId) turnAgentId = nextId;
-        if (nextName) turnAgentName = nextName;
-        if (switched) {
-          clearPending();
-          dropEmptyAssistant();
-          asstEl = null;
-          asstBody = null;
-          raw = '';
-        }
-      }
-
-      // ── Subagent tracking ──────────────────────────────────────────
-      // Buffers accumulate events from delegated subagents so the detail
-      // panel can replay them on demand.  subagentSet is a quick lookup
-      // to decide whether an incoming event belongs to a subagent (skip
-      // main-turn rendering) or to the parent (render normally).
-      var subagentBuffers = new Map();
-      var subagentSet = new Set();
-      var swarmCard = null;
-      var detailPanel = null;
-      var activeDetailAgent = null;
-
-      function getBuffer(aid) {
-        if (!subagentBuffers.has(aid)) {
-          subagentBuffers.set(aid, {
-            events: [], status: 'running', task: '', name: '',
-            index: 0, total: 1, row: null,
-          });
-        }
-        return subagentBuffers.get(aid);
-      }
-
-      function bufferEvent(aid, kind, data) {
-        var buf = getBuffer(aid);
-        buf.events.push({ kind: kind, data: data });
-        if (activeDetailAgent === aid && detailPanel) renderEventInDetail(kind, data, aid);
-      }
-
-      function isSubagentEvent(d) {
-        var aid = d.agent_id || '';
-        return aid && subagentSet.has(aid) && aid !== agentId;
-      }
-
-      function createSwarmCard() {
-        clearPending();
-        dropEmptyAssistant();
-        if (swarmCard) return swarmCard;
-        swarmCard = document.createElement('div');
-        swarmCard.className = 'swarm-card';
-        turn.appendChild(swarmCard);
-        atBottom();
-        return swarmCard;
-      }
-
-      function addSwarmRow(aid, name, task, idx, total) {
-        var card = swarmCard || createSwarmCard();
-        var row = document.createElement('div');
-        row.className = 'swarm-row';
-        row.dataset.agentId = aid;
-        var color = agentColor(aid);
-        var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
-        var idxStr = String(idx).padStart(2, '0');
-        var totalStr = String(total).padStart(2, '0');
-        row.innerHTML =
-          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-          '<div class="swarm-meta">' +
-            '<div class="swarm-row-head">' +
-              '<span class="name">' + esc(name || aid) + '</span>' +
-              '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
-            '</div>' +
-            '<div class="task">' + esc(task || '') + '</div>' +
-            '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
-          '</div>' +
-          '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
-        row.addEventListener('click', function () { openDetailPanel(aid); });
-        card.appendChild(row);
-        var buf = getBuffer(aid);
-        buf.row = row;
-        buf.name = name || aid;
-        buf.task = task || '';
-        buf.index = idx;
-        buf.total = total;
-        atBottom();
-        return row;
-      }
-
-      function bumpSwarmProgress(aid) {
-        var buf = subagentBuffers.get(aid);
-        if (!buf || !buf.row) return;
-        buf.row.classList.add('active');
-        var bar = buf.row.querySelector('.swarm-progress-bar');
-        if (bar) {
-          var w = parseFloat(bar.style.width) || 0;
-          bar.style.width = Math.min(92, w + 7) + '%';
-        }
-      }
-
-      function markSwarmDone(aid, status) {
-        var buf = subagentBuffers.get(aid);
-        if (!buf) return;
-        buf.status = status === 'error' ? 'error' : 'done';
-        if (!buf.row) return;
-        buf.row.classList.remove('active');
-        buf.row.classList.add(buf.status);
-        var bar = buf.row.querySelector('.swarm-progress-bar');
-        if (bar) bar.style.width = '100%';
-        if (activeDetailAgent === aid && detailPanel) {
-          var badge = detailPanel.querySelector('.si-status');
-          if (badge) {
-            badge.className = 'si-status ' + buf.status;
-            badge.textContent = buf.status;
-          }
-          detailPanel.querySelectorAll('.si-pill').forEach(function (pill) {
-            var dot = pill.querySelector('.dot');
-            if (dot && pill.classList.contains('active')) {
-              dot.className = 'dot ' + buf.status;
-            }
-          });
-        }
-      }
-
-      function openDetailPanel(aid) {
-        activeDetailAgent = aid;
-        var buf = subagentBuffers.get(aid) || getBuffer(aid);
-        var name = buf.name || aid;
-        var color = agentColor(aid);
-        var letter = esc((name || '?').slice(0, 1).toUpperCase());
-        var status = buf.status || 'running';
-
-        var panel = wrap.querySelector('.subagent-inspector');
-        if (!panel) {
-          panel = document.createElement('aside');
-          panel.className = 'subagent-inspector';
-          panel.setAttribute('role', 'complementary');
-          panel.setAttribute('aria-label', 'Subagent inspector');
-          wrap.appendChild(panel);
-        }
-        detailPanel = panel;
-        panel.innerHTML = '';
-
-        var head = document.createElement('div');
-        head.className = 'si-head';
-        head.innerHTML =
-          '<div class="si-agent">' +
-            '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-            '<div class="si-meta">' +
-              '<div class="si-name-row">' +
-                '<span class="si-name">' + esc(name) + '</span>' +
-                '<span class="si-status ' + esc(status) + '">' + esc(status) + '</span>' +
-              '</div>' +
-              '<div class="si-id">@' + esc(aid) + '</div>' +
-            '</div>' +
-          '</div>' +
-          '<button class="si-close" type="button" title="Close" aria-label="Close inspector">\u2715</button>';
-        panel.appendChild(head);
-
-        var taskEl = document.createElement('div');
-        taskEl.className = 'si-task';
-        if (buf.task) {
-          taskEl.innerHTML = '<span class="si-task-label">Task</span>' + esc(buf.task);
-        }
-        panel.appendChild(taskEl);
-
-        var bufferList = [];
-        subagentBuffers.forEach(function (b, id) { bufferList.push({ id: id, buf: b }); });
-        if (bufferList.length > 1) {
-          var nameCounts = {};
-          bufferList.forEach(function (item) {
-            var base = item.buf.name || item.id;
-            nameCounts[base] = (nameCounts[base] || 0) + 1;
-          });
-          var nameSeen = {};
-          var switcher = document.createElement('nav');
-          switcher.className = 'si-switcher';
-          switcher.setAttribute('aria-label', 'Subagents in this turn');
-          bufferList.forEach(function (item) {
-            var id = item.id;
-            var b = item.buf;
-            var base = b.name || id;
-            nameSeen[base] = (nameSeen[base] || 0) + 1;
-            var pill = document.createElement('button');
-            pill.type = 'button';
-            pill.className = 'si-pill' + (id === aid ? ' active' : '');
-            var st = b.status || 'running';
-            var cColor = agentColor(id);
-            var cLetter = esc((b.name || id || '?').slice(0, 1).toUpperCase());
-            var label = base;
-            if (nameCounts[base] > 1) label += ' #' + nameSeen[base];
-            pill.innerHTML =
-              '<span class="av" style="background:' + cColor + '">' + cLetter + '</span>' +
-              '<span>' + esc(label) + '</span>' +
-              '<span class="dot ' + esc(st) + '"></span>';
-            pill.addEventListener('click', function () { openDetailPanel(id); });
-            switcher.appendChild(pill);
-          });
-          panel.appendChild(switcher);
-        }
-
-        var body = document.createElement('div');
-        body.className = 'si-body';
-        panel.appendChild(body);
-
-        if (!buf.events.length) {
-          body.innerHTML = '<div class="si-empty">No steps yet — waiting for this agent to run.</div>';
-        } else {
-          var tl = document.createElement('div');
-          tl.className = 'si-timeline';
-          body.appendChild(tl);
-          buf.events.forEach(function (ev) {
-            renderEventInDetail(ev.kind, ev.data, aid);
-          });
-        }
-
-        head.querySelector('.si-close').addEventListener('click', closeDetailPanel);
-        wrap.querySelectorAll('.swarm-row').forEach(function (r) {
-          r.classList.toggle('selected', r.dataset.agentId === aid);
-        });
-        requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
-      }
-
-      function closeDetailPanel() {
-        activeDetailAgent = null;
-        wrap.querySelectorAll('.swarm-row.selected').forEach(function (r) {
-          r.classList.remove('selected');
-        });
-        var panel = wrap.querySelector('.subagent-inspector');
-        detailPanel = null;
-        if (panel) panel.remove();
-      }
-
-      function renderEventInDetail(kind, data, aid) {
-        if (!detailPanel) return;
-        var body = detailPanel.querySelector('.si-body');
-        if (!body) return;
-        if (window.Tomo && Tomo.renderInspectorStep) {
-          Tomo.renderInspectorStep(body, kind, data);
-          body.scrollTop = body.scrollHeight;
-        }
-      }
-
-      function makeToolCollapsible(card) {
-        if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
-      }
-
-      function buildToolCard(d) {
-        if (window.Tomo && Tomo.buildToolCard) {
-          return Tomo.buildToolCard({ tool: d.tool || 'tool', args: d.args || {}, running: true });
-        }
-        var tool = d.tool || 'tool';
-        var args = d.args || {};
-        var card = document.createElement('div');
-        card.className = 'tool loading';
-        card.innerHTML =
-          '<button type="button" class="tool-head">' +
-            '<span class="tstatus"></span><span class="tname">' + esc(tool) + '</span> ' +
-            '<span class="targs"></span><span class="tchip"></span><span class="chevron"></span>' +
-          '</button><div class="tool-body"><pre class="tres"></pre></div>';
-        card._res = card.querySelector('.tres');
-        card._chip = card.querySelector('.tchip');
-        makeToolCollapsible(card);
-        return card;
-      }
-
-      function buildApprovalCard(d) {
-        var card = document.createElement('div');
-        card.className = 'hitl-card approval-card';
-        card.dataset.id = d.id || '';
-        var findings = (d.findings || []).map(function (f) {
-          return '<li>' + esc(f.description || f.kind || '') + '</li>';
-        }).join('');
-        var preview = '';
-        try {
-          preview = typeof d.args_preview === 'string'
-            ? d.args_preview
-            : JSON.stringify(d.args_preview || {}, null, 2);
-        } catch (_) {
-          preview = String(d.args_preview || '');
-        }
-        var choices = d.choices || ['once', 'session', 'always', 'deny'];
-        var labels = { once: 'Once', session: 'Session', always: 'Always', deny: 'Deny' };
-        var btns = choices.map(function (c) {
-          return '<button type="button" class="hitl-btn" data-choice="' + esc(c) + '">' +
-            esc(labels[c] || c) + '</button>';
-        }).join('');
-        card.innerHTML =
-          '<div class="hitl-title">Approval required · ' + esc(d.tool || 'tool') + '</div>' +
-          '<div class="hitl-desc">' + esc(d.description || '') + '</div>' +
-          (findings ? '<ul class="hitl-findings">' + findings + '</ul>' : '') +
-          '<pre class="hitl-preview">' + esc(preview).slice(0, 800) + '</pre>' +
-          '<div class="hitl-actions">' + btns + '</div>';
-        card.querySelectorAll('.hitl-btn').forEach(function (btn) {
-          btn.addEventListener('click', function () {
-            var choice = btn.getAttribute('data-choice');
-            card.classList.add('resolved');
-            card.querySelectorAll('.hitl-btn').forEach(function (b) { b.disabled = true; });
-            fetch('/api/approvals/' + encodeURIComponent(d.id), {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ choice: choice }),
-            }).catch(function () {});
-          });
-        });
-        return card;
-      }
-
-      function buildClarifyCard(d) {
-        var card = document.createElement('div');
-        card.className = 'hitl-card clarify-card';
-        card.dataset.id = d.id || '';
-        var choices = d.choices || [];
-        var btns = choices.map(function (c, i) {
-          return '<button type="button" class="hitl-btn" data-answer="' + esc(c) + '">' +
-            esc(c) + '</button>';
-        }).join('');
-        card.innerHTML =
-          '<div class="hitl-title">Question</div>' +
-          '<div class="hitl-desc">' + esc(d.question || '') + '</div>' +
-          '<div class="hitl-actions">' + btns + '</div>' +
-          '<div class="hitl-other">' +
-            '<input type="text" class="hitl-input" placeholder="Other…" />' +
-            '<button type="button" class="hitl-btn hitl-send">Send</button>' +
-          '</div>';
-        function submit(answer) {
-          if (!answer) return;
-          card.classList.add('resolved');
-          card.querySelectorAll('button,input').forEach(function (el) { el.disabled = true; });
-          fetch('/api/clarify/' + encodeURIComponent(d.id), {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ answer: answer }),
-          }).catch(function () {});
-        }
-        card.querySelectorAll('.hitl-btn[data-answer]').forEach(function (btn) {
-          btn.addEventListener('click', function () {
-            submit(btn.getAttribute('data-answer') || '');
-          });
-        });
-        var sendBtn = card.querySelector('.hitl-send');
-        var inputEl = card.querySelector('.hitl-input');
-        if (sendBtn && inputEl) {
-          sendBtn.addEventListener('click', function () { submit(inputEl.value.trim()); });
-          inputEl.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Enter') {
-              ev.preventDefault();
-              submit(inputEl.value.trim());
-            }
-          });
-        }
-        return card;
-      }
-
-      es.addEventListener('state', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (d.busy) {
-          setStatus('amber', busyStatusLabel());
-        }
-        // End only when the active turn agent signals idle — not other swarm members.
-        if (!d.busy && turnActive) {
-          var who = d.agent_id || '';
-          if (!who || who === turnAgentId || who === agentId) endTurn();
-        } else if (!d.busy && !sending) setStatus('ok', 'online');
-      });
-      es.addEventListener('delegate', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        var target = d.to || d.agent_id || '';
-        var name = d.agent || target;
-        var task = d.task || d.reason || '';
-        var idx = d.parallel_index || 1;
-        var total = d.parallel_total || 1;
-        if (target) subagentSet.add(target);
-        createSwarmCard();
-        var buf = getBuffer(target);
-        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        if (!buf.row) addSwarmRow(target, name, task, idx, total);
-        setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
-        atBottom();
-      });
-      es.addEventListener('subagent_start', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        var aid = d.agent_id || '';
-        var name = d.agent || aid;
-        var task = d.task || '';
-        var idx = d.parallel_index || 1;
-        var total = d.parallel_total || 1;
-        if (aid) subagentSet.add(aid);
-        var buf = getBuffer(aid);
-        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        if (!buf.row) addSwarmRow(aid, name, task, idx, total);
-        buf.row.classList.add('active');
-        atBottom();
-      });
-      es.addEventListener('subagent_done', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        var aid = d.agent_id || '';
-        markSwarmDone(aid, d.status || 'ok');
-        atBottom();
-      });
-      es.addEventListener('turn.start', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        turnActive = true;
-        adoptAgent(d.agent_id, d.agent);
-        if (!asstEl) showPending();
-        atBottom();
-      });
-      es.addEventListener('session', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (!d.title) return;
-        wrap.dispatchEvent(new CustomEvent('tomo:session-title', {
-          detail: { session_id: d.session_id || currentSessionId(), title: d.title },
-        }));
-      });
-      es.addEventListener('thinking', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) {
-          bufferEvent(d.agent_id, 'thinking', d);
-          bumpSwarmProgress(d.agent_id);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        clearPending();
-        if (!thinkEl) { thinkEl = document.createElement('div'); thinkEl.className = 'thinking'; turn.appendChild(thinkEl); }
-        thinkEl.textContent += d.content || '';
-        atBottom();
-      });
-      es.addEventListener('tool', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) {
-          bufferEvent(d.agent_id, 'tool', d);
-          bumpSwarmProgress(d.agent_id);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        clearPending();
-        dropEmptyAssistant();
-        turn.appendChild(buildToolCard(d));
-        atBottom();
-      });
-      es.addEventListener('tool_result', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) {
-          bufferEvent(d.agent_id, 'tool_result', d);
-          bumpSwarmProgress(d.agent_id);
-          return;
-        }
-        const cards = turn.querySelectorAll('.tool');
-        const last = cards[cards.length - 1];
-        if (last) {
-          var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-          if (window.Tomo && Tomo.finishToolCard) {
-            Tomo.finishToolCard(last, resultText, !!d.error);
-          } else if (last._res) {
-            last._res.textContent = resultText;
-            last.classList.remove('loading');
-          }
-          try {
-            var toolName = (d.name || d.tool || '').toString();
-            var parsedArt = window.TomoArtifacts
-              ? TomoArtifacts.parseSaveResult(toolName, resultText)
-              : null;
-            if (!d.error && parsedArt) {
-              turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
-              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
-            }
-          } catch (_) {}
-        }
-        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
-          Tomo.upsertTodoPanel(turn, d.todos);
-        }
-        // Keep typing indicator after tool so UI does not look frozen mid-turn.
-        if (!asstEl && !pendingEl) showPending();
-        atBottom();
-      });
-      es.addEventListener('todos', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) {
-          bufferEvent(d.agent_id, 'todos', d);
-          bumpSwarmProgress(d.agent_id);
-          return;
-        }
-        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
-          clearPending();
-          Tomo.upsertTodoPanel(turn, d.todos);
-          if (!asstEl && !pendingEl) showPending();
-          atBottom();
-        }
-      });
-      es.addEventListener('approval_required', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        clearPending();
-        turn.appendChild(buildApprovalCard(d));
-        atBottom();
-      });
-      es.addEventListener('clarify_required', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        clearPending();
-        turn.appendChild(buildClarifyCard(d));
-        atBottom();
-      });
-      es.addEventListener('delta', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) {
-          bufferEvent(d.agent_id, 'delta', d);
-          bumpSwarmProgress(d.agent_id);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        const piece = d.content || '';
-        // Drop internal swarm bookkeeping if a model echoes it mid-stream.
-        if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
-        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        ensureAssistantBubble();
-        asstEl.classList.add('streaming');
-        raw += piece;
-        if (/^\s*\[Swarm\]/.test(raw)) {
-          dropEmptyAssistant();
-          raw = '';
-          return;
-        }
-        setMarkdown(asstBody, raw);
-        atBottom();
-      });
-      es.addEventListener('done', function (e) {
-        bumpActivity();
-        sawDone = true;
-        armIdle(POST_DONE_MS);
-        const d = JSON.parse(e.data || '{}');
-        if (isSubagentEvent(d)) return;
-        adoptAgent(d.agent_id, d.agent);
-        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        let content = (d.content != null ? String(d.content) : '').trim();
-        if (content.indexOf('[Swarm]') === 0) content = '';
-        if (content) {
-          ensureAssistantBubble();
-          raw = content;
-          setMarkdown(asstBody, raw);
-          asstEl.classList.remove('streaming');
-        } else {
-          clearPending();
-          dropEmptyAssistant();
-        }
-        atBottom();
-        setStatus('amber', busyStatusLabel());
-      });
-      es.addEventListener('turn.end', function () {
-        // Server closed the turn cleanly (no forever-heartbeat after message).
-        endTurn();
-      });
-      // Named SSE error vs transport close.
-      es.addEventListener('error', function (e) {
-        if (closed) return;
-        if (e && e.data) {
-          let msg = 'Agent error';
-          let code = '';
-          let errAgentId = '';
-          try {
-            const payload = JSON.parse(e.data);
-            msg = payload.message || msg;
-            code = payload.code || '';
-            errAgentId = payload.agent_id || '';
-          } catch (_) {}
-          // Subagent errors don't end the parent turn.
-          if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== agentId) {
-            bufferEvent(errAgentId, 'error', { message: msg });
-            markSwarmDone(errAgentId, 'error');
-            return;
-          }
-          if (code === 'session_busy' && text) {
-            clearWatchdogs();
-            closed = true;
-            closeStream();
-            messageQueue.unshift({ text: text, el: null, attachmentIds: attachIds });
-            sending = false;
-            setStatus('amber', busyStatusLabel());
-            if (window.Tomo && Tomo.toast) {
-              Tomo.toast('Session busy — message queued, retrying…', 'ok');
-            }
-            scheduleQueueDrain(700);
-            return;
-          }
-          errorBubble('<span style="color:var(--danger)">' + esc(msg) + '</span>');
-          endTurn();
-          return;
-        }
-        // Transport close: after a normal turn.end/busy=false we already closed.
-        // If the stream ends after activity, finish quietly — do not flash "interrupted".
-        if (turnActive || sawDone) {
-          endTurn();
-          return;
-        }
-        errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
-        endTurn();
-      });
-      es.addEventListener('heartbeat', function () {
-        // Keep-alive during long tools/LLM calls. After `done`, do NOT reset
-        // the post-done timer — forever-heartbeats (lost turn.end) used to
-        // keep the UI busy until hard timeout / refresh.
-        if (sawDone) return;
-        bumpActivity();
-      });
-      es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
+      TomoTurnStream.attach(es, turnStreamCtx('live', turn, {
+        text: text || '',
+        attachIds: attachIds,
+      }));
     }
 
     /**
@@ -1819,500 +1149,21 @@
      * @returns {boolean} true if a resume stream was opened
      */
     function resumeActiveTurn() {
-      const sid = currentSessionId();
-      const url = listenUrl();
+      var sid = currentSessionId();
+      var url = listenUrl();
       if (!sid || !url || sending || es) return false;
 
-      const turns = scroll.querySelectorAll('.turn');
-      const turn = turns[turns.length - 1];
-      if (!turn) return false;
-
-      let closed = false;
-      let sawTurnEvent = false;
-      let sawDone = false;
-      let turnAgentName = defaultAgentName;
-      let turnAgentId = agentId || '';
-      let thinkEl = null;
-      let asstEl = null;
-      let asstBody = null;
-      let pendingEl = null;
-      let raw = '';
-      let idleTimer = null;
-      let hardTimer = null;
-      const IDLE_MS = 180000;
-      const HARD_MS = 720000;
-
-      // Skip replayed tool/tool_result events already represented in history.
-      let skipTools = turn.querySelectorAll('.tool').length;
-      let skipResults = 0;
-      turn.querySelectorAll('.tool').forEach(function (c) {
-        if (c._res && c._res.textContent) skipResults++;
-      });
-      let toolSeen = 0;
-      let resultSeen = 0;
-
-      const subagentSet = new Set();
-      turn.querySelectorAll('.swarm-row[data-agent-id]').forEach(function (row) {
-        if (row.dataset.agentId) subagentSet.add(row.dataset.agentId);
-      });
-
-      function swarmRowFor(aid) {
-        if (!aid) return null;
-        var rows = turn.querySelectorAll('.swarm-row[data-agent-id]');
-        for (var i = 0; i < rows.length; i++) {
-          if (rows[i].dataset.agentId === aid) return rows[i];
-        }
-        return null;
-      }
-
-      function bumpSwarmProgress(aid) {
-        if (!aid) return;
-        var row = swarmRowFor(aid);
-        if (!row) return;
-        row.classList.add('active');
-        var bar = row.querySelector('.swarm-progress-bar');
-        if (bar) {
-          var w = parseFloat(bar.style.width) || 0;
-          bar.style.width = Math.min(92, w + 7) + '%';
-        }
-      }
-
-      function ensureSwarmRow(aid, name, task, idx, total) {
-        if (!aid) return;
-        subagentSet.add(aid);
-        var row = swarmRowFor(aid);
-        if (row) {
-          bumpSwarmProgress(aid);
-          return row;
-        }
-        var card = turn.querySelector('.swarm-card');
-        if (!card) {
-          card = document.createElement('div');
-          card.className = 'swarm-card';
-          turn.appendChild(card);
-        }
-        row = document.createElement('div');
-        row.className = 'swarm-row active';
-        row.dataset.agentId = aid;
-        var color = agentColor(aid);
-        var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
-        var idxStr = String(idx || 1).padStart(2, '0');
-        var totalStr = String(total || 1).padStart(2, '0');
-        row.innerHTML =
-          '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-          '<div class="swarm-meta">' +
-            '<div class="swarm-row-head">' +
-              '<span class="name">' + esc(name || aid) + '</span>' +
-              '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
-            '</div>' +
-            '<div class="task">' + esc(task || '') + '</div>' +
-            '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:8%"></div></div>' +
-          '</div>' +
-          '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
-        card.appendChild(row);
-        atBottom();
-        return row;
-      }
-
-      function markSwarmDone(aid, status) {
-        if (!aid) return;
-        var row = swarmRowFor(aid);
-        if (!row) return;
-        row.classList.remove('active');
-        row.classList.add(status === 'error' ? 'error' : 'done');
-        var bar = row.querySelector('.swarm-progress-bar');
-        if (bar) bar.style.width = '100%';
-      }
-
-      function clearWatchdogs() {
-        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-        if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
-      }
-
-      function armIdle(ms) {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(function () {
-          if (closed) return;
-          endResume();
-        }, ms || IDLE_MS);
-      }
-
-      function bumpActivity() {
-        armIdle(IDLE_MS);
-      }
-
-      function clearPending() {
-        if (pendingEl) { pendingEl.remove(); pendingEl = null; }
-      }
-
-      function showPending() {
-        clearPending();
-        pendingEl = document.createElement('div');
-        pendingEl.className = 'turn-pending';
-        const style = turnAgentId ? ' style="background:' + agentColor(turnAgentId) + '"' : '';
-        pendingEl.innerHTML =
-          '<div class="av"' + style + '>' + esc((turnAgentName || 'A').slice(0, 1).toUpperCase()) + '</div>' +
-          '<div class="meta"><span class="name">' + esc(turnAgentName || 'Agent') + '</span>' +
-          '<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span></div>';
-        turn.appendChild(pendingEl);
-      }
-
-      function ensureAssistantBubble() {
-        clearPending();
-        if (asstEl) return asstEl;
-        // Prefer an existing assistant bubble from history (partial refresh).
-        const existing = turn.querySelector('.msg.assistant');
-        if (existing) {
-          asstEl = existing;
-          asstBody = existing.querySelector('.bubble-body');
-          raw = (asstBody && asstBody.textContent) || '';
-          return asstEl;
-        }
-        const tmp = document.createElement('div');
-        tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-        asstEl = tmp.firstElementChild;
-        turn.appendChild(asstEl);
-        asstBody = asstEl.querySelector('.bubble-body');
-        return asstEl;
-      }
-
-      function dropEmptyAssistant() {
-        if (!asstEl) return;
-        const body = (asstBody && asstBody.textContent || '').trim();
-        if (body) return;
-        asstEl.remove();
-        asstEl = null;
-        asstBody = null;
-        raw = '';
-      }
-
-      function adoptAgent(id, name) {
-        if (id) turnAgentId = id;
-        if (name) turnAgentName = name;
-      }
-
-      function clearToolLoading() {
-        turn.querySelectorAll('.tool.loading').forEach(function (c) {
-          c.classList.remove('loading');
-        });
-      }
-
-      function makeToolCollapsible(card) {
-        if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
-      }
-
-      function buildToolCard(d) {
-        if (window.Tomo && Tomo.buildToolCard) {
-          return Tomo.buildToolCard({ tool: d.tool || 'tool', args: d.args || {}, running: true });
-        }
-        var tool = d.tool || 'tool';
-        var card = document.createElement('div');
-        card.className = 'tool loading';
-        card.innerHTML =
-          '<button type="button" class="tool-head">' +
-            '<span class="tstatus"></span><span class="tname">' + esc(tool) + '</span>' +
-            '<span class="targs"></span><span class="tchip"></span><span class="chevron"></span>' +
-          '</button><div class="tool-body"><pre class="tres"></pre></div>';
-        card._res = card.querySelector('.tres');
-        card._chip = card.querySelector('.tchip');
-        makeToolCollapsible(card);
-        return card;
-      }
-
-      function applyToolResult(d) {
-        const cards = turn.querySelectorAll('.tool');
-        const last = cards[cards.length - 1];
-        if (last) {
-          var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-          if (window.Tomo && Tomo.finishToolCard) {
-            Tomo.finishToolCard(last, resultText, !!d.error);
-          } else if (last._res) {
-            last._res.textContent = resultText;
-            last.classList.remove('loading');
-          }
-          try {
-            var toolName = (d.name || d.tool || '').toString();
-            var parsedArt = window.TomoArtifacts
-              ? TomoArtifacts.parseSaveResult(toolName, resultText)
-              : null;
-            if (!d.error && parsedArt) {
-              turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
-              if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
-            }
-          } catch (_) {}
-        }
-        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
-          Tomo.upsertTodoPanel(turn, d.todos);
-        }
-        if (!asstEl && !pendingEl) showPending();
-        atBottom();
-      }
-
-      function endResume() {
-        if (closed) return;
-        clearWatchdogs();
-        clearPending();
-        dropEmptyAssistant();
-        closed = true;
-        closeStream();
-        delete wrap.dataset.liveStream;
-        wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
-        finishTurn();
-      }
-
-      function endIdleResume() {
-        // Listen mode hit idle heartbeats — turn already finished (or never ran).
-        if (closed) return;
-        clearWatchdogs();
-        clearToolLoading();
-        closed = true;
-        closeStream();
-        delete wrap.dataset.liveStream;
-        sending = false;
-        setStatus('ok', 'online');
-        refreshSendBtn();
-      }
-
-      sending = true;
-      wrap.dataset.liveStream = '1';
-      setStatus('amber', busyStatusLabel());
-      wrap.dispatchEvent(new CustomEvent('tomo:turn-start', { bubbles: true }));
-      refreshSendBtn();
+      var turn = hitlHost(null);
+      rehydratePendingHitl(turn);
 
       es = new EventSource(url);
-      hardTimer = setTimeout(function () {
-        if (closed) return;
-        endResume();
-      }, HARD_MS);
-      armIdle(IDLE_MS);
-
-      // If listen mode is only idle heartbeats (turn already finished), stop
-      // looking busy once replay would have arrived. Keep waiting when history
-      // already shows an in-flight swarm row (mid-run refresh).
-      setTimeout(function () {
-        if (!closed && !sawTurnEvent && subagentSet.size === 0) endIdleResume();
-      }, 1000);
-
-      es.addEventListener('state', function (e) {
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (d.busy) setStatus('amber', busyStatusLabel());
-      });
-
-      es.addEventListener('turn.start', function () {
-        sawTurnEvent = true;
-        bumpActivity();
-        setStatus('amber', busyStatusLabel());
-      });
-
-      es.addEventListener('delegate', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        ensureSwarmRow(
-          d.to || d.agent_id || '',
-          d.agent || d.to || '',
-          d.task || d.reason || '',
-          d.parallel_index || 1,
-          d.parallel_total || 1
-        );
-        setStatus('amber', busyStatusLabel());
-        atBottom();
-      });
-
-      es.addEventListener('subagent_start', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        ensureSwarmRow(
-          d.agent_id || '',
-          d.agent || d.agent_id || '',
-          d.task || '',
-          d.parallel_index || 1,
-          d.parallel_total || 1
-        );
-        atBottom();
-      });
-
-      es.addEventListener('subagent_done', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        markSwarmDone(d.agent_id || '', d.status || 'ok');
-        atBottom();
-      });
-
-      es.addEventListener('tool', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) {
-          bumpSwarmProgress(aid);
-          return;
-        }
-        toolSeen++;
-        if (toolSeen <= skipTools) {
-          // Replay of a history tool — keep unpaired card in loading state.
-          const cards = turn.querySelectorAll('.tool');
-          const card = cards[toolSeen - 1];
-          if (card && !(card._res && card._res.textContent)) {
-            card.classList.add('loading');
-            if (!card.querySelector('.tloading')) {
-              const tip = document.createElement('div');
-              tip.className = 'tloading';
-              tip.textContent = 'running\u2026';
-              card.insertBefore(tip, card._res || null);
-            }
-          }
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        clearPending();
-        dropEmptyAssistant();
-        turn.appendChild(buildToolCard(d));
-        atBottom();
-      });
-
-      es.addEventListener('tool_result', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) {
-          bumpSwarmProgress(aid);
-          return;
-        }
-        resultSeen++;
-        if (resultSeen <= skipResults) return;
-        applyToolResult(d);
-      });
-
-      es.addEventListener('todos', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
-          clearPending();
-          Tomo.upsertTodoPanel(turn, d.todos);
-          if (!asstEl && !pendingEl) showPending();
-          atBottom();
-        }
-      });
-
-      es.addEventListener('thinking', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) {
-          bumpSwarmProgress(aid);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        clearPending();
-        if (!thinkEl) {
-          thinkEl = document.createElement('div');
-          thinkEl.className = 'thinking';
-          turn.appendChild(thinkEl);
-        }
-        thinkEl.textContent += d.content || '';
-        atBottom();
-      });
-
-      es.addEventListener('delta', function (e) {
-        sawTurnEvent = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) {
-          bumpSwarmProgress(aid);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        const piece = d.content || '';
-        if (!raw && /^\s*\[Swarm\]/.test(piece)) return;
-        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        ensureAssistantBubble();
-        asstEl.classList.add('streaming');
-        raw += piece;
-        if (/^\s*\[Swarm\]/.test(raw)) {
-          dropEmptyAssistant();
-          raw = '';
-          return;
-        }
-        setMarkdown(asstBody, raw);
-        atBottom();
-      });
-
-      es.addEventListener('done', function (e) {
-        sawTurnEvent = true;
-        sawDone = true;
-        bumpActivity();
-        const d = JSON.parse(e.data || '{}');
-        const aid = d.agent_id || '';
-        if (aid && subagentSet.has(aid) && aid !== agentId) {
-          bumpSwarmProgress(aid);
-          return;
-        }
-        adoptAgent(d.agent_id, d.agent);
-        if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-        let content = (d.content != null ? String(d.content) : '').trim();
-        if (content.indexOf('[Swarm]') === 0) content = '';
-        if (content) {
-          ensureAssistantBubble();
-          raw = content;
-          setMarkdown(asstBody, raw);
-          asstEl.classList.remove('streaming');
-        } else {
-          clearPending();
-          dropEmptyAssistant();
-        }
-        atBottom();
-        setStatus('amber', busyStatusLabel());
-      });
-
-      es.addEventListener('turn.end', function () {
-        endResume();
-      });
-
-      es.addEventListener('heartbeat', function () {
-        // Heartbeat with no turn events ⇒ idle listen stream (stale busy, etc.).
-        if (!sawTurnEvent) {
-          endIdleResume();
-          return;
-        }
-        // After done, don't let keepalives defer endResume forever.
-        if (sawDone) return;
-        bumpActivity();
-      });
-
-      es.addEventListener('error', function (e) {
-        if (closed) return;
-        if (e && e.data) {
-          let msg = 'Agent error';
-          try {
-            const payload = JSON.parse(e.data);
-            msg = payload.message || msg;
-            const errAgentId = payload.agent_id || '';
-            if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== agentId) return;
-          } catch (_) {}
-          clearPending();
-          const tmp = document.createElement('div');
-          tmp.innerHTML = bubbleHtml('assistant', turnAgentName, turnAgentId);
-          const b = tmp.firstElementChild;
-          turn.appendChild(b);
-          b.querySelector('.bubble-body').innerHTML =
-            '<span style="color:var(--danger)">' + esc(msg) + '</span>';
-          endResume();
-          return;
-        }
-        // Transport error: EventSource will retry; don't tear down yet if turn active.
-        if (sawTurnEvent) return;
-        endIdleResume();
-      });
-
-      es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
+      if (!window.TomoTurnStream || !TomoTurnStream.attach) {
+        console.error('[tomo] TomoTurnStream missing');
+        closeStream();
+        return false;
+      }
+      // attach() sets sending / liveStream / status for resume mode.
+      TomoTurnStream.attach(es, turnStreamCtx('resume', turn, {}));
       return true;
     }
 
@@ -2325,6 +1176,7 @@
       },
       send: send,
       resume: resumeActiveTurn,
+      rehydratePending: rehydratePendingHitl,
     };
   }
 
@@ -2337,6 +1189,19 @@
   };
 
   document.querySelectorAll('.chat-wrap').forEach(function (wrap) {
-    initChat(wrap);
+    var handle = initChat(wrap);
+    if (!handle) return;
+    // Agent detail / hard refresh: restore HITL cards and re-attach mid-turn stream.
+    if (handle.rehydratePending) {
+      handle.rehydratePending().then(function (needsResume) {
+        if (needsResume && handle.resume) {
+          handle.resume();
+          return;
+        }
+        var scrollEl = wrap.querySelector('.chat-scroll');
+        var loadingTools = scrollEl && scrollEl.querySelectorAll('.tool.loading');
+        if (loadingTools && loadingTools.length && handle.resume) handle.resume();
+      });
+    }
   });
 })();

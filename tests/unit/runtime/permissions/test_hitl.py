@@ -66,3 +66,28 @@ async def test_clarify_resolve() -> None:
     asyncio.create_task(_resolve())
     answer = await hitl.await_clarify(payload["id"], timeout=2.0)
     assert answer == "dev"
+
+
+def test_list_pending_for_session() -> None:
+    a = hitl.create_approval(
+        tool="bash",
+        args={"command": "ls"},
+        findings=[],
+        description="list",
+        session_id="s1",
+    )
+    hitl.create_approval(
+        tool="bash",
+        args={"command": "pwd"},
+        findings=[],
+        description="other session",
+        session_id="s2",
+    )
+    c = hitl.create_clarify(question="Pick?", choices=["a"], session_id="s1")
+    pending = hitl.list_pending_for_session("s1")
+    assert [p["id"] for p in pending["approvals"]] == [a["id"]]
+    assert [p["id"] for p in pending["clarifies"]] == [c["id"]]
+    assert hitl.list_pending_for_session("missing") == {
+        "approvals": [],
+        "clarifies": [],
+    }

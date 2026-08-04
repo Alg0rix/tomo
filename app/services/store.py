@@ -199,6 +199,7 @@ class Store:
             self._busy.end_session_turn(session_id)
 
     def is_session_turn_active(self, session_id: str) -> bool:
+        """True while the session-turn lease is held (background or direct stream)."""
         with self._lock:
             return self._busy.is_session_turn_active(session_id)
 
@@ -258,6 +259,10 @@ class Store:
     def get_or_create_session(self, agent_id: str, user_id: str) -> str:
         with self._lock:
             return sessions_store.get_or_create_session(self._conn, agent_id, user_id)
+
+    def find_session(self, agent_id: str, user_id: str) -> str | None:
+        with self._lock:
+            return sessions_store.find_session(self._conn, agent_id, user_id)
 
     def delete_session(self, session_id: str) -> bool:
         with self._lock:

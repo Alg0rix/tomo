@@ -14,11 +14,11 @@ from pydantic import BaseModel, Field
 from app.core.deps import AuthDep, session_user_id
 from app.services import (
     heartbeat_stream,
-    run_turn,
     session_heartbeat_stream,
     store,
 )
-from app.services.chat import get_active_session_turn, start_session_turn
+from app.channels.sse_map import session_busy_sse
+from app.services.chat import SessionTurnBusy, get_active_session_turn, start_session_turn
 
 
 class SessionChatStreamIn(BaseModel):
@@ -74,39 +74,51 @@ async def session_chat_stream_post(
     request: Request,
     _: AuthDep = None,
 ):
-    """Start (or join) a session turn; stream Tomo SSE. Prefer this over GET."""
-    if not store.get_session(session_id):
+    """Start a session turn and stream Tomo SSE. Prefer this over GET.
+
+    If a turn is already running, emit ``session_busy`` so the client can
+    re-queue. Reconnect/watch uses GET listen — never drop a new message by
+    joining an in-flight turn.
+    """
+    session = store.get_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     message = (body.message or "").strip()
     attachment_ids = list(body.attachment_ids or [])
     if not message and not attachment_ids:
         raise HTTPException(status_code=400, detail="Message is required")
     uid = session_user_id(request)
+    coordinator_id = session.get("coordinator_id") or session.get("agent_id") or ""
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
-        active = get_active_session_turn(session_id)
-        if active:
-            queue = active.subscribe(after_seq=0)
-        else:
-            try:
-                active, queue = await start_session_turn(
-                    session_id,
-                    message,
-                    uid,
-                    start_seq=0,
-                    attachment_ids=attachment_ids,
-                )
-            except ValueError:
-                yield fmt_sse(
-                    {
-                        "event": "error",
-                        "data": {"message": "Could not start turn"},
-                    }
-                )
-                return
+        busy = session_busy_sse(
+            agent_id=coordinator_id, session_id=session_id, seq=1
+        )
+        if get_active_session_turn(session_id) is not None:
+            yield busy
+            return
+        try:
+            active, queue = await start_session_turn(
+                session_id,
+                message,
+                uid,
+                start_seq=0,
+                attachment_ids=attachment_ids,
+            )
+        except SessionTurnBusy:
+            yield busy
+            return
+        except ValueError:
+            yield fmt_sse(
+                {
+                    "event": "error",
+                    "data": {"message": "Could not start turn"},
+                }
+            )
+            return
 
         owner = active
 
@@ -217,6 +229,7 @@ async def chat_stream_post(
     request: Request,
     _: AuthDep = None,
 ):
+    """Start a background turn on the agent's solo session (same as session POST)."""
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     message = (body.message or "").strip()
@@ -224,28 +237,47 @@ async def chat_stream_post(
     if not message and not attachment_ids:
         raise HTTPException(status_code=400, detail="Message is required")
     uid = session_user_id(request)
+    try:
+        session_id = store.get_or_create_session(agent_id, uid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
 
         yield "retry: 4000\n\n"
-        async with contextlib.aclosing(
-            run_turn(
-                agent_id,
+        busy = session_busy_sse(agent_id=agent_id, session_id=session_id, seq=1)
+        if get_active_session_turn(session_id) is not None:
+            yield busy
+            return
+        try:
+            active, queue = await start_session_turn(
+                session_id,
                 message,
                 uid,
                 start_seq=0,
                 attachment_ids=attachment_ids,
             )
-        ) as agen:
-            async for chunk in agen:
-                if await request.is_disconnected():
-                    return
-                yield chunk
+        except SessionTurnBusy:
+            yield busy
+            return
+        except ValueError:
+            yield fmt_sse(
+                {"event": "error", "data": {"message": "Could not start turn"}}
+            )
+            return
+
+        def _release() -> None:
+            active.unsubscribe(queue)
+
+        async for chunk in _drain_queue_with_heartbeats(
+            queue, request, on_exit=_release
+        ):
+            yield chunk
         yield fmt_sse(
             {
                 "event": "turn.end",
-                "data": {"agent_id": agent_id, "ok": True},
+                "data": {"agent_id": agent_id, "session_id": session_id, "ok": True},
                 "seq": 9999,
             }
         )
@@ -270,7 +302,7 @@ async def chat_stream(
     attachment_ids: Annotated[list[str], Query()] = [],
     _: AuthDep = None,
 ):
-    """Heartbeat / idle listen only. Starting a turn requires POST."""
+    """Listen/resume the agent's solo session turn, else idle heartbeats."""
     if (message or "").strip() or attachment_ids:
         raise HTTPException(
             status_code=405,
@@ -278,9 +310,38 @@ async def chat_stream(
         )
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
+    uid = session_user_id(request)
+    session_id = store.find_session(agent_id, uid)
 
     async def event_source():
+        from app.channels.sse_map import fmt_sse
+
         yield "retry: 4000\n\n"
+        if session_id:
+            active = get_active_session_turn(session_id)
+            if active:
+                queue = active.subscribe(after_seq=0)
+
+                def _release() -> None:
+                    active.unsubscribe(queue)
+
+                async for chunk in _drain_queue_with_heartbeats(
+                    queue, request, on_exit=_release
+                ):
+                    yield chunk
+                yield fmt_sse(
+                    {
+                        "event": "turn.end",
+                        "data": {
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                            "ok": True,
+                        },
+                        "seq": 9999,
+                    }
+                )
+                return
+
         async with contextlib.aclosing(
             heartbeat_stream(agent_id, start_seq=1000)
         ) as agen:

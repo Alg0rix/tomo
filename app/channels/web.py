@@ -17,7 +17,7 @@ import logging
 import uuid
 from typing import Any, AsyncIterator
 
-from app.channels.sse_map import fmt_sse, map_loop_event, now
+from app.channels.sse_map import fmt_sse, map_loop_event, now, session_busy_sse
 from app.runtime.agent.loop import run_turn as _agent_run_turn
 from app.runtime.coordinator.router import parse_leading_mention, resolve_target
 from app.runtime.session_title import (
@@ -319,6 +319,8 @@ async def stream_turn_sse(
     message: str,
     start_seq: int,
     attachment_ids: list[str] | None = None,
+    *,
+    acquire_lock: bool = True,
 ) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
@@ -327,34 +329,32 @@ async def stream_turn_sse(
 
     Only one turn may run per session at a time; concurrent streams get an
     immediate error so the client can re-queue the message.
+
+    When the caller already holds the session-turn lease (background
+    ``start_session_turn``), pass ``acquire_lock=False`` so lock ownership
+    stays with that single lease owner.
     """
     seq = start_seq
     busy_ids: set[str] = set()
     ctx_token = None
     wp_tokens = None
     primary_agent = coordinator_id
-    turn_locked = store.try_begin_session_turn(session_id)
-    if not turn_locked:
-        logger.warning(
-            "turn rejected session_id=%s reason=session busy concurrent turn",
-            session_id,
-        )
-        seq += 1
-        yield fmt_sse(
-            {
-                "event": "error",
-                "data": {
-                    "message": (
-                        "Session is busy with another turn. "
-                        "Your message was not accepted — try again when idle."
-                    ),
-                    "code": "session_busy",
-                    "agent_id": coordinator_id,
-                },
-                "seq": seq,
-            }
-        )
-        return
+    turn_locked = False
+    if acquire_lock:
+        turn_locked = store.try_begin_session_turn(session_id)
+        if not turn_locked:
+            logger.warning(
+                "turn rejected session_id=%s reason=session busy concurrent turn",
+                session_id,
+            )
+            seq += 1
+            yield session_busy_sse(
+                agent_id=coordinator_id, session_id=session_id, seq=seq
+            )
+            return
+    else:
+        # Caller holds the lease for the full background turn lifetime.
+        turn_locked = False
 
     logger.info(
         "turn begin session_id=%s coordinator_id=%s start_seq=%s message=%r",

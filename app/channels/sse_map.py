@@ -96,6 +96,30 @@ def fmt_sse(event: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def session_busy_sse(
+    *,
+    agent_id: str = "",
+    session_id: str = "",
+    seq: int = 1,
+) -> str:
+    """Wire event when a session already has an in-flight turn (client re-queues)."""
+    return fmt_sse(
+        {
+            "event": "error",
+            "data": {
+                "message": (
+                    "Session is busy with another turn. "
+                    "Your message was not accepted — try again when idle."
+                ),
+                "code": "session_busy",
+                "agent_id": agent_id,
+                "session_id": session_id,
+            },
+            "seq": seq,
+        }
+    )
+
+
 def now() -> float:
     return time.time()
 
@@ -500,4 +524,4 @@ def map_loop_event(
     return chunks, entries, seq
 
 
-__all__ = ["fmt_sse", "map_loop_event", "now", "sse_summary"]
+__all__ = ["fmt_sse", "map_loop_event", "now", "session_busy_sse", "sse_summary"]

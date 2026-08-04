@@ -264,5 +264,6 @@
     });
   }
   var wrap = document.querySelector('.chat-wrap');
+  // chat.js auto-inits + rehydrates HITL / mid-turn resume on load.
   if (wrap && window.TomoChat) TomoChat.init(wrap);
 })();
