@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.llm.mock import MockLLMClient
-from app.runtime.llm.openai_compat import LLMConfigError, OpenAICompatClient
+from app.runtime.llm.openai_compat import (
+    LLMConfigError,
+    LLMRequestError,
+    OpenAICompatClient,
+    default_llm_timeout_seconds,
+    format_llm_error,
+)
 
 
 def get_llm(agent_id: str | None = None) -> LLMClient:
@@ -30,7 +36,10 @@ def get_llm(agent_id: str | None = None) -> LLMClient:
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
     # OpenAICompatClient raises LLMConfigError when the API key is empty.
     return OpenAICompatClient(
-        base_url=base_url, api_key=profile.get("api_key") or "", model=model
+        base_url=base_url,
+        api_key=profile.get("api_key") or "",
+        model=model,
+        timeout=default_llm_timeout_seconds(),
     )
 
 
@@ -41,5 +50,8 @@ __all__ = [
     "MockLLMClient",
     "OpenAICompatClient",
     "LLMConfigError",
+    "LLMRequestError",
+    "format_llm_error",
+    "default_llm_timeout_seconds",
     "get_llm",
 ]

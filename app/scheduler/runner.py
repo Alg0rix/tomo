@@ -1,10 +1,8 @@
-"""In-process schedule harness — fires due jobs as agent turns.
+"""Schedule fire path + lifespan hooks.
 
-Hermes-inspired hardening:
-* claim-before-fire CAS (no double-fire across overlapping ticks)
-* real next_run via parse.compute_next_run (interval / cron / one-shot)
-* one-shot and repeat_times auto-complete after the last successful claim
-* concurrent due jobs run in parallel (bounded gather)
+Wake timing is owned by APScheduler (:mod:`app.scheduler.engine`). This module
+keeps claim → agent turn → finish_run, plus a test helper that fires due rows
+without APS.
 """
 
 from __future__ import annotations
@@ -17,10 +15,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_runner_task: asyncio.Task[None] | None = None
-_runner_stop: asyncio.Event | None = None
-
-DEFAULT_POLL_SECONDS = 5.0
+DEFAULT_POLL_SECONDS = 5.0  # legacy; safety sweep interval lives in engine
 MAX_PARALLEL_FIRES = 4
 
 
@@ -96,7 +91,7 @@ async def fire_schedule(
 
 
 async def fire_due_schedules(*, now: float | None = None) -> list[dict[str, Any]]:
-    """Claim and fire all due schedules. Safe to call from tests."""
+    """Claim and fire all due schedules once (tests + APS safety sweep)."""
     from app.services.store import store
 
     ts = now if now is not None else time.time()
@@ -136,43 +131,45 @@ async def run_schedule_now(schedule_id: str) -> dict[str, Any]:
     return await fire_schedule(sch, skip_claim=True)
 
 
-async def _runner_loop(stop: asyncio.Event, poll_seconds: float) -> None:
-    while not stop.is_set():
-        try:
-            await fire_due_schedules()
-        except Exception:
-            logger.exception("scheduler tick error")
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
-        except asyncio.TimeoutError:
-            pass
+def notify_schedule_changed(schedule_id: str | None = None) -> None:
+    """Re-sync APS after create/update/pause/resume/delete (best-effort)."""
+    try:
+        from app.scheduler.engine import is_running, sync_schedule
+
+        if not is_running():
+            return
+        if not schedule_id:
+            return
+        sync_schedule(schedule_id)
+    except Exception:
+        logger.debug("notify_schedule_changed failed id=%s", schedule_id, exc_info=True)
+
+
+def notify_schedule_removed(schedule_id: str) -> None:
+    try:
+        from app.scheduler.engine import is_running, remove_schedule
+
+        if is_running():
+            remove_schedule(schedule_id)
+    except Exception:
+        logger.debug("notify_schedule_removed failed id=%s", schedule_id, exc_info=True)
 
 
 def start_scheduler(*, poll_seconds: float = DEFAULT_POLL_SECONDS) -> None:
-    """Start the background poll loop (idempotent). Called from app lifespan."""
-    global _runner_task, _runner_stop
-    if _runner_task is not None and not _runner_task.done():
-        return
-    _runner_stop = asyncio.Event()
-    _runner_task = asyncio.create_task(
-        _runner_loop(_runner_stop, poll_seconds), name="tomo-scheduler"
-    )
-    logger.info("scheduler started poll_seconds=%s", poll_seconds)
+    """Start APScheduler wake engine (idempotent). Called from app lifespan."""
+    _ = poll_seconds  # retained for call-site compat; wake is event-driven now
+    from app.scheduler.engine import start_engine
+
+    start_engine()
+    logger.info("scheduler started (APScheduler)")
 
 
 async def stop_scheduler() -> None:
-    """Stop the background poll loop (idempotent)."""
-    global _runner_task, _runner_stop
-    if _runner_stop is not None:
-        _runner_stop.set()
-    task = _runner_task
-    _runner_task = None
-    _runner_stop = None
-    if task is not None:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        logger.info("scheduler stopped")
+    """Stop APScheduler (idempotent)."""
+    from app.scheduler.engine import stop_engine
+
+    await stop_engine()
+    logger.info("scheduler stopped")
 
 
 __all__ = [
@@ -181,6 +178,8 @@ __all__ = [
     "fire_schedule",
     "fire_due_schedules",
     "run_schedule_now",
+    "notify_schedule_changed",
+    "notify_schedule_removed",
     "start_scheduler",
     "stop_scheduler",
 ]

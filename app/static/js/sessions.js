@@ -611,27 +611,42 @@
     }
 
     function toolCallStillRunning(entries, index) {
-      // Unpaired tool_call (no later tool_output for same agent) while the
-      // turn has not finished — still executing after a mid-turn refresh.
+      // Unpaired tool_call while the turn has not finished — still executing
+      // after a mid-turn refresh. Prefer call_id pairing so parallel tools
+      // don't all clear when the first result arrives.
       var e = entries[index];
       if (!e || e.type !== 'tool_call') return false;
       var last = entries[entries.length - 1];
       if (!last || last.type === 'final' || last.type === 'error') return false;
       var aid = e.agent_id || '';
+      var callId = (e.call_id || '').toString();
       for (var i = index + 1; i < entries.length; i++) {
         var n = entries[i];
-        if (n.type === 'tool_output' && (n.agent_id || '') === aid) return false;
+        if (n.type === 'tool_output' && (n.agent_id || '') === aid) {
+          if (callId) {
+            if ((n.call_id || '').toString() === callId) return false;
+            continue;
+          }
+          return false;
+        }
         if (n.type === 'user' || n.type === 'final' || n.type === 'error') return false;
       }
       return true;
     }
 
-    function buildHistoryToolCard(fn, params, running) {
+    function buildHistoryToolCard(fn, params, running, callId) {
       if (window.Tomo && Tomo.buildToolCard) {
-        return Tomo.buildToolCard({ tool: fn || 'tool', args: params || {}, running: !!running });
+        return Tomo.buildToolCard({
+          tool: fn || 'tool',
+          args: params || {},
+          running: !!running,
+          call_id: callId || '',
+        });
       }
       var card = document.createElement('div');
       card.className = 'tool' + (running ? ' loading' : ' ok');
+      if (callId) card.dataset.callId = callId;
+      card.dataset.toolName = fn || 'tool';
       card.innerHTML =
         '<button type="button" class="tool-head">' +
           '<span class="tstatus"></span><span class="tname">' + esc(fn || 'tool') + '</span>' +
@@ -847,11 +862,18 @@
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
           var key = keyForAid(aid);
-          bufferEvent(key, 'tool', { tool: e.function, args: e.params });
+          bufferEvent(key, 'tool', {
+            tool: e.function,
+            args: e.params,
+            call_id: e.call_id || '',
+          });
           bumpSwarmProgress(key);
         } else {
           turn.appendChild(buildHistoryToolCard(
-            e.function, e.params, toolCallStillRunning(entries, entryIdx)
+            e.function,
+            e.params,
+            toolCallStillRunning(entries, entryIdx),
+            e.call_id || ''
           ));
         }
         return;
@@ -861,11 +883,24 @@
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
           var key = keyForAid(aid);
-          bufferEvent(key, 'tool_result', { result: e.content, error: e.error });
+          bufferEvent(key, 'tool_result', {
+            result: e.content,
+            error: e.error,
+            tool: e.function || '',
+            call_id: e.call_id || '',
+          });
           bumpSwarmProgress(key);
         } else {
-          var cards = turn.querySelectorAll('.tool');
-          var last = cards[cards.length - 1];
+          var last = window.Tomo && Tomo.findToolCard
+            ? Tomo.findToolCard(turn, {
+                call_id: e.call_id || '',
+                tool: e.function || '',
+              })
+            : null;
+          if (!last) {
+            var loading = turn.querySelectorAll('.tool.loading');
+            last = loading[0] || null;
+          }
           var resultText = e.content || '';
           if (last) {
             if (window.Tomo && Tomo.finishToolCard) {
@@ -873,6 +908,7 @@
             } else if (last._res) {
               last._res.textContent = resultText;
               last.classList.remove('loading');
+              last.classList.remove('running');
             }
           }
           if (!e.error && window.TomoArtifacts) {

@@ -1,4 +1,4 @@
-"""Schedules + run log — SQLite harness (hermes-inspired).
+"""Schedules + run log — SQLite harness.
 
 Supports interval, 5-field cron, and one-shot schedules. Firing uses
 claim-before-run CAS so concurrent ticks cannot double-fire. ``cron`` and

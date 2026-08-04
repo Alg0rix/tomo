@@ -143,6 +143,148 @@ class LLMRequestError(RuntimeError):
     """Raised when the upstream chat/completions call fails."""
 
 
+def format_llm_error(exc: BaseException) -> str:
+    """Build a user-visible LLM failure message (never empty).
+
+    Provider SDKs often yield blank ``str(exc)`` or bury the real reason in
+    ``body`` / ``response``. Long generations commonly fail as timeout,
+    context overflow, or max-output — surface those clearly.
+    """
+    if isinstance(exc, LLMRequestError):
+        text = str(exc).strip()
+        if text and text not in {"LLM request failed:", "LLM request failed: "}:
+            return text
+
+    parts: list[str] = []
+    name = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status > 0:
+        parts.append(f"HTTP {status}")
+
+    # Prefer structured body (OpenAI / OpenRouter / vLLM shape).
+    detail = _extract_provider_detail(exc)
+    if detail:
+        parts.append(detail)
+    else:
+        msg = (getattr(exc, "message", None) or str(exc) or "").strip()
+        # Strip noisy SDK prefixes.
+        for prefix in ("Error code: ", "Error: "):
+            if msg.startswith(prefix):
+                msg = msg[len(prefix) :].strip()
+        if msg and msg not in {name, f"{name}()"}:
+            parts.append(msg)
+
+    if not parts:
+        cause = exc.__cause__ or exc.__context__
+        if cause is not None and cause is not exc:
+            nested = format_llm_error(cause)
+            if nested and not nested.startswith("LLM request failed"):
+                parts.append(nested)
+            elif str(cause).strip():
+                parts.append(str(cause).strip())
+        if not parts:
+            parts.append(name or "unknown error")
+
+    text = " — ".join(parts)
+    hint = _hint_for_llm_error(text, status)
+    if hint and hint not in text:
+        text = f"{text}. {hint}"
+    if not text.lower().startswith("llm "):
+        text = f"LLM request failed: {text}"
+    # Bound UI payload size.
+    if len(text) > 800:
+        text = text[:797] + "…"
+    return text
+
+
+def _extract_provider_detail(exc: BaseException) -> str:
+    """Pull error.message / code from SDK body or HTTP response text."""
+    chunks: list[str] = []
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error") if isinstance(body.get("error"), dict) else body
+        if isinstance(err, dict):
+            for key in ("message", "msg", "detail", "error"):
+                val = err.get(key)
+                if isinstance(val, str) and val.strip():
+                    chunks.append(val.strip())
+                    break
+            code = err.get("code") or err.get("type") or body.get("code")
+            if code and str(code) not in " ".join(chunks):
+                chunks.append(f"code={code}")
+        elif isinstance(body.get("message"), str):
+            chunks.append(body["message"].strip())
+    elif isinstance(body, str) and body.strip():
+        chunks.append(body.strip()[:400])
+
+    resp = getattr(exc, "response", None)
+    if resp is not None and not chunks:
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                nested = _extract_provider_detail(
+                    type("_E", (), {"body": data, "message": ""})()
+                )
+                if nested:
+                    chunks.append(nested)
+        except Exception:
+            try:
+                raw = getattr(resp, "text", None) or ""
+                if isinstance(raw, str) and raw.strip():
+                    chunks.append(raw.strip()[:400])
+            except Exception:
+                pass
+
+    return " — ".join(c for c in chunks if c)
+
+
+def _hint_for_llm_error(text: str, status: int | None) -> str:
+    low = text.lower()
+    if any(
+        m in low
+        for m in (
+            "context_length",
+            "context window",
+            "maximum context",
+            "too many tokens",
+            "token limit",
+            "prompt is too long",
+            "max_tokens",
+            "max output",
+        )
+    ):
+        return (
+            "The prompt or reply exceeded the model context/output limit — "
+            "try a shorter request, a new session, or a larger-context model"
+        )
+    if any(m in low for m in ("timed out", "timeout", "deadline exceeded")):
+        return (
+            "The model took too long (common on long answers) — "
+            "retry, raise llm_timeout_seconds in settings, or ask for a shorter reply"
+        )
+    if status == 401 or "invalid api key" in low or "unauthorized" in low:
+        return "Check the API key under System → Models"
+    if status == 429 or "rate limit" in low:
+        return "Rate limited — wait a moment and retry"
+    if status in {500, 502, 503, 504} or "overloaded" in low:
+        return "Provider is temporarily unavailable — retry shortly"
+    if "content" in low and "filter" in low:
+        return "Blocked by the provider content filter"
+    return ""
+
+
+def default_llm_timeout_seconds() -> float:
+    """HTTP timeout for chat completions (long answers need headroom)."""
+    try:
+        from app.services import store
+
+        raw = store.get_settings().get("llm_timeout_seconds", 300)
+        return max(30.0, min(float(raw), 3600.0))
+    except Exception:
+        return 300.0
+
+
 # ── JSON auto-repair ──────────────────────────────────────────────
 
 
@@ -340,7 +482,7 @@ class OpenAICompatClient:
         api_key: str | None = None,
         model: str | None = None,
         *,
-        timeout: float = 60.0,
+        timeout: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         resolved_key = (api_key or "").strip()
@@ -351,17 +493,23 @@ class OpenAICompatClient:
         self._base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self._api_key = resolved_key
         self._model = model or "gpt-4o-mini"
-        self._timeout = timeout
+        # Default 300s — long generations often exceed a 60s HTTP timeout and
+        # previously surfaced as a blank "LLM request failed:".
+        self._timeout = (
+            float(timeout) if timeout is not None else default_llm_timeout_seconds()
+        )
         self._transport = transport
 
         http_client = None
         if transport is not None:
-            http_client = httpx.AsyncClient(transport=transport, timeout=timeout)
+            http_client = httpx.AsyncClient(
+                transport=transport, timeout=self._timeout
+            )
 
         self._client = openai.AsyncOpenAI(
             base_url=self._base_url,
             api_key=resolved_key,
-            timeout=timeout,
+            timeout=self._timeout,
             max_retries=2,
             http_client=http_client,
         )
@@ -387,24 +535,36 @@ class OpenAICompatClient:
 
         try:
             resp = await self._client.chat.completions.create(**payload)
-        except openai.APIConnectionError as exc:
-            raise LLMRequestError(f"LLM request failed: {exc}") from exc
-        except openai.APIStatusError as exc:
-            raise LLMRequestError(
-                f"LLM returned HTTP {exc.status_code}: {exc.message[:200]}"
-            ) from exc
+        except LLMRequestError:
+            raise
+        except Exception as exc:
+            _logger.warning(
+                "LLM complete failed model=%s: %s", self._model, format_llm_error(exc)
+            )
+            raise LLMRequestError(format_llm_error(exc)) from exc
 
         if not resp.choices:
-            raise LLMRequestError("LLM response had no choices")
+            raise LLMRequestError(
+                "LLM request failed: empty choices[] — provider returned no completion"
+            )
 
         first = resp.choices[0]
         if first is None:
-            raise LLMRequestError("LLM response choices[0] was null")
+            raise LLMRequestError("LLM request failed: choices[0] was null")
+        finish = getattr(first, "finish_reason", None) or ""
         message = getattr(first, "message", None)
         if message is None:
-            raise LLMRequestError("LLM response had no message")
+            raise LLMRequestError("LLM request failed: response had no message")
         content = getattr(message, "content", None)
         tool_calls = getattr(message, "tool_calls", None)
+
+        if finish in {"length", "max_tokens"} and not tool_calls:
+            # Partial text may still be useful — return it, but log.
+            _logger.info(
+                "LLM hit output length limit model=%s chars=%d",
+                self._model,
+                len(content or ""),
+            )
 
         return LLMResponse(
             content=content,
@@ -490,12 +650,17 @@ class OpenAICompatClient:
                         if args_fragment:
                             slot["arguments"] += args_fragment
 
-        except openai.APIConnectionError as exc:
-            raise LLMRequestError(f"LLM request failed: {exc}") from exc
-        except openai.APIStatusError as exc:
-            raise LLMRequestError(
-                f"LLM returned HTTP {exc.status_code}: {exc.message[:200]}"
-            ) from exc
+        except LLMRequestError:
+            raise
+        except Exception as exc:
+            _logger.warning(
+                "LLM stream failed model=%s deltas=%d: %s",
+                self._model,
+                len(content_parts),
+                format_llm_error(exc),
+            )
+            # If we already streamed text, still raise so the UI shows why it stopped.
+            raise LLMRequestError(format_llm_error(exc)) from exc
 
         raw_tools = []
         for idx in sorted(tool_acc):
@@ -511,6 +676,11 @@ class OpenAICompatClient:
                 }
             )
         text = "".join(content_parts) if content_parts else None
+        if text is None and not raw_tools:
+            raise LLMRequestError(
+                "LLM request failed: stream ended with no content and no tool calls "
+                "(provider closed the connection early — common on long answers or timeouts)"
+            )
         yield {
             "type": "done",
             "response": LLMResponse(
@@ -592,6 +762,8 @@ __all__ = [
     "OpenAICompatClient",
     "LLMConfigError",
     "LLMRequestError",
+    "format_llm_error",
+    "default_llm_timeout_seconds",
     "extract_context_window",
     "_match_model_context",
 ]

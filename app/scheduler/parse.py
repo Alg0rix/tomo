@@ -245,7 +245,7 @@ def compute_next_run(
 
 
 def catchup_grace_seconds(parsed: dict[str, Any]) -> int:
-    """How late a job may still fire before fast-forward (hermes-style)."""
+    """How late a job may still fire before fast-forwarding past the slot."""
     min_g, max_g = 120, 7200
     kind = parsed.get("kind")
     if kind == "interval":

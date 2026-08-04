@@ -373,7 +373,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             "content, tokenize='porter')"
         )
 
-    # Schedule harness columns (hermes-inspired; idempotent ALTER).
+    # Schedule harness columns (idempotent ALTER).
     sch_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedules)")}
     _sch_alters = {
         "schedule_kind": "ALTER TABLE schedules ADD COLUMN schedule_kind TEXT NOT NULL DEFAULT 'interval'",

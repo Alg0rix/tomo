@@ -96,6 +96,7 @@ def seed_settings() -> dict[str, Any]:
         "learning_skill_nudge_iters": 5,
         "learning_cooldown_sec": 90,
         "learning_review_profile_id": "",
+        "llm_timeout_seconds": 300,
         "public_history": False,
         "setup_complete": True,
         "eval_parallel_workers": 2,

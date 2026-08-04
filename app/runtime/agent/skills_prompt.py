@@ -1,4 +1,4 @@
-"""Hermes-style skill awareness + behavioral guidance for the system prompt.
+"""Skill awareness + behavioral guidance for the system prompt.
 
 Progressive disclosure: inject a compact name/description catalog so the model
 knows what exists; full bodies load on demand via ``use_skill`` (or slash).
@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from typing import Any
 
-# Match Hermes-ish budget: short index lines, hard cap on catalog size.
+# Short index lines with a hard cap on catalog size.
 _SKILL_DESC_LIMIT = 80
 _SKILL_CATALOG_CAP = 48
 _SKILL_TOOLS = frozenset({"list_skills", "use_skill", "manage_skill"})
 
-# Injected when manage_skill is enabled (Hermes SKILLS_GUIDANCE analogue).
+# Injected when manage_skill is enabled.
 SKILLS_GUIDANCE = (
     "After completing a complex task (several tool calls), fixing a tricky "
     "error, or discovering a reusable workflow, distill it with "

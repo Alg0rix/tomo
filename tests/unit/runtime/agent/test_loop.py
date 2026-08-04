@@ -83,14 +83,14 @@ async def test_bash_path_emits_tool_then_result_then_final() -> None:
     tool_ev = next(e for e in events if e["kind"] == "tool")
     result_ev = next(e for e in events if e["kind"] == "tool_result")
     final_ev = _final(events)
-    assert tool_ev == {
-        "kind": "tool",
-        "tool": "bash",
-        "args": {"command": "echo 4"},
-    }
+    assert tool_ev["kind"] == "tool"
+    assert tool_ev["tool"] == "bash"
+    assert tool_ev["args"] == {"command": "echo 4"}
+    assert tool_ev.get("call_id")
     assert result_ev["tool"] == "bash"
     assert result_ev["result"].strip() == "4"
     assert result_ev["error"] is False
+    assert result_ev.get("call_id") == tool_ev["call_id"]
     assert final_ev["content"] == _BASH_FINAL
     assert final_ev.get("already_streamed") is True
 

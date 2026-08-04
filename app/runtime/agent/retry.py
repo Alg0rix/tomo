@@ -31,15 +31,18 @@ def is_transient_llm_error(exc: BaseException) -> bool:
         "rate limit",
         "timed out",
         "timeout",
+        "deadline exceeded",
         "temporarily unavailable",
         "connection reset",
         "connection aborted",
+        "connection error",
         "http 429",
         "http 500",
         "http 502",
         "http 503",
         "http 504",
         "overloaded",
+        "server error",
     )
     return any(m in msg for m in markers)
 

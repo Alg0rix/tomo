@@ -1,6 +1,6 @@
 """OpenAI-compatible chat completions for API integrations.
 
-``POST /v1/chat/completions`` — Hermes-style adapter over Tomo session turns.
+``POST /v1/chat/completions`` — OpenAI-compatible adapter over Tomo session turns.
 ``model`` is a Tomo agent id (solo auto-session). Pass ``X-Tomo-Session-Id`` to
 continue an existing session (solo or swarm); history lives in the session DB.
 """

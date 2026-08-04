@@ -164,7 +164,7 @@ def _agent_has_memory_tool(agent_id: str | None) -> bool:
 
 
 def _skills_prompt_section(agent_id: str) -> str:
-    """Hermes-style skill awareness catalog (name + short description)."""
+    """Skill awareness catalog (name + short description)."""
     try:
         from app.runtime.agent.skills_prompt import build_skills_system_prompt
 

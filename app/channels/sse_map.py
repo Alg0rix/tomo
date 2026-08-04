@@ -181,31 +181,37 @@ def map_loop_event(
         )
     elif kind == "tool":
         seq += 1
+        call_id = ev.get("call_id") or ""
+        tool_data = {
+            "tool": ev["tool"],
+            "args": ev["args"],
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
+        if call_id:
+            tool_data["call_id"] = call_id
         chunks.append(
             fmt_sse(
                 {
                     "event": "tool",
-                    "data": {
-                        "tool": ev["tool"],
-                        "args": ev["args"],
-                        "agent_id": agent_id,
-                        "agent": agent_name,
-                    },
+                    "data": tool_data,
                     "seq": seq,
                 }
             )
         )
-        entries.append(
-            {
-                "type": "tool_call",
-                "function": ev["tool"],
-                "params": ev["args"],
-                "agent_id": agent_id,
-                "ts": now(),
-            }
-        )
+        entry = {
+            "type": "tool_call",
+            "function": ev["tool"],
+            "params": ev["args"],
+            "agent_id": agent_id,
+            "ts": now(),
+        }
+        if call_id:
+            entry["call_id"] = call_id
+        entries.append(entry)
     elif kind == "tool_result":
         seq += 1
+        call_id = ev.get("call_id") or ""
         data = {
             "tool": ev["tool"],
             "result": ev["result"],
@@ -213,6 +219,8 @@ def map_loop_event(
             "agent_id": agent_id,
             "agent": agent_name,
         }
+        if call_id:
+            data["call_id"] = call_id
         if ev.get("todos") is not None:
             data["todos"] = ev["todos"]
         chunks.append(
@@ -224,16 +232,17 @@ def map_loop_event(
                 }
             )
         )
-        entries.append(
-            {
-                "type": "tool_output",
-                "content": ev["result"],
-                "function": ev["tool"],
-                "error": ev["error"],
-                "agent_id": agent_id,
-                "ts": now(),
-            }
-        )
+        entry = {
+            "type": "tool_output",
+            "content": ev["result"],
+            "function": ev["tool"],
+            "error": ev["error"],
+            "agent_id": agent_id,
+            "ts": now(),
+        }
+        if call_id:
+            entry["call_id"] = call_id
+        entries.append(entry)
         # Also emit a dedicated todos SSE when the tool carried a snapshot.
         if isinstance(ev.get("todos"), list):
             seq += 1

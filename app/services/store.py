@@ -814,29 +814,58 @@ class Store:
 
     def create_schedule(self, data: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
-            return schedules_store.create_schedule(self._conn, data)
+            out = schedules_store.create_schedule(self._conn, data)
+        self._notify_schedule(out.get("id"))
+        return out
 
     def update_schedule(
         self, schedule_id: str, data: dict[str, Any]
     ) -> dict[str, Any] | None:
         with self._lock:
-            return schedules_store.update_schedule(self._conn, schedule_id, data)
+            out = schedules_store.update_schedule(self._conn, schedule_id, data)
+        # Skip APS re-sync for bookkeeping-only fields (avoids overlay loops).
+        _meta = frozenset({"next_run", "last_run", "claim_until", "run_count"})
+        if set(data.keys()) - _meta:
+            self._notify_schedule(schedule_id)
+        return out
 
     def pause_schedule(
         self, schedule_id: str, *, reason: str = ""
     ) -> dict[str, Any] | None:
         with self._lock:
-            return schedules_store.pause_schedule(
+            out = schedules_store.pause_schedule(
                 self._conn, schedule_id, reason=reason
             )
+        self._notify_schedule(schedule_id)
+        return out
 
     def resume_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return schedules_store.resume_schedule(self._conn, schedule_id)
+            out = schedules_store.resume_schedule(self._conn, schedule_id)
+        self._notify_schedule(schedule_id)
+        return out
 
     def delete_schedule(self, schedule_id: str) -> bool:
         with self._lock:
-            return schedules_store.delete_schedule(self._conn, schedule_id)
+            ok = schedules_store.delete_schedule(self._conn, schedule_id)
+        if ok:
+            try:
+                from app.scheduler.runner import notify_schedule_removed
+
+                notify_schedule_removed(schedule_id)
+            except Exception:
+                pass
+        return ok
+
+    def _notify_schedule(self, schedule_id: str | None) -> None:
+        if not schedule_id:
+            return
+        try:
+            from app.scheduler.runner import notify_schedule_changed
+
+            notify_schedule_changed(schedule_id)
+        except Exception:
+            pass
 
     def list_due_schedules(self, now: float | None = None) -> list[dict[str, Any]]:
         with self._lock:

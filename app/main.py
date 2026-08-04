@@ -62,6 +62,10 @@ async def _lifespan(_app: FastAPI):
         _store.sync_skills()
     except Exception:
         pass
+    # Background supervisors (event-driven; not generic task queues):
+    # * telegram — long-poll inbound messages
+    # * scheduler — APScheduler wake engine over SQLite schedules (agent turns)
+    # Chat turns, learning distill, portal copies stay request/task-local.
     from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
     from app.scheduler import start_scheduler, stop_scheduler
 

@@ -486,19 +486,32 @@ async def run_dag_execution(
 
 
 def _tool_event(ev: dict, agent_id: str | None) -> dict:
-    return {"kind": "tool", "tool": ev["tool"], "args": ev["args"],
-            "atg_node": ev["atg_node"], "agent_id": agent_id or ""}
+    node = ev.get("atg_node") or ""
+    out = {
+        "kind": "tool",
+        "tool": ev["tool"],
+        "args": ev["args"],
+        "atg_node": node,
+        "agent_id": agent_id or "",
+    }
+    # Stable id so parallel wave tools don't share one UI card.
+    if node:
+        out["call_id"] = f"atg:{node}"
+    return out
 
 
 def _tool_result_event(ev: dict, agent_id: str | None) -> dict:
+    node = ev.get("atg_node") or ""
     out = {
         "kind": "tool_result",
         "tool": ev["tool"],
         "result": ev["result"],
         "error": ev["error"],
-        "atg_node": ev["atg_node"],
+        "atg_node": node,
         "agent_id": agent_id or "",
     }
+    if node:
+        out["call_id"] = f"atg:{node}"
     if ev.get("todos") is not None:
         out["todos"] = ev["todos"]
     return out

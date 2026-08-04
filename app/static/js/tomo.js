@@ -583,6 +583,10 @@
       (running ? ' loading' : ' ok') +
       (presented.isEdit ? ' is-edit' : '') +
       (expanded ? ' expanded' : '');
+    var callId = (opts.call_id || opts.callId ||
+      (toolOrData && toolOrData.call_id) || (toolOrData && toolOrData.callId) || '').toString();
+    if (callId) card.dataset.callId = callId;
+    card.dataset.toolName = tool;
     var summary = presented.summary || '';
     card.innerHTML =
       '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
@@ -712,14 +716,54 @@
       (collapsed ? '' : '<div class="todo-bd">' + rows + '</div>');
   };
 
+  /**
+   * Find the tool card to finish for a tool_result event.
+   * Prefer call_id match; else first still-loading card with same tool name;
+   * else first still-loading card. Avoids parallel-tool "always last card" bugs.
+   */
+  Tomo.findToolCard = function (root, data) {
+    if (!root) return null;
+    data = data || {};
+    var callId = (data.call_id || data.callId || '').toString();
+    // ATG waves may only carry atg_node; treat as call id when present.
+    if (!callId && data.atg_node) callId = 'atg:' + String(data.atg_node);
+    var toolName = (data.tool || data.name || data.function || '').toString();
+    var cards = root.querySelectorAll('.tool, .si-tool');
+    var i, card, cId, cName, loading;
+    if (callId) {
+      for (i = 0; i < cards.length; i++) {
+        card = cards[i];
+        cId = (card.dataset && card.dataset.callId) || card.getAttribute('data-call-id') || '';
+        if (cId === callId) return card;
+      }
+    }
+    var firstLoading = null;
+    var firstLoadingName = null;
+    for (i = 0; i < cards.length; i++) {
+      card = cards[i];
+      loading = card.classList.contains('loading') || card.classList.contains('running');
+      if (!loading) continue;
+      if (!firstLoading) firstLoading = card;
+      cName = (card.dataset && card.dataset.toolName) || '';
+      if (!cName) {
+        var nameEl = card.querySelector('.tname, .si-tag.tool');
+        cName = nameEl ? (nameEl.textContent || '').trim() : '';
+      }
+      if (toolName && cName === toolName && !firstLoadingName) firstLoadingName = card;
+    }
+    return firstLoadingName || firstLoading || null;
+  };
+
   /** Attach tool output to a card and flip status to ok/error. */
   Tomo.finishToolCard = function (card, result, isError) {
     if (!card) return;
     var resultText = typeof result === 'string' ? result : JSON.stringify(result == null ? '' : result);
     if (card._res) card._res.textContent = resultText;
     card.classList.remove('loading');
+    card.classList.remove('running');
     card.classList.toggle('error', !!isError);
     card.classList.toggle('ok', !isError);
+    card.classList.add('has-output');
     if (card._chip) {
       var hint = isError
         ? (Tomo.truncate((resultText.split('\n')[0] || 'Error').trim(), 56) || 'Error')
@@ -781,6 +825,8 @@
       var cmd = presented.summary || fmt(toolName, data.args || {});
       var card = document.createElement('div');
       card.className = 'si-item si-tool running' + (presented.autoExpand ? ' expanded' : '');
+      if (data.call_id) card.dataset.callId = data.call_id;
+      card.dataset.toolName = toolName;
       card.innerHTML =
         '<span class="si-node" aria-hidden="true"></span>' +
         '<div class="si-card">' +
@@ -810,8 +856,7 @@
     }
 
     if (kind === 'tool_result') {
-      var tools = body.querySelectorAll('.si-tool');
-      var last = tools[tools.length - 1];
+      var last = Tomo.findToolCard(body, data) || Tomo.findToolCard(root, data);
       if (!last || !last._res) {
         if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
         return null;
@@ -824,6 +869,7 @@
       }
       last.classList.add('has-output');
       last.classList.remove('running');
+      last.classList.remove('loading');
       if (last._meta) {
         var hint = preview(resultText);
         if (data.error) {

@@ -8,8 +8,8 @@ onto SSE:
 
 * ``{"kind": "thinking", "content": str}``          # optional reasoning
 * ``{"kind": "delta", "content": str}``             # streamed text token/chunk
-* ``{"kind": "tool", "tool": str, "args": dict}``
-* ``{"kind": "tool_result", "tool": str, "result": str, "error": bool}``
+* ``{"kind": "tool", "tool": str, "args": dict, "call_id": str}``
+* ``{"kind": "tool_result", "tool": str, "result": str, "error": bool, "call_id": str}``
 * ``{"kind": "delegate", "from": str, "to": str, "reason": str,
    "task": str, "parallel_index": int, "parallel_total": int}``
 * ``{"kind": "subagent_start", "agent_id": str, "task": str,
@@ -325,10 +325,14 @@ async def _run_one_gated_tool(
     call: ToolCall,
     *,
     session_id: str | None,
+    call_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield optional HITL events, then a ``tool_result`` event (serial path)."""
+    cid = call_id or getattr(call, "id", None) or ""
     if call.name == "clarify":
         async for ev in _handle_clarify(call, session_id=session_id):
+            if ev.get("kind") == "tool_result" and cid:
+                ev = {**ev, "call_id": cid}
             yield ev
         return
 
@@ -341,21 +345,27 @@ async def _run_one_gated_tool(
     assert decision is not None
     if not decision.allowed:
         result = decision.message or "BLOCKED: denied"
-        yield {
+        payload = {
             "kind": "tool_result",
             "tool": call.name,
             "result": result,
             "error": True,
         }
+        if cid:
+            payload["call_id"] = cid
+        yield payload
         return
 
     result = _truncate_result(await _execute_authorized(call, decision))
-    yield {
+    payload = {
         "kind": "tool_result",
         "tool": call.name,
         "result": result,
         "error": tool_result_is_error(result),
     }
+    if cid:
+        payload["call_id"] = cid
+    yield payload
 
 
 def _truncate_result(result: Any) -> str:
@@ -596,7 +606,11 @@ async def run_turn(
             except Exception as exc:
                 metrics.ended_kind = "error"
                 metrics.log_summary()
-                yield {"kind": "error", "message": f"LLM request failed: {exc}"}
+                from app.runtime.llm.openai_compat import format_llm_error
+
+                msg = format_llm_error(exc)
+                _logger.exception("LLM round failed agent=%s: %s", agent_id, msg)
+                yield {"kind": "error", "message": msg}
                 return
             _ = before_len  # kept for readability / future delta metrics
 
@@ -699,7 +713,12 @@ async def run_turn(
             pending_mut: list[tuple[str, ToolCall, Decision]] = []
 
             for cid, call in other_calls:
-                yield {"kind": "tool", "tool": call.name, "args": call.arguments}
+                yield {
+                    "kind": "tool",
+                    "tool": call.name,
+                    "args": call.arguments,
+                    "call_id": cid,
+                }
 
                 if call.name == "clarify":
                     result_text = "Error: no tool result"
@@ -716,6 +735,7 @@ async def run_turn(
                                 "tool": call.name,
                                 "result": result_text,
                                 "error": error,
+                                "call_id": cid,
                             }
                     result_by_cid[cid] = (result_text, error)
                     already_yielded.add(cid)
@@ -735,6 +755,7 @@ async def run_turn(
                         "tool": call.name,
                         "result": result_text,
                         "error": True,
+                        "call_id": cid,
                     }
                     result_by_cid[cid] = (result_text, True)
                     already_yielded.add(cid)
@@ -776,6 +797,7 @@ async def run_turn(
                     payload = {
                         "kind": "tool_result",
                         "tool": call.name,
+                        "call_id": cid,
                         "result": text_res,
                         "error": err,
                     }
@@ -849,6 +871,7 @@ async def run_turn(
                                     "tool": _call.name,
                                     "result": box[0],
                                     "error": True,
+                                    "call_id": _cid,
                                 },
                             )
                         )
@@ -1004,7 +1027,12 @@ async def _stream_delegate_bundle(
     provided, the truncated result string is appended so callers can feed the
     parent LLM tool message without re-scanning the stream.
     """
-    yield {"kind": "tool", "tool": call.name, "args": call.arguments}
+    yield {
+        "kind": "tool",
+        "tool": call.name,
+        "args": call.arguments,
+        "call_id": cid,
+    }
     args = call.arguments if isinstance(call.arguments, dict) else {}
     reason = args.get("reason")
     if not isinstance(reason, str) or not reason.strip():
@@ -1076,6 +1104,7 @@ async def _stream_delegate_bundle(
         "tool": call.name,
         "result": sub_result,
         "error": delegate_error,
+        "call_id": cid,
     }
 
 

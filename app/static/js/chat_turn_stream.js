@@ -160,8 +160,13 @@
     function endIdleResume() {
       if (closed) return;
       clearWatchdogs();
-      ctx.turn.querySelectorAll('.tool.loading').forEach(function (c) {
+      // Idle resume: drop spinners so cards don't stick on "running" forever.
+      ctx.turn.querySelectorAll('.tool.loading, .tool.running, .si-tool.running').forEach(function (c) {
         c.classList.remove('loading');
+        c.classList.remove('running');
+        if (!c.classList.contains('ok') && !c.classList.contains('error') && !c.classList.contains('is-error')) {
+          c.classList.add('ok');
+        }
       });
       closed = true;
       ctx.closeStream();
@@ -202,11 +207,18 @@
 
     function buildToolCard(d) {
       if (window.Tomo && Tomo.buildToolCard) {
-        return Tomo.buildToolCard({ tool: d.tool || 'tool', args: d.args || {}, running: true });
+        return Tomo.buildToolCard({
+          tool: d.tool || 'tool',
+          args: d.args || {},
+          running: true,
+          call_id: d.call_id || '',
+        });
       }
       var tool = d.tool || 'tool';
       var card = document.createElement('div');
       card.className = 'tool loading';
+      if (d.call_id) card.dataset.callId = d.call_id;
+      card.dataset.toolName = tool;
       card.innerHTML =
         '<button type="button" class="tool-head">' +
           '<span class="tstatus"></span><span class="tname">' + ctx.esc(tool) + '</span> ' +
@@ -219,8 +231,13 @@
     }
 
     function applyToolResult(d) {
-      var cards = ctx.turn.querySelectorAll('.tool');
-      var last = cards[cards.length - 1];
+      var last = window.Tomo && Tomo.findToolCard
+        ? Tomo.findToolCard(ctx.turn, d)
+        : null;
+      if (!last) {
+        var cards = ctx.turn.querySelectorAll('.tool.loading');
+        last = cards[0] || ctx.turn.querySelectorAll('.tool')[ctx.turn.querySelectorAll('.tool').length - 1];
+      }
       if (last) {
         var resultText = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
         if (window.Tomo && Tomo.finishToolCard) {
@@ -228,6 +245,7 @@
         } else if (last._res) {
           last._res.textContent = resultText;
           last.classList.remove('loading');
+          last.classList.remove('running');
         }
         try {
           var toolName = (d.name || d.tool || '').toString();

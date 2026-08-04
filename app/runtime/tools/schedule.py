@@ -1,4 +1,4 @@
-"""schedule tool — agent-callable schedule harness (hermes-inspired)."""
+"""schedule tool — agent-callable schedule harness."""
 
 from __future__ import annotations
 

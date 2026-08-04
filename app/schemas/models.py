@@ -243,7 +243,7 @@ class ScheduleCreate(BaseModel):
     schedule: str | None = Field(
         default=None,
         max_length=120,
-        description="Hermes-style schedule: 'every 1h', '30m', '0 9 * * *', ISO time",
+        description="Schedule string: 'every 1h', '30m', '0 9 * * *', ISO time",
     )
     cron: str = ""
     interval_seconds: int | None = Field(default=None, ge=1, le=86400 * 90)
