@@ -1,12 +1,20 @@
 {% from 'partials/avatar.html' import avatar %}
 {% from 'partials/agent_badge.html' import agent_status %}
 
-<div class="agent-studio-head">
+<header class="agent-studio-head">
   {{ avatar(agent.id, agent.name) }}
-  <div style="flex:1;min-width:0">
-    <div style="font-weight:700;font-size:16px;font-family:var(--font-display)">{{ agent.name }}{% if agent.is_super %} <span class="badge accent sm">coordinator</span>{% endif %}</div>
-    <div class="faint mono" style="font-size:11px">{% if agent.role %}{{ agent.role }} · {% endif %}{{ agent.model_id or 'default model' }} · {{ agent.id }}</div>
+  <div class="agent-studio-id">
+    <div class="agent-studio-name">
+      {{ agent.name }}
+      {% if agent.is_super %}<span class="badge accent sm">coordinator</span>{% endif %}
+    </div>
+    <div class="agent-studio-meta mono">
+      {% if agent.role %}<span>{{ agent.role }}</span><span class="sep" aria-hidden="true">·</span>{% endif %}
+      <span>{{ agent.model_label or 'default model' }}</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span class="agent-studio-aid">{{ agent.id }}</span>
+    </div>
   </div>
   {{ agent_status(agent) }}
-  <a class="btn ghost sm" href="/sessions?s={{ session_id }}">Open in Chat</a>
-</div>
+  <a class="agent-studio-open" href="/sessions?s={{ session_id }}">Open swarm session</a>
+</header>

@@ -1,19 +1,23 @@
 {% from 'partials/agent_badge.html' import workplace_status %}
 
-<a class="tile tile-link" href="/workplaces/{{ workplace.id }}">
-  <div class="tile-head">
-    <div class="tile-title">{{ workplace.name }}</div>
-    <span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span>
+<a class="wp-row" href="/workplaces/{{ workplace.id }}" role="listitem"
+   data-search="{{ (workplace.name ~ ' ' ~ workplace.kind ~ ' ' ~ (workplace.root_path or '') ~ ' ' ~ (workplace.host_detail or workplace.host or '') ~ ' ' ~ workplace.id)|e }}">
+  <div class="wp-row-main">
+    <div class="wp-row-title">
+      <span class="wp-row-name">{{ workplace.name }}</span>
+      <span class="kind {{ workplace.kind }}">{{ workplace.kind }}</span>
+    </div>
+    {% if workplace.kind == 'local' %}
+    <div class="wp-row-path mono" title="{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}">{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}</div>
+    {% else %}
+    <div class="wp-row-path mono" title="{{ workplace.host_detail or workplace.host or '—' }}">{{ workplace.host_detail or workplace.host or '—' }}{% if workplace.root_path and workplace.kind == 'ssh' %} <span class="faint">· {{ workplace.root_path }}</span>{% endif %}</div>
+    {% endif %}
   </div>
-  {% if workplace.kind == 'local' %}
-  <div class="tile-desc mono workplace-path" title="{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}">{{ workplace.root_path or workplace.host_detail or workplace.host or '—' }}</div>
-  {% else %}
-  <div class="tile-desc mono workplace-path" title="{{ workplace.host_detail or workplace.host or '—' }}">{{ workplace.host_detail or workplace.host or '—' }}{% if workplace.root_path and workplace.kind == 'ssh' %}<br><span class="faint">root {{ workplace.root_path }}</span>{% endif %}</div>
-  {% endif %}
-  <div class="tile-foot">
+  <div class="wp-row-side">
     {{ workplace_status(workplace.status, workplace.kind) }}
     {% if show_agent_count | default(true) %}
-    <span class="faint" style="margin-left:auto">{{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}</span>
+    <span class="wp-row-agents mono faint">{{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}</span>
     {% endif %}
+    <span class="wp-row-go" aria-hidden="true">→</span>
   </div>
 </a>

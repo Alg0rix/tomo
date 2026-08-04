@@ -5,7 +5,10 @@
     <div class="chat-main">
       <div class="chat-scroll" data-chat-panel="chat" style="flex:1">
         {% if not history %}
-        <div class="chat-empty"><div class="big">Talk to {{ agent.name }}</div><div>Direct line — use Chat for swarm conversations.</div></div>
+        <div class="chat-empty agent-chat-empty">
+          <div class="agent-chat-empty-title">No messages yet</div>
+          <div>Direct line to {{ agent.name }}. Swarm sessions live under Chat.</div>
+        </div>
         {% else %}
         {% for e in history %}
           {% if e.type == 'user' %}
@@ -14,7 +17,7 @@
           </div>
           {% elif e.type == 'final' %}
           <div class="turn">
-          <div class="msg assistant"><div class="av" style="background:{{ avatar_color(agent.id) }}">{{ agent.name[:1]|upper }}</div><div class="bubble"><div class="who">{{ agent.name }}</div><div class="bubble-body prose">{{ e.content|e }}</div></div></div>
+          <div class="msg assistant"><div class="av" style="background:{{ avatar_color(agent.id) }}">{{ agent.name[:1]|upper }}</div><div class="bubble"><div class="who">{{ agent.name }}</div><div class="bubble-body chat-prose">{{ e.content|e }}</div></div></div>
           </div>
           {% endif %}
         {% endfor %}

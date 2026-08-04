@@ -1,81 +1,84 @@
 <div class="agent-studio-panel hidden" id="panel-config" data-agent-id="{{ agent.id }}">
-  <div class="card">
-    <div class="card-head"><h3>Configuration</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <form id="cfgForm" autocomplete="off" onsubmit="return false;">
-        <div class="config-grid">
-          <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ agent.id }}</div></div>
-          <div class="config-row"><div class="lbl">Name</div>
-            <input class="input" id="cfgName" value="{{ agent.name }}" style="max-width:240px">
-          </div>
-          <div class="config-row"><div class="lbl">Role</div>
-            <input class="input" id="cfgRole" value="{{ agent.role }}" placeholder="e.g. coordinator" style="max-width:240px">
-          </div>
-          <div class="config-row"><div class="lbl">Model</div>
-            <select class="input" id="cfgModel" style="max-width:240px">
-              <option value="" {% if not agent.model_id %}selected{% endif %}>Use default</option>
-              {% for p in llm_profiles %}
-              <option value="{{ p.id }}" {% if agent.model_id == p.id %}selected{% endif %}>{{ p.name }} ({{ p.model }}){% if not p.enabled %} · disabled{% endif %}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="config-row"><div class="lbl">Workplace scope</div>
-            {% set scope = agent.workplace_scope or 'single' %}
-            <select class="input" id="cfgWorkplaceScope" style="max-width:280px">
-              <option value="single" {% if scope == 'single' %}selected{% endif %}>Single workplace</option>
-              <option value="list" {% if scope == 'list' %}selected{% endif %}>Multiple workplaces</option>
-              <option value="all_tunnels" {% if scope == 'all_tunnels' %}selected{% endif %}>All tunnel connectors</option>
-              <option value="all" {% if scope == 'all' %}selected{% endif %}>All workplaces</option>
-            </select>
-          </div>
-          <div class="config-row" id="cfgWorkplaceSingleRow">
-            <div class="lbl">Primary workplace</div>
-            <select class="input" id="cfgWorkplace" style="max-width:280px">
-              <option value="" {% if not agent.workplace_id %}selected{% endif %}>Default sandbox (work/)</option>
+  <div class="agent-config">
+    <header class="agent-config-hd">
+      <h3 class="agent-config-title">Configuration</h3>
+      <p class="agent-config-sub faint">Identity, model profile, and workplace scope. Save applies immediately.</p>
+    </header>
+    <form id="cfgForm" class="agent-config-form" autocomplete="off" onsubmit="return false;">
+      <div class="config-grid">
+        <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ agent.id }}</div></div>
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input config-input" id="cfgName" value="{{ agent.name }}">
+        </div>
+        <div class="config-row"><div class="lbl">Role</div>
+          <input class="input config-input" id="cfgRole" value="{{ agent.role }}" placeholder="e.g. coordinator">
+        </div>
+        <div class="config-row"><div class="lbl">Model</div>
+          <select class="input config-input" id="cfgModel">
+            <option value="" {% if not agent.model_id %}selected{% endif %}>Use default</option>
+            {% for p in llm_profiles %}
+            <option value="{{ p.id }}" {% if agent.model_id == p.id %}selected{% endif %}>{{ p.name }} ({{ p.model }}){% if not p.enabled %} · disabled{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="config-row"><div class="lbl">Workplace scope</div>
+          {% set scope = agent.workplace_scope or 'single' %}
+          <select class="input config-input-wide" id="cfgWorkplaceScope">
+            <option value="single" {% if scope == 'single' %}selected{% endif %}>Single workplace</option>
+            <option value="list" {% if scope == 'list' %}selected{% endif %}>Multiple workplaces</option>
+            <option value="all_tunnels" {% if scope == 'all_tunnels' %}selected{% endif %}>All tunnel connectors</option>
+            <option value="all" {% if scope == 'all' %}selected{% endif %}>All workplaces</option>
+          </select>
+        </div>
+        <div class="config-row" id="cfgWorkplaceSingleRow">
+          <div class="lbl">Primary workplace</div>
+          <select class="input config-input-wide" id="cfgWorkplace">
+            <option value="" {% if not agent.workplace_id %}selected{% endif %}>Default sandbox (work/)</option>
+            {% for w in workplaces %}
+            <option value="{{ w.id }}" {% if agent.workplace_id == w.id %}selected{% endif %}>{{ w.name }} ({{ w.kind }}){% if w.host %} · {{ w.host }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="config-row" id="cfgWorkplaceListRow" style="display:none">
+          <div class="lbl">Workplaces</div>
+          <div class="workplace-multi" id="cfgWorkplaceList">
+            {% set selected_ids = agent.workplace_ids or [] %}
+            {% if agent.workplace_id and agent.workplace_id not in selected_ids %}
+              {% set selected_ids = [agent.workplace_id] + selected_ids %}
+            {% endif %}
+            {% if workplaces %}
               {% for w in workplaces %}
-              <option value="{{ w.id }}" {% if agent.workplace_id == w.id %}selected{% endif %}>{{ w.name }} ({{ w.kind }}){% if w.host %} · {{ w.host }}{% endif %}</option>
+              <label class="workplace-check">
+                <input type="checkbox" value="{{ w.id }}" {% if w.id in selected_ids %}checked{% endif %}>
+                <span>{{ w.name }} <span class="muted">({{ w.kind }}{% if w.host %} · {{ w.host }}{% endif %})</span></span>
+              </label>
               {% endfor %}
-            </select>
-          </div>
-          <div class="config-row" id="cfgWorkplaceListRow" style="display:none">
-            <div class="lbl">Workplaces</div>
-            <div class="workplace-multi" id="cfgWorkplaceList" style="max-width:360px">
-              {% set selected_ids = agent.workplace_ids or [] %}
-              {% if agent.workplace_id and agent.workplace_id not in selected_ids %}
-                {% set selected_ids = [agent.workplace_id] + selected_ids %}
-              {% endif %}
-              {% if workplaces %}
-                {% for w in workplaces %}
-                <label class="workplace-check">
-                  <input type="checkbox" value="{{ w.id }}" {% if w.id in selected_ids %}checked{% endif %}>
-                  <span>{{ w.name }} <span class="muted">({{ w.kind }}{% if w.host %} · {{ w.host }}{% endif %})</span></span>
-                </label>
-                {% endfor %}
-              {% else %}
-                <div class="muted" style="font-size:13px">No workplaces yet — create one under Agents → Workplaces.</div>
-              {% endif %}
-            </div>
-          </div>
-          <div class="config-row" id="cfgWorkplaceScopeHint" style="display:none">
-            <div class="lbl"></div>
-            <div class="muted" style="font-size:12.5px;line-height:1.45;max-width:420px" id="cfgWorkplaceScopeHintText"></div>
-          </div>
-          <div class="config-row"><div class="lbl">Description</div>
-            <input class="input" id="cfgDesc" value="{{ agent.description }}" style="max-width:420px">
-          </div>
-          <div class="config-row"><div class="lbl">Artifacts</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              {% from 'partials/toggle.html' import toggle %}
-              {{ toggle(id='cfgArtifacts', checked=agent.artifacts_enabled, disabled=false) }}
-              <span class="muted" style="font-size:12.5px">Durable file store + Artifacts tab</span>
-            </div>
-          </div>
-          <div class="config-row"><div class="lbl">Status</div>
-            <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
+            {% else %}
+              <div class="muted" style="font-size:13px">No workplaces yet — create one under Agents → Workplaces.</div>
+            {% endif %}
           </div>
         </div>
-        <div style="margin-top:16px"><button class="btn primary sm" type="button" id="cfgSave">Save</button></div>
-      </form>
-    </div>
+        <div class="config-row" id="cfgWorkplaceScopeHint" style="display:none">
+          <div class="lbl"></div>
+          <div class="muted config-hint" id="cfgWorkplaceScopeHintText"></div>
+        </div>
+        <div class="config-row"><div class="lbl">Description</div>
+          <input class="input config-input-wide" id="cfgDesc" value="{{ agent.description }}">
+        </div>
+        <div class="config-row"><div class="lbl">Artifacts</div>
+          <div class="config-inline">
+            {% from 'partials/toggle.html' import toggle %}
+            {{ toggle(id='cfgArtifacts', checked=agent.artifacts_enabled, disabled=false) }}
+            <span class="muted config-hint">Durable file store + Artifacts tab</span>
+          </div>
+        </div>
+        <div class="config-row"><div class="lbl">Status</div>
+          <div>{% if agent.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge muted">disabled</span>{% endif %}</div>
+        </div>
+      </div>
+      <div class="agent-config-foot">
+        <button class="btn primary sm" type="button" id="cfgSave">Save</button>
+      </div>
+    </form>
   </div>
 </div>

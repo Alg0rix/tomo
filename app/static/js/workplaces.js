@@ -163,4 +163,48 @@
       }
     });
   }
+
+  // List filter
+  var wpSearch = document.getElementById("wpSearch");
+  var wpList = document.getElementById("workplaceTiles");
+  var wpMeta = document.getElementById("wpSearchMeta");
+  var wpEmpty = document.getElementById("wpSearchEmpty");
+  if (wpSearch && wpList) {
+    var rows = Array.prototype.slice.call(wpList.querySelectorAll(".wp-row, .tile"));
+    function hay(el) {
+      return (el.getAttribute("data-search") || el.textContent || "").toLowerCase();
+    }
+    function run() {
+      var q = (wpSearch.value || "").trim().toLowerCase();
+      var n = 0;
+      rows.forEach(function (r) {
+        var show = !q || hay(r).indexOf(q) !== -1;
+        r.hidden = !show;
+        r.style.display = show ? "" : "none";
+        if (show) n++;
+      });
+      if (wpMeta) {
+        if (q) {
+          wpMeta.hidden = false;
+          wpMeta.textContent = n + " shown";
+        } else {
+          wpMeta.hidden = true;
+          wpMeta.textContent = "";
+        }
+      }
+      if (wpEmpty) {
+        var none = q && n === 0;
+        wpEmpty.hidden = !none;
+        wpEmpty.classList.toggle("hidden", !none);
+        wpEmpty.textContent = none ? 'No workplaces match “' + q + '”.' : "";
+      }
+    }
+    wpSearch.addEventListener("input", run);
+    wpSearch.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") {
+        wpSearch.value = "";
+        run();
+      }
+    });
+  }
 })();

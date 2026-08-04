@@ -103,18 +103,58 @@ class Store:
         }
 
     # -- agents (SQLite) -------------------------------------------------
+    def _decorate_agent_model(self, agent: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Drop stale model_id (must be a profile id) and attach display label.
+
+        Older seeds/setup wrote model *names* (e.g. ``gpt-4o-mini``) into
+        ``agents.model_id``. Runtime already falls back to the default profile;
+        the UI was still showing the orphan string.
+        """
+        if not agent:
+            return agent
+        mid = (agent.get("model_id") or "").strip()
+        if mid:
+            prof = llm_profiles_store.get_public_profile(self._conn, mid)
+            if not prof:
+                agents_store.update_agent(
+                    self._conn,
+                    agent["id"],
+                    {"model_id": ""},
+                    self._busy.ids(),
+                )
+                agent = {**agent, "model_id": ""}
+                mid = ""
+        resolved = llm_profiles_store.resolve_profile(self._conn, agent["id"])
+        if resolved:
+            name = (resolved.get("name") or resolved.get("id") or "").strip()
+            model = (resolved.get("model") or "").strip()
+            if name and model and name.casefold() != model.casefold():
+                label = f"{name} · {model}"
+            else:
+                label = name or model or "default"
+            via = "profile" if mid else "default"
+        else:
+            label = "no model configured"
+            via = "none"
+        return {**agent, "model_label": label, "model_via": via}
+
     def list_agents(self) -> list[dict[str, Any]]:
         with self._lock:
-            return agents_store.list_agents(self._conn, self._busy.ids())
+            rows = agents_store.list_agents(self._conn, self._busy.ids())
+            return [self._decorate_agent_model(a) or a for a in rows]
 
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return agents_store.get_agent(self._conn, agent_id, self._busy.ids())
+            return self._decorate_agent_model(
+                agents_store.get_agent(self._conn, agent_id, self._busy.ids())
+            )
 
     def get_coordinator(self) -> dict[str, Any] | None:
         """Enabled super agent, else first enabled agent (home-chat default)."""
         with self._lock:
-            return agents_store.get_coordinator(self._conn, self._busy.ids())
+            return self._decorate_agent_model(
+                agents_store.get_coordinator(self._conn, self._busy.ids())
+            )
 
     def list_enabled_agent_ids(self) -> list[str]:
         """Ids of enabled agents (coordinator / super first)."""

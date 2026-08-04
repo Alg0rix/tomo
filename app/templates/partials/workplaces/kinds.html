@@ -1,17 +1,26 @@
-<div class="card workplace-kinds">
-  <div class="card-head"><h3>Connection types</h3></div>
-  <div class="card-body workplace-kinds-body">
-    <div class="row workplace-kind-row">
+<section class="wp-kinds" aria-label="Connection types">
+  <h2 class="wp-kinds-title">Connection types</h2>
+  <div class="wp-kinds-list">
+    <div class="wp-kind">
       <span class="kind local">local</span>
-      <div class="meta"><div class="title">Local process</div><div class="desc">Path on the Tomo host — bash/file tools use this root when assigned</div></div>
+      <div class="wp-kind-meta">
+        <div class="wp-kind-name">Local process</div>
+        <div class="wp-kind-desc">Path on the Tomo host — bash/file tools use this root when assigned</div>
+      </div>
     </div>
-    <div class="row workplace-kind-row">
+    <div class="wp-kind">
       <span class="kind ssh">ssh</span>
-      <div class="meta"><div class="title">SSH</div><div class="desc">Remote host with password or key (encrypted at rest) — Connect probes reachability</div></div>
+      <div class="wp-kind-meta">
+        <div class="wp-kind-name">SSH</div>
+        <div class="wp-kind-desc">Remote host with password or key (encrypted at rest) — Connect probes reachability</div>
+      </div>
     </div>
-    <div class="row workplace-kind-row">
+    <div class="wp-kind">
       <span class="kind tunnel">tunnel</span>
-      <div class="meta"><div class="title">Tomo Connector</div><div class="desc">Outbound WebSocket from a Go agent — pair once, same tools behind NAT</div></div>
+      <div class="wp-kind-meta">
+        <div class="wp-kind-name">Tomo Connector</div>
+        <div class="wp-kind-desc">Outbound WebSocket from a Go agent — pair once, same tools behind NAT</div>
+      </div>
     </div>
   </div>
-</div>
+</section>

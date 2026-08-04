@@ -1,14 +1,21 @@
 <div class="agent-studio-panel hidden" id="panel-tools" data-agent-id="{{ agent.id }}">
   {% from 'partials/toggle.html' import toggle %}
-  <p class="faint" style="margin:0 0 12px">Enable or disable tools for this agent. Changes apply on Save. Artifact tools follow the Config → Artifacts toggle.</p>
-  {% for t in tools %}
-  <div class="tool-row" data-tool-id="{{ t.id }}">
-    <div class="meta"><div class="name">{{ t.name }}{% if t.locked %} <span class="badge muted">locked</span>{% endif %}</div><div class="desc">{{ t.description }}</div></div>
-    <span class="mono faint" style="font-size:11px">{{ t.backend }}</span>
-    {{ toggle(checked=t.enabled, disabled=t.locked, extra_class='tool-enable') }}
+  <p class="agent-panel-lead faint">Enable or disable tools for this agent. Save applies. Artifact tools follow Config → Artifacts.</p>
+  <div class="agent-ledger">
+    {% for t in tools %}
+    <div class="tool-row" data-tool-id="{{ t.id }}">
+      <div class="meta">
+        <div class="name">{{ t.name }}{% if t.locked %} <span class="badge muted">locked</span>{% endif %}</div>
+        <div class="desc">{{ t.description }}</div>
+      </div>
+      <span class="mono faint tool-backend">{{ t.backend }}</span>
+      {{ toggle(checked=t.enabled, disabled=t.locked, extra_class='tool-enable') }}
+    </div>
+    {% else %}
+    <div class="empty">No tools registered yet.</div>
+    {% endfor %}
   </div>
-  {% else %}
-  <div class="empty">No tools registered yet.</div>
-  {% endfor %}
-  <div style="margin-top:16px"><button class="btn primary sm" type="button" id="toolsSave">Save</button></div>
+  <div class="agent-config-foot">
+    <button class="btn primary sm" type="button" id="toolsSave">Save</button>
+  </div>
 </div>

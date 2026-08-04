@@ -1,11 +1,15 @@
 /* agent_detail.js — studio tab switching + config/tools save */
 (function () {
   "use strict";
-  document.querySelectorAll('.agent-studio-tabs .pill-tab[data-panel]').forEach(function (tab) {
+  document.querySelectorAll('.agent-studio-tabs .agent-tab[data-panel], .agent-studio-tabs .pill-tab[data-panel]').forEach(function (tab) {
     tab.addEventListener('click', function () {
       var panel = tab.dataset.panel;
-      document.querySelectorAll('.pill-tab[data-panel]').forEach(function (t) { t.classList.remove('active'); });
+      document.querySelectorAll('.agent-studio-tabs [data-panel]').forEach(function (t) {
+        t.classList.remove('active');
+        if (t.getAttribute('role') === 'tab') t.setAttribute('aria-selected', 'false');
+      });
       tab.classList.add('active');
+      if (tab.getAttribute('role') === 'tab') tab.setAttribute('aria-selected', 'true');
       document.querySelectorAll('.agent-studio-panel').forEach(function (p) { p.classList.add('hidden'); });
       var el = document.getElementById('panel-' + panel);
       if (el) el.classList.remove('hidden');

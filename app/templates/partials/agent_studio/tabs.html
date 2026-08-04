@@ -1,10 +1,10 @@
-<div class="pill-tabs agent-studio-tabs">
-  <button class="pill-tab active" type="button" data-panel="chat">Chat</button>
-  <button class="pill-tab" type="button" data-panel="config">Config</button>
-  <button class="pill-tab" type="button" data-panel="tools">Tools</button>
-  <button class="pill-tab" type="button" data-panel="skills">Skills</button>
-  <button class="pill-tab" type="button" data-panel="channels">Channels</button>
+<nav class="agent-studio-tabs" role="tablist" aria-label="Agent sections">
+  <button class="agent-tab active" type="button" role="tab" aria-selected="true" data-panel="chat">Chat</button>
+  <button class="agent-tab" type="button" role="tab" aria-selected="false" data-panel="config">Config</button>
+  <button class="agent-tab" type="button" role="tab" aria-selected="false" data-panel="tools">Tools</button>
+  <button class="agent-tab" type="button" role="tab" aria-selected="false" data-panel="skills">Skills</button>
+  <button class="agent-tab" type="button" role="tab" aria-selected="false" data-panel="channels">Channels</button>
   {% if agent.artifacts_enabled %}
-  <button class="pill-tab" type="button" data-panel="artifacts">Artifacts</button>
+  <button class="agent-tab" type="button" role="tab" aria-selected="false" data-panel="artifacts">Artifacts</button>
   {% endif %}
-</div>
+</nav>

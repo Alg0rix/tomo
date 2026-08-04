@@ -1,5 +1,25 @@
 [
   {
+    "date": "2026-08-04",
+    "macrostructure": "Workbench",
+    "theme": "Darkroom",
+    "enrichment": "none",
+    "brief": "Workplaces list — ledger rows, filter, panel-sheet form",
+    "scope": "workplaces",
+    "nav": "none",
+    "footer": "none"
+  },
+  {
+    "date": "2026-08-04",
+    "macrostructure": "Workbench",
+    "theme": "Darkroom",
+    "enrichment": "none",
+    "brief": "Agent studio /agents/main — underline tabs, ledger rows, flat primary",
+    "scope": "agent-studio",
+    "nav": "underline-rail",
+    "footer": "none"
+  },
+  {
     "date": "2026-07-30",
     "macrostructure": "Letter",
     "theme": "Darkroom",
