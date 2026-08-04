@@ -134,9 +134,18 @@
   /** Load HTML into a sandboxed iframe via srcdoc (never Tomo-origin src). */
   function fillHtmlFrame(iframe, url, textOpt) {
     if (!iframe) return;
+    var nudgeChat = function () {
+      var scroll = iframe.closest && iframe.closest(".chat-scroll");
+      // Only re-pin while an active stick is still holding — never yank after the user left.
+      if (scroll && typeof scroll._tomoStickGo === "function") {
+        scroll._tomoStickGo();
+      }
+    };
     var apply = function (text) {
       iframe.removeAttribute("src");
       iframe.srcdoc = text;
+      // srcdoc paint can arrive after history stick — re-pin if still active.
+      requestAnimationFrame(nudgeChat);
     };
     if (typeof textOpt === "string") {
       apply(textOpt);

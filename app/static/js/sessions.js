@@ -1007,7 +1007,17 @@
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
       // init may re-touch markdown; stick again after layout settles
-      stickChatScrollBottom(chatWrap.querySelector('.chat-scroll'));
+      var scrollEl = chatWrap.querySelector('.chat-scroll');
+      stickChatScrollBottom(scrollEl);
+      // Web fonts / late paint can reflow long prose after the first pin.
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () {
+          if (chatWrap.dataset.sessionId !== sessionId) return;
+          if (scrollEl && typeof scrollEl._tomoStickGo === 'function') {
+            scrollEl._tomoStickGo();
+          }
+        });
+      }
 
       // Mid-turn / HITL wait: rehydrate cards + re-attach listen stream.
       // resume() always rehydrates pending; history "complete" can still have HITL.

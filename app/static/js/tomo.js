@@ -100,77 +100,70 @@
 
   /**
    * Keep a scroll container pinned to the bottom while async layout (images,
-   * mermaid, streaming turns, artifact panels) grows content. Stops if the
-   * user scrolls away from the bottom.
+   * mermaid, streaming turns, artifact panels) grows content.
    *
-   * Idempotent: calling this again on the same element cleans up any prior
-   * active stick first. Programmatic scrolls are forced instant so CSS
-   * `scroll-behavior: smooth` never animates them.
+   * Cancel is gesture-first (wheel / touchmove / PageUp-style keys). Gap
+   * checks on `scroll` only run outside a quiet window after programmatic
+   * pins — layout thrash must not look like the user scrolled away.
    *
-   * Deferred cancel: scroll events that show a gap > userGap are verified
-   * via rAF before cleanup — a single transient gap from layout thrash
-   * will not kill the stick.
-   *
-   * MutationObserver watches for new child nodes so ResizeObserver + img
-   * load binds extend to elements added after stick start (streaming turns).
+   * Idempotent: calling again on the same element replaces any prior stick.
    *
    * @param {Element} el  Scroll container
    * @param {object}  [opts]
-   * @param {number}  [opts.userGap=120]    px gap that counts as user scroll-away
-   * @param {number[]} [opts.times=[50,200,500,1000,2000]]  delayed go() timings
-   * @param {number}  [opts.holdMs=15000]   auto-cleanup after this many ms
+   * @param {number}  [opts.userGap=80]     px gap that counts as scroll-away
+   * @param {number[]} [opts.times=[50,200,500,1000,2000,4000]]  delayed go()
+   * @param {number}  [opts.holdMs=20000]   auto-cleanup after this many ms
    */
   Tomo.stickScrollBottom = function (el, opts) {
     if (!el) return;
     opts = opts || {};
-    var gap = opts.userGap != null ? opts.userGap : 120;
-    var times = opts.times || [50, 200, 500, 1000, 2000];
-    var holdMs = opts.holdMs != null ? opts.holdMs : 15000;
+    var gap = opts.userGap != null ? opts.userGap : 80;
+    var times = opts.times || [50, 200, 500, 1000, 2000, 4000];
+    var holdMs = opts.holdMs != null ? opts.holdMs : 20000;
     var cancelled = false;
-    var sticking = false;
+    var quietUntil = 0;
     var timers = [];
     var rafIds = [];
     var ro = null;
     var mo = null;
     var cleanupFn = null;
-    var stickGen = 0;
 
-    // Replace any prior stick on this element.
     if (el._tomoStickCleanup) {
       el._tomoStickCleanup();
     }
 
+    function markProgrammatic() {
+      // Ignore scroll events for a beat after we pin — covers residual
+      // scroll events and overflow-anchor adjustments from our own jump.
+      quietUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 120;
+    }
+
     function go() {
       if (cancelled) return;
-      sticking = true;
+      markProgrammatic();
       Tomo.scrollToBottomInstant(el);
-      // Hold `sticking` across two rAFs so residual scroll events from the
-      // instant jump don't get mistaken for a user gesture. Bump the stick
-      // generation each go() so an overlapping earlier jump can't clear
-      // `sticking` while a later jump is still settling.
-      var gen = ++stickGen;
-      rafIds.push(requestAnimationFrame(function () {
-        rafIds.push(requestAnimationFrame(function () {
-          if (gen === stickGen) sticking = false;
-        }));
-      }));
     }
-    // Expose the active go() so callers can re-pin without replacing the stick.
     el._tomoStickGo = go;
 
-    function cancelOnUserScroll() {
-      if (sticking || cancelled) return;
+    function onUserGesture() {
+      if (cancelled) return;
+      cleanupFn();
+    }
+
+    function onScroll() {
+      if (cancelled) return;
+      var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now < quietUntil) return;
       if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
-        // Deferred cancel: verify after one rAF that the gap persists.
-        // Kills false cancels from layout thrash (ResizeObserver firing,
-        // lazy images settling, artifact panel width transition, etc.).
-        var id = requestAnimationFrame(function () {
-          if (cancelled || sticking) return;
-          if (el.scrollHeight - el.scrollTop - el.clientHeight > gap) {
-            cleanupFn();
-          }
-        });
-        rafIds.push(id);
+        cleanupFn();
+      }
+    }
+
+    function onKeyNav(ev) {
+      if (cancelled) return;
+      var k = ev.key;
+      if (k === 'PageUp' || k === 'Home' || k === 'ArrowUp') {
+        cleanupFn();
       }
     }
 
@@ -188,7 +181,10 @@
     cleanupFn = function () {
       if (cancelled) return;
       cancelled = true;
-      el.removeEventListener('scroll', cancelOnUserScroll);
+      el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', onUserGesture);
+      el.removeEventListener('touchmove', onUserGesture);
+      el.removeEventListener('keydown', onKeyNav);
       timers.forEach(function (t) { clearTimeout(t); });
       timers = [];
       rafIds.forEach(function (id) { cancelAnimationFrame(id); });
@@ -210,20 +206,21 @@
     };
 
     go();
-    // Double-rAF go so late layout settles before we stop re-anchoring.
     rafIds.push(requestAnimationFrame(function () {
       go();
       rafIds.push(requestAnimationFrame(go));
     }));
 
-    // Bind incomplete images already present.
     el.querySelectorAll('img').forEach(function (img) {
       bindImgEvents(img);
     });
 
-    el.addEventListener('scroll', cancelOnUserScroll, { passive: true });
+    el.addEventListener('wheel', onUserGesture, { passive: true });
+    el.addEventListener('touchmove', onUserGesture, { passive: true });
+    el.addEventListener('scroll', onScroll, { passive: true });
+    // Chat scroll is rarely focused; still catch PageUp when it is.
+    el.addEventListener('keydown', onKeyNav);
 
-    // ResizeObserver on all current children.
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(onContentResize);
       Array.prototype.forEach.call(el.children, function (child) {
@@ -231,8 +228,6 @@
       });
     }
 
-    // MutationObserver: watch for new child nodes (streaming .turn elements,
-    // artifact cards, lazy images) so RO + img binds extend dynamically.
     if (typeof MutationObserver !== 'undefined') {
       mo = new MutationObserver(function (mutations) {
         if (cancelled) return;
@@ -242,7 +237,6 @@
             var node = added[j];
             if (node.nodeType !== 1) continue;
             if (ro) ro.observe(node);
-            // Bind incomplete images inside the added subtree.
             if (node.tagName === 'IMG') {
               bindImgEvents(node);
             }
@@ -253,7 +247,9 @@
         }
         go();
       });
-      mo.observe(el, { childList: true, subtree: true });
+      // childList only on direct children — hljs/mermaid span churn inside
+      // bubbles must not re-pin on every token (that caused scroll thrash).
+      mo.observe(el, { childList: true, subtree: false });
     }
 
     times.forEach(function (ms) { timers.push(setTimeout(go, ms)); });
