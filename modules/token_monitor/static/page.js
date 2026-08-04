@@ -1,4 +1,4 @@
-/* Token Monitor dashboard (heatmap + leaderboards + feed) */
+/* Token Monitor dashboard — in / out first */
 (function () {
   "use strict";
 
@@ -16,6 +16,73 @@
     return String(n);
   }
 
+  function pctShare(a, b) {
+    var t = (Number(a) || 0) + (Number(b) || 0);
+    if (t <= 0) return { inPct: 50, outPct: 50 };
+    var inPct = Math.round(((Number(a) || 0) / t) * 1000) / 10;
+    return { inPct: inPct, outPct: Math.round((100 - inPct) * 10) / 10 };
+  }
+
+  function ratioLabel(prompt, completion) {
+    var p = Number(prompt) || 0;
+    var c = Number(completion) || 0;
+    if (p <= 0 && c <= 0) return "—";
+    if (c <= 0) return "∞ : 0";
+    if (p <= 0) return "0 : ∞";
+    var r = p / c;
+    if (r >= 10) return r.toFixed(0) + " : 1";
+    if (r >= 1) return r.toFixed(1).replace(/\.0$/, "") + " : 1";
+    return "1 : " + (1 / r).toFixed(1).replace(/\.0$/, "");
+  }
+
+  function trackHtml(prompt, completion, turns) {
+    var p = Number(prompt) || 0;
+    var c = Number(completion) || 0;
+    var share = pctShare(p, c);
+    var turnsPart =
+      turns != null
+        ? '<span class="turns">' + fmtNum(turns) + " turn" + (turns === 1 ? "" : "s") + "</span>"
+        : "";
+    return (
+      '<div class="usage-track">' +
+      '<div class="usage-track-bar" role="img" aria-label="in ' +
+      fmtNum(p) +
+      ", out " +
+      fmtNum(c) +
+      '">' +
+      '<span class="seg-in" style="width:' +
+      share.inPct +
+      '%"></span>' +
+      '<span class="seg-out" style="width:' +
+      share.outPct +
+      '%"></span>' +
+      "</div>" +
+      '<div class="usage-track-nums">' +
+      '<span class="io-in">↓ ' +
+      fmtNum(p) +
+      "</span>" +
+      '<span class="io-out">↑ ' +
+      fmtNum(c) +
+      "</span>" +
+      '<span class="io-total">' +
+      fmtNum(p + c) +
+      " total</span>" +
+      turnsPart +
+      "</div></div>"
+    );
+  }
+
+  function chipsHtml(prompt, completion, extra) {
+    return (
+      '<span class="io-chip is-in"><span class="io-k">In</span>' +
+      fmtNum(prompt) +
+      '</span><span class="io-chip is-out"><span class="io-k">Out</span>' +
+      fmtNum(completion) +
+      "</span>" +
+      (extra || "")
+    );
+  }
+
   function level(turns) {
     if (!turns) return 0;
     if (turns === 1) return 1;
@@ -25,7 +92,6 @@
   }
 
   function weekdayMon0(iso) {
-    // JS: Sun=0 … map to Mon=0
     var d = new Date(iso + "T12:00:00Z");
     return (d.getUTCDay() + 6) % 7;
   }
@@ -39,7 +105,6 @@
       return;
     }
 
-    // Pad so first column starts on Monday.
     var pad = weekdayMon0(days[0].date);
     var cells = [];
     for (var i = 0; i < pad; i++) {
@@ -53,13 +118,13 @@
         d.turns +
         " turn" +
         (d.turns === 1 ? "" : "s") +
-        " · " +
-        fmtNum(d.tokens) +
-        " tok (in " +
+        " · in " +
         fmtNum(d.prompt_tokens) +
         " / out " +
         fmtNum(d.completion_tokens) +
-        ")";
+        " (" +
+        fmtNum(d.tokens) +
+        " total)";
       cells.push(
         '<div class="uh-cell l' +
           lv +
@@ -85,17 +150,11 @@
         return (
           '<li><span class="rank">' +
           (i + 1) +
-          '</span><span class="name">' +
+          '</span><div class="row-main"><div class="row-top"><span class="name">' +
           esc(r.name || r.agent_id) +
-          '</span><span class="meta">' +
-          fmtNum(r.turns) +
-          " turns · " +
-          fmtNum(r.tokens) +
-          " tok (in " +
-          fmtNum(r.prompt_tokens) +
-          " / out " +
-          fmtNum(r.completion_tokens) +
-          ")</span></li>"
+          "</span></div>" +
+          trackHtml(r.prompt_tokens, r.completion_tokens, r.turns) +
+          "</div></li>"
         );
       })
       .join("");
@@ -113,19 +172,13 @@
         return (
           '<li><span class="rank">' +
           (i + 1) +
-          '</span><a class="name" href="/sessions?s=' +
+          '</span><div class="row-main"><div class="row-top"><a class="name" href="/sessions?s=' +
           encodeURIComponent(r.session_id) +
           '">' +
           esc(r.title || r.session_id) +
-          '</a><span class="meta">' +
-          fmtNum(r.turns) +
-          " turns · " +
-          fmtNum(r.tokens) +
-          " tok (in " +
-          fmtNum(r.prompt_tokens) +
-          " / out " +
-          fmtNum(r.completion_tokens) +
-          ")</span></li>"
+          "</a></div>" +
+          trackHtml(r.prompt_tokens, r.completion_tokens, r.turns) +
+          "</div></li>"
         );
       })
       .join("");
@@ -144,6 +197,13 @@
           ? new Date(r.created_at * 1000).toLocaleString()
           : "";
         var preview = r.message_preview || "(no message)";
+        var extra =
+          '<span class="io-chip is-muted">' +
+          fmtNum(r.turns) +
+          " turn</span>" +
+          (when
+            ? '<span class="io-chip is-muted">' + esc(when) + "</span>"
+            : "");
         return (
           '<li><div class="feed-top"><a href="/sessions?s=' +
           encodeURIComponent(r.session_id) +
@@ -151,53 +211,47 @@
           esc(r.title) +
           '</a><span class="faint mono">' +
           esc(r.agent_id || "—") +
-          "</span><span class=\"faint\">" +
-          esc(when) +
           '</span></div><div class="feed-body">' +
           esc(preview) +
-          '</div><div class="feed-meta faint">' +
-          fmtNum(r.turns) +
-          " turn · " +
-          fmtNum(r.tokens) +
-          " tok (in " +
-          fmtNum(r.prompt_tokens) +
-          " / out " +
-          fmtNum(r.completion_tokens) +
-          ")</div></li>"
+          '</div><div class="feed-meta">' +
+          chipsHtml(r.prompt_tokens, r.completion_tokens, extra) +
+          "</div></li>"
         );
       })
       .join("");
   }
 
+  function setText(sel, text) {
+    var el = root.querySelector(sel);
+    if (el) el.textContent = text;
+  }
+
   function fillStats(summary) {
     var today = (summary && summary.today) || {};
     var week = (summary && summary.week) || {};
-    var elT = root.querySelector('[data-stat="today"]');
-    var elW = root.querySelector('[data-stat="week"]');
-    var elA = root.querySelector('[data-stat="active"]');
-    if (elW) {
-      elW.textContent =
-        fmtNum(week.turns) +
-        " turns · " +
-        fmtNum(week.tokens) +
-        " tok (in " +
-        fmtNum(week.prompt_tokens) +
-        " / out " +
-        fmtNum(week.completion_tokens) +
-        ")";
-    }
-    if (elT) {
-      elT.textContent =
-        fmtNum(today.turns) +
-        " / " +
-        fmtNum(today.tokens) +
-        " (in " +
-        fmtNum(today.prompt_tokens) +
-        " / out " +
-        fmtNum(today.completion_tokens) +
-        ")";
-    }
-    if (elA) elA.textContent = String(summary.active_sessions_1h || 0);
+    var wIn = week.prompt_tokens || 0;
+    var wOut = week.completion_tokens || 0;
+    var tIn = today.prompt_tokens || 0;
+    var tOut = today.completion_tokens || 0;
+
+    setText('[data-stat="week-in"]', fmtNum(wIn));
+    setText('[data-stat="week-out"]', fmtNum(wOut));
+    setText('[data-stat="today-in"]', fmtNum(tIn));
+    setText('[data-stat="today-out"]', fmtNum(tOut));
+    setText('[data-stat="week-ratio"]', ratioLabel(wIn, wOut));
+    setText('[data-stat="week-turns"]', fmtNum(week.turns));
+    setText('[data-stat="week-total"]', fmtNum(week.tokens));
+    setText('[data-stat="today-turns"]', fmtNum(today.turns));
+    setText(
+      '[data-stat="active"]',
+      String((summary && summary.active_sessions_1h) || 0)
+    );
+
+    var share = pctShare(wIn, wOut);
+    var barIn = root.querySelector('[data-bar="in"]');
+    var barOut = root.querySelector('[data-bar="out"]');
+    if (barIn) barIn.style.width = share.inPct + "%";
+    if (barOut) barOut.style.width = share.outPct + "%";
   }
 
   async function load() {

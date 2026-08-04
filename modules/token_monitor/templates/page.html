@@ -1,41 +1,93 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ module_static('token_monitor', 'page.css') }}?v=3">
+<link rel="stylesheet" href="{{ module_static('token_monitor', 'page.css') }}?v=4">
 {% endblock %}
 {% block content %}
 <div class="page usage-page" id="usagePage">
   <div class="page-head">
     <div>
       <h1 class="page-title">Usage</h1>
-      <p class="page-sub">Token Monitor — turns like commits, tokens on hover. <span class="badge muted">module</span></p>
+      <p class="page-sub">Token Monitor — prompt in, completion out. <span class="badge muted">module</span></p>
     </div>
   </div>
 
-  <div class="usage-hero">
-    <section class="usage-hero-stat" id="usageStats" aria-label="Usage summary">
-      <div class="usage-hero-k">This week</div>
-      <div class="usage-hero-v" data-stat="week">—</div>
-      <div class="usage-hero-sub">
-        <span><span class="faint">Today</span> <strong data-stat="today">—</strong></span>
-        <span><span class="faint">Active (1h)</span> <strong data-stat="active">—</strong></span>
-      </div>
-    </section>
+  <!-- In / out hero -->
+  <section class="usage-io" aria-label="Token in and out summary">
+    <div class="usage-io-pair">
+      <article class="usage-io-card is-in">
+        <div class="usage-io-dir">
+          <span class="usage-io-arrow" aria-hidden="true">↓</span>
+          <span class="usage-io-label">In</span>
+          <span class="usage-io-hint">prompt</span>
+        </div>
+        <div class="usage-io-value" data-stat="week-in">—</div>
+        <div class="usage-io-period">this week</div>
+        <div class="usage-io-today">
+          <span class="faint">Today</span>
+          <strong data-stat="today-in">—</strong>
+        </div>
+      </article>
 
-    <section class="usage-hero-heat" aria-label="Activity">
+      <div class="usage-io-mid" aria-hidden="true">
+        <div class="usage-io-ratio" data-stat="week-ratio">—</div>
+        <div class="usage-io-bar" id="usageIoBar">
+          <span class="usage-io-bar-in" data-bar="in" style="width:50%"></span>
+          <span class="usage-io-bar-out" data-bar="out" style="width:50%"></span>
+        </div>
+        <div class="usage-io-ratio-sub">in : out</div>
+      </div>
+
+      <article class="usage-io-card is-out">
+        <div class="usage-io-dir">
+          <span class="usage-io-arrow" aria-hidden="true">↑</span>
+          <span class="usage-io-label">Out</span>
+          <span class="usage-io-hint">completion</span>
+        </div>
+        <div class="usage-io-value" data-stat="week-out">—</div>
+        <div class="usage-io-period">this week</div>
+        <div class="usage-io-today">
+          <span class="faint">Today</span>
+          <strong data-stat="today-out">—</strong>
+        </div>
+      </article>
+    </div>
+
+    <div class="usage-io-meta" id="usageStats">
+      <div class="usage-io-meta-item">
+        <span class="usage-io-meta-k">Turns (week)</span>
+        <strong data-stat="week-turns">—</strong>
+      </div>
+      <div class="usage-io-meta-item">
+        <span class="usage-io-meta-k">Total tok (week)</span>
+        <strong data-stat="week-total">—</strong>
+      </div>
+      <div class="usage-io-meta-item">
+        <span class="usage-io-meta-k">Turns (today)</span>
+        <strong data-stat="today-turns">—</strong>
+      </div>
+      <div class="usage-io-meta-item">
+        <span class="usage-io-meta-k">Active (1h)</span>
+        <strong data-stat="active">—</strong>
+      </div>
+    </div>
+  </section>
+
+  <section class="usage-hero-heat" aria-label="Activity">
+    <div class="usage-section-head">
       <h2 class="usage-h">Activity</h2>
-      <p class="page-sub usage-heat-sub">Last 12 months · cell = turns · hover for tokens</p>
-      <div class="usage-heat-wrap">
-        <div class="usage-heat" id="usageHeat" aria-label="Usage heatmap"></div>
-      </div>
-      <div class="usage-heat-legend">
-        <span class="faint">Less</span>
-        <span class="uh-cell l0"></span><span class="uh-cell l1"></span>
-        <span class="uh-cell l2"></span><span class="uh-cell l3"></span>
-        <span class="uh-cell l4"></span>
-        <span class="faint">More</span>
-      </div>
-    </section>
-  </div>
+      <p class="page-sub usage-heat-sub">Last 12 months · cell = turns · hover for in / out</p>
+    </div>
+    <div class="usage-heat-wrap">
+      <div class="usage-heat" id="usageHeat" aria-label="Usage heatmap"></div>
+    </div>
+    <div class="usage-heat-legend">
+      <span class="faint">Less</span>
+      <span class="uh-cell l0"></span><span class="uh-cell l1"></span>
+      <span class="uh-cell l2"></span><span class="uh-cell l3"></span>
+      <span class="uh-cell l4"></span>
+      <span class="faint">More</span>
+    </div>
+  </section>
 
   <div class="usage-cols">
     <section class="usage-section">
@@ -55,5 +107,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ module_static('token_monitor', 'page.js') }}?v=3"></script>
+<script src="{{ module_static('token_monitor', 'page.js') }}?v=4"></script>
 {% endblock %}
