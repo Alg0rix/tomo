@@ -69,7 +69,7 @@ async def fire_schedule(
     }
     try:
         async with contextlib.aclosing(
-            run_session_turn(session_id, message, "scheduler")
+            run_session_turn(session_id, message, "scheduler", origin="scheduler")
         ) as agen:
             async for _chunk in agen:
                 pass

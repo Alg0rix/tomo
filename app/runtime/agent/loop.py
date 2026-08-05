@@ -301,6 +301,7 @@ async def _authorize_tool(
     call: ToolCall,
     *,
     session_id: str | None,
+    origin: str | None = None,
 ) -> AsyncIterator[dict[str, Any] | Decision]:
     """Yield HITL events; finally yield a :class:`Decision` or blocked result dict.
 
@@ -310,11 +311,20 @@ async def _authorize_tool(
     Nested delegate turns never prompt for tool approval — ``evaluate``
     already auto-allows when ``current_depth() > 0`` (hardline / user_deny
     still block). Session ``/auto``/``/smart`` still apply at the top level.
+
+    Scheduler fires (``origin == "scheduler"``) never HITL: they evaluate in
+    ``off``-like mode so approvals are bypassed while hardline / user_deny
+    still block, then skip the smart/HITL waiters entirely.
     """
     args = call.arguments if isinstance(call.arguments, dict) else {}
     work_root = sandbox.resolve_work_root()
+    is_scheduler = origin == "scheduler"
     decision = evaluate(
-        call.name, args, work_root=work_root, session_id=session_id
+        call.name,
+        args,
+        work_root=work_root,
+        session_id=session_id,
+        mode_override="off" if is_scheduler else None,
     )
 
     # Belt-and-suspenders if evaluate was called without nested depth set.
@@ -526,6 +536,7 @@ async def run_turn(
     session_id: str | None = None,
     max_iterations: int | None = None,
     enable_atg: bool | None = None,
+    origin: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one agent turn, yielding internal events.
 
@@ -792,7 +803,9 @@ async def run_turn(
                     continue
 
                 decision: Decision | None = None
-                async for item in _authorize_tool(call, session_id=session_id):
+                async for item in _authorize_tool(
+                    call, session_id=session_id, origin=origin
+                ):
                     if isinstance(item, Decision):
                         decision = item
                     else:

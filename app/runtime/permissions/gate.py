@@ -74,12 +74,18 @@ def evaluate(
     *,
     work_root: Path,
     session_id: str | None = None,
+    mode_override: str | None = None,
 ) -> Decision:
-    """Sync assessment up to HITL (does not wait)."""
+    """Sync assessment up to HITL (does not wait).
+
+    ``mode_override`` (e.g. ``"off"``) forces the approval mode for this
+    assessment regardless of session/settings — used by unattended scheduler
+    fires so tool flags never escalate to HITL.
+    """
     arguments = args if isinstance(args, dict) else {}
     assessment = assess(tool, arguments, work_root, deny_globs=_deny_globs())
     findings = list(assessment.findings)
-    mode = get_effective_mode(session_id)
+    mode = mode_override or get_effective_mode(session_id)
 
     if assessment.has_hardline():
         hard = next(f for f in findings if f.kind == "hardline")

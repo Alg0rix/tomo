@@ -495,12 +495,16 @@ def expand_user_content_for_llm(entry: dict[str, Any]) -> str:
 
 
 async def run_session_turn(
-    session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
+    session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None,
+    *, origin: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream one turn for a session (swarm or single-agent).
 
     Starts on ``coordinator_id``; ``stream_turn_sse`` may hand off to a session
     member via ``delegate`` tool or leading ``@mention``.
+
+    ``origin`` tags the caller (e.g. ``"scheduler"``) so unattended turns skip
+    human-in-the-loop approval prompts. Defaults to ``None`` (interactive).
     """
     session = store.get_session(session_id)
     if not session:
@@ -540,6 +544,7 @@ async def run_session_turn(
             message,
             start_seq,
             attachment_ids=attachment_ids,
+            origin=origin,
         )
     ) as agen:
         async for chunk in agen:
@@ -547,7 +552,8 @@ async def run_session_turn(
 
 
 async def run_turn(
-    agent_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
+    agent_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None,
+    *, origin: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream one coordinator turn for an agent's single-agent session.
 
@@ -573,6 +579,7 @@ async def run_turn(
             message,
             start_seq,
             attachment_ids=attachment_ids,
+            origin=origin,
         )
     ) as agen:
         async for chunk in agen:

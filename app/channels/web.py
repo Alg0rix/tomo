@@ -233,6 +233,7 @@ async def _drain_agent_turn(
     turn_id: str,
     busy_ids: set[str],
     token_acc: dict[str, int] | None = None,
+    origin: str | None = None,
 ) -> AsyncIterator[tuple[str, int]]:
     """Run ``run_turn`` for ``agent_id``, mapping/persisting events.
 
@@ -258,6 +259,7 @@ async def _drain_agent_turn(
         history=history,
         agent_id=agent_id,
         session_id=session_id,
+        origin=origin,
     ):
         _accumulate_turn_tokens(token_acc, ev)
         # Nested subagent events carry their own agent_id for attribution.
@@ -347,6 +349,7 @@ async def stream_turn_sse(
     attachment_ids: list[str] | None = None,
     *,
     acquire_lock: bool = True,
+    origin: str | None = None,
 ) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
@@ -640,6 +643,7 @@ async def stream_turn_sse(
                     turn_id=turn_id,
                     busy_ids=busy_ids,
                     token_acc=token_acc,
+                    origin=origin,
                 ):
                     yield chunk
             else:
@@ -652,6 +656,7 @@ async def stream_turn_sse(
                     turn_id=turn_id,
                     busy_ids=busy_ids,
                     token_acc=token_acc,
+                    origin=origin,
                 ):
                     yield chunk
 
