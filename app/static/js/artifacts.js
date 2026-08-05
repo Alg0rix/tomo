@@ -37,6 +37,9 @@
   var ICO_BACK =
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
     '<path d="M10 3.5 5.5 8 10 12.5"/></svg>';
+  var ICO_SHARE =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<path d="M4 10v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V8"/><path d="M8 2v8"/><path d="M5 5l3-3 3 3"/></svg>';
 
   var HTML_SANDBOX = "allow-scripts allow-forms allow-popups allow-modals allow-downloads";
 
@@ -1260,6 +1263,9 @@
             ICO_EXTERNAL +
             "</a>"
           : "") +
+        '<button type="button" class="cap-art-btn" data-cap-share="1" title="Share link" aria-label="Share link">' +
+        ICO_SHARE +
+        "</button>" +
         '<button type="button" class="cap-art-btn cap-collapse" title="Close" aria-label="Close">' +
         ICO_CLOSE +
         "</button>" +
@@ -1314,6 +1320,47 @@
       });
     });
     wireMaxToggle(root, wrap);
+
+    var shareBtn = root.querySelector("[data-cap-share]");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", function () {
+        var art = _state.art || {};
+        var sid = _state.sessionId || art.session_id;
+        var fn = art.filename;
+        if (!sid || !fn) return;
+        if (shareBtn.disabled) return;
+        shareBtn.disabled = true;
+        var orig = shareBtn.innerHTML;
+        shareBtn.innerHTML =
+          '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4v4l2.5 1.5"/></svg>';
+        fetch(
+          "/api/sessions/" +
+            encodeURIComponent(sid) +
+            "/artifacts/" +
+            encodeURIComponent(fn) +
+            "/share",
+          { method: "POST", credentials: "same-origin" }
+        )
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
+          .then(function (data) {
+            var url = window.location.origin + data.share_url;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(url).catch(function () {});
+            }
+            window.prompt("Copy share link", url);
+          })
+          .catch(function () {
+            window.alert("Could not create share link.");
+          })
+          .finally(function () {
+            shareBtn.disabled = false;
+            shareBtn.innerHTML = orig;
+          });
+      });
+    }
 
     var body = root.querySelector(".cap-drill-body");
     if (kind === "files") {

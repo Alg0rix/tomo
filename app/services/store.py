@@ -1146,6 +1146,38 @@ class Store:
         with self._lock:
             return mem_layers.create_artifact(self._conn, data)
 
+    def share_artifact(
+        self, session_id: str, filename: str, created_by: str = ""
+    ) -> dict[str, Any]:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.share_artifact(
+                self._conn, session_id, filename, created_by=created_by
+            )
+
+    def get_artifact_share(self, token: str) -> dict[str, Any] | None:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.get_artifact_share(self._conn, token)
+
+    def get_artifact_share_by_file(
+        self, session_id: str, filename: str
+    ) -> dict[str, Any] | None:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.get_artifact_share_by_file(
+                self._conn, session_id, filename
+            )
+
+    def revoke_artifact_share(self, session_id: str, filename: str) -> bool:
+        from app.runtime.memory import layers as mem_layers
+
+        with self._lock:
+            return mem_layers.revoke_artifact_share(self._conn, session_id, filename)
+
     def search_artifacts(
         self, query: str, *, limit: int = 5, session_id: str | None = None
     ) -> list[dict[str, Any]]:

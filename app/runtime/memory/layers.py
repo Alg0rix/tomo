@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import time
 import uuid
@@ -143,6 +144,87 @@ def list_artifacts(
         (max(1, min(limit, 100)),),
     ).fetchall()
     return [_artifact_row(r) for r in rows]
+
+
+def _share_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "token": row["token"],
+        "session_id": row["session_id"],
+        "filename": row["filename"],
+        "created_at": row["created_at"],
+        "created_by": row["created_by"],
+    }
+
+
+def share_artifact(
+    conn: sqlite3.Connection,
+    session_id: str,
+    filename: str,
+    created_by: str = "",
+) -> dict[str, Any]:
+    sid = (session_id or "").strip()
+    fn = (filename or "").strip()
+    if not sid or not fn:
+        raise ValueError("session_id and filename are required")
+
+    existing = conn.execute(
+        "SELECT * FROM artifact_shares WHERE session_id=? AND filename=?",
+        (sid, fn),
+    ).fetchone()
+    if existing:
+        return _share_row(existing)
+
+    token = secrets.token_urlsafe(24)
+    now = _now()
+    conn.execute(
+        "INSERT INTO artifact_shares(token, session_id, filename, created_at, created_by) "
+        "VALUES (?,?,?,?,?)",
+        (token, sid, fn, now, (created_by or "").strip()),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM artifact_shares WHERE token=?", (token,)).fetchone()
+    return _share_row(row)
+
+
+def get_artifact_share(
+    conn: sqlite3.Connection, token: str
+) -> dict[str, Any] | None:
+    t = (token or "").strip()
+    if not t:
+        return None
+    row = conn.execute(
+        "SELECT * FROM artifact_shares WHERE token=?", (t,)
+    ).fetchone()
+    return _share_row(row) if row else None
+
+
+def get_artifact_share_by_file(
+    conn: sqlite3.Connection, session_id: str, filename: str
+) -> dict[str, Any] | None:
+    sid = (session_id or "").strip()
+    fn = (filename or "").strip()
+    if not sid or not fn:
+        return None
+    row = conn.execute(
+        "SELECT * FROM artifact_shares WHERE session_id=? AND filename=?",
+        (sid, fn),
+    ).fetchone()
+    return _share_row(row) if row else None
+
+
+def revoke_artifact_share(
+    conn: sqlite3.Connection, session_id: str, filename: str
+) -> bool:
+    sid = (session_id or "").strip()
+    fn = (filename or "").strip()
+    if not sid or not fn:
+        return False
+    cur = conn.execute(
+        "DELETE FROM artifact_shares WHERE session_id=? AND filename=?",
+        (sid, fn),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ── Session summaries ────────────────────────────────────────────────

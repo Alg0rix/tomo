@@ -589,3 +589,107 @@ async def list_agent_artifacts_compat(
         page=page,
         limit=limit,
     )
+
+
+def _serve_artifact_file(session_id: str, filename: str, *, download: bool) -> FileResponse:
+    """Serve an artifact file with the same security rules as the auth endpoint."""
+    from app.runtime.artifacts.fs import artifacts_dir, validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    base = artifacts_dir(session_id).resolve()
+    path = (base / filename).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid path") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff"}
+    lower = filename.lower()
+    if lower.endswith((".html", ".htm")):
+        return FileResponse(
+            path,
+            media_type="text/plain; charset=utf-8",
+            filename=filename,
+            content_disposition_type="attachment",
+            headers=headers,
+        )
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=filename,
+        content_disposition_type="attachment" if download else "inline",
+        headers=headers,
+    )
+
+
+@router.post("/sessions/{session_id}/artifacts/{filename}/share")
+async def share_session_artifact(
+    session_id: str, filename: str, request: Request, _: AuthDep
+):
+    """Create or return the existing public share link for an artifact."""
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import artifacts_dir, validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    if not (artifacts_dir(session_id) / filename).is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    share = store.share_artifact(
+        session_id, filename, created_by=session_user_id(request)
+    )
+    return {"token": share["token"], "share_url": f"/share/{share['token']}"}
+
+
+@router.get("/sessions/{session_id}/artifacts/{filename}/share")
+async def get_session_artifact_share(session_id: str, filename: str, _: AuthDep):
+    """Check whether an artifact already has a public share link."""
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    share = store.get_artifact_share_by_file(session_id, filename)
+    if not share:
+        return {"shared": False}
+    return {
+        "shared": True,
+        "token": share["token"],
+        "share_url": f"/share/{share['token']}",
+    }
+
+
+@router.delete("/sessions/{session_id}/artifacts/{filename}/share")
+async def revoke_session_artifact_share(session_id: str, filename: str, _: AuthDep):
+    """Revoke the public share link for an artifact."""
+    _require_session(session_id)
+    from app.runtime.artifacts.fs import validate_filename
+
+    err = validate_filename(filename)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    store.revoke_artifact_share(session_id, filename)
+    return {"success": True}
+
+
+@router.get("/share/{token}/raw")
+async def get_shared_artifact_raw(token: str):
+    """Public raw access to a shared artifact (HTML is forced to text/plain)."""
+    share = store.get_artifact_share(token)
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    return _serve_artifact_file(share["session_id"], share["filename"], download=False)
+
+
+@router.get("/share/{token}/download")
+async def get_shared_artifact_download(token: str):
+    """Public download access to a shared artifact."""
+    share = store.get_artifact_share(token)
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    return _serve_artifact_file(share["session_id"], share["filename"], download=True)

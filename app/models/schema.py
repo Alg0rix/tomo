@@ -267,6 +267,17 @@ CREATE TABLE IF NOT EXISTS artifacts (
     created_at REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS artifact_shares (
+    token      TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    filename   TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_shares_session_filename
+    ON artifact_shares(session_id, filename);
+
 CREATE TABLE IF NOT EXISTS agent_state (
     agent_id   TEXT NOT NULL,
     key        TEXT NOT NULL,

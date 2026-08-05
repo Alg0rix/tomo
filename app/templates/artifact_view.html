@@ -51,6 +51,9 @@
     <a class="btn ghost sm" href="/sessions?s={{ session_id }}">← Chat</a>
     <span class="av-title" title="{{ filename }}">{{ title }}</span>
     <span class="av-meta mono">{{ filename }}</span>
+    {% if not is_public_view %}
+    <button class="btn ghost sm" id="avShareBtn" type="button">Share</button>
+    {% endif %}
     <a class="btn ghost sm" href="{{ file_url }}" target="_blank" rel="noopener">Raw</a>
     <a class="btn sm primary" href="{{ file_url }}" download="{{ filename }}">Download</a>
   </header>
@@ -109,6 +112,57 @@
     filename: stage.dataset.filename,
     category: stage.dataset.category,
     session_id: stage.dataset.sessionId,
+  });
+})();
+</script>
+{% endif %}
+{% if not is_public_view %}
+<script>
+(function () {
+  var btn = document.getElementById('avShareBtn');
+  if (!btn) return;
+  var sid = {{ session_id|tojson }};
+  var fn = {{ filename|tojson }};
+  var base = window.location.origin;
+  var busy = false;
+  btn.addEventListener('click', function () {
+    if (busy) return;
+    busy = true;
+    btn.textContent = 'Sharing…';
+    fetch(
+      '/api/sessions/' + encodeURIComponent(sid) + '/artifacts/' + encodeURIComponent(fn) + '/share',
+      { method: 'POST', credentials: 'same-origin' }
+    )
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var url = base + data.share_url;
+        function reset() {
+          btn.textContent = 'Share';
+          busy = false;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            btn.textContent = 'Link copied';
+            setTimeout(reset, 2000);
+          }, function () {
+            window.prompt('Copy this link', url);
+            reset();
+          });
+        } else {
+          window.prompt('Copy this link', url);
+          reset();
+        }
+      })
+      .catch(function () {
+        btn.textContent = 'Failed';
+        setTimeout(function () {
+          btn.textContent = 'Share';
+          busy = false;
+        }, 2000);
+      });
   });
 })();
 </script>

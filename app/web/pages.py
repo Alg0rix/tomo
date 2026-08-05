@@ -127,6 +127,77 @@ async def artifact_view_page(request: Request, session_id: str, filename: str, _
             title=title,
             category=category,
             file_url=artifact_public_url(session_id, filename),
+            is_public_view=False,
+        ),
+    )
+
+
+@router.get("/share/{token}", response_class=HTMLResponse)
+async def shared_artifact_view_page(request: Request, token: str):
+    """Public artifact viewer for anyone with a share link."""
+    share = store.get_artifact_share(token)
+    if not share:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            page_ctx(request, "error", code=404, message="Share link not found."),
+            status_code=404,
+        )
+    session_id = share["session_id"]
+    filename = share["filename"]
+    from app.runtime.artifacts.fs import (
+        artifacts_dir,
+        category_for,
+        validate_filename,
+    )
+
+    err = validate_filename(filename)
+    if err:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            page_ctx(request, "error", code=400, message=err),
+            status_code=400,
+        )
+    base = artifacts_dir(session_id).resolve()
+    path = (base / filename).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            page_ctx(request, "error", code=400, message="Invalid artifact path."),
+            status_code=400,
+        )
+    if not path.is_file():
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            page_ctx(
+                request,
+                "error",
+                code=404,
+                message=f"Artifact “{filename}” not found.",
+            ),
+            status_code=404,
+        )
+    category = category_for(filename)
+    title = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip() or filename
+    title = " ".join(w[:1].upper() + w[1:] if w else w for w in title.split())
+    return templates.TemplateResponse(
+        request,
+        "artifact_view.html",
+        page_ctx(
+            request,
+            "artifact_view",
+            session_id=session_id,
+            filename=filename,
+            title=title,
+            category=category,
+            file_url=f"/api/share/{token}/raw",
+            share_token=token,
+            is_public_view=True,
         ),
     )
 
