@@ -211,8 +211,18 @@ def test_trail_marks_errors() -> None:
     assert "errors=1" in trail
 
 
-async def test_review_llm_empty_choices_is_skipped_not_logged_as_error() -> None:
+async def test_review_llm_empty_choices_is_skipped_not_logged_as_error(
+    monkeypatch,
+) -> None:
     """A provider that returns empty choices should not spam the growth log."""
+    import app.runtime.agent.retry as retry_mod
+
+    real = retry_mod.with_llm_retry
+
+    async def fast_retry(op, *, attempts=2, base_delay_s=0.75, label="llm"):
+        return await real(op, attempts=attempts, base_delay_s=0.01, label=label)
+
+    monkeypatch.setattr(retry_mod, "with_llm_retry", fast_retry)
 
     class EmptyChoicesLLM:
         async def complete(self, messages, tools=None):
@@ -237,3 +247,57 @@ async def test_review_llm_empty_choices_is_skipped_not_logged_as_error() -> None
     assert result is None
     events = store.list_learning_events(limit=10, agent_id="empty")
     assert not events
+
+
+async def test_review_llm_prefers_stream_complete(monkeypatch) -> None:
+    """Learning review must use stream_complete (same path as chat), with tools."""
+    import app.runtime.agent.retry as retry_mod
+
+    real = retry_mod.with_llm_retry
+
+    async def fast_retry(op, *, attempts=2, base_delay_s=0.75, label="llm"):
+        return await real(op, attempts=attempts, base_delay_s=0.01, label=label)
+
+    monkeypatch.setattr(retry_mod, "with_llm_retry", fast_retry)
+
+    class StreamPreferLLM:
+        def __init__(self) -> None:
+            self.complete_calls = 0
+            self.stream_calls = 0
+            self.stream_had_tools = False
+
+        async def complete(self, messages, tools=None):
+            self.complete_calls += 1
+            raise LLMRequestError(
+                "LLM request failed: empty choices[] — provider returned no completion"
+            )
+
+        async def stream_complete(self, messages, tools=None):
+            self.stream_calls += 1
+            self.stream_had_tools = bool(tools)
+            yield {"type": "done", "response": LLMResponse(content="Nothing to save.")}
+
+    llm = StreamPreferLLM()
+    _ = observe_turn(agent_id="stream-pref", tool_calls=0, ended_kind="final")
+    plan = observe_turn(agent_id="stream-pref", tool_calls=0, ended_kind="final")
+    assert plan and plan.review_memory
+    metrics = TurnMetrics(
+        agent_id="stream-pref",
+        session_id="s-sp",
+        ended_kind="final",
+        tool_calls=0,
+    )
+    result = await run_learning_review(
+        client=llm,
+        messages=[{"role": "user", "content": "hi"}],
+        metrics=metrics,
+        user_message="hi",
+        final_content="hello",
+        plan=plan,
+    )
+    assert result is not None
+    assert result.get("saved") is False
+    assert "Nothing to save" in (result.get("note") or "")
+    assert llm.stream_calls >= 1
+    assert llm.stream_had_tools is True
+    assert llm.complete_calls == 0

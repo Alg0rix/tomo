@@ -31,6 +31,14 @@ def test_atg_interfaces_use_result_key_only() -> None:
 def test_transient_classifier() -> None:
     assert is_transient_llm_error(TimeoutError("timed out"))
     assert is_transient_llm_error(RuntimeError("LLM returned HTTP 429: slow down"))
+    assert is_transient_llm_error(
+        RuntimeError(
+            "LLM request failed: empty choices[] — provider returned no completion"
+        )
+    )
+    assert is_transient_llm_error(
+        RuntimeError("stream ended with no content and no tool calls")
+    )
     assert not is_transient_llm_error(RuntimeError("LLM returned HTTP 401: bad key"))
 
 

@@ -43,6 +43,11 @@ def is_transient_llm_error(exc: BaseException) -> bool:
         "http 504",
         "overloaded",
         "server error",
+        # Proxies often return HTTP 200 with choices=[] / null on blips.
+        "empty choices",
+        "provider returned no completion",
+        "provider returned an empty response",
+        "stream ended with no content",
     )
     return any(m in msg for m in markers)
 

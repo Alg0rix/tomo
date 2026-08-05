@@ -230,7 +230,12 @@
     if (ev.saved) {
       return esc(ev.diary || ev.note || 'A durable lesson was recorded for future sessions.');
     }
-    return esc(ev.note || 'Nothing durable to save this pass.');
+    var note = (ev.note || '').toString();
+    // Hide provider/transport failure leftovers from older builds.
+    if (/empty choices|LLM request failed|Provider returned no output|no completion/i.test(note)) {
+      return esc('Review skipped — model returned no usable output. Chat still works; retry later.');
+    }
+    return esc(note || 'Nothing durable to save this pass.');
   }
 
   function timelineBullets(ev) {

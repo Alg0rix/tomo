@@ -205,6 +205,7 @@ async def _run_review_llm(
     review_memory: bool,
     review_skills: bool,
 ) -> dict[str, Any]:
+    from app.runtime.agent.retry import with_llm_retry
     from app.runtime.tools.registry import execute
 
     schemas = _learning_tool_schemas(
@@ -226,9 +227,37 @@ async def _run_review_llm(
     note = ""
     loop = asyncio.get_running_loop()
 
+    async def _one_complete(
+        msgs: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> LLMResponse:
+        # Prefer streaming — same path as chat. Non-stream + tools is what
+        # triggers empty ``choices[]`` on proxies that still stream fine.
+        stream_fn = getattr(client, "stream_complete", None)
+        if stream_fn is not None:
+            assembled: LLMResponse | None = None
+            async for ev in stream_fn(msgs, tools):
+                if ev.get("type") == "done":
+                    assembled = ev.get("response")
+            if assembled is None:
+                raise LLMRequestError(
+                    "LLM request failed: stream ended without a completion"
+                )
+            return assembled
+        return await client.complete(msgs, tools)
+
+    async def _complete(
+        msgs: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> LLMResponse:
+        return await with_llm_retry(
+            lambda: _one_complete(msgs, tools),
+            attempts=2,
+            base_delay_s=0.5,
+            label="learning-review",
+        )
+
     with _review_isolation(agent_id):
         for _ in range(_MAX_REVIEW_ROUNDS):
-            resp: LLMResponse = await client.complete(messages, schemas)
+            resp: LLMResponse = await _complete(messages, schemas)
             if not resp.has_tool_calls:
                 note = (resp.content or "").strip()
                 break

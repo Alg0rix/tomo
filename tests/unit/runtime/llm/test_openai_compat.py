@@ -35,6 +35,68 @@ def _client(transport: httpx.MockTransport, **kw) -> OpenAICompatClient:
     )
 
 
+def _completion_json_to_sse(body: dict) -> bytes:
+    """Convert a non-stream chat.completion JSON body into SSE bytes."""
+    choices = body.get("choices") or []
+    if not choices or choices[0] is None:
+        return b'data: {"choices":[]}\n\ndata: [DONE]\n\n'
+    message = (choices[0] or {}).get("message") or {}
+    chunks: list[dict] = []
+    content = message.get("content")
+    if content:
+        chunks.append({"choices": [{"delta": {"content": content}}]})
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        deltas = []
+        for i, tc in enumerate(tool_calls):
+            if not isinstance(tc, dict):
+                continue
+            fn = tc.get("function") or {}
+            args = fn.get("arguments", "{}")
+            if isinstance(args, (dict, list)):
+                args = json.dumps(args)
+            deltas.append(
+                {
+                    "index": i,
+                    "id": tc.get("id") or f"call_{i}",
+                    "type": "function",
+                    "function": {
+                        "name": fn.get("name") or "",
+                        "arguments": args if isinstance(args, str) else "{}",
+                    },
+                }
+            )
+        if deltas:
+            chunks.append({"choices": [{"delta": {"tool_calls": deltas}}]})
+    if not chunks:
+        chunks.append({"choices": [{"delta": {}}]})
+    usage = body.get("usage")
+    if usage:
+        chunks.append({"choices": [], "usage": usage})
+    return (
+        "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+    ).encode()
+
+
+def _completion_response(request: httpx.Request, body: dict, *, status: int = 200) -> httpx.Response:
+    """Serve JSON or SSE depending on whether the client asked for streaming.
+
+    ``complete(..., tools=...)`` assembles via stream; text-only ``complete``
+    still uses non-stream. Tests can return one OpenAI-shaped body either way.
+    """
+    try:
+        req = json.loads(request.content) if request.content else {}
+    except Exception:
+        req = {}
+    if status == 200 and req.get("stream"):
+        return httpx.Response(
+            200,
+            content=_completion_json_to_sse(body),
+            headers={"content-type": "text/event-stream"},
+        )
+    return httpx.Response(status, json=body)
+
+
 def _completion_body(
     *,
     content: str | None = None,
@@ -110,8 +172,9 @@ async def test_tools_forwarded_and_tool_calls_mapped() -> None:
         assert body["tools"] == [
             {"type": "function", "function": {"name": "calculator"}}
         ]
-        return httpx.Response(
-            200, json=_completion_body(content=None, tool_calls=raw_tool_calls)
+        assert body.get("stream") is True
+        return _completion_response(
+            request, _completion_body(content=None, tool_calls=raw_tool_calls)
         )
 
     resp = await _client(httpx.MockTransport(handler)).complete(
@@ -169,10 +232,75 @@ async def test_empty_choices_raises_request_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": []})
 
-    with pytest.raises(LLMRequestError):
+    with pytest.raises(LLMRequestError, match="empty choices"):
         await _client(httpx.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
+
+
+async def test_empty_choices_includes_embedded_provider_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [],
+                "error": {"message": "Provider overloaded", "code": "upstream"},
+            },
+        )
+
+    with pytest.raises(LLMRequestError, match="Provider overloaded") as ei:
+        await _client(httpx.MockTransport(handler)).complete(
+            [{"role": "user", "content": "hi"}]
+        )
+    assert "empty choices" in str(ei.value)
+
+
+async def test_empty_choices_retries_via_stream() -> None:
+    """Non-stream empty choices[] recovers through the streaming path."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        body = json.loads(request.content)
+        if not body.get("stream"):
+            return httpx.Response(200, json={"choices": []})
+        return _completion_response(
+            request, _completion_body(content="recovered via stream")
+        )
+
+    resp = await _client(httpx.MockTransport(handler)).complete(
+        [{"role": "user", "content": "hi"}]
+    )
+    assert resp.content == "recovered via stream"
+    assert calls["n"] == 2
+
+
+async def test_complete_with_tools_uses_stream() -> None:
+    """Tool-bearing complete() must hit stream=true (avoids empty choices[])."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body.get("stream") is True
+        assert body.get("tools")
+        return _completion_response(
+            request,
+            _completion_body(
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": "{}"},
+                    }
+                ],
+            ),
+        )
+
+    resp = await _client(httpx.MockTransport(handler)).complete(
+        [{"role": "user", "content": "run"}],
+        tools=[{"type": "function", "function": {"name": "bash"}}],
+    )
+    assert resp.tool_calls[0].name == "bash"
 
 
 async def test_request_error_wraps_network_failure() -> None:

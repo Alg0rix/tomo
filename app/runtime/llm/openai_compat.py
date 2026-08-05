@@ -239,6 +239,54 @@ def _extract_provider_detail(exc: BaseException) -> str:
     return " — ".join(c for c in chunks if c)
 
 
+def _completion_error_detail(resp: Any) -> str:
+    """Extract a provider error embedded in an otherwise-OK chat completion.
+
+    Proxies (OpenRouter, LiteLLM, custom routers) often return HTTP 200 with
+    ``choices: []`` / ``null`` plus an ``error`` object instead of raising.
+    """
+    data: dict[str, Any] | None = None
+    dump = getattr(resp, "model_dump", None)
+    if callable(dump):
+        try:
+            raw = dump()
+            if isinstance(raw, dict):
+                data = raw
+        except Exception:
+            data = None
+    if data is None:
+        extra = getattr(resp, "model_extra", None)
+        if isinstance(extra, dict):
+            data = extra
+    if not data:
+        return ""
+
+    err = data.get("error")
+    if isinstance(err, dict):
+        parts: list[str] = []
+        for key in ("message", "msg", "detail"):
+            val = err.get(key)
+            if isinstance(val, str) and val.strip():
+                parts.append(val.strip())
+                break
+        code = err.get("code") or err.get("type")
+        if code is not None and str(code).strip():
+            parts.append(f"code={code}")
+        return " — ".join(parts)
+    if isinstance(err, str) and err.strip():
+        return err.strip()
+    return ""
+
+
+def _empty_choices_message(resp: Any) -> str:
+    """Build the LLMRequestError text for an empty/null choices response."""
+    detail = _completion_error_detail(resp)
+    base = "LLM request failed: empty choices[] — provider returned no completion"
+    if detail:
+        return f"{base} ({detail})"
+    return base
+
+
 def _hint_for_llm_error(text: str, status: int | None) -> str:
     low = text.lower()
     if any(
@@ -559,17 +607,43 @@ class OpenAICompatClient:
             return self._base_url
         return f"{self._base_url}/chat/completions"
 
+    async def _complete_via_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> LLMResponse:
+        """Assemble a full :class:`LLMResponse` from ``stream_complete``.
+
+        Chat already prefers streaming; many OpenAI-compatible proxies return
+        HTTP 200 with empty ``choices[]`` on non-stream tool completions while
+        the same model streams fine. Callers that only have ``complete`` get
+        the same wire path.
+        """
+        assembled: LLMResponse | None = None
+        async for ev in self.stream_complete(messages, tools):
+            if ev.get("type") == "done":
+                assembled = ev.get("response")
+        if assembled is None:
+            raise LLMRequestError(
+                "LLM request failed: stream ended without a completion"
+            )
+        return assembled
+
     async def complete(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
+        # Prefer the streaming path whenever tools are present — same as the
+        # agent loop. Non-stream + tools is where empty ``choices[]`` shows up
+        # on flaky proxies even when chat streaming works for the same model.
+        if tools:
+            return await self._complete_via_stream(messages, tools)
+
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
         }
-        if tools:
-            payload["tools"] = tools
 
         try:
             resp = await self._client.chat.completions.create(**payload)
@@ -581,20 +655,21 @@ class OpenAICompatClient:
             )
             raise LLMRequestError(format_llm_error(exc)) from exc
 
-        if not resp.choices:
+        first = resp.choices[0] if resp.choices else None
+        if first is None:
+            empty_msg = _empty_choices_message(resp)
             _logger.warning(
-                "LLM empty choices model=%s base_url=%s response=%s",
+                "LLM empty choices on non-stream model=%s base_url=%s — "
+                "retrying via stream response=%s",
                 self._model,
                 self._base_url,
                 getattr(resp, "model_dump", lambda: vars(resp))(),
             )
-            raise LLMRequestError(
-                "LLM request failed: empty choices[] — provider returned no completion"
-            )
+            try:
+                return await self._complete_via_stream(messages, tools)
+            except LLMRequestError as stream_exc:
+                raise LLMRequestError(empty_msg) from stream_exc
 
-        first = resp.choices[0]
-        if first is None:
-            raise LLMRequestError("LLM request failed: choices[0] was null")
         finish = getattr(first, "finish_reason", None) or ""
         message = getattr(first, "message", None)
         if message is None:
