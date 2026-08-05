@@ -59,11 +59,13 @@ Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
 ```bash
 cp .env.example .env   # set TOMO_SESSION_SECRET + TOMO_ADMIN_PASSWORD
-docker compose up -d --build
+docker compose up -d   # pulls ghcr.io/alg0rix/tomo:latest
+# or: docker compose up -d --build
 # UI: http://127.0.0.1:8787
 ```
 
-Persists `$TOMO_HOME` / `$TOMO_WORK` in named volumes. Full guide (reverse proxy, bind mounts, connector): [docs/deployments.md](docs/deployments.md).
+Images are published to GHCR on `main` and `v*` tags. Persists `$TOMO_HOME` /
+`$TOMO_WORK` in named volumes. Full guide: [docs/deployments.md](docs/deployments.md).
 
 ### Install connector (tunnel workplaces)
 
@@ -183,7 +185,7 @@ CI workflows:
 
 | Workflow | When | What |
 |----------|------|------|
-| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release |
+| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release; `main`/`v*` → GHCR `ghcr.io/alg0rix/tomo` |
 | [`lint.yml`](.github/workflows/lint.yml) | push/PR | ruff (E/F), `gofmt`/`go vet`, `bash -n` on install scripts |
 | [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
 

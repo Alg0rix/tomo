@@ -2,12 +2,13 @@
 # Docs: docs/deployments.md
 #
 #   cp .env.example .env   # set strong secrets
-#   docker compose up -d --build
+#   docker compose up -d              # pull GHCR image
+#   docker compose up -d --build      # build locally instead
 
 services:
   tomo:
+    image: ${TOMO_IMAGE:-ghcr.io/alg0rix/tomo:latest}
     build: .
-    image: tomo:local
     container_name: tomo
     ports:
       - "${TOMO_PUBLISH_PORT:-8787}:8787"

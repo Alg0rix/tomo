@@ -33,6 +33,24 @@ Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
 Repo root ships `Dockerfile`, `docker-compose.yml`, and `.env.example`.
 
+Published images live on **GitHub Container Registry**:
+
+```text
+ghcr.io/alg0rix/tomo:latest     # main branch
+ghcr.io/alg0rix/tomo:0.2.0      # release tag v0.2.0
+ghcr.io/alg0rix/tomo:0.2        # major.minor
+ghcr.io/alg0rix/tomo:main
+ghcr.io/alg0rix/tomo:sha-<short>
+```
+
+CI (`.github/workflows/ci.yml` job `docker`) builds and pushes on every
+`main` push and on `v*` tags after Python tests pass. No Docker Hub token
+needed — `GITHUB_TOKEN` + `packages: write` is enough.
+
+After the **first** successful push, make the package public if anonymous
+pull should work: GitHub → repo → **Packages** → `tomo` → Package settings →
+**Change visibility → Public**.
+
 ### 1. Secrets
 
 ```bash
@@ -46,7 +64,14 @@ openssl rand -hex 32   # paste into TOMO_SESSION_SECRET
 Tomo refuses to bind `0.0.0.0` while those still use the insecure defaults
 (`tomo-dev-secret-change-me` / `tomo`).
 
-### 2. Start
+### 2. Start (pull from GHCR)
+
+```bash
+docker compose up -d
+# or pin: TOMO_IMAGE=ghcr.io/alg0rix/tomo:0.2.0 docker compose up -d
+```
+
+Local build instead of pull:
 
 ```bash
 docker compose up -d --build
@@ -85,6 +110,7 @@ Set in `.env` (or Compose `environment:`). Process env wins over
 | `TOMO_SECRET_KEY` | Optional Fernet master key; else file `$TOMO_HOME/.secret_key` |
 | `TOMO_HOST` / `TOMO_PORT` | Bind address (Compose sets `0.0.0.0:8787`) |
 | `TOMO_PUBLISH_PORT` | Host port mapped to the container (default `8787`) |
+| `TOMO_IMAGE` | Image ref (default `ghcr.io/alg0rix/tomo:latest`) |
 | `TOMO_TRUST_PROXY` | `1` when behind a reverse proxy that strips client `X-Forwarded-For` |
 | `TOMO_COOKIE_SECURE` | `1` for HTTPS-only cookies (auto-on when not binding loopback) |
 | `TOMO_HOME` / `TOMO_WORK` | Override paths (Compose uses `/data/home` and `/data/work`) |
@@ -145,13 +171,22 @@ disabled / long timeouts — use your proxy’s streaming WebSocket settings.
 
 ### 8. Update
 
+**From GHCR (recommended):**
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+**Rebuild from source:**
+
 ```bash
 git pull
 docker compose up -d --build
 ```
 
-Named volumes keep Home/Work across rebuilds. Pin a release checkout with
-`git checkout v0.2.0` before build if you want a fixed tag.
+Named volumes keep Home/Work across rebuilds. Pin a release with
+`TOMO_IMAGE=ghcr.io/alg0rix/tomo:0.2.0`.
 
 ### 9. Limitations
 
