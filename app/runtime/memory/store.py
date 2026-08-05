@@ -16,13 +16,18 @@ def search(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
 
 
 def remember(
-    title: str, body: str, tags: list[str] | None = None
+    title: str,
+    body: str,
+    tags: list[str] | None = None,
+    *,
+    confidence: float | None = None,
 ) -> dict[str, Any]:
     from app.services import store
 
-    return store.create_knowledge_entry(
-        {"title": title, "body": body, "tags": tags or []}
-    )
+    data: dict[str, Any] = {"title": title, "body": body, "tags": tags or []}
+    if confidence is not None:
+        data["confidence"] = confidence
+    return store.create_knowledge_entry(data)
 
 
 __all__ = ["search", "remember"]

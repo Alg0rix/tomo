@@ -25,15 +25,39 @@ def run(arguments: dict[str, Any]) -> str:
     else:
         return "Error: 'tags' must be an array of strings"
 
+    confidence: float | None = None
+    if "confidence" in arguments and arguments["confidence"] is not None:
+        try:
+            confidence = float(arguments["confidence"])
+        except (TypeError, ValueError):
+            return "Error: 'confidence' must be a number"
+    else:
+        try:
+            from app.runtime.agent.learning.state import in_review_scope
+
+            if in_review_scope():
+                confidence = 0.9
+        except Exception:
+            confidence = None
+
     from app.services import store
 
+    payload: dict[str, Any] = {
+        "title": title.strip(),
+        "body": body.strip(),
+        "tags": tags_list,
+    }
+    if confidence is not None:
+        payload["confidence"] = confidence
+        payload["success_count"] = 1  # review-confirmed or explicit confidence
+
     try:
-        entry = store.create_knowledge_entry(
-            {"title": title.strip(), "body": body.strip(), "tags": tags_list}
-        )
+        entry = store.create_knowledge_entry(payload)
     except ValueError as exc:
         return f"Error: {exc}"
-    return f"Saved knowledge entry '{entry['id']}': {entry['title']}"
+    conf = entry.get("confidence")
+    conf_bit = f" (confidence={conf:.2f})" if isinstance(conf, (int, float)) else ""
+    return f"Saved knowledge entry '{entry['id']}': {entry['title']}{conf_bit}"
 
 
 __all__ = ["run"]

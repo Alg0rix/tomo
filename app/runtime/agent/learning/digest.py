@@ -124,6 +124,11 @@ def build_review_digest(
     plan_reason: str = "",
     skill_catalog: str | None = None,
     user_snippet: str | None = None,
+    project_snippet: str | None = None,
+    conversation_summary: str | None = None,
+    agent_snippet: str | None = None,
+    semantic_hint: str | None = None,
+    shared_snippet: str | None = None,
 ) -> str:
     """Structured digest the reviewer consumes as its sole user message body."""
     trail = compact_tool_trail(messages)
@@ -137,14 +142,19 @@ def build_review_digest(
 
     parts = [
         f"## Trigger\n{plan_reason or 'scheduled_review'}",
-        f"## Goal (this turn)\n{goal[:800]}",
+        f"## Goal (this turn) [conversation]\n{goal[:800]}",
     ]
+    if conversation_summary and conversation_summary.strip():
+        parts.append(
+            "## Conversation summary [conversation]\n"
+            + conversation_summary.strip()[:1200]
+        )
     if len(excerpts) > 1:
         parts.append(
-            "## Recent user messages\n"
+            "## Recent user messages [conversation]\n"
             + "\n---\n".join(f"- {e}" for e in excerpts[:-1])
         )
-    parts.append(f"## Tool trail\n{trail}")
+    parts.append(f"## Execution trail [execution]\n{trail}")
     parts.append(
         "## Skills touched this turn\n"
         + (", ".join(skills_touched) if skills_touched else "(none)")
@@ -156,16 +166,31 @@ def build_review_digest(
             "creating anything new. Prefer `manage_skill` patch over create."
         )
     if skill_catalog is not None:
-        parts.append(f"## Existing skill catalog\n{skill_catalog}")
+        parts.append(f"## Existing skill catalog [agent/skills]\n{skill_catalog}")
+    if agent_snippet is not None:
+        parts.append(f"## Agent memory [agent]\n{agent_snippet}")
     if user_snippet is not None:
-        parts.append(f"## USER profile (current)\n{user_snippet}")
+        parts.append(f"## USER profile [user]\n{user_snippet}")
+    if project_snippet is not None:
+        parts.append(f"## Project notes [project]\n{project_snippet}")
+    if semantic_hint is not None:
+        parts.append(f"## Semantic KB hint [semantic]\n{semantic_hint}")
+    if shared_snippet and shared_snippet.strip():
+        parts.append(f"## Shared notes [shared]\n{shared_snippet.strip()}")
+    else:
+        parts.append(
+            "## Shared notes [shared]\n"
+            "(Session-scoped swarm_notes from delegate completes; "
+            "do not put them in USER.)"
+        )
     final = (final_content or "").strip()[:_MAX_FINAL_CHARS] or "(empty)"
-    parts.append(f"## Final answer (excerpt)\n{final}")
+    parts.append(f"## Final answer (excerpt) [episodic]\n{final}")
     parts.append(
         f"## Stats\ntool_calls={tool_calls} messages={len(messages)} "
         f"skills_touched={len(skills_touched)}"
     )
     parts.append(
+        "Pick the correct memory lane before writing. "
         "Act with tools if warranted; otherwise reply exactly: Nothing to save."
     )
     return "\n\n".join(parts)

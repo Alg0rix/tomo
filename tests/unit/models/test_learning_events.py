@@ -53,7 +53,11 @@ def test_insert_and_list(db) -> None:
 
 
 def test_stats_via_mixin(db) -> None:
-    db.insert_learning_event(saved=True, created_at=1)
+    db.insert_learning_event(
+        saved=True,
+        created_at=1,
+        extract={"items": [], "memory_types": ["user"], "saved": True},
+    )
     db.insert_learning_event(saved=True, created_at=2)
     db.insert_learning_event(saved=False, created_at=3)
 
@@ -64,6 +68,12 @@ def test_stats_via_mixin(db) -> None:
     assert st["events_total"] == 3
     assert st["events_saved"] == 2
     assert st["events_idle"] == 1
+
+    saved_rows = db.list_learning_events(limit=10, saved_only=True)
+    assert len(saved_rows) == 2
+    assert all(r["saved"] for r in saved_rows)
+    typed = next(r for r in saved_rows if r["created_at"] == 1.0)
+    assert "user" in typed["memory_types"]
 
 
 def test_by_month(db) -> None:

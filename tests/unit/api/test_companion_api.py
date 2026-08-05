@@ -30,6 +30,23 @@ def test_companion_snapshot_shape(tmp_path) -> None:
         assert "heatmap" in data
         assert isinstance(data["heatmap"].get("days"), list)
         assert "streak" in data
+        assert "diagnostics" in data
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+def test_companion_events_saved_only(tmp_path) -> None:
+    store.rebind(tmp_path / "comp_saved.db")
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        store.insert_learning_event(saved=True, diary="a", created_at=100.0)
+        store.insert_learning_event(saved=False, note="idle", created_at=200.0)
+        client = TestClient(app)
+        r = client.get("/api/companion/events?saved_only=true")
+        assert r.status_code == 200
+        events = r.json()["events"]
+        assert len(events) == 1
+        assert events[0]["saved"] is True
     finally:
         app.dependency_overrides.pop(require_auth, None)
 

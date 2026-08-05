@@ -21,7 +21,6 @@ Hardening:
 from __future__ import annotations
 
 from app.runtime.agent.learning.bond import compute_bond
-from app.runtime.agent.learning.companion import companion_snapshot
 from app.runtime.agent.learning.diary import derive_diary, extract_diary_line
 from app.runtime.agent.learning.digest import build_review_digest, compact_tool_trail
 from app.runtime.agent.learning.runner import run_learning_review, schedule_learning_review
@@ -39,6 +38,11 @@ from app.runtime.agent.learning.state import (
     snapshot,
 )
 
+
+def companion_snapshot(*args, **kwargs):
+    from app.runtime.agent.learning.companion import companion_snapshot as _snap
+
+    return _snap(*args, **kwargs)
 
 
 def decide_review(

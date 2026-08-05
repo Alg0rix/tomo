@@ -38,7 +38,18 @@ def _parse_json_obj(raw: str | None) -> dict[str, Any]:
     return val if isinstance(val, dict) else {}
 
 
+def _row_keys(row: sqlite3.Row) -> set[str]:
+    try:
+        return set(row.keys())
+    except Exception:
+        return set()
+
+
 def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
+    keys = _row_keys(row)
+    extract = {}
+    if "extract_json" in keys:
+        extract = _parse_json_obj(row["extract_json"])
     return {
         "id": row["id"],
         "created_at": float(row["created_at"] or 0),
@@ -53,6 +64,10 @@ def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
         "diary": row["diary"] or "",
         "note": row["note"] or "",
         "plan": _parse_json_obj(row["plan_json"]),
+        "extract": extract,
+        "memory_types": list(extract.get("memory_types") or [])
+        if isinstance(extract, dict)
+        else [],
     }
 
 
@@ -70,35 +85,65 @@ def insert_learning_event(
     diary: str = "",
     note: str = "",
     plan: dict[str, Any] | None = None,
+    extract: dict[str, Any] | None = None,
     event_id: str | None = None,
     created_at: float | None = None,
 ) -> dict[str, Any]:
     eid = (event_id or "").strip() or uuid.uuid4().hex
     ts = float(created_at) if created_at is not None else _now()
     acts = [str(a) for a in (actions or []) if str(a).strip()]
-    conn.execute(
-        """
-        INSERT INTO learning_events (
-            id, created_at, agent_id, session_id, user_id, reason,
-            review_memory, review_skills, saved, actions_json, diary, note, plan_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            eid,
-            ts,
-            (agent_id or "").strip(),
-            (session_id or "").strip(),
-            (user_id or "web").strip() or "web",
-            (reason or "").strip(),
-            1 if review_memory else 0,
-            1 if review_skills else 0,
-            1 if saved else 0,
-            json.dumps(acts, ensure_ascii=False),
-            (diary or "").strip(),
-            (note or "").strip(),
-            json.dumps(plan or {}, ensure_ascii=False),
-        ),
-    )
+    extract_obj = extract if isinstance(extract, dict) else {}
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(learning_events)")}
+    if "extract_json" in cols:
+        conn.execute(
+            """
+            INSERT INTO learning_events (
+                id, created_at, agent_id, session_id, user_id, reason,
+                review_memory, review_skills, saved, actions_json, diary, note,
+                plan_json, extract_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                eid,
+                ts,
+                (agent_id or "").strip(),
+                (session_id or "").strip(),
+                (user_id or "web").strip() or "web",
+                (reason or "").strip(),
+                1 if review_memory else 0,
+                1 if review_skills else 0,
+                1 if saved else 0,
+                json.dumps(acts, ensure_ascii=False),
+                (diary or "").strip(),
+                (note or "").strip(),
+                json.dumps(plan or {}, ensure_ascii=False),
+                json.dumps(extract_obj, ensure_ascii=False),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO learning_events (
+                id, created_at, agent_id, session_id, user_id, reason,
+                review_memory, review_skills, saved, actions_json, diary, note, plan_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                eid,
+                ts,
+                (agent_id or "").strip(),
+                (session_id or "").strip(),
+                (user_id or "web").strip() or "web",
+                (reason or "").strip(),
+                1 if review_memory else 0,
+                1 if review_skills else 0,
+                1 if saved else 0,
+                json.dumps(acts, ensure_ascii=False),
+                (diary or "").strip(),
+                (note or "").strip(),
+                json.dumps(plan or {}, ensure_ascii=False),
+            ),
+        )
     conn.commit()
     row = conn.execute(
         "SELECT * FROM learning_events WHERE id=?", (eid,)
@@ -112,6 +157,7 @@ def list_learning_events(
     limit: int = 30,
     before: float | None = None,
     agent_id: str | None = None,
+    saved_only: bool = False,
 ) -> list[dict[str, Any]]:
     lim = max(1, min(int(limit or 30), 200))
     clauses: list[str] = []
@@ -123,6 +169,8 @@ def list_learning_events(
     if aid:
         clauses.append("agent_id = ?")
         params.append(aid)
+    if saved_only:
+        clauses.append("saved = 1")
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(lim)
     rows = conn.execute(
@@ -189,9 +237,103 @@ def learning_events_by_month(
     return buckets
 
 
+def get_learning_agent_state(
+    conn: sqlite3.Connection, agent_id: str
+) -> dict[str, Any] | None:
+    aid = (agent_id or "").strip() or "_default"
+    tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "learning_agent_state" not in tables:
+        return None
+    row = conn.execute(
+        "SELECT * FROM learning_agent_state WHERE agent_id=?", (aid,)
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "agent_id": row["agent_id"],
+        "turns_since_memory": int(row["turns_since_memory"] or 0),
+        "iters_since_skill": int(row["iters_since_skill"] or 0),
+        "memory_due": bool(row["memory_due"]),
+        "skills_due": bool(row["skills_due"]),
+        "skill_refine_pending": bool(row["skill_refine_pending"]),
+        "last_review_at": float(row["last_review_at"] or 0),
+        "reviews_started": int(row["reviews_started"] or 0),
+        "reviews_saved": int(row["reviews_saved"] or 0),
+        "skipped_cooldown": int(row["skipped_cooldown"] or 0),
+        "skipped_inflight": int(row["skipped_inflight"] or 0),
+        "updated_at": float(row["updated_at"] or 0),
+    }
+
+
+def upsert_learning_agent_state(
+    conn: sqlite3.Connection,
+    agent_id: str,
+    *,
+    turns_since_memory: int = 0,
+    iters_since_skill: int = 0,
+    memory_due: bool = False,
+    skills_due: bool = False,
+    skill_refine_pending: bool = False,
+    last_review_at: float = 0.0,
+    reviews_started: int = 0,
+    reviews_saved: int = 0,
+    skipped_cooldown: int = 0,
+    skipped_inflight: int = 0,
+) -> None:
+    aid = (agent_id or "").strip() or "_default"
+    tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "learning_agent_state" not in tables:
+        return
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO learning_agent_state (
+            agent_id, turns_since_memory, iters_since_skill, memory_due, skills_due,
+            skill_refine_pending, last_review_at, reviews_started, reviews_saved,
+            skipped_cooldown, skipped_inflight, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(agent_id) DO UPDATE SET
+            turns_since_memory=excluded.turns_since_memory,
+            iters_since_skill=excluded.iters_since_skill,
+            memory_due=excluded.memory_due,
+            skills_due=excluded.skills_due,
+            skill_refine_pending=excluded.skill_refine_pending,
+            last_review_at=excluded.last_review_at,
+            reviews_started=excluded.reviews_started,
+            reviews_saved=excluded.reviews_saved,
+            skipped_cooldown=excluded.skipped_cooldown,
+            skipped_inflight=excluded.skipped_inflight,
+            updated_at=excluded.updated_at
+        """,
+        (
+            aid,
+            int(turns_since_memory),
+            int(iters_since_skill),
+            1 if memory_due else 0,
+            1 if skills_due else 0,
+            1 if skill_refine_pending else 0,
+            float(last_review_at or 0),
+            int(reviews_started),
+            int(reviews_saved),
+            int(skipped_cooldown),
+            int(skipped_inflight),
+            now,
+        ),
+    )
+    conn.commit()
+
+
 __all__ = [
     "insert_learning_event",
     "list_learning_events",
     "learning_event_stats",
     "learning_events_by_month",
+    "get_learning_agent_state",
+    "upsert_learning_agent_state",
 ]

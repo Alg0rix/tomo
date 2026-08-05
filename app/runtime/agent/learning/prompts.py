@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.runtime.agent.learning.memory_types import lanes_prompt_block
+
 _BASE = """You are Tomo's learning reviewer — a background curator, not a chat agent.
 You do not speak to the user. You only distill durable knowledge from a completed turn.
 
@@ -40,7 +42,8 @@ _FOCUS_MEMORY = """
 Focus this pass: MEMORY primarily — be ACTIVE.
 Look for persona, preferences, corrections, or expectations about how you should behave.
 If something stands out, save with `memory` (target=user for who they are; target=memory
-for env/conventions) even if the user never said "remember".
+for env/conventions; target=project for workplace stack/architecture) even if the user
+never said "remember".
 Use `remember` for longer searchable KB docs; `agent_state` for short keyed facts.
 Only touch skills if a clear procedural lesson appeared.
 """
@@ -69,7 +72,14 @@ def system_prompt(*, review_memory: bool, review_skills: bool) -> str:
         focus = _FOCUS_MEMORY
     else:
         focus = _FOCUS_SKILLS
-    return _BASE + "\n" + focus.strip() + "\n"
+    return (
+        _BASE
+        + "\n"
+        + lanes_prompt_block()
+        + "\n\n"
+        + focus.strip()
+        + "\n"
+    )
 
 
 __all__ = ["system_prompt"]

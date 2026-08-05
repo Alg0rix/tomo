@@ -11,6 +11,7 @@
     data: null,
     tab: 'bond',
     selectedEventId: null,
+    savedOnly: false,
   };
 
   var ICO = {
@@ -225,6 +226,55 @@
     document.head.appendChild(s);
   }
 
+  function memoryTypeChips(ev) {
+    var types = (ev && ev.memory_types) || [];
+    if ((!types || !types.length) && ev && ev.extract && ev.extract.memory_types) {
+      types = ev.extract.memory_types;
+    }
+    if (!types || !types.length) return '';
+    return types
+      .slice(0, 6)
+      .map(function (t) {
+        return '<span class="cp-chip is-type">' + esc(String(t)) + '</span>';
+      })
+      .join('');
+  }
+
+  function renderDiagnostics(diag) {
+    diag = diag || {};
+    if (!diag || typeof diag !== 'object') return '';
+    var bits = [];
+    if (diag.in_flight) bits.push('review in flight');
+    if (diag.memory_due) bits.push('memory due');
+    if (diag.skills_due) bits.push('skills due');
+    if (diag.cooldown_remaining_sec > 0) {
+      bits.push('cooldown ' + Math.ceil(diag.cooldown_remaining_sec) + 's');
+    }
+    bits.push(
+      'turns ' +
+        (diag.turns_since_memory != null ? diag.turns_since_memory : '—') +
+        '/' +
+        (diag.memory_nudge != null ? diag.memory_nudge : '—')
+    );
+    bits.push(
+      'reviews ' +
+        (diag.reviews_started || 0) +
+        ' · saved ' +
+        (diag.reviews_saved || 0)
+    );
+    if (diag.skipped_cooldown) bits.push('skip cool ' + diag.skipped_cooldown);
+    if (diag.skipped_inflight) bits.push('skip fly ' + diag.skipped_inflight);
+    return (
+      '<div class="cp-diag" title="Learning harness diagnostics">' +
+      bits
+        .map(function (b) {
+          return '<span class="cp-diag-pill">' + esc(b) + '</span>';
+        })
+        .join('') +
+      '</div>'
+    );
+  }
+
   function diaryFeature(ev) {
     if (!ev) return '';
     if (ev.saved) {
@@ -315,6 +365,7 @@
     chips += sel.saved
       ? '<span class="cp-chip is-ok">saved</span>'
       : '<span class="cp-chip">idle</span>';
+    chips += memoryTypeChips(sel);
     (sel.actions || []).slice(0, 4).forEach(function (a) {
       chips += '<span class="cp-chip mono">' + esc(String(a).slice(0, 60)) + '</span>';
     });
@@ -338,6 +389,14 @@
     );
   }
 
+  function visibleEvents(events) {
+    events = events || [];
+    if (!state.savedOnly) return events;
+    return events.filter(function (e) {
+      return !!e.saved;
+    });
+  }
+
   function render(data) {
     ensureGrowthStyles();
     state.data = data;
@@ -345,13 +404,14 @@
     var stats = data.stats || {};
     var parts = data.bond_parts || {};
     var learning = !!data.learning_enabled;
-    var events = data.recent_events || [];
+    var allEvents = data.recent_events || [];
+    var events = visibleEvents(allEvents);
     var preview = data.user_profile_preview || [];
     var streak = data.streak != null ? data.streak : (data.heatmap && data.heatmap.streak) || 0;
 
-    if (events.length) {
-      state.nextBefore = events[events.length - 1].created_at || null;
-      if (!state.selectedEventId) state.selectedEventId = events[0].id;
+    if (allEvents.length) {
+      state.nextBefore = allEvents[allEvents.length - 1].created_at || null;
+      if (!state.selectedEventId && events.length) state.selectedEventId = events[0].id;
     } else {
       state.nextBefore = null;
       state.selectedEventId = null;
@@ -430,7 +490,9 @@
       '<label class="toggle companion-toggle">' +
       '<input type="checkbox" id="companionLearning" ' +
       (learning ? 'checked' : '') +
-      '><span class="track"></span></label></div></section>' +
+      '><span class="track"></span></label></div>' +
+      renderDiagnostics(data.diagnostics) +
+      '</section>' +
       /* Activity */
       '<section class="cp-bento cp-bento-pad">' +
       '<div class="cp-activity-head">' +
@@ -482,7 +544,10 @@
       '<section class="cp-bento cp-bento-pad">' +
       '<div class="cp-log-head">' +
       '<div><h3>Growth log</h3>' +
-      '<p>A record of every milestone as Tomo learns with you</p></div></div>' +
+      '<p>A record of every milestone as Tomo learns with you</p></div>' +
+      '<label class="cp-filter"><input type="checkbox" id="companionSavedOnly" ' +
+      (state.savedOnly ? 'checked' : '') +
+      '> Saved only</label></div>' +
       '<div class="cp-log-grid">' +
       '<div id="cpDiary">' +
       renderDiaryCard(events) +
@@ -538,7 +603,7 @@
 
   function selectEvent(id) {
     state.selectedEventId = id;
-    var events = (state.data && state.data.recent_events) || [];
+    var events = visibleEvents((state.data && state.data.recent_events) || []);
     var diary = document.getElementById('cpDiary');
     var tl = document.getElementById('cpTimeline');
     if (diary) diary.innerHTML = renderDiaryCard(events);
@@ -595,6 +660,14 @@
     bindTimeline();
     var more = document.getElementById('companionLoadMore');
     if (more) more.addEventListener('click', loadMore);
+    var savedOnly = document.getElementById('companionSavedOnly');
+    if (savedOnly) {
+      savedOnly.addEventListener('change', function () {
+        state.savedOnly = !!savedOnly.checked;
+        state.selectedEventId = null;
+        if (state.data) render(state.data);
+      });
+    }
     window.addEventListener('resize', positionTabInk);
   }
 
@@ -602,18 +675,21 @@
     if (state.loadingMore || !state.nextBefore) return;
     state.loadingMore = true;
     try {
-      var data = await Tomo.api(
-        '/api/companion/events?limit=30&before=' + encodeURIComponent(state.nextBefore)
-      );
+      var q =
+        '/api/companion/events?limit=30&before=' +
+        encodeURIComponent(state.nextBefore);
+      if (state.savedOnly) q += '&saved_only=true';
+      var data = await Tomo.api(q);
       var events = (data && data.events) || [];
       if (state.data && events.length) {
         state.data.recent_events = (state.data.recent_events || []).concat(events);
         state.nextBefore = data.next_before || null;
+        var shown = visibleEvents(state.data.recent_events);
         var diary = document.getElementById('cpDiary');
         var tl = document.getElementById('cpTimeline');
-        if (diary) diary.innerHTML = renderDiaryCard(state.data.recent_events);
+        if (diary) diary.innerHTML = renderDiaryCard(shown);
         if (tl) {
-          tl.innerHTML = renderTimeline(state.data.recent_events);
+          tl.innerHTML = renderTimeline(shown);
           bindTimeline();
         }
         var foot = document.getElementById('companionLogFoot');

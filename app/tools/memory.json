@@ -18,8 +18,8 @@
           },
           "target": {
             "type": "string",
-            "enum": ["memory", "user", "all"],
-            "description": "memory (agent notes) | user (shared profile) | all (list only)"
+            "enum": ["memory", "user", "project", "all"],
+            "description": "memory (agent notes) | user (shared profile) | project (workplace PROJECT.md) | all (list only)"
           },
           "content": {
             "type": "string",
@@ -36,6 +36,10 @@
           "agent_id": {
             "type": "string",
             "description": "Defaults to the bound agent (for memory target)."
+          },
+          "workplace_id": {
+            "type": "string",
+            "description": "Workplace id for project target (defaults from agent workplace)."
           }
         },
         "required": ["action"]

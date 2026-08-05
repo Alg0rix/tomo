@@ -25,7 +25,7 @@ def _rrf_fuse(
 def search_knowledge_hybrid(
     conn: Any, query: str, *, limit: int = 5
 ) -> list[dict[str, Any]]:
-    """Hybrid KB search: FTS + semantic (+ lexical fallback)."""
+    """Hybrid KB search: FTS + semantic (+ lexical fallback), confidence-ranked."""
     from app.models.mixins import knowledge_entries as kb
     from app.runtime.memory import embeddings as emb
     from app.runtime.memory import fts
@@ -36,19 +36,22 @@ def search_knowledge_hybrid(
     k = max(1, min(int(limit or 5), 20))
 
     fts_ids = fts.search_knowledge_fts(conn, text, limit=k * 2)
-    sem_ids = [rid for rid, _ in emb.semantic_rank(conn, scope="knowledge", query=text, limit=k * 2)]
+    sem_ids = [
+        rid for rid, _ in emb.semantic_rank(conn, scope="knowledge", query=text, limit=k * 2)
+    ]
 
-    fused = _rrf_fuse([fts_ids, sem_ids], limit=k)
+    fused = _rrf_fuse([fts_ids, sem_ids], limit=k * 2)
     hits: list[dict[str, Any]] = []
     for eid in fused:
         entry = kb.get_entry(conn, eid)
         if entry:
             hits.append(entry)
-    if hits:
-        return hits
+    if not hits:
+        hits = kb.search_entries_lexical(conn, text, limit=k * 2)
 
-    # Fallback: legacy token scorer (always works).
-    return kb.search_entries_lexical(conn, text, limit=k)
+    # Prefer high-confidence semantic knowledge among fused hits.
+    ranked = kb.rank_entries_by_confidence(hits, limit=k)
+    return ranked
 
 
 def search_messages_hybrid(
@@ -100,7 +103,11 @@ def retrieve_for_turn(
     session_id: str | None = None,
     limit: int = 4,
 ) -> str:
-    """Build a compact memory block for system-prompt injection (Reuse step)."""
+    """Build a compact memory block for system-prompt injection (Reuse step).
+
+    Ranking preference (Learning OS Slice 2):
+    user prefs → bound project → high-confidence semantic KB → rest.
+    """
     if not (query or "").strip():
         return ""
     try:
@@ -109,6 +116,33 @@ def retrieve_for_turn(
         return ""
 
     parts: list[str] = []
+
+    # 1) User lane (prefs / style) — highest priority retrieval signal.
+    try:
+        from app.runtime.memory import curated
+
+        user_entries = curated.read_entries(curated.user_path())
+        cleaned = [e.strip() for e in user_entries if (e or "").strip()]
+        if cleaned:
+            snippet = "\n".join(f"- {e[:160]}" for e in cleaned[:4])
+            parts.append("User prefs [user]:\n" + snippet)
+    except Exception as exc:
+        _logger.debug("user retrieve failed: %s", exc)
+
+    # 2) Project lane when workplace is bound.
+    if agent_id:
+        try:
+            from app.runtime.memory import project as project_mem
+
+            wid = project_mem.workplace_id_for_agent(agent_id)
+            if wid:
+                snip = project_mem.format_snippet(wid, limit=400)
+                if snip and snip != "(empty)":
+                    parts.append(f"Project notes [project] ({wid}):\n{snip}")
+        except Exception as exc:
+            _logger.debug("project retrieve failed: %s", exc)
+
+    # 3) High-confidence semantic KB.
     try:
         kb_hits = store.search_knowledge(query, limit=limit)
         if kb_hits:
@@ -117,8 +151,16 @@ def retrieve_for_turn(
                 body = (h.get("body") or "").strip().replace("\n", " ")
                 if len(body) > 180:
                     body = body[:177] + "…"
-                lines.append(f"- {h.get('title')}: {body}")
-            parts.append("Knowledge:\n" + "\n".join(lines))
+                conf = h.get("confidence")
+                conf_s = f" conf={conf:.2f}" if isinstance(conf, (int, float)) else ""
+                lines.append(f"- {h.get('title')}: {body}{conf_s}")
+                try:
+                    eid = (h.get("id") or "").strip()
+                    if eid:
+                        store.bump_knowledge_use(eid)
+                except Exception:
+                    pass
+            parts.append("Knowledge [semantic]:\n" + "\n".join(lines))
     except Exception as exc:
         _logger.debug("kb retrieve failed: %s", exc)
 
@@ -150,7 +192,7 @@ def retrieve_for_turn(
             state = store.list_agent_state(agent_id)
             if state:
                 lines = [f"- {k}: {v}" for k, v in list(state.items())[:6]]
-                parts.append("Agent state:\n" + "\n".join(lines))
+                parts.append("Agent state [agent]:\n" + "\n".join(lines))
         except Exception:
             pass
 
@@ -161,9 +203,21 @@ def retrieve_for_turn(
                 text = summary["summary"].strip()
                 if len(text) > 400:
                     text = text[:397] + "…"
-                parts.append(f"Session memory:\n{text}")
+                parts.append(f"Session memory [conversation]:\n{text}")
         except Exception:
             pass
+        try:
+            from app.models.mixins import swarm_notes as sn
+
+            shared = store.with_db(
+                lambda conn: sn.format_swarm_notes_snippet(
+                    conn, session_id=session_id, limit=5
+                )
+            )
+            if shared:
+                parts.append(f"Shared swarm notes [shared]:\n{shared}")
+        except Exception as exc:
+            _logger.debug("swarm notes retrieve failed: %s", exc)
 
     try:
         arts = store.search_artifacts(query, limit=3, session_id=session_id)
@@ -172,15 +226,28 @@ def retrieve_for_turn(
                 f"- {a.get('title')} ({a.get('path') or a.get('kind')})"
                 for a in arts
             ]
-            parts.append("Artifacts:\n" + "\n".join(lines))
+            parts.append("Artifacts [execution]:\n" + "\n".join(lines))
     except Exception:
         pass
+
+    try:
+        exec_hits = store.search_execution_snippets(
+            query, session_id=session_id, limit=3
+        )
+        if exec_hits:
+            lines = [
+                f"- {h.get('title')}: {(h.get('snippet') or '')[:160]}"
+                for h in exec_hits
+            ]
+            parts.append("Execution snippets [execution]:\n" + "\n".join(lines))
+    except Exception as exc:
+        _logger.debug("execution snippet retrieve failed: %s", exc)
 
     if not parts:
         return ""
     return (
         "## Retrieved memory\n"
-        "Use only if relevant; prefer tools to verify.\n\n"
+        "Prefer user prefs and high-confidence knowledge; verify with tools.\n\n"
         + "\n\n".join(parts)
     )
 

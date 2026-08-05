@@ -31,11 +31,12 @@ def _catalog(
     filepath: str,
     size: int,
     notes: str = "",
+    preview: str = "",
 ) -> None:
     try:
         from app.services import store
 
-        store.create_artifact(
+        art = store.create_artifact(
             {
                 "title": filename,
                 "path": filepath,
@@ -44,6 +45,19 @@ def _catalog(
                 "session_id": session_id,
                 "agent_id": agent_id,
             }
+        )
+        # Learning OS execution index (best-effort).
+        snip = (preview or "").strip()
+        if not snip:
+            snip = f"{filename} ({notes or f'size={size}'})"
+        store.insert_execution_snippet(
+            session_id=session_id,
+            agent_id=agent_id,
+            source="artifact",
+            ref_id=str(art.get("id") or ""),
+            title=filename,
+            snippet=snip[:2000],
+            tags=["execution", "artifact"],
         )
     except Exception:
         pass
@@ -179,6 +193,7 @@ def run(arguments: dict[str, Any]) -> str:
             filepath=info["filepath"],
             size=info["size"],
             notes=notes,
+            preview=content[:2000],
         )
         return json.dumps(
             {

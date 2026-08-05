@@ -1161,6 +1161,27 @@ async def _stream_delegate_bundle(
                 "status": "error" if delegate_error else "ok",
                 "delegate_call_id": cid,
             }
+            # Learning OS shared lane — publish full outcome before truncate.
+            if session_id:
+                try:
+                    from app.models.mixins import swarm_notes as sn
+                    from app.services import store
+
+                    def _publish(conn: Any) -> None:
+                        sn.insert_swarm_note(
+                            conn,
+                            session_id=session_id,
+                            from_agent_id=agent_id or "",
+                            to_agent_id=target,
+                            delegate_call_id=cid or "",
+                            reason=reason,
+                            content=str(sub_output or ""),
+                            status="error" if delegate_error else "ok",
+                        )
+
+                    store.with_db(_publish)
+                except Exception:
+                    _logger.debug("swarm_note publish failed", exc_info=True)
             sub_result = sub_output or "(no output from subagent)"
     elif delegate_error:
         sub_result = str(delegate_result)

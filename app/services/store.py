@@ -712,6 +712,16 @@ class Store:
         with self._lock:
             return knowledge_store.search_entries(self._conn, query, limit=limit)
 
+    def bump_knowledge_use(self, entry_id: str, *, success: bool = False) -> None:
+        with self._lock:
+            knowledge_store.bump_entry_use(
+                self._conn, entry_id, success=success
+            )
+
+    def mark_knowledge_success(self, entry_id: str) -> None:
+        with self._lock:
+            knowledge_store.mark_entry_success(self._conn, entry_id)
+
     # -- skills / plugins / schedules (SQLite) ---------------------------
     def list_skills(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -1259,12 +1269,17 @@ class Store:
         limit: int = 30,
         before: float | None = None,
         agent_id: str | None = None,
+        saved_only: bool = False,
     ) -> list[dict[str, Any]]:
         from app.models.mixins import learning_events as le
 
         with self._lock:
             return le.list_learning_events(
-                self._conn, limit=limit, before=before, agent_id=agent_id
+                self._conn,
+                limit=limit,
+                before=before,
+                agent_id=agent_id,
+                saved_only=saved_only,
             )
 
     def companion_snapshot(self, *, recent_limit: int = 20) -> dict[str, Any]:
@@ -1273,6 +1288,41 @@ class Store:
 
         with self._lock:
             return snap(self._conn, recent_limit=recent_limit)
+
+    # -- Learning OS shared / execution lanes ----------------------------
+    def insert_swarm_note(self, **kwargs: Any) -> dict[str, Any] | None:
+        from app.models.mixins import swarm_notes as sn
+
+        with self._lock:
+            return sn.insert_swarm_note(self._conn, **kwargs)
+
+    def list_swarm_notes(
+        self, *, session_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        from app.models.mixins import swarm_notes as sn
+
+        with self._lock:
+            return sn.list_swarm_notes(self._conn, session_id=session_id, limit=limit)
+
+    def insert_execution_snippet(self, **kwargs: Any) -> dict[str, Any] | None:
+        from app.models.mixins import execution_snippets as ex
+
+        with self._lock:
+            return ex.insert_execution_snippet(self._conn, **kwargs)
+
+    def search_execution_snippets(
+        self,
+        query: str,
+        *,
+        session_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        from app.models.mixins import execution_snippets as ex
+
+        with self._lock:
+            return ex.search_execution_snippets(
+                self._conn, query, session_id=session_id, limit=limit
+            )
 
 
 store = Store()

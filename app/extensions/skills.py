@@ -459,6 +459,62 @@ def _library_skill_dir(skill_id: str, home_root: Path | None = None) -> Path:
     return ensure_under(lib, slugify_skill_id(skill_id))
 
 
+def snapshot_skill_revision(
+    skill_dir: Path, *, label: str = "SKILL.md"
+) -> Path | None:
+    """Copy current SKILL.md into ``revisions/vN.md`` before overwrite.
+
+    Returns the revision path, or None if there was nothing to snapshot.
+    """
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return None
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text.strip():
+        return None
+    rev_dir = skill_dir / "revisions"
+    try:
+        rev_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    existing = sorted(rev_dir.glob("v*.md"))
+    next_n = 1
+    for p in existing:
+        stem = p.stem  # v12
+        if stem.startswith("v") and stem[1:].isdigit():
+            next_n = max(next_n, int(stem[1:]) + 1)
+    dest = rev_dir / f"v{next_n}.md"
+    header = f"<!-- revision of {label} @ v{next_n} -->\n"
+    try:
+        dest.write_text(header + text, encoding="utf-8")
+    except OSError:
+        return None
+    return dest
+
+
+def list_skill_revisions(
+    skill_id: str, *, home_root: Path | None = None
+) -> list[dict[str, Any]]:
+    """List revision files for a library skill (newest first)."""
+    dest = _library_skill_dir(skill_id, home_root)
+    rev_dir = dest / "revisions"
+    if not rev_dir.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for p in sorted(rev_dir.glob("v*.md"), reverse=True):
+        stem = p.stem
+        n = int(stem[1:]) if stem.startswith("v") and stem[1:].isdigit() else 0
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        out.append({"version": n, "path": str(p), "name": p.name, "bytes": size})
+    return out
+
+
 def _compose_skill_md(
     *,
     name: str,
@@ -511,6 +567,8 @@ def write_library_skill(
     if dest.exists() and not overwrite:
         raise FileExistsError(f"skill already exists: {sid}")
     dest.mkdir(parents=True, exist_ok=True)
+    if overwrite and (dest / "SKILL.md").is_file():
+        snapshot_skill_revision(dest)
     (dest / "SKILL.md").write_text(content, encoding="utf-8")
     loaded = load_discovered_skill(dest / "SKILL.md", "library", root=home.library_skills_dir(home_root))
     if loaded is None:
@@ -534,6 +592,7 @@ def edit_library_skill(
     skill_md = dest / "SKILL.md"
     if not skill_md.is_file():
         raise FileNotFoundError(f"library skill not found: {sid}")
+    snapshot_skill_revision(dest)
     if content is not None:
         text = content
         if not text.strip().startswith("---"):
@@ -602,6 +661,8 @@ def patch_library_skill(
     updated = text.replace(old_string, new_string, 1)
     if len(updated) > _MAX_SKILL_CHARS:
         raise ValueError(f"result exceeds {_MAX_SKILL_CHARS} characters")
+    if rel == "SKILL.md" or target.name == "SKILL.md":
+        snapshot_skill_revision(dest, label=rel)
     target.write_text(updated, encoding="utf-8")
     loaded = load_discovered_skill(dest / "SKILL.md", "library", root=home.library_skills_dir(home_root))
     if loaded is None:
@@ -664,4 +725,6 @@ __all__ = [
     "patch_library_skill",
     "write_skill_support_file",
     "delete_library_skill",
+    "snapshot_skill_revision",
+    "list_skill_revisions",
 ]

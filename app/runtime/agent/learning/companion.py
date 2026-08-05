@@ -219,6 +219,24 @@ def companion_snapshot(conn: sqlite3.Connection, *, recent_limit: int = 20) -> d
     }
     bond = compute_bond(**parts)
 
+    diagnostics: dict[str, Any] = {}
+    try:
+        from app.runtime.agent.learning.state import snapshot as learn_snap
+
+        # Prefer coordinator / default agent diagnostics when present.
+        diagnostics = learn_snap(None)
+        if isinstance(diagnostics, dict) and diagnostics:
+            # Flatten: pick first agent or empty diagnostic shell.
+            first = next(iter(diagnostics.values()), None)
+            if isinstance(first, dict):
+                diagnostics = first
+            else:
+                diagnostics = learn_snap("_default")
+        else:
+            diagnostics = learn_snap("_default")
+    except Exception:
+        diagnostics = {}
+
     return {
         "bond": bond,
         "bond_parts": parts,
@@ -235,6 +253,7 @@ def companion_snapshot(conn: sqlite3.Connection, *, recent_limit: int = 20) -> d
         "heatmap": heatmap,
         "recent_events": recent,
         "user_profile_preview": preview,
+        "diagnostics": diagnostics,
         "generated_at": time.time(),
     }
 

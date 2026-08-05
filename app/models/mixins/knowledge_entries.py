@@ -43,12 +43,40 @@ def _tags_json(tags: Any) -> str:
     return json.dumps(_parse_tags(tags), ensure_ascii=False)
 
 
+def _row_keys(row: sqlite3.Row) -> set[str]:
+    try:
+        return set(row.keys())
+    except Exception:
+        return set()
+
+
+def _clamp_confidence(raw: Any, default: float = 0.7) -> float:
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        val = default
+    return max(0.0, min(1.0, val))
+
+
 def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
+    keys = _row_keys(row)
+    confidence = 0.7
+    use_count = 0
+    success_count = 0
+    if "confidence" in keys:
+        confidence = _clamp_confidence(row["confidence"], 0.7)
+    if "use_count" in keys:
+        use_count = int(row["use_count"] or 0)
+    if "success_count" in keys:
+        success_count = int(row["success_count"] or 0)
     return {
         "id": row["id"],
         "title": row["title"],
         "body": row["body"],
         "tags": _parse_tags(row["tags_json"]),
+        "confidence": confidence,
+        "use_count": use_count,
+        "success_count": success_count,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -113,18 +141,40 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
         explicit=(data.get("id") or None) or None,
     )
     now = _now()
-    conn.execute(
-        "INSERT INTO knowledge_entries (id, title, body, tags_json, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (
-            eid,
-            title,
-            (data.get("body") or "").strip(),
-            _tags_json(data.get("tags")),
-            now,
-            now,
-        ),
-    )
+    confidence = _clamp_confidence(data.get("confidence"), 0.7)
+    use_count = max(0, int(data.get("use_count") or 0))
+    success_count = max(0, int(data.get("success_count") or 0))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
+    if {"confidence", "use_count", "success_count"} <= cols:
+        conn.execute(
+            "INSERT INTO knowledge_entries "
+            "(id, title, body, tags_json, confidence, use_count, success_count, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                eid,
+                title,
+                (data.get("body") or "").strip(),
+                _tags_json(data.get("tags")),
+                confidence,
+                use_count,
+                success_count,
+                now,
+                now,
+            ),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO knowledge_entries (id, title, body, tags_json, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                eid,
+                title,
+                (data.get("body") or "").strip(),
+                _tags_json(data.get("tags")),
+                now,
+                now,
+            ),
+        )
     conn.commit()
     entry = get_entry(conn, eid)
     assert entry is not None
@@ -154,6 +204,11 @@ def update_entry(
     if "tags" in data and data["tags"] is not None:
         sets.append("tags_json=?")
         params.append(_tags_json(data["tags"]))
+    if "confidence" in data and data["confidence"] is not None:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
+        if "confidence" in cols:
+            sets.append("confidence=?")
+            params.append(_clamp_confidence(data["confidence"]))
     if sets:
         sets.append("updated_at=?")
         params.append(_now())
@@ -220,13 +275,74 @@ def search_entries_lexical(
     return [e for _, e in scored[:k]]
 
 
+def rank_entries_by_confidence(
+    entries: list[dict[str, Any]], *, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Prefer high confidence, then success rate, then use_count."""
+
+    def _key(e: dict[str, Any]) -> tuple[float, float, int, float]:
+        conf = _clamp_confidence(e.get("confidence"), 0.5)
+        uses = max(0, int(e.get("use_count") or 0))
+        succ = max(0, int(e.get("success_count") or 0))
+        rate = (succ / uses) if uses > 0 else 0.0
+        updated = float(e.get("updated_at") or 0)
+        return (conf, rate, uses, updated)
+
+    ordered = sorted(entries, key=_key, reverse=True)
+    if limit is None:
+        return ordered
+    return ordered[: max(1, int(limit))]
+
+
+def bump_entry_use(
+    conn: sqlite3.Connection, entry_id: str, *, success: bool = False
+) -> None:
+    """Increment use_count (and optionally success_count) after retrieval."""
+    eid = (entry_id or "").strip()
+    if not eid:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
+    if "use_count" not in cols:
+        return
+    if success and "success_count" in cols:
+        conn.execute(
+            "UPDATE knowledge_entries SET "
+            "use_count=COALESCE(use_count,0)+1, "
+            "success_count=COALESCE(success_count,0)+1 "
+            "WHERE id=?",
+            (eid,),
+        )
+    else:
+        conn.execute(
+            "UPDATE knowledge_entries SET use_count=COALESCE(use_count,0)+1 WHERE id=?",
+            (eid,),
+        )
+    conn.commit()
+
+
+def mark_entry_success(conn: sqlite3.Connection, entry_id: str) -> None:
+    """Bump success_count for a knowledge entry (e.g. review-confirmed write)."""
+    eid = (entry_id or "").strip()
+    if not eid:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
+    if "success_count" not in cols:
+        return
+    conn.execute(
+        "UPDATE knowledge_entries SET "
+        "success_count=COALESCE(success_count,0)+1 WHERE id=?",
+        (eid,),
+    )
+    conn.commit()
+
+
 def search_entries(
     conn: sqlite3.Connection,
     query: str,
     *,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Hybrid search (FTS + semantic + lexical fallback)."""
+    """Hybrid search (FTS + semantic + lexical fallback), confidence-ranked."""
     from app.runtime.memory.retrieve import search_knowledge_hybrid
 
     return search_knowledge_hybrid(conn, query, limit=limit)
@@ -240,4 +356,7 @@ __all__ = [
     "delete_entry",
     "search_entries",
     "search_entries_lexical",
+    "rank_entries_by_confidence",
+    "bump_entry_use",
+    "mark_entry_success",
 ]

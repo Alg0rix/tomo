@@ -73,3 +73,40 @@ def test_search_finds_seeded_deadline(tmp_path: Path) -> None:
 def test_search_empty_query(tmp_path: Path) -> None:
     _rebind(tmp_path)
     assert store.search_knowledge("   ") == []
+
+
+def test_confidence_and_use_counters(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    low = store.create_knowledge_entry(
+        {
+            "id": "kb_low",
+            "title": "Low conf fact about widgets",
+            "body": "widgets are rare",
+            "confidence": 0.2,
+        }
+    )
+    high = store.create_knowledge_entry(
+        {
+            "id": "kb_high",
+            "title": "High conf fact about widgets",
+            "body": "widgets are common in Tomo",
+            "confidence": 0.95,
+            "success_count": 3,
+        }
+    )
+    assert low["confidence"] == 0.2
+    assert high["confidence"] == 0.95
+    assert high["success_count"] == 3
+
+    hits = store.search_knowledge("widgets")
+    assert hits
+    ids = [h["id"] for h in hits]
+    assert "kb_high" in ids
+    # High confidence should rank at or before low when both match.
+    if "kb_low" in ids:
+        assert ids.index("kb_high") < ids.index("kb_low")
+
+    store.bump_knowledge_use("kb_high")
+    again = store.get_knowledge_entry("kb_high")
+    assert again is not None
+    assert again["use_count"] >= 1

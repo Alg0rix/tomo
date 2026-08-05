@@ -8,15 +8,20 @@ Invariants
 * Skill iters are **cumulative across turns**, not only tools on this turn.
 * Skill-touched this turn always arms skill review (refine-in-place).
 * Nested / review-fork / non-final turns never advance or fire.
+* Sticky dues + counters persist in SQLite ``learning_agent_state`` and
+  hydrate across process restart (wall-clock cooldown).
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_MEMORY_NUDGE = 5
 _DEFAULT_SKILL_NUDGE = 5
@@ -26,6 +31,7 @@ _MAX_HYDRATED_SESSIONS = 512
 
 _lock = threading.RLock()
 _agents: dict[str, "AgentLearningState"] = {}
+_db_hydrated: set[str] = set()
 _hydrated_sessions: set[str] = set()
 # Task-local: only the review asyncio task sees True (other turns keep counting).
 _in_review: ContextVar[bool] = ContextVar("tomo_learning_in_review", default=False)
@@ -109,7 +115,7 @@ class AgentLearningState:
     skill_refine_pending: bool = False
     memory_due: bool = False  # sticky until review starts
     skills_due: bool = False
-    last_review_at: float = 0.0
+    last_review_at: float = 0.0  # wall clock (time.time)
     in_flight: bool = False
     last_skills_touched: list[str] = field(default_factory=list)
     reviews_started: int = 0
@@ -122,6 +128,65 @@ def _key(agent_id: str | None) -> str:
     return (agent_id or "").strip() or "_default"
 
 
+def _persist_state(agent_id: str, st: AgentLearningState) -> None:
+    """Best-effort write sticky counters to SQLite (never raises)."""
+    try:
+        from app.models.mixins import learning_events as le
+        from app.services import store
+
+        def _write(conn: Any) -> None:
+            le.upsert_learning_agent_state(
+                conn,
+                agent_id,
+                turns_since_memory=st.turns_since_memory,
+                iters_since_skill=st.iters_since_skill,
+                memory_due=st.memory_due,
+                skills_due=st.skills_due,
+                skill_refine_pending=st.skill_refine_pending,
+                last_review_at=st.last_review_at,
+                reviews_started=st.reviews_started,
+                reviews_saved=st.reviews_saved,
+                skipped_cooldown=st.reviews_skipped_cooldown,
+                skipped_inflight=st.reviews_skipped_inflight,
+            )
+
+        store.with_db(_write)
+    except Exception as exc:
+        _logger.debug("learning state persist failed: %s", exc)
+
+
+def _hydrate_from_db(agent_id: str, st: AgentLearningState) -> None:
+    """Load sticky dues/counters once per process for this agent."""
+    if agent_id in _db_hydrated:
+        return
+    _db_hydrated.add(agent_id)
+    try:
+        from app.models.mixins import learning_events as le
+        from app.services import store
+
+        def _read(conn: Any) -> dict[str, Any] | None:
+            return le.get_learning_agent_state(conn, agent_id)
+
+        row = store.with_db(_read)
+    except Exception as exc:
+        _logger.debug("learning state hydrate failed: %s", exc)
+        return
+    if not row:
+        return
+    st.turns_since_memory = int(row.get("turns_since_memory") or 0)
+    st.iters_since_skill = int(row.get("iters_since_skill") or 0)
+    st.memory_due = bool(row.get("memory_due"))
+    st.skills_due = bool(row.get("skills_due"))
+    st.skill_refine_pending = bool(row.get("skill_refine_pending"))
+    st.last_review_at = float(row.get("last_review_at") or 0)
+    st.reviews_started = int(row.get("reviews_started") or 0)
+    st.reviews_saved = int(row.get("reviews_saved") or 0)
+    st.reviews_skipped_cooldown = int(row.get("skipped_cooldown") or 0)
+    st.reviews_skipped_inflight = int(row.get("skipped_inflight") or 0)
+    # in_flight must not survive restart — a crashed review would soft-lock.
+    st.in_flight = False
+
+
 def get_state(agent_id: str | None) -> AgentLearningState:
     with _lock:
         k = _key(agent_id)
@@ -131,8 +196,10 @@ def get_state(agent_id: str | None) -> AgentLearningState:
                 # Drop oldest insertion (dict preserves order on 3.12+).
                 drop = next(iter(_agents))
                 del _agents[drop]
+                _db_hydrated.discard(drop)
             st = AgentLearningState()
             _agents[k] = st
+            _hydrate_from_db(k, st)
         return st
 
 
@@ -163,6 +230,7 @@ def hydrate_from_session(session_id: str | None, agent_id: str | None) -> None:
     """Seed turn counter from prior user messages after process restart.
 
     Only runs once per process+session. Does not invent skill iters.
+    Prefer SQLite sticky state when already hydrated for the agent.
     """
     sid = (session_id or "").strip()
     if not sid or not learning_enabled():
@@ -173,6 +241,10 @@ def hydrate_from_session(session_id: str | None, agent_id: str | None) -> None:
         if len(_hydrated_sessions) >= _MAX_HYDRATED_SESSIONS:
             _hydrated_sessions.clear()
         _hydrated_sessions.add(sid)
+        # Ensure DB hydrate runs first.
+        st = get_state(agent_id)
+        if st.turns_since_memory > 0 or st.memory_due:
+            return
 
     mem_n = memory_nudge_turns()
     if mem_n <= 0:
@@ -199,6 +271,14 @@ def hydrate_from_session(session_id: str | None, agent_id: str | None) -> None:
         # Only seed if still at zero (fresh process / new agent bind).
         if st.turns_since_memory == 0 and not st.memory_due:
             st.turns_since_memory = user_turns % mem_n
+            _persist_state(_key(agent_id), st)
+
+
+def _cooldown_blocked(st: AgentLearningState) -> bool:
+    cool = cooldown_seconds()
+    if cool <= 0 or st.last_review_at <= 0:
+        return False
+    return (time.time() - st.last_review_at) < cool
 
 
 def observe_turn(
@@ -245,17 +325,18 @@ def observe_turn(
                 st.skills_due = True
 
         if not st.memory_due and not st.skills_due:
+            _persist_state(aid, st)
             return None
 
         if st.in_flight:
             st.reviews_skipped_inflight += 1
+            _persist_state(aid, st)
             return None
 
-        cool = cooldown_seconds()
-        if cool > 0 and st.last_review_at > 0:
-            if (time.monotonic() - st.last_review_at) < cool:
-                st.reviews_skipped_cooldown += 1
-                return None
+        if _cooldown_blocked(st):
+            st.reviews_skipped_cooldown += 1
+            _persist_state(aid, st)
+            return None
 
         reasons: list[str] = []
         if st.memory_due:
@@ -268,6 +349,7 @@ def observe_turn(
             else:
                 reasons.append("skill_due")
 
+        _persist_state(aid, st)
         return ReviewPlan(
             agent_id=aid,
             review_memory=st.memory_due,
@@ -286,14 +368,14 @@ def begin_review(plan: ReviewPlan) -> bool:
         st = get_state(plan.agent_id)
         if st.in_flight:
             st.reviews_skipped_inflight += 1
+            _persist_state(plan.agent_id, st)
             return False
-        cool = cooldown_seconds()
-        if cool > 0 and st.last_review_at > 0:
-            if (time.monotonic() - st.last_review_at) < cool:
-                st.reviews_skipped_cooldown += 1
-                return False
+        if _cooldown_blocked(st):
+            st.reviews_skipped_cooldown += 1
+            _persist_state(plan.agent_id, st)
+            return False
         st.in_flight = True
-        st.last_review_at = time.monotonic()
+        st.last_review_at = time.time()
         st.reviews_started += 1
         if plan.review_memory:
             st.memory_due = False
@@ -302,6 +384,7 @@ def begin_review(plan: ReviewPlan) -> bool:
             st.skills_due = False
             st.iters_since_skill = 0
             st.skill_refine_pending = False
+        _persist_state(plan.agent_id, st)
         return True
 
 
@@ -311,6 +394,7 @@ def finish_review(agent_id: str | None, *, saved: bool = False) -> None:
         st.in_flight = False
         if saved:
             st.reviews_saved += 1
+        _persist_state(_key(agent_id), st)
 
 
 def peek_eligible(
@@ -348,6 +432,10 @@ def snapshot(agent_id: str | None = None) -> dict[str, Any]:
     with _lock:
         if agent_id is not None:
             st = get_state(agent_id)
+            cool = cooldown_seconds()
+            remaining = 0.0
+            if cool > 0 and st.last_review_at > 0:
+                remaining = max(0.0, cool - (time.time() - st.last_review_at))
             return {
                 "agent_id": _key(agent_id),
                 "turns_since_memory": st.turns_since_memory,
@@ -355,13 +443,15 @@ def snapshot(agent_id: str | None = None) -> dict[str, Any]:
                 "memory_due": st.memory_due,
                 "skills_due": st.skills_due,
                 "in_flight": st.in_flight,
+                "last_review_at": st.last_review_at,
+                "cooldown_remaining_sec": round(remaining, 1),
                 "reviews_started": st.reviews_started,
                 "reviews_saved": st.reviews_saved,
                 "skipped_cooldown": st.reviews_skipped_cooldown,
                 "skipped_inflight": st.reviews_skipped_inflight,
                 "memory_nudge": memory_nudge_turns(),
                 "skill_nudge": skill_nudge_iters(),
-                "cooldown_sec": cooldown_seconds(),
+                "cooldown_sec": cool,
             }
         return {k: snapshot(k) for k in list(_agents.keys())}
 
@@ -370,6 +460,7 @@ def reset_learning_state() -> None:
     """Test helper — clear all counters / hydration."""
     with _lock:
         _agents.clear()
+        _db_hydrated.clear()
         _hydrated_sessions.clear()
     _in_review.set(False)
 

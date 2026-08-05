@@ -46,10 +46,17 @@ _ALLOWED_REVIEW_TOOLS = frozenset(
 )
 
 
-def _gather_digest_context() -> tuple[str, str]:
-    """Skill catalog + USER snippet for the review digest (best-effort)."""
+def _gather_digest_context(
+    *, agent_id: str | None = None, session_id: str | None = None
+) -> tuple[str, str, str, str, str, str, str]:
+    """catalog, user, project, conversation, agent_snip, semantic_hint, shared."""
     catalog = "(empty catalog)"
     user_snip = "(empty)"
+    project_snip = "(no workplace)"
+    conversation = "(none)"
+    agent_snip = "(empty)"
+    semantic = "(use remember for durable searchable facts — not chat dumps)"
+    shared = "(none yet)"
     try:
         from app.services import store
 
@@ -64,7 +71,64 @@ def _gather_digest_context() -> tuple[str, str]:
         user_snip = format_user_snippet(entries)
     except Exception as exc:
         _logger.debug("learning USER snippet gather failed: %s", exc)
-    return catalog, user_snip
+    try:
+        from app.runtime.memory import project as project_mem
+
+        wid = project_mem.workplace_id_for_agent(agent_id)
+        if wid:
+            project_snip = project_mem.format_snippet(wid)
+        else:
+            project_snip = "(no workplace bound)"
+    except Exception as exc:
+        _logger.debug("learning project snippet failed: %s", exc)
+    try:
+        if session_id:
+            from app.services import store
+
+            prev = store.get_session_summary(session_id)
+            if prev and prev.get("summary"):
+                conversation = str(prev["summary"]).strip()[:1200]
+    except Exception as exc:
+        _logger.debug("learning conversation summary failed: %s", exc)
+    try:
+        if agent_id:
+            from app.runtime.memory import curated
+
+            path = curated.memory_path(agent_id)
+            entries = curated.read_entries(path) if path else []
+            agent_snip = format_user_snippet(entries)
+    except Exception as exc:
+        _logger.debug("learning agent memory snippet failed: %s", exc)
+    try:
+        from app.services import store
+
+        rows = store.list_knowledge_entries() or []
+        titles = []
+        for r in rows[:8]:
+            if not isinstance(r, dict):
+                continue
+            t = (r.get("title") or r.get("id") or "").strip()
+            if t:
+                titles.append(f"- {t[:80]}")
+        if titles:
+            semantic = "Recent KB titles:\n" + "\n".join(titles)
+    except Exception as exc:
+        _logger.debug("learning semantic hint failed: %s", exc)
+    try:
+        if session_id:
+            from app.models.mixins import swarm_notes as sn
+            from app.services import store
+
+            text = store.with_db(
+                lambda conn: sn.format_swarm_notes_snippet(
+                    conn, session_id=session_id, limit=6
+                )
+            )
+            if text:
+                shared = text
+    except Exception as exc:
+        _logger.debug("learning shared notes failed: %s", exc)
+    return catalog, user_snip, project_snip, conversation, agent_snip, semantic, shared
 
 
 def _record_learning_event(
@@ -78,6 +142,10 @@ def _record_learning_event(
     note = str(result.get("note") or "")
     saved = bool(result.get("saved"))
     diary = derive_diary(saved=saved, note=note, actions=actions)
+    extract = result.get("extract") if isinstance(result.get("extract"), dict) else {}
+    plan_payload = plan.as_dict()
+    if extract:
+        plan_payload = {**plan_payload, "extract": extract}
     try:
         from app.models.mixins import learning_events as le
         from app.runtime.agent.learning.companion import session_user_id
@@ -96,10 +164,27 @@ def _record_learning_event(
                 actions=actions,
                 diary=diary,
                 note=note,
-                plan=plan.as_dict(),
+                plan=plan_payload,
+                extract=extract or None,
             )
 
         store.with_db(_insert)
+        # Index execution-lane snippets from the review extract.
+        if extract:
+            try:
+                from app.models.mixins import execution_snippets as ex
+
+                def _index(conn: Any) -> None:
+                    ex.index_from_review_extract(
+                        conn,
+                        extract,
+                        session_id=metrics.session_id or "",
+                        agent_id=metrics.agent_id or plan.agent_id or "",
+                    )
+
+                store.with_db(_index)
+            except Exception as exc:
+                _logger.debug("execution snippet index failed: %s", exc)
     except Exception as exc:
         _logger.warning("learning event insert failed: %s", exc)
     return diary
@@ -206,13 +291,22 @@ async def _run_review_llm(
     review_skills: bool,
 ) -> dict[str, Any]:
     from app.runtime.agent.retry import with_llm_retry
+    from app.runtime.agent.learning.memory_types import (
+        classify_actions,
+        classify_review_action,
+    )
     from app.runtime.tools.registry import execute
 
     schemas = _learning_tool_schemas(
         review_memory=review_memory, review_skills=review_skills
     )
     if not schemas:
-        return {"saved": False, "actions": [], "note": "no learning tools registered"}
+        return {
+            "saved": False,
+            "actions": [],
+            "note": "no learning tools registered",
+            "extract": {},
+        }
 
     messages: list[dict[str, Any]] = [
         {
@@ -224,6 +318,7 @@ async def _run_review_llm(
         {"role": "user", "content": digest},
     ]
     actions: list[str] = []
+    classified: list[dict[str, Any]] = []
     note = ""
     loop = asyncio.get_running_loop()
 
@@ -296,23 +391,35 @@ async def _run_review_llm(
                         )
                     except Exception as exc:  # pragma: no cover
                         result = f"Error: {exc}"
-                if not str(result).startswith("Error"):
-                    actions.append(f"{call.name}: {str(result).splitlines()[0][:140]}")
+                result_s = str(result)
+                classified.append(
+                    classify_review_action(
+                        call.name, arguments=args, result_text=result_s
+                    )
+                )
+                if not result_s.startswith("Error"):
+                    actions.append(f"{call.name}: {result_s.splitlines()[0][:140]}")
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": cid,
                         "name": call.name,
-                        "content": str(result)[:4000],
+                        "content": result_s[:4000],
                     }
                 )
         else:
             note = note or "review round limit"
 
-    saved = bool(actions)
+    extract = classify_actions(actions, classified=classified)
+    saved = bool(extract.get("saved"))
     if not saved and note.lower().startswith("nothing to save"):
         note = "Nothing to save."
-    return {"saved": saved, "actions": actions, "note": note}
+    return {
+        "saved": saved,
+        "actions": actions,
+        "note": note,
+        "extract": extract,
+    }
 
 
 def _update_session_summary(
@@ -375,7 +482,11 @@ async def run_learning_review(
         return None
 
     review_client, routed = _resolve_review_client(client)
-    catalog, user_snip = _gather_digest_context()
+    catalog, user_snip, project_snip, conversation, agent_snip, semantic, shared = (
+        _gather_digest_context(
+            agent_id=metrics.agent_id, session_id=metrics.session_id
+        )
+    )
     digest = build_review_digest(
         messages=messages,
         user_message=user_message,
@@ -385,12 +496,18 @@ async def run_learning_review(
         plan_reason=plan.reason,
         skill_catalog=catalog,
         user_snippet=user_snip,
+        project_snippet=project_snip,
+        conversation_summary=conversation,
+        agent_snippet=agent_snip,
+        semantic_hint=semantic,
+        shared_snippet=shared,
     )
 
     result: dict[str, Any] = {
         "saved": False,
         "actions": [],
         "note": "",
+        "extract": {},
         "review_memory": plan.review_memory,
         "review_skills": plan.review_skills,
         "reason": plan.reason,
@@ -409,6 +526,8 @@ async def run_learning_review(
         result["saved"] = bool(llm_out.get("saved"))
         result["actions"] = list(llm_out.get("actions") or [])
         result["note"] = str(llm_out.get("note") or "")
+        if isinstance(llm_out.get("extract"), dict):
+            result["extract"] = llm_out["extract"]
     except LLMRequestError as exc:
         # Provider-side failures (empty choices, timeouts, auth errors) should not
         # spam the growth log. Release the review claim and skip this round.

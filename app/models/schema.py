@@ -17,6 +17,9 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``users``           — login accounts (username + scrypt password hash)
 * ``api_keys``        — per-account Bearer tokens for ``/api/*`` access
 * ``learning_events`` — Companion growth ledger (active-learning reviews)
+* ``learning_agent_state`` — Sticky learning counters across restart
+* ``swarm_notes`` — Session-scoped shared notes from delegate completes
+* ``execution_snippets`` — Lightweight index of execution-lane outcomes
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -131,12 +134,15 @@ CREATE TABLE IF NOT EXISTS workplaces (
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_entries (
-    id         TEXT PRIMARY KEY,
-    title      TEXT NOT NULL,
-    body       TEXT NOT NULL DEFAULT '',
-    tags_json  TEXT NOT NULL DEFAULT '[]',
-    created_at REAL NOT NULL DEFAULT 0,
-    updated_at REAL NOT NULL DEFAULT 0
+    id             TEXT PRIMARY KEY,
+    title          TEXT NOT NULL,
+    body           TEXT NOT NULL DEFAULT '',
+    tags_json      TEXT NOT NULL DEFAULT '[]',
+    confidence     REAL NOT NULL DEFAULT 0.7,
+    use_count      INTEGER NOT NULL DEFAULT 0,
+    success_count  INTEGER NOT NULL DEFAULT 0,
+    created_at     REAL NOT NULL DEFAULT 0,
+    updated_at     REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS skills (
@@ -300,13 +306,61 @@ CREATE TABLE IF NOT EXISTS learning_events (
     actions_json    TEXT NOT NULL DEFAULT '[]',
     diary           TEXT NOT NULL DEFAULT '',
     note            TEXT NOT NULL DEFAULT '',
-    plan_json       TEXT NOT NULL DEFAULT '{}'
+    plan_json       TEXT NOT NULL DEFAULT '{}',
+    extract_json    TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_learning_events_created
     ON learning_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_learning_events_agent
     ON learning_events(agent_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_agent_state (
+    agent_id              TEXT PRIMARY KEY,
+    turns_since_memory    INTEGER NOT NULL DEFAULT 0,
+    iters_since_skill     INTEGER NOT NULL DEFAULT 0,
+    memory_due            INTEGER NOT NULL DEFAULT 0,
+    skills_due            INTEGER NOT NULL DEFAULT 0,
+    skill_refine_pending  INTEGER NOT NULL DEFAULT 0,
+    last_review_at        REAL NOT NULL DEFAULT 0,
+    reviews_started       INTEGER NOT NULL DEFAULT 0,
+    reviews_saved         INTEGER NOT NULL DEFAULT 0,
+    skipped_cooldown      INTEGER NOT NULL DEFAULT 0,
+    skipped_inflight      INTEGER NOT NULL DEFAULT 0,
+    updated_at            REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS swarm_notes (
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL DEFAULT '',
+    from_agent_id    TEXT NOT NULL DEFAULT '',
+    to_agent_id      TEXT NOT NULL DEFAULT '',
+    delegate_call_id TEXT NOT NULL DEFAULT '',
+    reason           TEXT NOT NULL DEFAULT '',
+    content          TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'ok',
+    created_at       REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_swarm_notes_session
+    ON swarm_notes(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS execution_snippets (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL DEFAULT '',
+    agent_id    TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT 'review',
+    ref_id      TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    snippet     TEXT NOT NULL DEFAULT '',
+    tags_json   TEXT NOT NULL DEFAULT '[]',
+    created_at  REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_snippets_session
+    ON execution_snippets(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_snippets_created
+    ON execution_snippets(created_at DESC);
 """
 
 
@@ -435,6 +489,106 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE schedules SET schedule_display=cron "
             "WHERE (schedule_display IS NULL OR schedule_display='') AND cron != ''"
+        )
+
+    # Learning OS: extract_json + sticky counter persistence.
+    le_cols = {r[1] for r in conn.execute("PRAGMA table_info(learning_events)")}
+    if "extract_json" not in le_cols:
+        conn.execute(
+            "ALTER TABLE learning_events "
+            "ADD COLUMN extract_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    table_names = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "learning_agent_state" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learning_agent_state (
+                agent_id              TEXT PRIMARY KEY,
+                turns_since_memory    INTEGER NOT NULL DEFAULT 0,
+                iters_since_skill     INTEGER NOT NULL DEFAULT 0,
+                memory_due            INTEGER NOT NULL DEFAULT 0,
+                skills_due            INTEGER NOT NULL DEFAULT 0,
+                skill_refine_pending  INTEGER NOT NULL DEFAULT 0,
+                last_review_at        REAL NOT NULL DEFAULT 0,
+                reviews_started       INTEGER NOT NULL DEFAULT 0,
+                reviews_saved         INTEGER NOT NULL DEFAULT 0,
+                skipped_cooldown      INTEGER NOT NULL DEFAULT 0,
+                skipped_inflight      INTEGER NOT NULL DEFAULT 0,
+                updated_at            REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+    # Slice 2: knowledge confidence / usage counters.
+    kb_cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
+    _kb_alters = {
+        "confidence": (
+            "ALTER TABLE knowledge_entries "
+            "ADD COLUMN confidence REAL NOT NULL DEFAULT 0.7"
+        ),
+        "use_count": (
+            "ALTER TABLE knowledge_entries "
+            "ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
+        ),
+        "success_count": (
+            "ALTER TABLE knowledge_entries "
+            "ADD COLUMN success_count INTEGER NOT NULL DEFAULT 0"
+        ),
+    }
+    for col, ddl in _kb_alters.items():
+        if col not in kb_cols:
+            conn.execute(ddl)
+
+    table_names = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "swarm_notes" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS swarm_notes (
+                id               TEXT PRIMARY KEY,
+                session_id       TEXT NOT NULL DEFAULT '',
+                from_agent_id    TEXT NOT NULL DEFAULT '',
+                to_agent_id      TEXT NOT NULL DEFAULT '',
+                delegate_call_id TEXT NOT NULL DEFAULT '',
+                reason           TEXT NOT NULL DEFAULT '',
+                content          TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL DEFAULT 'ok',
+                created_at       REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_swarm_notes_session "
+            "ON swarm_notes(session_id, created_at DESC)"
+        )
+    if "execution_snippets" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_snippets (
+                id          TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL DEFAULT '',
+                agent_id    TEXT NOT NULL DEFAULT '',
+                source      TEXT NOT NULL DEFAULT 'review',
+                ref_id      TEXT NOT NULL DEFAULT '',
+                title       TEXT NOT NULL DEFAULT '',
+                snippet     TEXT NOT NULL DEFAULT '',
+                tags_json   TEXT NOT NULL DEFAULT '[]',
+                created_at  REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_execution_snippets_session "
+            "ON execution_snippets(session_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_execution_snippets_created "
+            "ON execution_snippets(created_at DESC)"
         )
 
     from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts

@@ -14,6 +14,38 @@ def run(arguments: dict[str, Any]) -> str:
     action = str(arguments.get("action") or "list").strip().lower()
     target = str(arguments.get("target") or "memory").strip().lower()
     agent_id = str(arguments.get("agent_id") or current_agent_id() or "").strip() or None
+    workplace_id = str(arguments.get("workplace_id") or "").strip() or None
+
+    if target == "project":
+        from app.runtime.memory import project as project_mem
+
+        if not workplace_id:
+            workplace_id = project_mem.workplace_id_for_agent(agent_id)
+        if action == "list":
+            if not workplace_id:
+                return "Error: workplace_id required for project target (agent has no workplace)"
+            entries = project_mem.read_entries(workplace_id)
+            path = project_mem.project_path(workplace_id)
+            lines = [
+                f"[project] {path} ({len(entries)} entries)"
+                if path
+                else "[project] (unavailable)"
+            ]
+            for i, e in enumerate(entries, 1):
+                lines.append(f"  {i}. {e.replace(chr(10), ' ')[:200]}")
+            return "\n".join(lines) if entries else f"[project] empty ({path})"
+        if action == "add":
+            content = arguments.get("content")
+            if not isinstance(content, str):
+                return "Error: content is required"
+            result = project_mem.add_entry(workplace_id, content)
+            if not result.get("ok"):
+                return f"Error: {result.get('error')}"
+            return (
+                f"{result.get('message')} "
+                f"({result.get('chars', '?')} chars, {result.get('count')} entries)."
+            )
+        return "Error: project target supports action=add|list only"
 
     if action == "list":
         if target == "all":

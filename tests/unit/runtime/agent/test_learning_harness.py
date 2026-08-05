@@ -85,6 +85,9 @@ def test_digest_includes_goal_trail_skills() -> None:
     assert "Existing skill catalog" in d
     assert "USER profile" in d
     assert "Refine-first" in d
+    assert "[execution]" in d
+    assert "[episodic]" in d
+    assert "[conversation]" in d
 
 
 def test_cooldown_does_not_burn_nudge() -> None:

@@ -56,10 +56,11 @@ async def companion_events_api(
     limit: int = Query(30, ge=1, le=200),
     before: float | None = Query(None),
     agent_id: str | None = Query(None),
+    saved_only: bool = Query(False),
 ):
     """Paginated growth log (learning events)."""
     events = store.list_learning_events(
-        limit=limit, before=before, agent_id=agent_id
+        limit=limit, before=before, agent_id=agent_id, saved_only=saved_only
     )
     next_before = None
     if events and len(events) >= limit:
