@@ -26,6 +26,7 @@ from app.runtime.agent.learning.state import (
 )
 from app.runtime.agent.metrics import TurnMetrics
 from app.runtime.llm.base import LLMClient, LLMResponse
+from app.runtime.llm.openai_compat import LLMRequestError
 
 _logger = logging.getLogger(__name__)
 
@@ -367,6 +368,7 @@ async def run_learning_review(
         "routed": routed,
         "plan": plan.as_dict(),
     }
+    record_event = True
     try:
         llm_out = await _run_review_llm(
             review_client,
@@ -378,14 +380,24 @@ async def run_learning_review(
         result["saved"] = bool(llm_out.get("saved"))
         result["actions"] = list(llm_out.get("actions") or [])
         result["note"] = str(llm_out.get("note") or "")
+    except LLMRequestError as exc:
+        # Provider-side failures (empty choices, timeouts, auth errors) should not
+        # spam the growth log. Release the review claim and skip this round.
+        _logger.warning("learning review LLM request failed: %s", exc)
+        result["note"] = "Provider returned no output — review skipped."
+        record_event = False
     except Exception as exc:
         _logger.warning("learning review failed: %s", exc)
         result["note"] = f"error: {exc}"
     finally:
         finish_review(metrics.agent_id, saved=bool(result.get("saved")))
-        result["diary"] = _record_learning_event(
-            metrics=metrics, plan=plan, result=result
-        )
+        if record_event:
+            result["diary"] = _record_learning_event(
+                metrics=metrics, plan=plan, result=result
+            )
+
+    if not record_event:
+        return None
 
     _update_session_summary(
         metrics.session_id,

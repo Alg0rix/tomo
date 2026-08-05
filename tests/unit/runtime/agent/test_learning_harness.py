@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services import store
 from app.runtime.agent.learning import (
     build_review_digest,
     compact_tool_trail,
@@ -14,9 +15,9 @@ from app.runtime.agent.learning import (
 )
 from app.runtime.agent.learning.state import begin_review, finish_review, in_review_scope
 from app.runtime.agent.metrics import TurnMetrics
-from app.runtime.tools.registry import reset_registry
-from app.services import store
 from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.openai_compat import LLMRequestError
+from app.runtime.tools.registry import reset_registry
 from tests.fakes.llm import ScriptedLLM, text_reply
 
 
@@ -208,3 +209,31 @@ def test_trail_marks_errors() -> None:
     )
     assert "✗" in trail
     assert "errors=1" in trail
+
+
+async def test_review_llm_empty_choices_is_skipped_not_logged_as_error() -> None:
+    """A provider that returns empty choices should not spam the growth log."""
+
+    class EmptyChoicesLLM:
+        async def complete(self, messages, tools=None):
+            raise LLMRequestError(
+                "LLM request failed: empty choices[] — provider returned no completion"
+            )
+
+    _ = observe_turn(agent_id="empty", tool_calls=0, ended_kind="final")
+    plan = observe_turn(agent_id="empty", tool_calls=0, ended_kind="final")
+    assert plan and plan.review_memory
+    metrics = TurnMetrics(
+        agent_id="empty", session_id="s-empty", ended_kind="final", tool_calls=0
+    )
+    result = await run_learning_review(
+        client=EmptyChoicesLLM(),
+        messages=[{"role": "user", "content": "hi"}],
+        metrics=metrics,
+        user_message="hi",
+        final_content="hello",
+        plan=plan,
+    )
+    assert result is None
+    events = store.list_learning_events(limit=10, agent_id="empty")
+    assert not events
