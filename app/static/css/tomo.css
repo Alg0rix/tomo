@@ -2313,6 +2313,12 @@ body.cap-resizing iframe {
   pointer-events: auto;
 }
 .chat-agent-panel[data-cap-open="1"] .cap-expand-strip { display: none; }
+/* Subagent inspector lives in the same top-right corner — hide the floating
+   Artifacts pill while it's open so it never covers the inspector's close
+   button (both are direct children of .chat-wrap). */
+.chat-wrap:has(> .subagent-inspector) .chat-agent-panel[data-cap-open="0"] {
+  display: none;
+}
 .cap-expand-strip:hover { color: var(--text); background: var(--surface-2); border-color: var(--border-accent); }
 .cap-expand-ico {
   display: grid; place-items: center;
