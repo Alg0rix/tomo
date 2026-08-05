@@ -23,6 +23,7 @@ from app.runtime.permissions.hitl import (
     create_approval,
 )
 from app.runtime.permissions.modes import (
+    apply_session_mode,
     clear_session_modes,
     set_session_mode,
     toggle_auto,
@@ -191,3 +192,27 @@ async def test_toggle_auto_unsticks_pending_approval() -> None:
     choice = await asyncio.wait_for(task, timeout=1.0)
     assert choice == "once"
     assert cancel_session_pending("sess_stuck") == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_session_mode_auto_unsticks_mid_turn() -> None:
+    """Composer PUT to Auto mid-HITL must wake the waiter (not only /auto)."""
+    payload = create_approval(
+        tool="bash",
+        args={"command": "ls ~"},
+        findings=[],
+        description="escape",
+        session_id="sess_put",
+    )
+
+    async def _run() -> str:
+        return await await_approval(payload["id"], timeout=2.0)
+
+    task = asyncio.create_task(_run())
+    await asyncio.sleep(0.05)
+    result = apply_session_mode("sess_put", "off")
+    assert result["mode"] == "off"
+    assert result["label"] == "Auto"
+    assert result["cleared_pending"] == 1
+    choice = await asyncio.wait_for(task, timeout=1.0)
+    assert choice == "once"

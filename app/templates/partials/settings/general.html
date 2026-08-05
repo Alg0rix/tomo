@@ -15,6 +15,23 @@
           {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
         </div>
       </div>
+      {% set amode = (settings.approvals_mode or 'smart')|string|lower %}
+      {% if amode in ('auto', 'yolo') %}{% set amode = 'off' %}{% endif %}
+      {% if amode not in ('manual', 'smart', 'off') %}{% set amode = 'smart' %}{% endif %}
+      <div class="config-row">
+        <div class="lbl">
+          Default permission
+          <div class="config-hint" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:4px">Only affects newly-created sessions</div>
+        </div>
+        <div class="config-control" style="padding-top:4px">
+          <div class="seg-control" id="setApprovalsMode" role="radiogroup" aria-label="Default permission">
+            <button type="button" class="seg-btn{% if amode == 'manual' %} is-active{% endif %}" data-mode="manual" role="radio" aria-checked="{{ 'true' if amode == 'manual' else 'false' }}">Manual</button>
+            <button type="button" class="seg-btn{% if amode == 'smart' %} is-active{% endif %}" data-mode="smart" role="radio" aria-checked="{{ 'true' if amode == 'smart' else 'false' }}">Smart</button>
+            <button type="button" class="seg-btn{% if amode == 'off' %} is-active{% endif %}" data-mode="off" role="radio" aria-checked="{{ 'true' if amode == 'off' else 'false' }}">Auto</button>
+          </div>
+          <p class="config-hint">Manual asks · Smart assesses · Auto skips prompts (slash /auto)</p>
+        </div>
+      </div>
       <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveGeneral">Save changes</button></div>
     </div>
   </div>

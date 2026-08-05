@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+import threading
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -52,6 +53,9 @@ class _ActiveTurn:
     _consumers: list[asyncio.Queue] = field(default_factory=list)
     _replay: list[tuple[int | None, str]] = field(default_factory=list)
     task: asyncio.Task | None = None
+    # Mid-turn user steers (kimi-web ctrl+s / Enter-with-queue).
+    steer_inbox: list[dict[str, Any]] = field(default_factory=list)
+    _steer_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def subscribe(self, after_seq: int = 0) -> asyncio.Queue:
         """Subscribe to live events.
@@ -160,6 +164,9 @@ def cancel_session_turn(session_id: str) -> bool:
     turn = get_active_session_turn(sid)
     if turn is None:
         return False
+
+    with turn._steer_lock:
+        turn.steer_inbox.clear()
 
     turn._broadcast(
         _fmt_sse(
@@ -636,6 +643,60 @@ async def session_heartbeat_stream(
         yield _fmt_sse({"event": "heartbeat", "data": {}, "seq": seq})
 
 
+
+def push_session_steer(
+    session_id: str,
+    message: str,
+    attachment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Queue a user message into the running turn (mid-turn steer).
+
+    Returns ``accepted=True`` when an active turn took the message. The agent
+    loop drains the inbox between tool iterations (and before a would-be
+    final) so the next LLM round sees the steered text.
+    """
+    sid = (session_id or "").strip()
+    if not sid:
+        return {"ok": False, "accepted": False, "reason": "session_id required"}
+    turn = get_active_session_turn(sid)
+    if turn is None:
+        return {"ok": False, "accepted": False, "reason": "no_active_turn", "session_id": sid}
+    clean = (message or "").strip()
+    ids = [a for a in (attachment_ids or []) if isinstance(a, str) and a.strip()]
+    if not clean and not ids:
+        return {"ok": False, "accepted": False, "reason": "empty", "session_id": sid}
+    item = {"content": clean, "attachment_ids": ids}
+    with turn._steer_lock:
+        turn.steer_inbox.append(item)
+    logger.info(
+        "steer accepted session_id=%s chars=%d attachments=%d inbox=%d",
+        sid,
+        len(clean),
+        len(ids),
+        len(turn.steer_inbox),
+    )
+    return {
+        "ok": True,
+        "accepted": True,
+        "session_id": sid,
+        "pending": len(turn.steer_inbox),
+    }
+
+
+def drain_session_steers(session_id: str | None) -> list[dict[str, Any]]:
+    """Pop all pending steers for *session_id* (empty if none / no turn)."""
+    sid = (session_id or "").strip()
+    if not sid:
+        return []
+    turn = get_active_session_turn(sid)
+    if turn is None:
+        return []
+    with turn._steer_lock:
+        items = list(turn.steer_inbox)
+        turn.steer_inbox.clear()
+    return items
+
+
 __all__ = [
     "_fmt_sse",
     "SessionTurnBusy",
@@ -644,7 +705,9 @@ __all__ = [
     "expand_slash_skill",
     "expand_user_content_for_llm",
     "cancel_session_turn",
+    "drain_session_steers",
     "get_active_session_turn",
+    "push_session_steer",
     "heartbeat_stream",
     "prepend_attachment_info",
     "record_session_user_message",

@@ -601,6 +601,31 @@ def map_loop_event(
         chunks.append(
             fmt_sse({"event": "clarify_required", "data": data, "seq": seq})
         )
+    elif kind == "steer":
+        # Mid-turn user injection — persist + broadcast so reconnect/history see it.
+        content = ev.get("content") or ""
+        att_ids = list(ev.get("attachment_ids") or [])
+        att_meta = list(ev.get("attachments") or [])
+        seq += 1
+        data = {
+            "content": content,
+            "steered": True,
+            "session_id": ev.get("session_id") or "",
+        }
+        if att_ids:
+            data["attachment_ids"] = att_ids
+            data["attachments"] = att_meta
+        chunks.append(fmt_sse({"event": "user", "data": data, "seq": seq}))
+        entry: dict[str, Any] = {
+            "type": "user",
+            "content": content,
+            "ts": now(),
+            "steered": True,
+        }
+        if att_ids:
+            entry["attachment_ids"] = att_ids
+            entry["attachments"] = att_meta
+        entries.append(entry)
     elif kind == "todos":
         seq += 1
         chunks.append(

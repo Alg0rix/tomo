@@ -447,6 +447,9 @@ async def stream_turn_sse(
                 }
             )
             seq += 1
+            from app.runtime.permissions.modes import mode_payload
+
+            approval = mode_payload(session_id)
             yield fmt_sse(
                 {
                     "event": "done",
@@ -455,12 +458,19 @@ async def stream_turn_sse(
                         "agent_id": coordinator_id,
                         "agent": _agent_label(coordinator_id),
                         "turn_id": "slash",
+                        "approval": approval,
                     },
                     "seq": seq,
                 }
             )
             seq += 1
-            yield fmt_sse({"event": "turn.end", "data": {}, "seq": seq})
+            yield fmt_sse(
+                {
+                    "event": "turn.end",
+                    "data": {"approval": approval},
+                    "seq": seq,
+                }
+            )
             return
 
         session = store.get_session(session_id) or {}

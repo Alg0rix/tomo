@@ -47,10 +47,6 @@ CI (`.github/workflows/ci.yml` job `docker`) builds and pushes on every
 `main` push and on `v*` tags after Python tests pass. No Docker Hub token
 needed — `GITHUB_TOKEN` + `packages: write` is enough.
 
-After the **first** successful push, make the package public if anonymous
-pull should work: GitHub → repo → **Packages** → `tomo` → Package settings →
-**Change visibility → Public**.
-
 ### 1. Secrets
 
 ```bash

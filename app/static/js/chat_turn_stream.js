@@ -889,6 +889,21 @@
       ctx.atBottom();
     });
 
+    // Mid-turn steer: seal the current assistant segment so the next
+    // deltas open a fresh bubble; turn continues (not turn.end).
+    es.addEventListener('user', function (e) {
+      bumpActivity();
+      sawDone = false;
+      sealAssistantBubble();
+      if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+      try {
+        var d = JSON.parse(e.data || '{}');
+        if (d && d.steered && window.Tomo && Tomo.toast) {
+          /* client already rendered the steered bubble */
+        }
+      } catch (_) {}
+    });
+
     es.addEventListener('done', function (e) {
       bumpActivity();
       sawDone = true;
@@ -928,6 +943,7 @@
         raw = content;
         ctx.setMarkdown(asstBody, raw);
         asstEl.classList.remove('streaming');
+        sealAssistantBubble();
       } else {
         clearPending();
         dropEmptyAssistant();
@@ -936,7 +952,13 @@
       ctx.setStatus('amber', ctx.busyStatusLabel());
     });
 
-    es.addEventListener('turn.end', function () {
+    es.addEventListener('turn.end', function (e) {
+      try {
+        var raw = e && e.data ? JSON.parse(e.data) : null;
+        if (raw && raw.approval && typeof ctx.onApproval === 'function') {
+          ctx.onApproval(raw.approval);
+        }
+      } catch (_) {}
       endTurn();
     });
 

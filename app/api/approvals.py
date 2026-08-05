@@ -26,6 +26,28 @@ async def list_session_pending(session_id: str, _: AuthDep):
     }
 
 
+@router.get("/sessions/{session_id}/approval-mode")
+async def get_approval_mode(session_id: str, _: AuthDep):
+    from app.runtime.permissions.modes import mode_payload
+
+    return mode_payload(session_id)
+
+
+@router.put("/sessions/{session_id}/approval-mode")
+async def put_approval_mode(session_id: str, body: dict, _: AuthDep):
+    """Override approval mode for this session (works mid-turn).
+
+    Switching to Auto (``off``) clears pending HITL cards so a stuck turn
+    can continue without waiting for Once/Deny.
+    """
+    from app.runtime.permissions.modes import apply_session_mode, normalize_mode
+
+    raw = body.get("mode") if isinstance(body, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=400, detail="mode required")
+    return apply_session_mode(session_id, normalize_mode(raw))
+
+
 @router.post("/approvals/{approval_id}")
 async def post_approval(approval_id: str, body: dict, _: AuthDep):
     choice = body.get("choice") if isinstance(body, dict) else None

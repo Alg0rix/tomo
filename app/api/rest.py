@@ -214,11 +214,14 @@ async def get_session_api(session_id: str, _: AuthDep):
     agent_map = {a["id"]: a for a in agents}
     ids = session.get("agent_ids") or ([session["agent_id"]] if session.get("agent_id") else [])
     is_swarm = bool(session.get("is_swarm")) or len(ids) > 1
+    from app.runtime.permissions.modes import mode_payload
+
     return {
         **session,
         "agent_ids": ids,
         "agents": [agent_map[a] for a in ids if a in agent_map],
         "is_swarm": is_swarm,
+        "approval": mode_payload(session_id),
     }
 
 

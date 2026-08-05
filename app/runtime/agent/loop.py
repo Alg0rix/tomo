@@ -232,6 +232,51 @@ async def _llm_round_with_retry(
         raise last_exc
 
 
+
+def _peek_has_steers(session_id: str | None) -> bool:
+    if not session_id:
+        return False
+    try:
+        from app.services.chat import get_active_session_turn
+
+        turn = get_active_session_turn(session_id)
+        if turn is None:
+            return False
+        with turn._steer_lock:
+            return bool(turn.steer_inbox)
+    except Exception:
+        return False
+
+
+async def _emit_drained_steers(
+    messages: list[dict[str, Any]], session_id: str | None
+) -> AsyncIterator[dict[str, Any]]:
+    """Drain mid-turn steers into *messages* and yield ``steer`` events."""
+    if not session_id:
+        return
+    try:
+        from app.services.chat import (
+            attachment_meta_for_ids,
+            drain_session_steers,
+            expand_user_content_for_llm,
+        )
+    except Exception:
+        return
+    items = drain_session_steers(session_id)
+    for item in items:
+        clean = str(item.get("content") or "")
+        ids = list(item.get("attachment_ids") or [])
+        entry = {"content": clean, "attachment_ids": ids}
+        llm_text = expand_user_content_for_llm(entry)
+        messages.append({"role": "user", "content": llm_text or clean or "(attachment)"})
+        yield {
+            "kind": "steer",
+            "content": clean,
+            "attachment_ids": ids,
+            "attachments": attachment_meta_for_ids(ids),
+        }
+
+
 def _last_user_text(
     user_message: str | None, history: list[dict[str, Any]] | None
 ) -> str:
@@ -334,6 +379,12 @@ async def _authorize_tool(
         yield decision
         return
 
+    # Mid-turn override to Auto (off) after evaluate() — honor immediately.
+    if decision.needs_hitl and get_effective_mode(session_id) == "off":
+        decision = apply_choice(decision, "once", session_id=session_id)
+        yield decision
+        return
+
     if decision.needs_hitl and get_effective_mode(session_id) == "smart":
         cmd = command_from_args(call.name, args)
         verdict = await smart_approve(
@@ -344,6 +395,12 @@ async def _authorize_tool(
         elif verdict == "deny":
             decision.smart_denied = True
             decision.allow_permanent = False
+
+    # Re-check Auto after smart (user may have flipped mode mid-assessment).
+    if decision.needs_hitl and get_effective_mode(session_id) == "off":
+        decision = apply_choice(decision, "once", session_id=session_id)
+        yield decision
+        return
 
     if decision.needs_hitl:
         payload = hitl_mod.create_approval(
@@ -644,6 +701,9 @@ async def run_turn(
         iteration = 0
         while iteration < limit:
             iteration += 1
+            # Mid-turn steers (composer queue → Enter / ctrl+s).
+            async for steer_ev in _emit_drained_steers(messages, session_id):
+                yield steer_ev
             resp: LLMResponse | None = None
             streamed = False
             metrics.mark_llm_round()
@@ -688,6 +748,23 @@ async def run_turn(
                 yield {"kind": "thinking", "content": resp.content}
 
             if not resp.has_tool_calls:
+                # Late steer during the LLM round — keep going instead of ending.
+                if _peek_has_steers(session_id):
+                    final_content = resp.content or ""
+                    if final_content:
+                        messages.append(
+                            {"role": "assistant", "content": final_content}
+                        )
+                        yield {
+                            "kind": "final",
+                            "content": final_content,
+                            "already_streamed": streamed,
+                            "continued": True,
+                        }
+                    async for steer_ev in _emit_drained_steers(messages, session_id):
+                        yield steer_ev
+                    continue
+
                 _logger.info(
                     "turn end agent=%s final_chars=%d",
                     agent_id,

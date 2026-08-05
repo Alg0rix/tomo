@@ -226,6 +226,7 @@
     const attachInput = wrap.querySelector('.attachment-input');
     const attachPreview = wrap.querySelector('.attachment-preview');
     const composerEl = wrap.querySelector('.composer');
+    const modeBtn = wrap.querySelector('.composer-mode') || document.getElementById('composerModeBtn');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
 
     /** @type {{id: string, name: string, size: number}[]} */
@@ -245,7 +246,79 @@
     let skillsCache = null;
     let skillsLoading = false;
 
+    // Cycle: Manual → Smart → Auto(off) → Manual
+    var MODE_CYCLE = ['manual', 'smart', 'off'];
+    var MODE_LABEL = { manual: 'Manual', smart: 'Smart', off: 'Auto' };
+
     function currentSessionId() { return wrap.dataset.sessionId || ''; }
+
+    function paintApprovalMode(payload) {
+      if (!modeBtn) return;
+      var mode = (payload && payload.mode) || 'smart';
+      var label = (payload && payload.label) || MODE_LABEL[mode] || 'Smart';
+      modeBtn.dataset.mode = mode;
+      var key = modeBtn.querySelector('.composer-mode-key');
+      if (key) key.textContent = label;
+      else modeBtn.innerHTML =
+        '<span class="composer-mode-key">' + esc(label) + '</span>' +
+        '<span class="composer-mode-suffix"> Mode</span>';
+      modeBtn.title =
+        'Permission: ' + label + ' — click to cycle (/manual /smart /auto)';
+    }
+
+    async function refreshApprovalMode() {
+      var sid = currentSessionId();
+      if (!sid || !modeBtn) return;
+      try {
+        var data = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/approval-mode'
+        );
+        if (data) paintApprovalMode(data);
+      } catch (e) { /* ignore */ }
+    }
+
+    async function cycleApprovalMode() {
+      var sid = currentSessionId();
+      if (!sid) {
+        if (window.Tomo && Tomo.toast) Tomo.toast('Open a chat first', 'err');
+        return;
+      }
+      var cur = modeBtn ? modeBtn.dataset.mode || 'smart' : 'smart';
+      var idx = MODE_CYCLE.indexOf(cur);
+      var next = MODE_CYCLE[(idx < 0 ? 0 : idx + 1) % MODE_CYCLE.length];
+      try {
+        var data = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/approval-mode',
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: next }),
+          }
+        );
+        if (data) {
+          paintApprovalMode(data);
+          if (data.cleared_pending && window.Tomo && Tomo.toast) {
+            Tomo.toast(
+              'Auto — cleared ' + data.cleared_pending + ' pending approval(s)',
+              'ok'
+            );
+          }
+        }
+      } catch (e) {
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast('Could not change permission mode', 'err');
+        }
+      }
+    }
+
+    if (modeBtn) {
+      modeBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        cycleApprovalMode();
+      });
+    }
+    refreshApprovalMode();
+
     function pendingAgentIds() {
       return (wrap.dataset.pendingAgents || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     }
@@ -687,7 +760,8 @@
       input.style.height = next + 'px';
     }
 
-    function appendUserBubble(value, queued, attachments) {
+    function appendUserBubble(value, queued, attachments, opts) {
+      opts = opts || {};
       const empty = scroll.querySelector('.chat-empty');
       if (empty) empty.remove();
       const u = document.createElement('div');
@@ -699,10 +773,12 @@
       if (attachments && attachments.length) {
         body.insertAdjacentHTML('beforeend', attachmentChipsHtml(attachments, false));
       }
-      if (queued) {
-        bubble.classList.add('msg-queued');
+      if (queued || opts.steering) {
+        bubble.classList.add(opts.steering ? 'msg-steering' : 'msg-queued');
         var actions = bubble.querySelector('.msg-actions');
-        var chip = '<span class="queue-chip">queued</span>';
+        var chip = opts.steering
+          ? '<span class="queue-chip steer-chip">steering</span>'
+          : '<span class="queue-chip">queued</span>';
         if (actions) actions.insertAdjacentHTML('afterbegin', chip);
         else bubble.querySelector('.bubble').insertAdjacentHTML('beforeend', chip);
       }
@@ -718,8 +794,94 @@
     function markBubbleDequeued(el) {
       if (!el) return;
       el.classList.remove('msg-queued');
+      el.classList.remove('msg-steering');
       const chip = el.querySelector('.queue-chip');
       if (chip) chip.remove();
+    }
+
+    function removeQueuedBubble(el) {
+      if (!el) return;
+      var t = el.closest ? el.closest('.turn') : null;
+      if (t) t.remove();
+      else el.remove();
+    }
+
+    /**
+     * Merge local queue + live composer text into the RUNNING turn (kimi steer).
+     * Triggered when the user presses Enter while messages are already queued.
+     */
+    async function steerQueued(value, attachmentIds, attachments) {
+      var parts = [];
+      var attachIds = [];
+      var attachMeta = [];
+      var seenAtt = {};
+      while (messageQueue.length) {
+        var q = messageQueue.shift();
+        if (q && q.text && String(q.text).trim()) parts.push(String(q.text).trim());
+        (q.attachmentIds || []).forEach(function (id) {
+          if (id && !seenAtt[id]) { seenAtt[id] = true; attachIds.push(id); }
+        });
+        (q.attachments || []).forEach(function (a) {
+          if (a && a.id && !seenAtt['meta:' + a.id]) {
+            seenAtt['meta:' + a.id] = true;
+            attachMeta.push(a);
+          }
+        });
+        removeQueuedBubble(q && q.el);
+      }
+      if (value && String(value).trim()) parts.push(String(value).trim());
+      (attachmentIds || []).forEach(function (id) {
+        if (id && !seenAtt[id]) { seenAtt[id] = true; attachIds.push(id); }
+      });
+      (attachments || []).forEach(function (a) {
+        if (a && a.id && !seenAtt['meta:' + a.id]) {
+          seenAtt['meta:' + a.id] = true;
+          attachMeta.push(a);
+        }
+      });
+      var merged = parts.join('\n\n');
+      if (!merged && !attachIds.length) {
+        syncBusyStatus();
+        return false;
+      }
+      var sid = currentSessionId();
+      if (!sid) {
+        Tomo.toast('No session to steer into', 'err');
+        enqueueMessage(merged, attachIds, attachMeta);
+        return false;
+      }
+      var el = appendUserBubble(merged, false, attachMeta, { steering: true });
+      syncBusyStatus();
+      try {
+        var data = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/chat/steer',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: merged,
+              attachment_ids: attachIds,
+            }),
+          }
+        );
+        if (!data || !data.accepted) {
+          throw new Error((data && data.reason) || 'Steer rejected');
+        }
+        markBubbleDequeued(el);
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast('Steering into current turn…', 'ok');
+        }
+        setStatus('amber', 'busy · steering');
+        return true;
+      } catch (e) {
+        removeQueuedBubble(el);
+        // Fall back to queue so the text is not lost; drain after turn ends.
+        enqueueMessage(merged, attachIds, attachMeta);
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast((e && e.message) || 'Could not steer — queued instead', 'err');
+        }
+        return false;
+      }
     }
 
     function closeStream() {
@@ -898,6 +1060,7 @@
           workplace_id: data.workplace_id || workplaceId || '',
         },
       }));
+      refreshApprovalMode();
       return data.session_id;
     }
 
@@ -917,6 +1080,7 @@
         atBottom: atBottom,
         setStatus: setStatus,
         busyStatusLabel: busyStatusLabel,
+        onApproval: paintApprovalMode,
         refreshSendBtn: refreshSendBtn,
         closeStream: closeStream,
         finishTurn: finishTurn,
@@ -1019,7 +1183,9 @@
         return { id: a.id, name: a.name, size: a.size };
       });
       const attachIds = attachMeta.map(function (a) { return a.id; });
-      if (!value && !attachIds.length) return;
+      var hasQueue = messageQueue.length > 0;
+      // Empty Enter is allowed when steering an existing queue into the turn.
+      if (!value && !attachIds.length && !(sending && hasQueue)) return;
       if (uploading) {
         Tomo.toast('Wait for uploads to finish', 'err');
         return;
@@ -1030,6 +1196,10 @@
       uploadedAttachments = [];
       renderAttachmentPreview();
       refreshSendBtn();
+      if (sending && hasQueue) {
+        await steerQueued(value, attachIds, attachMeta);
+        return;
+      }
       if (sending) {
         enqueueMessage(value, attachIds, attachMeta);
         return;
@@ -1114,6 +1284,44 @@
         if (e.key === 'Escape') {
           e.preventDefault();
           hideMentions();
+          return;
+        }
+      }
+      // Ctrl/Cmd+S — steer live text (+ any queue) into the running turn.
+      if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        if (sending) {
+          e.preventDefault();
+          (async function () {
+            var value = input.value.trim();
+            var attachMeta = uploadedAttachments.map(function (a) {
+              return { id: a.id, name: a.name, size: a.size };
+            });
+            var attachIds = attachMeta.map(function (a) { return a.id; });
+            if (!value && !attachIds.length && !messageQueue.length) return;
+            if (uploading) {
+              Tomo.toast('Wait for uploads to finish', 'err');
+              return;
+            }
+            hidePopups();
+            input.value = '';
+            resize();
+            uploadedAttachments = [];
+            renderAttachmentPreview();
+            refreshSendBtn();
+            // No queue yet: park live text as a headless queue entry, then steer.
+            if (!messageQueue.length && (value || attachIds.length)) {
+              messageQueue.push({
+                text: value,
+                el: null,
+                attachmentIds: attachIds,
+                attachments: attachMeta,
+              });
+              value = '';
+              attachIds = [];
+              attachMeta = [];
+            }
+            await steerQueued(value, attachIds, attachMeta);
+          })();
           return;
         }
       }

@@ -90,6 +90,11 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     if "llm_model" in payload and payload["llm_model"] is not None:
         payload["default_model"] = payload["llm_model"]
 
+    if "approvals_mode" in payload and payload["approvals_mode"] is not None:
+        from app.runtime.permissions.modes import normalize_mode
+
+        payload["approvals_mode"] = normalize_mode(payload["approvals_mode"])
+
     for key, value in payload.items():
         if value is None:
             continue

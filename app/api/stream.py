@@ -164,6 +164,31 @@ async def session_chat_stop(session_id: str, _: AuthDep = None):
     return {"ok": True, "stopped": stopped, "session_id": session_id}
 
 
+@router.post("/sessions/{session_id}/chat/steer")
+async def session_chat_steer(
+    session_id: str,
+    body: SessionChatStreamIn,
+    _: AuthDep = None,
+):
+    """Inject a user message into the running turn (mid-turn steer).
+
+    Used when the composer already has queued follow-ups and the user presses
+    Enter again — merge client-side, then POST here. Does not start a new turn.
+    """
+    if not store.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    from app.services.chat import push_session_steer
+
+    message = (body.message or "").strip()
+    attachment_ids = list(body.attachment_ids or [])
+    result = push_session_steer(session_id, message, attachment_ids=attachment_ids)
+    if not result.get("accepted"):
+        reason = result.get("reason") or "rejected"
+        status = 409 if reason == "no_active_turn" else 400
+        raise HTTPException(status_code=status, detail=reason)
+    return result
+
+
 @router.get("/sessions/{session_id}/chat/stream")
 async def session_chat_stream(
     session_id: str,

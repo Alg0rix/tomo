@@ -30,14 +30,30 @@
 
   var saveBtn = document.getElementById('saveGeneral');
   if (saveBtn) {
+    var seg = document.getElementById('setApprovalsMode');
+    if (seg) {
+      seg.querySelectorAll('.seg-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          seg.querySelectorAll('.seg-btn').forEach(function (b) {
+            b.classList.remove('is-active');
+            b.setAttribute('aria-checked', 'false');
+          });
+          btn.classList.add('is-active');
+          btn.setAttribute('aria-checked', 'true');
+        });
+      });
+    }
     saveBtn.addEventListener('click', async function () {
       try {
+        var active = seg && seg.querySelector('.seg-btn.is-active');
+        var mode = active ? active.getAttribute('data-mode') : 'smart';
         var data = await Tomo.api('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             max_tool_iterations: parseInt(document.getElementById('setMaxIter').value, 10),
             learning_enabled: document.getElementById('setLearning').checked,
+            approvals_mode: mode || 'smart',
           }),
         });
         if (!data) return;
