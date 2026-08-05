@@ -5057,6 +5057,18 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   padding-top: 4px;
 }
 .config-stack { flex: 1; min-width: 0; max-width: 420px; }
+.wp-install-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.wp-spin {
+  width: 13px; height: 13px; flex-shrink: 0;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: btn-spin 0.65s linear infinite;
+}
 .field-status { margin: 6px 0 0; font-size: 12px; }
 .mono-input {
   width: 100%;

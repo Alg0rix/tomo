@@ -17,9 +17,23 @@
     document.querySelectorAll(".wp-tunnel-only").forEach(function (el) {
       el.style.display = kind === "tunnel" ? "" : "none";
     });
+    document.querySelectorAll(".wp-tunnel-ish").forEach(function (el) {
+      el.style.display = kind === "tunnel" ? "" : "none";
+    });
+    syncInstallToggle();
+  }
+
+  function syncInstallToggle() {
+    var tog = document.getElementById("wpInstallToggle");
+    var on = !!(tog && tog.checked);
+    document.querySelectorAll(".wp-ssh-install").forEach(function (el) {
+      el.style.display = on ? "" : "none";
+    });
   }
 
   if (kindEl) kindEl.addEventListener("change", syncKindFields);
+  var installToggle = document.getElementById("wpInstallToggle");
+  if (installToggle) installToggle.addEventListener("change", syncInstallToggle);
   syncKindFields();
 
   var newBtn = document.getElementById("newWorkplaceBtn");
@@ -39,6 +53,13 @@
       document.getElementById("wpSshKey").value = "";
       var ps = document.getElementById("wpPwdStatus"); if (ps) ps.textContent = "";
       var ks = document.getElementById("wpKeyStatus"); if (ks) ks.textContent = "";
+      var it = document.getElementById("wpInstallToggle"); if (it) it.checked = false;
+      var is = document.getElementById("wpInstallStatus"); if (is) is.hidden = true;
+      var itxt = document.getElementById("wpInstallStatusText"); if (itxt) itxt.textContent = "";
+      if (document.getElementById("wpInstallSshHost")) document.getElementById("wpInstallSshHost").value = "";
+      if (document.getElementById("wpInstallSshPort")) document.getElementById("wpInstallSshPort").value = "22";
+      if (document.getElementById("wpInstallSshUser")) document.getElementById("wpInstallSshUser").value = "";
+      if (document.getElementById("wpInstallSshPassword")) document.getElementById("wpInstallSshPassword").value = "";
       syncKindFields();
       formCard.classList.remove("hidden");
     });
@@ -73,11 +94,89 @@
     return body;
   }
 
+  function setInstallStatus(text, show) {
+    var s = document.getElementById("wpInstallStatus");
+    var t = document.getElementById("wpInstallStatusText");
+    if (s) s.hidden = !show;
+    if (t) t.textContent = text || "";
+  }
+
+  async function runInstallViaSsh(btn) {
+    var host = document.getElementById("wpInstallSshHost").value.trim();
+    var user = document.getElementById("wpInstallSshUser").value.trim();
+    var name = document.getElementById("wpName").value.trim();
+    if (!host || !user) {
+      Tomo.toast("SSH host and user are required to install via SSH", "err");
+      return;
+    }
+    var payload = {
+      name: name || (user + "@" + host),
+      ssh_host: host,
+      ssh_port: parseInt(document.getElementById("wpInstallSshPort").value, 10) || 22,
+      ssh_user: user,
+    };
+    var pwd = document.getElementById("wpInstallSshPassword").value;
+    if (pwd) payload.ssh_password = pwd;
+    if (btn) btn.disabled = true;
+    setInstallStatus("Connecting…", true);
+    try {
+      // Poll the async install job. The endpoint returns immediately with a job
+      // id, then we poll /status until it reaches a terminal state.
+      var job = await Tomo.api("/api/workplaces/install-via-ssh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      var jobId = job && (job.job_id || job.id);
+      if (!jobId) {
+        // Synchronous completion (created directly).
+        Tomo.toast("Connector installed", "ok");
+        setTimeout(function () { location.reload(); }, 500);
+        return;
+      }
+      var done = false;
+      while (!done) {
+        var st = await Tomo.api("/api/workplaces/install-via-ssh/" + encodeURIComponent(jobId), {
+          method: "GET",
+        });
+        if (st && st.status === "installing") {
+          setInstallStatus("Installing connector…", true);
+        } else if (st && st.status === "pairing") {
+          setInstallStatus("Pairing…", true);
+        } else if (st && (st.status === "done" || st.status === "ok")) {
+          setInstallStatus("", false);
+          Tomo.toast("Connector installed and paired", "ok");
+          setTimeout(function () { location.reload(); }, 500);
+          done = true;
+        } else if (st && (st.status === "error" || st.status === "failed")) {
+          setInstallStatus("", false);
+          Tomo.toast((st.message || "Install failed"), "err");
+          done = true;
+        } else {
+          // Unknown status → treat as in-progress; keep polling.
+          setInstallStatus("Working…", true);
+        }
+        if (!done) await new Promise(function (r) { setTimeout(r, 1500); });
+      }
+    } catch (e) {
+      setInstallStatus("", false);
+      Tomo.toast((e && e.message) || "Install via SSH failed", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   var save = document.getElementById("wpSave");
   if (save) {
     save.addEventListener("click", async function () {
       var body = collectBody();
       var mode = modeEl ? modeEl.value : "add";
+      // Tunnel + "Install via SSH" → call the provision endpoint instead of plain create.
+      var installToggle = document.getElementById("wpInstallToggle");
+      if (mode === "add" && body.kind === "tunnel" && installToggle && installToggle.checked) {
+        await runInstallViaSsh(save);
+        return;
+      }
       try {
         if (mode === "add") {
           var created = await Tomo.api("/api/workplaces", {

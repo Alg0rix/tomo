@@ -57,6 +57,31 @@
         <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Connector</div>
           <div class="faint config-hint">Creates a pairing code. On the device: build <code>connector/</code> then <code>tomo-connector pair --code … --server …</code></div>
         </div>
+        <div class="config-row wp-tunnel-ish" style="display:none"><div class="lbl">Install via SSH</div>
+          <div class="config-stack">
+            <label class="workplace-check">
+              <input type="checkbox" id="wpInstallToggle">
+              <span>Install connector via SSH <span class="muted">— provision this machine and pair it automatically</span></span>
+            </label>
+          </div>
+        </div>
+        <div class="config-row wp-ssh-install" style="display:none"><div class="lbl">SSH host</div>
+          <input class="input config-input-wide" id="wpInstallSshHost" placeholder="host.example.com" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-install" style="display:none"><div class="lbl">SSH port</div>
+          <input class="input config-input" type="number" id="wpInstallSshPort" value="22" style="max-width:120px">
+        </div>
+        <div class="config-row wp-ssh-install" style="display:none"><div class="lbl">SSH user</div>
+          <input class="input config-input" id="wpInstallSshUser" placeholder="root" spellcheck="false">
+        </div>
+        <div class="config-row wp-ssh-install" style="display:none"><div class="lbl">Password</div>
+          <input class="input config-input" type="password" id="wpInstallSshPassword" placeholder="Root password" autocomplete="new-password">
+        </div>
+        <div class="config-row wp-ssh-install" style="display:none"><div class="lbl">Status</div>
+          <div class="config-stack">
+            <div class="wp-install-status" id="wpInstallStatus" hidden><span class="wp-spin"></span><span id="wpInstallStatusText">Installing connector…</span></div>
+          </div>
+        </div>
       </div>
       <div class="panel-sheet-foot">
         <button class="btn ghost sm" type="button" id="wpCancel">Cancel</button>
@@ -89,4 +114,4 @@
   {% include 'partials/workplaces/kinds.html' %}
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}?v=wp-ledger1"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}?v=wp-install1"></script>{% endblock %}
