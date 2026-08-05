@@ -173,8 +173,8 @@ fi
 
 printf '%s\n' "$BRANCH" >"$INSTALL_DIR/.tomo-install-branch"
 
-log "→ uv sync"
-(cd "$INSTALL_DIR" && uv sync)
+log "→ uv sync (Python 3.13)"
+(cd "$INSTALL_DIR" && uv sync --python 3.13)
 
 ensure_bootstrap_secrets
 
