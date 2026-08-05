@@ -294,7 +294,6 @@ def _install_service_script(dest: str, os_arch: str) -> str:
             "run 'tomo-connector service install' manually\"\n"
         )
     unit = _systemd_unit().replace("%h", '"$HOME"')
-    quoted = shlex.quote(unit)
     return (
         "command -v systemctl >/dev/null 2>&1 || { "
         "echo '⚠ systemctl not found — connector installed; start manually with "

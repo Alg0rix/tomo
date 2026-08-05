@@ -440,8 +440,6 @@ def delete_workplace(conn: sqlite3.Connection, workplace_id: str) -> bool:
                 workplace_id, session.websocket, fail_pending=True
             )
             try:
-                import asyncio
-
                 session.websocket.close_nowait(code=4001)
             except Exception:
                 pass
