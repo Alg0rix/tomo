@@ -5,6 +5,10 @@ params/error/ts) onto the ``messages`` columns. ``params`` is JSON-encoded
 into ``params_json``; booleans are stored as INTEGER. Appending a message also
 bumps the parent session's ``message_count`` / ``updated_at`` and auto-resolves
 a fresh "New conversation"/"New swarm chat" title from the first user message.
+
+Top-level ``call_id`` / ``delegate_call_id`` (not schema columns) are folded
+into ``params.__meta`` on write and restored on read so tool pairing and
+same-agent swarm instance keys survive refresh.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from typing import Any
 
 _NEW_SESSION_TITLES = ("New conversation", "New swarm chat")
 _TITLE_MAX_LEN = 60
+_META_KEYS = ("call_id", "delegate_call_id")
 
 
 def _now() -> float:
@@ -41,6 +46,42 @@ def derive_session_title(content: str, *, max_len: int = _TITLE_MAX_LEN) -> str:
     return cut.rstrip(".,;:!?…") + "…"
 
 
+def _fold_meta(entry: dict[str, Any], params: Any) -> Any:
+    """Merge top-level call/delegate ids into ``params.__meta`` for persistence."""
+    meta = {k: entry[k] for k in _META_KEYS if entry.get(k)}
+    if not meta:
+        return params
+    if params is None:
+        return {"__meta": meta}
+    if isinstance(params, dict):
+        existing = params.get("__meta")
+        merged_meta = {**(existing if isinstance(existing, dict) else {}), **meta}
+        # Prefer explicit top-level; also keep flat keys already in params.
+        for k in _META_KEYS:
+            if k in params and k not in merged_meta:
+                merged_meta[k] = params[k]
+        out = {**params, "__meta": merged_meta}
+        return out
+    return {"value": params, "__meta": meta}
+
+
+def _unfold_meta(entry: dict[str, Any], params: Any) -> Any:
+    """Restore ``call_id`` / ``delegate_call_id`` onto the entry from params."""
+    if not isinstance(params, dict):
+        return params
+    meta = params.get("__meta")
+    if isinstance(meta, dict):
+        for k in _META_KEYS:
+            if meta.get(k) and not entry.get(k):
+                entry[k] = meta[k]
+        params = {k: v for k, v in params.items() if k != "__meta"}
+    # Legacy / swarm lifecycle: flat keys inside params.
+    for k in _META_KEYS:
+        if k in params and not entry.get(k):
+            entry[k] = params[k]
+    return params or None
+
+
 def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     params = json.loads(row["params_json"]) if row["params_json"] else None
     entry = {
@@ -52,6 +93,8 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
         "error": bool(row["error"]),
         "ts": row["ts"],
     }
+    params = _unfold_meta(entry, params)
+    entry["params"] = params
     # Surface attachment ids at top level for UI / LLM expansion.
     if isinstance(params, dict) and params.get("attachment_ids"):
         entry["attachment_ids"] = list(params["attachment_ids"])
@@ -85,6 +128,7 @@ def append_session_history(
             "attachment_ids": list(entry["attachment_ids"]),
             "attachments": list(entry.get("attachments") or params.get("attachments") or []),
         }
+    params = _fold_meta(entry, params)
     params_json = json.dumps(params) if params is not None else None
     conn.execute(
         "INSERT INTO messages (session_id, type, content, agent_id, function, params_json, error, ts) "

@@ -1125,6 +1125,7 @@ async def _stream_delegate_bundle(
                 "task": reason,
                 "parallel_index": parallel_index,
                 "parallel_total": parallel_total,
+                "delegate_call_id": cid,
             }
             yield {
                 "kind": "subagent_start",
@@ -1133,6 +1134,7 @@ async def _stream_delegate_bundle(
                 "task": reason,
                 "parallel_index": parallel_index,
                 "parallel_total": parallel_total,
+                "delegate_call_id": cid,
             }
             sub_output = ""
             try:
@@ -1143,6 +1145,9 @@ async def _stream_delegate_bundle(
                     user_request=user_request,
                     history=None,
                     session_id=session_id,
+                    delegate_call_id=cid,
+                    parallel_index=parallel_index,
+                    parallel_total=parallel_total,
                 ):
                     yield ev
                     sub_output = final
@@ -1154,6 +1159,7 @@ async def _stream_delegate_bundle(
                 "agent_id": target,
                 "content": sub_output,
                 "status": "error" if delegate_error else "ok",
+                "delegate_call_id": cid,
             }
             sub_result = sub_output or "(no output from subagent)"
     elif delegate_error:

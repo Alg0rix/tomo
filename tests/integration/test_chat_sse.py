@@ -291,22 +291,26 @@ async def test_delegate_tool_runs_subagent_and_parent_continues(
     assert handoff.get("task") in ("ops work", "delegate")
     assert handoff.get("parallel_index") == 1
     assert handoff.get("parallel_total") == 1
+    assert handoff.get("delegate_call_id"), "delegate must carry instance id"
 
     # New: subagent_start and subagent_done lifecycle events.
     assert "subagent_start" in _names(events)
     sa_start = _data(events, "subagent_start")[0]
     assert sa_start["agent_id"] == "ops"
     assert sa_start.get("task") in ("ops work", "delegate")
+    assert sa_start.get("delegate_call_id") == handoff["delegate_call_id"]
     assert "subagent_done" in _names(events)
     sa_done = _data(events, "subagent_done")[0]
     assert sa_done["agent_id"] == "ops"
     assert sa_done["status"] == "ok"
+    assert sa_done.get("delegate_call_id") == handoff["delegate_call_id"]
 
     # The subagent's answer appears as deltas attributed to ops.
     deltas = _data(events, "delta")
     ops_deltas = [d for d in deltas if d.get("agent_id") == "ops"]
     assert ops_deltas, "subagent deltas should be attributed to ops"
     assert "disk" in "".join(d.get("content", "") for d in ops_deltas).lower()
+    assert all(d.get("delegate_call_id") == handoff["delegate_call_id"] for d in ops_deltas)
 
     # The parent continues and its final is the terminal ``done``.
     dones = _data(events, "done")
@@ -422,6 +426,79 @@ async def test_parallel_delegation_emits_swarm_events(
     ]
     assert parent_dones
     assert "disk" in parent_dones[-1].get("content", "").lower()
+
+
+async def test_parallel_same_agent_emits_distinct_delegate_call_ids(
+    tmp_path, monkeypatch
+) -> None:
+    """Two ``delegate`` calls to the *same* agent get distinct instance ids
+    so the UI can show two swarm cards / streams."""
+    store.rebind(tmp_path / "chat_same_agent.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+
+    coord = ScriptedLLM(
+        [
+            LLMResponse(
+                content="Dispatching ops twice in parallel.",
+                tool_calls=[
+                    ToolCall(
+                        id="call_ops_a",
+                        name="delegate",
+                        arguments={"agent_id": "ops", "reason": "check disk"},
+                    ),
+                    ToolCall(
+                        id="call_ops_b",
+                        name="delegate",
+                        arguments={"agent_id": "ops", "reason": "check mem"},
+                    ),
+                ],
+            ),
+            text_reply("Both ops runs finished."),
+        ]
+    )
+    # Two independent ops runs — each ScriptedLLM instance is consumed once.
+    ops_a = ScriptedLLM([text_reply("Ops A: disk ok.")])
+    ops_b = ScriptedLLM([text_reply("Ops B: mem ok.")])
+    ops_queue = [ops_a, ops_b]
+
+    def _llm(agent_id=None):
+        if agent_id == "ops":
+            return ops_queue.pop(0)
+        return coord
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
+
+    events = await _collect(sid, "check disk and mem via ops")
+
+    delegates = _data(events, "delegate")
+    assert len(delegates) == 2
+    assert all(d["to"] == "ops" for d in delegates)
+    dcids = {d.get("delegate_call_id") for d in delegates}
+    assert dcids == {"call_ops_a", "call_ops_b"}
+
+    starts = _data(events, "subagent_start")
+    assert len(starts) == 2
+    assert {s.get("delegate_call_id") for s in starts} == dcids
+
+    dones = _data(events, "subagent_done")
+    assert len(dones) == 2
+    assert {d.get("delegate_call_id") for d in dones} == dcids
+
+    # Nested deltas for each instance keep their own delegate_call_id.
+    ops_deltas = [
+        d for d in _data(events, "delta") if d.get("agent_id") == "ops"
+    ]
+    assert ops_deltas
+    assert {d.get("delegate_call_id") for d in ops_deltas} == dcids
+
+    history = store.get_session_history(sid)
+    del_entries = [h for h in history if h["type"] == "delegate"]
+    assert len(del_entries) == 2
+    hist_dcids = {h["params"].get("delegate_call_id") for h in del_entries}
+    assert hist_dcids == dcids
+    finals = [h for h in history if h["type"] == "final" and h.get("agent_id") == "ops"]
+    assert len(finals) == 2
+    assert {h.get("delegate_call_id") for h in finals} == dcids
 
 
 async def test_mention_forces_ops_without_coordinator_tools(

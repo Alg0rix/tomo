@@ -43,6 +43,11 @@
     var swarmCard = null;
     var detailPanel = null;
     var activeDetailAgent = null;
+    // Live fallback when wire has no delegate_call_id yet (pre-reload server):
+    // allocate a unique key per delegate so same catalog agent gets N cards.
+    var liveDelegateSeq = 0;
+    var agentToInstanceKey = {};      // agent_id → latest instance key
+    var parallelSlotKey = {};         // agent_id + ':' + parallel_index → key
 
     if (!isLive) {
       ctx.turn.querySelectorAll('.swarm-row[data-agent-id]').forEach(function (row) {
@@ -201,6 +206,44 @@
       return aid && subagentSet.has(aid) && aid !== ctx.agentId;
     }
 
+    /** Per-delegation instance key (same catalog agent can run twice). */
+    function instanceKeyFrom(d, fallbackAid) {
+      var dcid = (d && (d.delegate_call_id || d.delegateCallId)) || '';
+      if (dcid) return 'd:' + dcid;
+      var aid = fallbackAid || (d && d.agent_id) || '';
+      var idx = d && d.parallel_index;
+      if (aid && idx != null && parallelSlotKey[aid + ':' + idx]) {
+        return parallelSlotKey[aid + ':' + idx];
+      }
+      if (aid && agentToInstanceKey[aid]) return agentToInstanceKey[aid];
+      return aid || '';
+    }
+
+    /** Allocate a stable key for a new handoff (always unique per delegate). */
+    function allocateInstanceKey(d, aid) {
+      var dcid = (d && (d.delegate_call_id || d.delegateCallId)) || '';
+      var key;
+      if (dcid) {
+        key = 'd:' + dcid;
+      } else {
+        liveDelegateSeq++;
+        var idx = d && d.parallel_index;
+        var total = d && d.parallel_total;
+        if (aid && idx != null && total > 1) {
+          key = 'p:' + aid + ':' + idx + '/' + total;
+        } else {
+          key = 'live:' + liveDelegateSeq;
+        }
+      }
+      if (aid) {
+        agentToInstanceKey[aid] = key;
+        if (d && d.parallel_index != null) {
+          parallelSlotKey[aid + ':' + d.parallel_index] = key;
+        }
+      }
+      return key;
+    }
+
     function makeToolCollapsible(card) {
       if (window.Tomo && Tomo.wireToolCard) Tomo.wireToolCard(card);
     }
@@ -273,20 +316,20 @@
 
     // ── Full-featured subagent infrastructure (live) ────────────────
 
-    function getBuffer(aid) {
-      if (!subagentBuffers.has(aid)) {
-        subagentBuffers.set(aid, {
+    function getBuffer(key) {
+      if (!subagentBuffers.has(key)) {
+        subagentBuffers.set(key, {
           events: [], status: 'running', task: '', name: '',
-          index: 0, total: 1, row: null,
+          index: 0, total: 1, row: null, agentId: '', key: key,
         });
       }
-      return subagentBuffers.get(aid);
+      return subagentBuffers.get(key);
     }
 
-    function bufferEvent(aid, kind, data) {
-      var buf = getBuffer(aid);
+    function bufferEvent(key, kind, data) {
+      var buf = getBuffer(key);
       buf.events.push({ kind: kind, data: data });
-      if (activeDetailAgent === aid && detailPanel) renderEventInDetail(kind, data, aid);
+      if (activeDetailAgent === key && detailPanel) renderEventInDetail(kind, data, key);
     }
 
     function createSwarmCard() {
@@ -300,11 +343,12 @@
       return swarmCard;
     }
 
-    function addSwarmRow(aid, name, task, idx, total) {
+    function addSwarmRow(key, aid, name, task, idx, total) {
       var card = swarmCard || createSwarmCard();
       var row = document.createElement('div');
       row.className = 'swarm-row';
       row.dataset.agentId = aid;
+      row.dataset.instanceKey = key;
       var color = ctx.agentColor(aid);
       var letter = ctx.esc((name || aid || '?').slice(0, 1).toUpperCase());
       var idxStr = String(idx).padStart(2, '0');
@@ -320,11 +364,12 @@
           '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
         '</div>' +
         '<span class="si-open-hint" aria-hidden="true">inspect \u2192</span>';
-      row.addEventListener('click', function () { openDetailPanel(aid); });
+      row.addEventListener('click', function () { openDetailPanel(key); });
       card.appendChild(row);
-      var buf = getBuffer(aid);
+      var buf = getBuffer(key);
       buf.row = row;
       buf.name = name || aid;
+      buf.agentId = aid;
       buf.task = task || '';
       buf.index = idx;
       buf.total = total;
@@ -332,8 +377,8 @@
       return row;
     }
 
-    function bumpSwarmProgressLive(aid) {
-      var buf = subagentBuffers.get(aid);
+    function bumpSwarmProgressLive(key) {
+      var buf = subagentBuffers.get(key);
       if (!buf || !buf.row) return;
       buf.row.classList.add('active');
       var bar = buf.row.querySelector('.swarm-progress-bar');
@@ -343,8 +388,8 @@
       }
     }
 
-    function markSwarmDoneLive(aid, status) {
-      var buf = subagentBuffers.get(aid);
+    function markSwarmDoneLive(key, status) {
+      var buf = subagentBuffers.get(key);
       if (!buf) return;
       buf.status = status === 'error' ? 'error' : 'done';
       if (!buf.row) return;
@@ -352,7 +397,7 @@
       buf.row.classList.add(buf.status);
       var bar = buf.row.querySelector('.swarm-progress-bar');
       if (bar) bar.style.width = '100%';
-      if (activeDetailAgent === aid && detailPanel) {
+      if (activeDetailAgent === key && detailPanel) {
         var badge = detailPanel.querySelector('.si-status');
         if (badge) {
           badge.className = 'si-status ' + buf.status;
@@ -367,9 +412,10 @@
       }
     }
 
-    function openDetailPanel(aid) {
-      activeDetailAgent = aid;
-      var buf = subagentBuffers.get(aid) || getBuffer(aid);
+    function openDetailPanel(key) {
+      activeDetailAgent = key;
+      var buf = subagentBuffers.get(key) || getBuffer(key);
+      var aid = buf.agentId || key;
       var name = buf.name || aid;
       var color = ctx.agentColor(aid);
       var letter = ctx.esc((name || '?').slice(0, 1).toUpperCase());
@@ -414,7 +460,7 @@
       if (bufferList.length > 1) {
         var nameCounts = {};
         bufferList.forEach(function (item) {
-          var base = item.buf.name || item.id;
+          var base = item.buf.name || item.buf.agentId || item.id;
           nameCounts[base] = (nameCounts[base] || 0) + 1;
         });
         var nameSeen = {};
@@ -424,14 +470,15 @@
         bufferList.forEach(function (item) {
           var id = item.id;
           var b = item.buf;
-          var base = b.name || id;
+          var base = b.name || b.agentId || id;
           nameSeen[base] = (nameSeen[base] || 0) + 1;
           var pill = document.createElement('button');
           pill.type = 'button';
-          pill.className = 'si-pill' + (id === aid ? ' active' : '');
+          pill.className = 'si-pill' + (id === key ? ' active' : '');
           var st = b.status || 'running';
-          var cColor = ctx.agentColor(id);
-          var cLetter = ctx.esc((b.name || id || '?').slice(0, 1).toUpperCase());
+          var cAid = b.agentId || id;
+          var cColor = ctx.agentColor(cAid);
+          var cLetter = ctx.esc((b.name || cAid || '?').slice(0, 1).toUpperCase());
           var label = base;
           if (nameCounts[base] > 1) label += ' #' + nameSeen[base];
           pill.innerHTML =
@@ -455,13 +502,13 @@
         tl.className = 'si-timeline';
         body.appendChild(tl);
         buf.events.forEach(function (ev) {
-          renderEventInDetail(ev.kind, ev.data, aid);
+          renderEventInDetail(ev.kind, ev.data, key);
         });
       }
 
       head.querySelector('.si-close').addEventListener('click', closeDetailPanel);
       ctx.wrap.querySelectorAll('.swarm-row').forEach(function (r) {
-        r.classList.toggle('selected', r.dataset.agentId === aid);
+        r.classList.toggle('selected', (r.dataset.instanceKey || r.dataset.agentId) === key);
       });
       requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
     }
@@ -488,18 +535,18 @@
 
     // ── Simple swarm helpers (resume) ───────────────────────────────
 
-    function swarmRowFor(aid) {
-      if (!aid) return null;
-      var rows = ctx.turn.querySelectorAll('.swarm-row[data-agent-id]');
+    function swarmRowFor(key) {
+      if (!key) return null;
+      var rows = ctx.turn.querySelectorAll('.swarm-row');
       for (var i = 0; i < rows.length; i++) {
-        if (rows[i].dataset.agentId === aid) return rows[i];
+        if (rows[i].dataset.instanceKey === key || rows[i].dataset.agentId === key) return rows[i];
       }
       return null;
     }
 
-    function bumpSwarmProgressResume(aid) {
-      if (!aid) return;
-      var row = swarmRowFor(aid);
+    function bumpSwarmProgressResume(key) {
+      if (!key) return;
+      var row = swarmRowFor(key);
       if (!row) return;
       row.classList.add('active');
       var bar = row.querySelector('.swarm-progress-bar');
@@ -509,12 +556,12 @@
       }
     }
 
-    function ensureSwarmRow(aid, name, task, idx, total) {
-      if (!aid) return;
-      subagentSet.add(aid);
-      var row = swarmRowFor(aid);
+    function ensureSwarmRow(key, aid, name, task, idx, total) {
+      if (!aid && !key) return;
+      if (aid) subagentSet.add(aid);
+      var row = swarmRowFor(key || aid);
       if (row) {
-        bumpSwarmProgressResume(aid);
+        bumpSwarmProgressResume(key || aid);
         return row;
       }
       var card = ctx.turn.querySelector('.swarm-card');
@@ -523,9 +570,11 @@
         card.className = 'swarm-card';
         ctx.turn.appendChild(card);
       }
+      var instKey = key || aid;
       row = document.createElement('div');
       row.className = 'swarm-row active';
       row.dataset.agentId = aid;
+      row.dataset.instanceKey = instKey;
       var color = ctx.agentColor(aid);
       var letter = ctx.esc((name || aid || '?').slice(0, 1).toUpperCase());
       var idxStr = String(idx || 1).padStart(2, '0');
@@ -546,9 +595,9 @@
       return row;
     }
 
-    function markSwarmDoneResume(aid, status) {
-      if (!aid) return;
-      var row = swarmRowFor(aid);
+    function markSwarmDoneResume(key, status) {
+      if (!key) return;
+      var row = swarmRowFor(key);
       if (!row) return;
       row.classList.remove('active');
       row.classList.add(status === 'error' ? 'error' : 'done');
@@ -556,14 +605,14 @@
       if (bar) bar.style.width = '100%';
     }
 
-    function bumpSwarmProgress(aid) {
-      if (isLive) bumpSwarmProgressLive(aid);
-      else bumpSwarmProgressResume(aid);
+    function bumpSwarmProgress(key) {
+      if (isLive) bumpSwarmProgressLive(key);
+      else bumpSwarmProgressResume(key);
     }
 
-    function markSwarmDone(aid, status) {
-      if (isLive) markSwarmDoneLive(aid, status);
-      else markSwarmDoneResume(aid, status);
+    function markSwarmDone(key, status) {
+      if (isLive) markSwarmDoneLive(key, status);
+      else markSwarmDoneResume(key, status);
     }
 
     // ── HITL ────────────────────────────────────────────────────────
@@ -634,6 +683,11 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       var target = d.to || d.agent_id || '';
+      var key = isLive ? allocateInstanceKey(d, target) : instanceKeyFrom(d, target);
+      // Resume without dcid: still try parallel slot / allocate locally.
+      if (!isLive && (!key || key === target)) {
+        key = allocateInstanceKey(d, target);
+      }
       var name = d.agent || target;
       var task = d.task || d.reason || '';
       var idx = d.parallel_index || 1;
@@ -641,12 +695,13 @@
       if (target) subagentSet.add(target);
       if (isLive) {
         createSwarmCard();
-        var buf = getBuffer(target);
+        var buf = getBuffer(key);
         buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        if (!buf.row) addSwarmRow(target, name, task, idx, total);
+        buf.agentId = target;
+        if (!buf.row) addSwarmRow(key, target, name, task, idx, total);
         ctx.setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
       } else {
-        ensureSwarmRow(target, name, task, idx, total);
+        ensureSwarmRow(key, target, name, task, idx, total);
         ctx.setStatus('amber', ctx.busyStatusLabel());
       }
       ctx.atBottom();
@@ -657,18 +712,24 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       var aid = d.agent_id || '';
+      var key = instanceKeyFrom(d, aid);
+      // First sighting without a prior delegate: allocate a card.
+      if (!key || (isLive && subagentBuffers && !subagentBuffers.has(key))) {
+        if (!key || key === aid) key = allocateInstanceKey(d, aid);
+      }
       var name = d.agent || aid;
       var task = d.task || '';
       var idx = d.parallel_index || 1;
       var total = d.parallel_total || 1;
       if (aid) subagentSet.add(aid);
       if (isLive) {
-        var buf = getBuffer(aid);
+        var buf = getBuffer(key);
         buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        if (!buf.row) addSwarmRow(aid, name, task, idx, total);
+        buf.agentId = aid;
+        if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
         buf.row.classList.add('active');
       } else {
-        ensureSwarmRow(aid, name, task, idx, total);
+        ensureSwarmRow(key, aid, name, task, idx, total);
       }
       ctx.atBottom();
     });
@@ -677,7 +738,7 @@
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
-      markSwarmDone(d.agent_id || '', d.status || 'ok');
+      markSwarmDone(instanceKeyFrom(d, d.agent_id || ''), d.status || 'ok');
       ctx.atBottom();
     });
 
@@ -686,8 +747,9 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
-        if (isLive) { bufferEvent(d.agent_id, 'thinking', d); }
-        bumpSwarmProgress(d.agent_id);
+        var ik = instanceKeyFrom(d, d.agent_id);
+        if (isLive) { bufferEvent(ik, 'thinking', d); }
+        bumpSwarmProgress(ik);
         return;
       }
       adoptAgent(d.agent_id, d.agent);
@@ -728,8 +790,9 @@
       if (!isLive) sawTurnEvent = true;
       var aid = d.agent_id || '';
       if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
-        if (isLive) { bufferEvent(aid, 'tool', d); }
-        bumpSwarmProgress(aid);
+        var ik = instanceKeyFrom(d, aid);
+        if (isLive) { bufferEvent(ik, 'tool', d); }
+        bumpSwarmProgress(ik);
         return;
       }
       if (!isLive) {
@@ -762,8 +825,9 @@
       if (!isLive) sawTurnEvent = true;
       var aid = d.agent_id || '';
       if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
-        if (isLive) { bufferEvent(aid, 'tool_result', d); }
-        bumpSwarmProgress(aid);
+        var ik = instanceKeyFrom(d, aid);
+        if (isLive) { bufferEvent(ik, 'tool_result', d); }
+        bumpSwarmProgress(ik);
         return;
       }
       if (!isLive) {
@@ -778,8 +842,9 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
-        if (isLive) { bufferEvent(d.agent_id, 'todos', d); }
-        bumpSwarmProgress(d.agent_id);
+        var ik = instanceKeyFrom(d, d.agent_id);
+        if (isLive) { bufferEvent(ik, 'todos', d); }
+        bumpSwarmProgress(ik);
         return;
       }
       if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
@@ -795,8 +860,9 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
-        if (isLive) { bufferEvent(d.agent_id, 'delta', d); }
-        bumpSwarmProgress(d.agent_id);
+        var ik = instanceKeyFrom(d, d.agent_id);
+        if (isLive) { bufferEvent(ik, 'delta', d); }
+        bumpSwarmProgress(ik);
         return;
       }
       if (!isLive) {
@@ -833,7 +899,7 @@
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         if (isLive) return;
-        bumpSwarmProgress(d.agent_id);
+        bumpSwarmProgress(instanceKeyFrom(d, d.agent_id));
         return;
       }
       adoptAgent(d.agent_id, d.agent);
@@ -887,7 +953,11 @@
           errAgentId = payload.agent_id || '';
         } catch (_) {}
         if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== ctx.agentId) {
-          if (isLive) { bufferEvent(errAgentId, 'error', { message: msg }); markSwarmDone(errAgentId, 'error'); }
+          if (isLive) {
+            var errKey = instanceKeyFrom(payload, errAgentId);
+            bufferEvent(errKey, 'error', { message: msg });
+            markSwarmDone(errKey, 'error');
+          }
           return;
         }
         if (isLive && code === 'session_busy' && ctx.text) {

@@ -85,6 +85,9 @@ async def drain_subagent_turn(
     user_request: str,
     history: list[dict[str, Any]] | None = None,
     session_id: str | None = None,
+    delegate_call_id: str | None = None,
+    parallel_index: int | None = None,
+    parallel_total: int | None = None,
     run_turn_fn=None,
     llm: LLMClient | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -92,10 +95,16 @@ async def drain_subagent_turn(
     """Run a nested subagent turn, yielding ``(event, final_output)`` pairs.
 
     The subagent's events are re-emitted tagged with ``agent_id=target`` so
-    the SSE layer attributes them to the right agent. Each yielded value
-    carries the running ``final_output`` string (empty until the child emits
-    a ``final`` or ``error`` event). The *last* pair carries the complete
-    child output.
+    the SSE layer attributes them to the right agent. When ``delegate_call_id``
+    is set (parent ``delegate`` tool call id), it is stamped on every nested
+    event so the UI can tell apart parallel runs of the same catalog agent.
+    ``parallel_index`` / ``parallel_total`` are also stamped when provided
+    (fallback routing if ``delegate_call_id`` is absent on older clients).
+    Nested tool events keep their own ``call_id`` for tool pairing.
+
+    Each yielded value carries the running ``final_output`` string (empty
+    until the child emits a ``final`` or ``error`` event). The *last* pair
+    carries the complete child output.
 
     ``session_id`` is the parent chat session so ``/auto`` / ``/smart`` /
     ``/manual`` and session allowlists apply to the child. Nested turns also
@@ -135,6 +144,12 @@ async def drain_subagent_turn(
             ev.setdefault("agent_id", target_agent_id)
             ev.setdefault("from_agent_id", from_agent_id)
             ev["subagent"] = True
+            if delegate_call_id:
+                ev["delegate_call_id"] = delegate_call_id
+            if parallel_index is not None:
+                ev["parallel_index"] = parallel_index
+            if parallel_total is not None:
+                ev["parallel_total"] = parallel_total
             if ev["kind"] == "final":
                 final_output = ev.get("content") or ""
                 _logger.info(

@@ -482,6 +482,13 @@ async def test_delegate_streams_subagent_events_before_tool_result(
     assert "subagent_start" in {e["kind"] for e in events}
     assert first_nested_tool < delegate_result_i
     assert any(e["kind"] == "subagent_done" for e in events)
+    # Parent delegate call_id is stamped on swarm lifecycle + nested events.
+    start_ev = next(e for e in events if e["kind"] == "subagent_start")
+    assert start_ev.get("delegate_call_id") == "call_delegate"
+    bash_ev = next(e for e in events if e["kind"] == "tool" and e.get("tool") == "bash")
+    assert bash_ev.get("delegate_call_id") == "call_delegate"
+    assert bash_ev.get("call_id")  # nested tool keeps its own call_id
+    assert bash_ev["call_id"] != "call_delegate"
 
 
 

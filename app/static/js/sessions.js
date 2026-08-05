@@ -480,21 +480,36 @@
     // ── Per-turn state ──────────────────────────────────────────────
     var turn = null;
     var turnId = 0;
-    var delegateCounter = 0;          // unique per delegate call within a turn
-    var agentToKey = {};               // agent_id → current buffer key
+    var delegateCounter = 0;          // unique per delegate call within a turn (legacy)
+    var agentToKey = {};               // agent_id → current buffer key (legacy fallback)
     var subagentSet = new Set();
-    var subagentBuffers = new Map();  // key: turnId + ':' + delegateCounter → buffer
+    var subagentBuffers = new Map();  // key → buffer
     var turnBuffers = new Map();      // current turn: key → buffer
     var swarmCard = null;
     var detailPanel = null;
 
     function getBuffer(key) {
       if (!turnBuffers.has(key)) {
-        var buf = { events: [], name: '', task: '', status: 'running', row: null, aid: '', turnId: turnId };
+        var buf = { events: [], name: '', task: '', status: 'running', row: null, aid: '', turnId: turnId, key: key };
         turnBuffers.set(key, buf);
         subagentBuffers.set(key, buf);
       }
       return turnBuffers.get(key);
+    }
+
+    function entryDcid(e) {
+      if (!e) return '';
+      if (e.delegate_call_id) return String(e.delegate_call_id);
+      var p = e.params || {};
+      if (p.delegate_call_id) return String(p.delegate_call_id);
+      return '';
+    }
+
+    function keyForEntry(e, aid) {
+      var dcid = entryDcid(e);
+      if (dcid) return 'd:' + dcid;
+      var id = aid || (e && e.agent_id) || '';
+      return agentToKey[id] || id;
     }
 
     function keyForAid(aid) {
@@ -545,11 +560,12 @@
       return swarmCard;
     }
 
-    function addSwarmRow(aid, name, task, idx, total) {
+    function addSwarmRow(key, aid, name, task, idx, total) {
       var card = ensureSwarmCard();
       var row = document.createElement('div');
       row.className = 'swarm-row';
       row.dataset.agentId = aid;
+      row.dataset.instanceKey = key;
       var color = agentColor(aid);
       var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
       var idxStr = String(idx || 1).padStart(2, '0');
@@ -567,7 +583,6 @@
         '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
       row.addEventListener('click', function () { openDetailPanel(row); });
       card.appendChild(row);
-      var key = turnId + ':' + delegateCounter;
       var buf = getBuffer(key);
       buf.row = row;
       buf.key = key;
@@ -768,7 +783,7 @@
 
       head.querySelector('.si-close').addEventListener('click', closeDetailPanel);
       chatWrap.querySelectorAll('.swarm-row').forEach(function (r) {
-        r.classList.toggle('selected', r === (buf.row || rowOrAid) || r.dataset.agentId === aid);
+        r.classList.toggle('selected', r === (buf.row || rowOrAid));
       });
       requestAnimationFrame(function () { body.scrollTop = body.scrollHeight; });
     }
@@ -821,11 +836,18 @@
         var idx = p.parallel_index || 1;
         var total = p.parallel_total || 1;
         if (aid) subagentSet.add(aid);
-        delegateCounter++;
-        agentToKey[aid] = turnId + ':' + delegateCounter;
-        var buf = getBuffer(agentToKey[aid]);
+        var dcid = entryDcid(e);
+        var key;
+        if (dcid) {
+          key = 'd:' + dcid;
+        } else {
+          delegateCounter++;
+          key = turnId + ':' + delegateCounter;
+        }
+        agentToKey[aid] = key;
+        var buf = getBuffer(key);
         buf.name = name; buf.aid = aid; buf.task = task;
-        addSwarmRow(aid, name, task, idx, total);
+        addSwarmRow(key, aid, name, task, idx, total);
         return;
       }
 
@@ -839,29 +861,34 @@
         if (aid) subagentSet.add(aid);
         // Reuse buffer from a prior delegate entry — both events are persisted
         // for the same handoff; only create a new slot when none exists yet.
-        var key = agentToKey[aid];
+        var key = keyForEntry(e, aid);
         if (!key || !turnBuffers.has(key)) {
-          delegateCounter++;
-          key = turnId + ':' + delegateCounter;
+          var dcid = entryDcid(e);
+          if (dcid) {
+            key = 'd:' + dcid;
+          } else {
+            delegateCounter++;
+            key = turnId + ':' + delegateCounter;
+          }
           agentToKey[aid] = key;
         }
         var buf = getBuffer(key);
         buf.name = name; buf.aid = aid; buf.task = task || buf.task;
-        if (!buf.row) addSwarmRow(aid, name, task, idx, total);
+        if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
         if (buf.row) buf.row.classList.add('active');
         return;
       }
 
       if (e.type === 'subagent_done') {
         var p = e.params || {};
-        markSwarmDone(keyForAid(e.agent_id || ''), p.status || 'ok');
+        markSwarmDone(keyForEntry(e, e.agent_id || ''), p.status || 'ok');
         return;
       }
 
       if (e.type === 'tool_call') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          var key = keyForAid(aid);
+          var key = keyForEntry(e, aid);
           bufferEvent(key, 'tool', {
             tool: e.function,
             args: e.params,
@@ -882,7 +909,7 @@
       if (e.type === 'tool_output') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          var key = keyForAid(aid);
+          var key = keyForEntry(e, aid);
           bufferEvent(key, 'tool_result', {
             result: e.content,
             error: e.error,
@@ -926,7 +953,7 @@
       if (e.type === 'thinking') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          var key = keyForAid(aid);
+          var key = keyForEntry(e, aid);
           bufferEvent(key, 'thinking', { content: e.content });
           bumpSwarmProgress(key);
           return;
@@ -944,7 +971,7 @@
         var text = (e.content || '').trim();
         if (!text || text.indexOf('[Swarm]') === 0) return;
         if (subagentSet.has(aid)) {
-          var key = keyForAid(aid);
+          var key = keyForEntry(e, aid);
           bufferEvent(key, 'final', { content: text });
         } else {
           appendAssistantMessage(aid, text);
@@ -955,7 +982,7 @@
       if (e.type === 'error') {
         var aid = e.agent_id || '';
         if (subagentSet.has(aid)) {
-          markSwarmDone(keyForAid(aid), 'error');
+          markSwarmDone(keyForEntry(e, aid), 'error');
         } else {
           var row = document.createElement('div');
           row.className = 'msg error';
