@@ -1,0 +1,31 @@
+# Tomo coordinator — Docker Compose
+# Docs: docs/deployments.md
+#
+#   cp .env.example .env   # set strong secrets
+#   docker compose up -d --build
+
+services:
+  tomo:
+    build: .
+    image: tomo:local
+    container_name: tomo
+    ports:
+      - "${TOMO_PUBLISH_PORT:-8787}:8787"
+    environment:
+      TOMO_HOME: /data/home
+      TOMO_WORK: /data/work
+      TOMO_HOST: "0.0.0.0"
+      TOMO_PORT: "8787"
+      TOMO_SESSION_SECRET: ${TOMO_SESSION_SECRET:?Set TOMO_SESSION_SECRET in .env (see .env.example)}
+      TOMO_ADMIN_PASSWORD: ${TOMO_ADMIN_PASSWORD:?Set TOMO_ADMIN_PASSWORD in .env (see .env.example)}
+      TOMO_SECRET_KEY: ${TOMO_SECRET_KEY:-}
+      TOMO_TRUST_PROXY: ${TOMO_TRUST_PROXY:-0}
+      TOMO_COOKIE_SECURE: ${TOMO_COOKIE_SECURE:-}
+    volumes:
+      - tomo-home:/data/home
+      - tomo-work:/data/work
+    restart: unless-stopped
+
+volumes:
+  tomo-home:
+  tomo-work:

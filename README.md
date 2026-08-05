@@ -55,6 +55,16 @@ journalctl --user -u tomo -f
 
 Headless hosts: `loginctl enable-linger $USER` so the unit survives logout.
 
+### Deploy with Docker Compose
+
+```bash
+cp .env.example .env   # set TOMO_SESSION_SECRET + TOMO_ADMIN_PASSWORD
+docker compose up -d --build
+# UI: http://127.0.0.1:8787
+```
+
+Persists `$TOMO_HOME` / `$TOMO_WORK` in named volumes. Full guide (reverse proxy, bind mounts, connector): [docs/deployments.md](docs/deployments.md).
+
 ### Install connector (tunnel workplaces)
 
 On each remote device (or re-run to **update**):
@@ -528,7 +538,9 @@ tomo/
 ├── connector/                    # Go tomo-connector (WebSocket tunnel agent)
 ├── tests/                        # unit/ + integration/
 ├── scripts/                      # install.sh + release helpers
-├── docs/                         # Architecture notes
+├── Dockerfile                    # Coordinator image (Compose)
+├── docker-compose.yml            # Local / server Compose stack
+├── docs/                         # Architecture + deployments
 ├── seed/                         # Dev database seeds
 ├── tmp/                          # Local scratch (gitignored)
 └── var/                          # Runtime state (gitignored)
