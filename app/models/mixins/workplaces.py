@@ -100,6 +100,7 @@ def _row_to_workplace(row: sqlite3.Row, agent_count: int) -> dict[str, Any]:
         "connector_hostname": col("connector_hostname", "") or "",
         "connector_platform": col("connector_platform", "") or "",
         "connector_remote_ip": col("connector_remote_ip", "") or "",
+        "enabled": int(col("enabled", 1)) if "enabled" in keys else 1,
         "agent_count": agent_count,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -125,6 +126,9 @@ def public_workplace(row: dict[str, Any]) -> dict[str, Any]:
     else:
         out["pairing_expired"] = bool(code and exp and exp < _now())
     out["pairing_ttl_seconds"] = pairing_ttl_seconds()
+
+    # Disabled flag — blocks connect / pairing / connector auth.
+    out["enabled"] = bool(int(out.get("enabled", 1)))
 
     # Live connectivity — kind-specific (local is not tunnel "online/offline").
     kind = (out.get("kind") or "").strip().lower()
@@ -426,6 +430,23 @@ def delete_workplace(conn: sqlite3.Connection, workplace_id: str) -> bool:
         "SELECT 1 FROM workplaces WHERE id=?", (workplace_id,)
     ).fetchone():
         return False
+    # Drop live connector session so the socket closes, not just DB row.
+    try:
+        from app.workplaces.hub import hub
+
+        session = hub.get(workplace_id)
+        if session is not None:
+            hub.unregister(
+                workplace_id, session.websocket, fail_pending=True
+            )
+            try:
+                import asyncio
+
+                session.websocket.close_nowait(code=4001)
+            except Exception:
+                pass
+    except Exception:
+        pass
     conn.execute(
         "UPDATE agents SET workplace_id='' WHERE workplace_id=?",
         (workplace_id,),
@@ -458,6 +479,73 @@ def set_status(
         (st, _now(), workplace_id),
     )
     conn.commit()
+    return get_workplace(conn, workplace_id)
+
+
+def set_enabled(
+    conn: sqlite3.Connection,
+    workplace_id: str,
+    enabled: bool,
+) -> dict[str, Any] | None:
+    """Enable/disable a non-local workplace.
+
+    Disabling:
+
+    * clears the pairing code (revokes pending pairing) and expires it;
+    * flips status to ``disabled``;
+    * drops any live connector session from the hub so a disabled tunnel
+      cannot serve RPCs and its socket is closed.
+
+    Re-enabling keeps the connector token so the tunnel can reconnect.
+    """
+    row = conn.execute(
+        "SELECT kind, enabled FROM workplaces WHERE id=?", (workplace_id,)
+    ).fetchone()
+    if not row:
+        return None
+    kind = (row["kind"] or "").strip().lower()
+    # Local workplaces are bound to this install; disabling is not supported.
+    if kind == "local":
+        raise ValueError("Local workplaces cannot be disabled")
+    enabled = bool(enabled)
+    now = _now()
+    sets = ["enabled=?", "updated_at=?"]
+    params: list[Any] = [1 if enabled else 0, now]
+    if not enabled:
+        # Revoke pending pairing and mark disabled.
+        sets += ["pairing_code=?", "pairing_expires_at=?", "status=?"]
+        params += ["", 0.0, "disabled"]
+        conn.execute(
+            f"UPDATE workplaces SET {', '.join(sets)} WHERE id=?",
+            [*params, workplace_id],
+        )
+        conn.commit()
+        # Drop live connector session (tunnel only).
+        if kind == "tunnel":
+            try:
+                from app.workplaces.hub import hub
+
+                session = hub.get(workplace_id)
+                if session is not None:
+                    hub.unregister(workplace_id, session.websocket, fail_pending=True)
+                    try:
+                        import asyncio
+
+                        asyncio.get_running_loop().create_task(
+                            session.websocket.close(code=4001)
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    else:
+        sets += ["status=?"]
+        params += ["offline"]
+        conn.execute(
+            f"UPDATE workplaces SET {', '.join(sets)} WHERE id=?",
+            [*params, workplace_id],
+        )
+        conn.commit()
     return get_workplace(conn, workplace_id)
 
 
@@ -624,14 +712,17 @@ def mark_connector_seen(
         params.append(host[:160])
     params.append(workplace_id)
     conn.execute(
-        f"UPDATE workplaces SET {', '.join(sets)} WHERE id=?", params
+        f"UPDATE workplaces SET {', '.join(sets)} "
+        "WHERE id=? AND enabled=1",
+        params,
     )
     conn.commit()
 
 
 def mark_connector_offline(conn: sqlite3.Connection, workplace_id: str) -> None:
     conn.execute(
-        "UPDATE workplaces SET status=?, updated_at=? WHERE id=? AND kind='tunnel'",
+        "UPDATE workplaces SET status=?, updated_at=? "
+        "WHERE id=? AND kind='tunnel' AND enabled=1",
         ("offline", _now(), workplace_id),
     )
     conn.commit()

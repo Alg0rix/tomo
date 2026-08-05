@@ -123,6 +123,42 @@
     });
   }
 
+  // Enable / disable (non-local workplaces)
+  function toggleEnabled(wid, enabled) {
+    var action = enabled ? "enable" : "disable";
+    var btn = document.getElementById(enabled ? "wpEnableBtn" : "wpDisableBtn");
+    if (btn) btn.disabled = true;
+    return Tomo.api("/api/workplaces/" + encodeURIComponent(wid) + "/" + action, {
+      method: "POST",
+    }).then(function (result) {
+      Tomo.toast(enabled ? "Workplace enabled" : "Workplace disabled", "ok");
+      setTimeout(function () { location.reload(); }, 400);
+      return result;
+    }).catch(function (e) {
+      Tomo.toast((e && e.message) || "Could not " + action, "err");
+      if (btn) btn.disabled = false;
+      throw e;
+    });
+  }
+
+  var disableBtn = document.getElementById("wpDisableBtn");
+  if (disableBtn) {
+    disableBtn.addEventListener("click", function () {
+      var wid = disableBtn.dataset.id;
+      if (!window.confirm("Disable this workplace? Its tunnel/connector will be disconnected and it will refuse new connections until re-enabled.")) {
+        return;
+      }
+      toggleEnabled(wid, false);
+    });
+  }
+
+  var enableBtn = document.getElementById("wpEnableBtn");
+  if (enableBtn) {
+    enableBtn.addEventListener("click", function () {
+      toggleEnabled(enableBtn.dataset.id, true);
+    });
+  }
+
   var genPair = document.getElementById("wpGenPairing");
   if (genPair) {
     genPair.addEventListener("click", async function () {

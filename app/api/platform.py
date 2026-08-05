@@ -342,6 +342,28 @@ async def delete_workplace(workplace_id: str, _: AuthDep):
     return {"success": True}
 
 
+@router.post("/workplaces/{workplace_id}/disable")
+async def disable_workplace(workplace_id: str, _: AuthDep):
+    try:
+        wp = store.set_workplace_enabled(workplace_id, False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not wp:
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return {"success": True, "workplace": wp}
+
+
+@router.post("/workplaces/{workplace_id}/enable")
+async def enable_workplace(workplace_id: str, _: AuthDep):
+    try:
+        wp = store.set_workplace_enabled(workplace_id, True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not wp:
+        raise HTTPException(status_code=404, detail="Workplace not found")
+    return {"success": True, "workplace": wp}
+
+
 @router.post("/workplaces/{workplace_id}/connect")
 async def connect_workplace(workplace_id: str, _: AuthDep):
     """Test connection; persist status (tunnel only ``connected`` with live socket)."""

@@ -709,6 +709,7 @@ html.is-rail-collapsed .app-rail-collapse {
 .badge.ok { background: var(--ok-soft); color: var(--ok); } .badge.ok .pulse { background: var(--ok); }
 .badge.amber { background: var(--accent-soft); color: var(--accent); } .badge.amber .pulse { background: var(--accent); animation: pulse 1.4s infinite; }
 .badge.rose { background: var(--danger-soft); color: var(--danger); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border-color: rgba(232,99,107,.35); }
 .badge.muted { background: var(--surface-3); color: var(--text-dim); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 

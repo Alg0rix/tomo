@@ -535,12 +535,29 @@ class Store:
         with self._lock:
             return workplaces_store.delete_workplace(self._conn, workplace_id)
 
+    def set_workplace_enabled(
+        self, workplace_id: str, enabled: bool
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return workplaces_store.set_enabled(
+                self._conn, workplace_id, enabled
+            )
+
     def connect_workplace(self, workplace_id: str) -> dict[str, Any] | None:
         """Run Connect/test; persist status. Returns result dict or ``None`` if missing."""
         with self._lock:
             secrets = workplaces_store.get_workplace_secrets(self._conn, workplace_id)
             if not secrets:
                 return None
+            if not secrets.get("enabled", True):
+                return {
+                    "ok": False,
+                    "status": "disabled",
+                    "message": "Workplace is disabled — enable it before connecting",
+                    "workplace": workplaces_store.get_workplace(
+                        self._conn, workplace_id
+                    ),
+                }
             # Merge public flags (pairing_code, token_set) for tunnel messaging.
             public = workplaces_store.get_workplace(self._conn, workplace_id) or {}
             view = {**secrets, **{
@@ -585,6 +602,8 @@ class Store:
             wp = workplaces_store.find_by_pairing_code(self._conn, code)
             if not wp:
                 return None
+            if not wp.get("enabled", True):
+                return None
             token = workplaces_store.complete_pairing(
                 self._conn,
                 wp["id"],
@@ -614,6 +633,8 @@ class Store:
             wp = workplaces_store.find_by_connector_token(self._conn, token)
             if not wp:
                 return None
+            if not wp.get("enabled", True):
+                return None
             workplaces_store.mark_connector_seen(
                 self._conn,
                 wp["id"],
@@ -635,6 +656,9 @@ class Store:
         platform: str = "",
     ) -> None:
         with self._lock:
+            wp = workplaces_store.get_workplace(self._conn, workplace_id)
+            if not wp or not wp.get("enabled", True):
+                return
             workplaces_store.mark_connector_seen(
                 self._conn,
                 workplace_id,

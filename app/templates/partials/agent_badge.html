@@ -13,6 +13,8 @@
 {% set k = (kind or '')|string %}
 {% if k == 'local' or st == 'ready' %}
 <span class="badge ok"><span class="status-dot on"></span>ready</span>
+{% elif st == 'disabled' %}
+<span class="badge danger"><span class="status-dot off"></span>disabled</span>
 {% elif st == 'connected' %}
 <span class="badge ok"><span class="status-dot on"></span>connected</span>
 {% elif st == 'pairing' %}

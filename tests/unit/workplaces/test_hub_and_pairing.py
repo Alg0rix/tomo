@@ -115,6 +115,50 @@ def test_status_cannot_force_tunnel_connected_via_api(tmp_path: Path) -> None:
     assert store.get_workplace("wp_tun")["status"] != "connected"
 
 
+def test_disable_tunnel_revokes_pairing_and_blocks_connector(tmp_path: Path) -> None:
+    """Disable clears pairing + flips status; connector auth is refused."""
+    _rebind(tmp_path)
+    wp = store.create_workplace({"id": "wp_tun", "name": "T", "kind": "tunnel"})
+    code = wp["pairing_code"]
+    assert store.get_workplace("wp_tun")["enabled"] is True
+
+    got = store.set_workplace_enabled("wp_tun", False)
+    assert got is not None
+    assert got["enabled"] is False
+    assert got["status"] == "disabled"
+    assert got["pairing_code"] == ""
+
+    # Pairing refused for revoked code.
+    assert store.pair_connector(code) is None
+    # Connector hello refused while disabled.
+    assert store.hello_connector("whatever-token") is None
+
+    # Re-enable -> offline, connector token kept enables reconnect.
+    got = store.set_workplace_enabled("wp_tun", True)
+    assert got["enabled"] is True
+    assert got["status"] == "offline"
+
+
+def test_disable_local_rejected(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    store.create_workplace(
+        {
+            "id": "wp_loc",
+            "name": "L",
+            "kind": "local",
+            "root_path": str(tmp_path),
+        }
+    )
+    with pytest.raises(ValueError):
+        store.set_workplace_enabled("wp_loc", False)
+    assert store.get_workplace("wp_loc")["enabled"] is True
+
+
+def test_set_workplace_enabled_unknown_returns_none(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    assert store.set_workplace_enabled("nope", False) is None
+
+
 def test_pairing_code_avoids_ambiguous_chars() -> None:
     for _ in range(40):
         code = generate_pairing_code()

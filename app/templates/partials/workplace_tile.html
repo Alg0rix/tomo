@@ -14,6 +14,7 @@
     {% endif %}
   </div>
   <div class="wp-row-side">
+    {% if not workplace.enabled %}<span class="badge" title="Disabled — refuses new connections">disabled</span>{% endif %}
     {{ workplace_status(workplace.status, workplace.kind) }}
     {% if show_agent_count | default(true) %}
     <span class="wp-row-agents mono faint">{{ workplace.agent_count }} agent{{ 's' if workplace.agent_count != 1 else '' }}</span>

@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS workplaces (
     connector_hostname     TEXT NOT NULL DEFAULT '',
     connector_platform     TEXT NOT NULL DEFAULT '',
     connector_remote_ip    TEXT NOT NULL DEFAULT '',
+    enabled                INTEGER NOT NULL DEFAULT 1,
     created_at             REAL NOT NULL DEFAULT 0,
     updated_at             REAL NOT NULL DEFAULT 0
 );
@@ -353,6 +354,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "connector_hostname": "ALTER TABLE workplaces ADD COLUMN connector_hostname TEXT NOT NULL DEFAULT ''",
         "connector_platform": "ALTER TABLE workplaces ADD COLUMN connector_platform TEXT NOT NULL DEFAULT ''",
         "connector_remote_ip": "ALTER TABLE workplaces ADD COLUMN connector_remote_ip TEXT NOT NULL DEFAULT ''",
+        "enabled": "ALTER TABLE workplaces ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
     }
     for col, ddl in _wp_alters.items():
         if col not in wp_cols:
