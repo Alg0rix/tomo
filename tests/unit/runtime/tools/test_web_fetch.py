@@ -22,7 +22,7 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.headers = {}
+    mock_resp.headers = {"content-type": "text/plain"}
     mock_resp.text = "hello from web"
     mock_resp.raise_for_status = MagicMock()
     mock_resp.url = "https://example.com/page"
@@ -35,6 +35,31 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
     with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/page"})
     assert result == "hello from web"
+
+
+def test_web_fetch_html_to_markdown(monkeypatch) -> None:
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    html = """<!doctype html><html><head><title>T</title>
+    <script>alert(1)</script></head>
+    <body><h1>Hello</h1><p>World with <strong>bold</strong>.</p></body></html>"""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "text/html; charset=utf-8"}
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.url = "https://example.com/page"
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.get.return_value = mock_resp
+
+    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+        result = execute("web_fetch", {"url": "https://example.com/page"})
+    assert "# Hello" in result
+    assert "**bold**" in result
+    assert "<script>" not in result
+    assert "alert" not in result
 
 
 def test_web_fetch_blocks_loopback() -> None:
@@ -85,3 +110,12 @@ def test_web_fetch_http_error(monkeypatch) -> None:
     with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/"})
     assert result.startswith("Error")
+
+
+def test_html_to_markdown_direct() -> None:
+    md = web_fetch._html_to_markdown(
+        "<html><body><h2>Title</h2><ul><li>One</li><li>Two</li></ul></body></html>"
+    )
+    assert "## Title" in md
+    assert "- One" in md
+    assert "- Two" in md

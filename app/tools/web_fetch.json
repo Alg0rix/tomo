@@ -1,13 +1,13 @@
 {
   "id": "web_fetch",
   "name": "Web Fetch",
-  "description": "Fetch readable text content from a public HTTP(S) URL.",
+  "description": "Fetch a public HTTP(S) URL and return readable Markdown (HTML pages) or plain text.",
   "backend": "app.runtime.tools.web_fetch",
   "schema": {
     "type": "function",
     "function": {
       "name": "web_fetch",
-      "description": "HTTP GET a URL and return truncated text. Private/loopback hosts are blocked.",
+      "description": "HTTP GET a URL. HTML responses are converted to Markdown. Private/loopback hosts are blocked.",
       "parameters": {
         "type": "object",
         "properties": {

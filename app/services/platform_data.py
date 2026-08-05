@@ -14,7 +14,7 @@ def seed_tools() -> list[dict[str, Any]]:
     return [
         {"id": "shell", "name": "Shell", "description": "Run commands on connected workplaces", "backend": "local", "enabled": True, "agent_count": 3},
         {"id": "recall", "name": "Recall", "description": "Search agent memory and session history", "backend": "builtin", "enabled": True, "agent_count": 4},
-        {"id": "web_fetch", "name": "Web Fetch", "description": "Fetch and extract readable content from URLs", "backend": "builtin", "enabled": True, "agent_count": 2},
+        {"id": "web_fetch", "name": "Web Fetch", "description": "Fetch URLs and convert HTML pages to Markdown", "backend": "builtin", "enabled": True, "agent_count": 2},
         {"id": "file_read", "name": "File Read", "description": "Read files from agent workspace", "backend": "local", "enabled": True, "agent_count": 3},
         {"id": "delegate", "name": "Delegate", "description": "Hand a sub-task to another agent in the swarm", "backend": "builtin", "enabled": True, "agent_count": 1},
     ]
