@@ -22,6 +22,7 @@ from app.schemas import (
     UserUpdate,
     ApiKeyCreate,
     WorkplaceCreate,
+    WorkplaceInstallViaSsh,
     WorkplaceUpdate,
 )
 from app.services import store
@@ -387,6 +388,43 @@ async def issue_pairing_code(workplace_id: str, _: AuthDep):
         "pairing_code": wp.get("pairing_code") or "",
         "pairing_expires_at": wp.get("pairing_expires_at") or 0,
         "pairing_ttl_seconds": wp.get("pairing_ttl_seconds") or 0,
+    }
+
+
+@router.post("/workplaces/install-via-ssh")
+async def install_via_ssh(body: WorkplaceInstallViaSsh, _: AuthDep):
+    """Option C: install the Tomo Connector on a remote host over SSH.
+
+    Downloads the connector binary from GitHub Releases, sets up a systemd
+    ``--user`` unit, pairs it, and registers the host as a ``tunnel``
+    workplace. Returns the new workplace plus a concatenated install log.
+    """
+    from app.workplaces.install_via_ssh import InstallError, install_via_ssh as run_install
+
+    try:
+        result = run_install(
+            ssh_host=body.ssh_host,
+            ssh_port=body.ssh_port,
+            ssh_user=body.ssh_user,
+            ssh_password=body.ssh_password,
+            ssh_key=body.ssh_key,
+            name=body.name,
+            server_url=body.server_url,
+            arch=body.arch,
+            os_name=body.os_name,
+            version=body.version,
+            verify=body.verify,
+        )
+    except InstallError as e:
+        raise HTTPException(
+            status_code=502,
+            detail={"stage": e.stage, "message": str(e), "retryable": e.retryable},
+        ) from e
+    return {
+        "workplace": result.workplace,
+        "status": result.status,
+        "log": result.log,
+        "exit_code": 0,
     }
 
 

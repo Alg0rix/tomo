@@ -263,3 +263,24 @@ class ScheduleUpdate(BaseModel):
     message: str | None = Field(default=None, max_length=4000)
     enabled: bool | None = None
     repeat_times: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
+class WorkplaceInstallViaSsh(BaseModel):
+    """Install the Tomo Connector on a remote host via SSH (option C).
+
+    Downloads the prebuilt connector binary from GitHub Releases, sets up a
+    systemd ``--user`` unit, pairs it, and registers the host as a
+    ``tunnel`` workplace. Auto-detects the remote OS/arch unless overridden.
+    """
+
+    name: str = Field(min_length=1, max_length=80)
+    ssh_host: str = Field(min_length=1, max_length=253)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_user: str = Field(default="root", max_length=128)
+    ssh_password: str = ""
+    ssh_key: str = ""
+    server_url: str = Field(min_length=1, max_length=2048)
+    arch: str | None = Field(default=None, max_length=32)
+    os_name: str | None = Field(default=None, max_length=32)
+    version: str | None = Field(default=None, max_length=64)
+    verify: bool = True

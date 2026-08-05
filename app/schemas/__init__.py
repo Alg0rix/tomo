@@ -23,6 +23,7 @@ from .models import (
     UserUpdate,
     ApiKeyCreate,
     WorkplaceCreate,
+    WorkplaceInstallViaSsh,
     WorkplaceUpdate,
 )
 
@@ -49,5 +50,6 @@ __all__ = [
     "UserCreate",
     "UserUpdate",
     "WorkplaceCreate",
+    "WorkplaceInstallViaSsh",
     "WorkplaceUpdate",
 ]
