@@ -582,6 +582,12 @@ class OpenAICompatClient:
             raise LLMRequestError(format_llm_error(exc)) from exc
 
         if not resp.choices:
+            _logger.warning(
+                "LLM empty choices model=%s base_url=%s response=%s",
+                self._model,
+                self._base_url,
+                getattr(resp, "model_dump", lambda: vars(resp))(),
+            )
             raise LLMRequestError(
                 "LLM request failed: empty choices[] — provider returned no completion"
             )
