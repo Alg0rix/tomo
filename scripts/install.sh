@@ -173,6 +173,9 @@ fi
 
 printf '%s\n' "$BRANCH" >"$INSTALL_DIR/.tomo-install-branch"
 
+# A stale uv.lock from a different Python version can break sync. Regenerate it.
+rm -f "$INSTALL_DIR/uv.lock"
+
 log "→ uv sync (Python 3.13)"
 (cd "$INSTALL_DIR" && uv sync --python 3.13)
 
