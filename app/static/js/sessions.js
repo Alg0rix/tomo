@@ -565,13 +565,15 @@
     }
 
     function appendGenerativeUI(spec) {
-      if (!spec || !spec.tree || !window.TomoGenerativeUI) return;
+      if (!spec || !spec.ui_id || (!spec.tree && !spec.patch) || !window.TomoGenerativeUI) return;
       TomoGenerativeUI.mount(turn, spec, {
-        send: function (action) {
+        dispatch: function (action) {
+          if (chatHandle && chatHandle.uiAction) return chatHandle.uiAction(action);
           var body = '[UI action]\n' + JSON.stringify(action);
           if (chatHandle && chatHandle.send) return chatHandle.send(body);
           return null;
         },
+        sessionId: chatWrap.dataset.sessionId || '',
       });
     }
 

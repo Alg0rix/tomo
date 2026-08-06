@@ -22,7 +22,13 @@ def parse_result(value: str) -> dict[str, Any] | None:
         data = json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return None
-    return data if isinstance(data, dict) and data.get("tree") else None
+    return (
+        data
+        if isinstance(data, dict)
+        and data.get("ui_id")
+        and (data.get("tree") is not None or data.get("patch") is not None)
+        else None
+    )
 
 
 __all__ = ["parse_result", "run"]

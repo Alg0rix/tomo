@@ -4,7 +4,7 @@ import pytest
 
 from app.channels.sse_map import map_loop_event
 from app.runtime.tools.render_ui import run
-from app.runtime.ui import UIValidationError, validate_ui_payload
+from app.runtime.ui import UIValidationError, validate_ui_action, validate_ui_payload
 
 
 def _payload():
@@ -44,6 +44,45 @@ def test_render_ui_rejects_deep_trees():
         validate_ui_payload({"ui_id": "deep", "tree": tree})
 
 
+def test_render_ui_v2_patch_and_state_are_normalized():
+    payload = validate_ui_payload(
+        {
+            "ui_id": "checkout-1",
+            "mode": "patch",
+            "patch": [
+                {"op": "replace", "path": "/tree/children/0/value", "value": "Paid"},
+                {"op": "add", "path": "/state/order_id", "value": "ord-7"},
+            ],
+            "state": {"status": "pending"},
+        }
+    )
+    assert payload["mode"] == "patch"
+    assert payload["patch"][1]["path"] == "/state/order_id"
+    assert payload["state"] == {"status": "pending"}
+
+    with pytest.raises(UIValidationError):
+        validate_ui_payload(
+            {
+                "ui_id": "checkout-1",
+                "mode": "patch",
+                "patch": [{"op": "replace", "path": "/document/title", "value": "x"}],
+            }
+        )
+
+
+def test_ui_action_is_typed_and_bounded():
+    action = validate_ui_action(
+        {"ui_id": "checkout-1", "action": "pay.now", "payload": {"amount": "10"}}
+    )
+    assert action == {
+        "ui_id": "checkout-1",
+        "action": "pay.now",
+        "payload": {"amount": "10"},
+    }
+    with pytest.raises(UIValidationError):
+        validate_ui_action({"ui_id": "checkout-1", "action": "bad action"})
+
+
 def test_ui_event_is_sse_and_persistable_history_entry():
     chunks, entries, seq = map_loop_event(
         {
@@ -61,3 +100,22 @@ def test_ui_event_is_sse_and_persistable_history_entry():
     assert "event: ui" in chunks[0]
     assert entries[0]["type"] == "ui"
     assert entries[0]["params"]["ui_id"] == "chart-1"
+
+
+def test_ui_patch_event_keeps_patch_and_state_on_wire_and_history():
+    chunks, entries, _ = map_loop_event(
+        {
+            "kind": "ui",
+            "ui_id": "chart-1",
+            "mode": "patch",
+            "patch": [{"op": "replace", "path": "/state/status", "value": "done"}],
+            "state": {"status": "running"},
+        },
+        "agent",
+        "Tomo",
+        3,
+        "turn_1",
+    )
+    assert '"patch"' in chunks[0]
+    assert entries[0]["params"]["patch"][0]["path"] == "/state/status"
+    assert entries[0]["params"]["state"] == {"status": "running"}

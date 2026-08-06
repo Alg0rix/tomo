@@ -7,6 +7,7 @@ allow-listed node types and values below.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -37,6 +38,8 @@ NODE_TYPES = frozenset(
 )
 CONTAINER_TYPES = frozenset({"card", "stack", "grid"})
 _ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,79}$")
+_ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,79}$")
+_PATCH_PATH_RE = re.compile(r"^/(?:tree|state)(?:/[A-Za-z0-9_.:-]+|/[0-9]+)*$")
 
 
 class UIValidationError(ValueError):
@@ -185,13 +188,86 @@ def validate_ui_payload(arguments: dict[str, Any]) -> dict[str, Any]:
     if mode not in {"replace", "patch"}:
         raise UIValidationError("mode must be replace or patch")
     tree = arguments.get("tree")
-    if tree is None:
-        raise UIValidationError("tree is required")
-    return {
+    patch = arguments.get("patch")
+    if mode == "replace" and tree is None:
+        raise UIValidationError("tree is required for replace mode")
+    if mode == "replace" and patch is not None:
+        raise UIValidationError("patch is only valid in patch mode")
+    if mode == "patch" and tree is None and patch is None:
+        raise UIValidationError("patch or tree is required for patch mode")
+    result: dict[str, Any] = {
         "ui_id": _safe_id(ui_id, field="ui_id"),
         "mode": mode,
-        "tree": _node(tree, depth=0, count=[0]),
     }
+    if tree is not None:
+        result["tree"] = _node(tree, depth=0, count=[0])
+    if patch is not None:
+        if not isinstance(patch, list) or len(patch) > 50:
+            raise UIValidationError("patch must be an array with at most 50 operations")
+        clean_patch: list[dict[str, Any]] = []
+        for operation in patch:
+            if not isinstance(operation, dict):
+                raise UIValidationError("patch operations must be objects")
+            op = _string(operation.get("op"), field="patch.op", limit=16).lower()
+            path = _string(operation.get("path"), field="patch.path", limit=200)
+            if op not in {"add", "replace", "remove"} or not _PATCH_PATH_RE.fullmatch(path):
+                raise UIValidationError("patch operation or path is invalid")
+            clean: dict[str, Any] = {"op": op, "path": path}
+            if op != "remove":
+                if "value" not in operation:
+                    raise UIValidationError("patch add/replace requires value")
+                try:
+                    encoded = json.dumps(
+                        operation["value"],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise UIValidationError("patch value must be JSON data") from exc
+                if len(encoded) > MAX_STRING:
+                    raise UIValidationError("patch value is too large")
+                clean["value"] = operation["value"]
+            clean_patch.append(clean)
+        result["patch"] = clean_patch
+    if "state" in arguments:
+        state = arguments.get("state")
+        if not isinstance(state, dict):
+            raise UIValidationError("state must be an object")
+        try:
+            encoded_state = json.dumps(
+                state, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
+        except (TypeError, ValueError) as exc:
+            raise UIValidationError("state must contain JSON values") from exc
+        if len(encoded_state) > MAX_STRING:
+            raise UIValidationError("state is too large")
+        result["state"] = state
+    return result
 
 
-__all__ = ["UIValidationError", "validate_ui_payload"]
+def validate_ui_action(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Validate the small, typed payload sent by an interactive widget."""
+    if not isinstance(arguments, dict):
+        raise UIValidationError("arguments must be an object")
+    ui_id = _safe_id(arguments.get("ui_id"), field="ui_id")
+    action = _string(arguments.get("action"), field="action", limit=80).strip()
+    if not _ACTION_RE.fullmatch(action):
+        raise UIValidationError("action has an invalid name")
+    payload = arguments.get("payload", {})
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise UIValidationError("payload must be an object")
+    try:
+        encoded = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        )
+    except (TypeError, ValueError) as exc:
+        raise UIValidationError("payload must contain JSON values") from exc
+    if len(encoded) > 20_000:
+        raise UIValidationError("payload exceeds 20000 characters")
+    return {"ui_id": ui_id, "action": action, "payload": payload}
+
+
+__all__ = ["UIValidationError", "validate_ui_action", "validate_ui_payload"]

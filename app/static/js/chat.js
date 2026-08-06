@@ -1033,6 +1033,30 @@
       return '';
     }
 
+    async function dispatchUiAction(action) {
+      var sid = currentSessionId();
+      if (!sid || !action) return send('[UI action]\n' + JSON.stringify(action || {}));
+      try {
+        var result = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/ui-actions',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(action),
+          }
+        );
+        if (result && (result.mode === 'started' || result.mode === 'steer') && !sending && !es) {
+          resumeActiveTurn();
+        }
+        return result;
+      } catch (e) {
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast((e && e.message) || 'Could not dispatch UI action', 'err');
+        }
+        return null;
+      }
+    }
+
     async function ensureSession() {
       const existing = currentSessionId();
       if (existing) return existing;
@@ -1089,6 +1113,7 @@
         getSending: function () { return sending; },
         messageQueue: messageQueue,
         sendMessage: send,
+        dispatchUiAction: dispatchUiAction,
         currentSessionId: currentSessionId,
         onBindHitl: function (stream, turnEl, onEvent) {
           bindHitl(stream, turnEl, onEvent);
@@ -1490,6 +1515,7 @@
         delete wrap.dataset.liveStream;
       },
       send: send,
+      uiAction: dispatchUiAction,
       stop: stopTurn,
       resume: resumeActiveTurn,
       rehydratePending: rehydratePendingHitl,

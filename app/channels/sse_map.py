@@ -314,30 +314,35 @@ def map_loop_event(
         payload = {
             "ui_id": ev.get("ui_id") or "",
             "mode": ev.get("mode") or "replace",
-            "tree": ev.get("tree") or {},
             "agent_id": agent_id,
             "agent": agent_name,
         }
+        # V2 UIs may be a full replacement or a patch-only update. Preserve
+        # optional fields verbatim on both the wire and persisted history so
+        # a reconnect can replay the same state transition.
+        if ev.get("tree") is not None:
+            payload["tree"] = ev["tree"]
+        if ev.get("patch") is not None:
+            payload["patch"] = ev["patch"]
+        if ev.get("state") is not None:
+            payload["state"] = ev["state"]
         payload = _stamp_dcid(payload, ev)
         chunks.append(fmt_sse({"event": "ui", "data": payload, "seq": seq}))
+        ui_record = {
+            "ui_id": payload["ui_id"],
+            "mode": payload["mode"],
+        }
+        for field in ("tree", "patch", "state"):
+            if field in payload:
+                ui_record[field] = payload[field]
         entries.append(
             _stamp_dcid(
                 {
                     "type": "ui",
                     "content": json.dumps(
-                        {
-                            "ui_id": payload["ui_id"],
-                            "mode": payload["mode"],
-                            "tree": payload["tree"],
-                        },
-                        ensure_ascii=False,
-                        separators=(",", ":"),
+                        ui_record, ensure_ascii=False, separators=(",", ":")
                     ),
-                    "params": {
-                        "ui_id": payload["ui_id"],
-                        "mode": payload["mode"],
-                        "tree": payload["tree"],
-                    },
+                    "params": ui_record,
                     "agent_id": agent_id,
                     "ts": now(),
                 },

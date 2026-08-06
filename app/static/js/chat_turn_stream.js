@@ -38,7 +38,10 @@
         if (c._res && c._res.textContent) skipResults++;
       });
       skipThinking = ctx.turn.querySelectorAll('.si-think').length;
-      skipUi = ctx.turn.querySelectorAll('.gen-ui[data-ui-id]').length;
+      skipUi = 0;
+      ctx.turn.querySelectorAll('.gen-ui[data-ui-id]').forEach(function (root) {
+        skipUi += Number(root.dataset.uiEvents || 1) || 1;
+      });
     }
 
     var subagentSet = new Set();
@@ -155,13 +158,16 @@
     }
 
     function appendGenerativeUI(spec) {
-      if (!spec || !spec.tree || !window.TomoGenerativeUI) return;
+      if (!spec || !spec.ui_id || (!spec.tree && !spec.patch) || !window.TomoGenerativeUI) return;
       var sendAction = function (action) {
         var body = '[UI action]\n' + JSON.stringify(action);
         if (typeof ctx.sendMessage === 'function') return ctx.sendMessage(body);
         return null;
       };
-      TomoGenerativeUI.mount(ctx.turn, spec, { send: sendAction });
+      TomoGenerativeUI.mount(ctx.turn, spec, {
+        dispatch: ctx.dispatchUiAction || sendAction,
+        sessionId: ctx.currentSessionId ? ctx.currentSessionId() : '',
+      });
     }
 
     function errorBubble(bodyHtml) {

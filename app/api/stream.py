@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Annotated, AsyncIterator
+import json
+from typing import Annotated, Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -12,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.deps import AuthDep, session_user_id
+from app.runtime.ui import UIValidationError, validate_ui_action
 from app.services import (
     heartbeat_stream,
     session_heartbeat_stream,
@@ -22,6 +24,7 @@ from app.services.chat import (
     SessionTurnBusy,
     cancel_session_turn,
     get_active_session_turn,
+    push_session_steer,
     start_session_turn,
 )
 
@@ -29,6 +32,12 @@ from app.services.chat import (
 class SessionChatStreamIn(BaseModel):
     message: str = ""
     attachment_ids: list[str] = Field(default_factory=list)
+
+
+class SessionUIActionIn(BaseModel):
+    ui_id: str
+    action: str
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 router = APIRouter(prefix="/api")
@@ -187,6 +196,57 @@ async def session_chat_steer(
         status = 409 if reason == "no_active_turn" else 400
         raise HTTPException(status_code=status, detail=reason)
     return result
+
+
+@router.post("/sessions/{session_id}/ui-actions")
+async def session_ui_action(
+    session_id: str,
+    body: SessionUIActionIn,
+    request: Request,
+    _: AuthDep = None,
+):
+    """Dispatch a typed generative-UI action into the session agent turn."""
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        action = validate_ui_action(body.model_dump())
+    except UIValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Keep the model-facing message structured and bounded. The frontend can
+    # reconnect to the existing stream when an idle action starts a new turn.
+    message = "[UI action]\n" + json.dumps(
+        action, ensure_ascii=False, separators=(",", ":")
+    )
+    user_id = session_user_id(request)
+    active = get_active_session_turn(session_id)
+    if active is not None:
+        result = push_session_steer(session_id, message)
+        if result.get("accepted"):
+            return {**result, "mode": "steer", "ui_id": action["ui_id"]}
+        raise HTTPException(status_code=409, detail=result.get("reason") or "session busy")
+
+    try:
+        active, queue = await start_session_turn(session_id, message, user_id, start_seq=0)
+        # The action request only kicks off the background turn; the browser
+        # reconnects through the normal listen SSE endpoint. Do not leave the
+        # starter subscription queued without a consumer.
+        active.unsubscribe(queue)
+    except SessionTurnBusy:
+        result = push_session_steer(session_id, message)
+        if result.get("accepted"):
+            return {**result, "mode": "steer", "ui_id": action["ui_id"]}
+        raise HTTPException(status_code=409, detail="Session is busy") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "accepted": True,
+        "mode": "started",
+        "session_id": session_id,
+        "ui_id": action["ui_id"],
+    }
 
 
 @router.get("/sessions/{session_id}/chat/stream")
