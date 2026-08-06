@@ -86,6 +86,7 @@ _logger = logging.getLogger(__name__)
 # Loop-detection tuning (sliding window of tool+args signatures).
 _LOOP_WINDOW = 10
 _LOOP_THRESHOLD = 5
+_MAX_UI_RESULT_CHARS = 64_000
 
 # Read-only tools safe to run in parallel within one round (after gating).
 _READ_ONLY_TOOLS = frozenset(
@@ -471,7 +472,9 @@ async def _run_one_gated_tool(
         yield payload
         return
 
-    result = _truncate_result(await _execute_authorized(call, decision))
+    result = _truncate_result(
+        await _execute_authorized(call, decision), tool_name=call.name
+    )
     payload = {
         "kind": "tool_result",
         "tool": call.name,
@@ -483,12 +486,13 @@ async def _run_one_gated_tool(
     yield payload
 
 
-def _truncate_result(result: Any) -> str:
+def _truncate_result(result: Any, *, tool_name: str | None = None) -> str:
     """Truncate oversized tool results to bound the context window."""
     raw = result if isinstance(result, str) else str(result or "")
-    if len(raw) <= MAX_TOOL_RESULT_CHARS:
+    limit = _MAX_UI_RESULT_CHARS if tool_name == "render_ui" else MAX_TOOL_RESULT_CHARS
+    if len(raw) <= limit:
         return raw
-    return raw[:MAX_TOOL_RESULT_CHARS] + f"\n…[truncated, {len(raw)} chars]"
+    return raw[:limit] + f"\n…[truncated, {len(raw)} chars]"
 
 
 def _call_signature(call: ToolCall) -> str:
@@ -917,18 +921,22 @@ async def run_turn(
                 for (cid, _call, _d), res in zip(pending_ro, ro_results):
                     if isinstance(res, Exception):
                         res = f"Error: {res}"
-                    text_res = _truncate_result(res)
+                    text_res = _truncate_result(res, tool_name=_call.name)
                     result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
             else:
                 for cid, call, decision in pending_ro:
                     text_res = _truncate_result(
-                        await _execute_authorized(call, decision)
+                        await _execute_authorized(call, decision),
+                        tool_name=call.name,
                     )
                     result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
 
             # Mutating tools stay serial.
             for cid, call, decision in pending_mut:
-                text_res = _truncate_result(await _execute_authorized(call, decision))
+                text_res = _truncate_result(
+                    await _execute_authorized(call, decision),
+                    tool_name=call.name,
+                )
                 result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
 
             # Emit remaining tool_results in original call order; append all.
