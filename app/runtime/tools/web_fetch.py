@@ -15,6 +15,7 @@ from app.runtime.html_md import HtmlToMarkdown
 _TIMEOUT = 15.0
 _MAX_CHARS = 100_000
 _MAX_REDIRECTS = 5
+_HTML_CONVERTER_MAX_INPUT = 250_000
 
 _HTML_CT = re.compile(r"text/html|application/xhtml\+xml", re.I)
 _LOOKS_LIKE_HTML = re.compile(
@@ -76,6 +77,18 @@ def _html_to_markdown(html: str) -> str:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
+    if len(html) > _HTML_CONVERTER_MAX_INPUT:
+        # The CommonMark converter walks every DOM node and can become
+        # quadratic on script-heavy docs (DeepWiki pages can exceed 500 KB).
+        # For oversized pages, extract readable text directly after removing
+        # page chrome; this keeps the tool bounded and still gives the agent
+        # the document content it needs.
+        for tag in soup(["script", "style", "noscript", "svg", "iframe", "object", "embed", "nav", "footer", "header"]):
+            tag.decompose()
+        root = soup.find("article") or soup.find("main") or soup.body or soup
+        readable = root.get_text("\n", strip=True)
+        return re.sub(r"\n{3,}", "\n\n", readable).strip()
+
     for tag in soup(["script", "style", "noscript", "svg", "iframe", "object", "embed"]):
         tag.decompose()
     root = (

@@ -96,6 +96,38 @@ def test_web_fetch_large_html_keeps_main_content_before_truncation(monkeypatch) 
     assert "truncated" not in result
 
 
+def test_web_fetch_large_script_heavy_html_is_bounded(monkeypatch) -> None:
+    """DeepWiki-sized HTML must not stall in the Markdown converter."""
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "text/html; charset=utf-8"}
+    mock_resp.text = (
+        "<html><head><script>"
+        f"{'x' * 500_000}"
+        "</script></head><body><main><h1>Security model</h1>"
+        "<p>Mermaid uses a security level to control callbacks.</p>"
+        "</main></body></html>"
+    )
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.url = "https://deepwiki.com/mermaid-js/mermaid/2.5-security-model"
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.get.return_value = mock_resp
+
+    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+        result = execute(
+            "web_fetch",
+            {"url": "https://deepwiki.com/mermaid-js/mermaid/2.5-security-model"},
+        )
+
+    assert "Security model" in result
+    assert "security level" in result
+    assert "x" * 100 not in result
+
+
 def test_web_fetch_blocks_loopback() -> None:
     result = execute("web_fetch", {"url": "http://127.0.0.1/"})
     assert result.startswith("Error")
