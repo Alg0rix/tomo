@@ -791,6 +791,26 @@
   };
 
   /** Render one inspector timeline step. Returns the root element when useful. */
+  Tomo.buildReasoningCard = function (content) {
+    var text = String(content || '');
+    var esc = Tomo.escapeHtml;
+    var previewLine = text.split('\n')[0].trim();
+    var wrap = document.createElement('div');
+    wrap.className = 'si-item si-think';
+    var think = document.createElement('details');
+    think.className = 'si-card';
+    think.innerHTML =
+      '<summary class="si-card-hd">' +
+        '<div class="si-hd-top"><span class="si-tag think">Reasoning</span></div>' +
+        (previewLine ? '<div class="si-hd-preview">' + esc(Tomo.truncate(previewLine, 140)) + '</div>' : '') +
+      '</summary>' +
+      '<div class="si-card-bd"><pre class="si-think-body"></pre></div>';
+    think.querySelector('pre').textContent = text;
+    wrap.innerHTML = '<span class="si-node" aria-hidden="true"></span>';
+    wrap.appendChild(think);
+    return wrap;
+  };
+
   Tomo.renderInspectorStep = function (body, kind, data) {
     var esc = Tomo.escapeHtml;
     var root = Tomo.siTimeline(body);
@@ -798,23 +818,7 @@
     var preview = Tomo.toolResultPreview;
 
     if (kind === 'thinking') {
-      var text = String(data.content || '');
-      var previewLine = text.split('\n')[0].trim();
-      var wrap = document.createElement('div');
-      wrap.className = 'si-item si-think';
-      var think = document.createElement('details');
-      think.className = 'si-card';
-      think.innerHTML =
-        '<summary class="si-card-hd">' +
-          '<div class="si-hd-top">' +
-            '<span class="si-tag think">Thought</span>' +
-          '</div>' +
-          (previewLine ? '<div class="si-hd-preview">' + esc(Tomo.truncate(previewLine, 120)) + '</div>' : '') +
-        '</summary>' +
-        '<div class="si-card-bd"><pre class="si-think-body"></pre></div>';
-      think.querySelector('pre').textContent = text;
-      wrap.innerHTML = '<span class="si-node" aria-hidden="true"></span>';
-      wrap.appendChild(think);
+      var wrap = Tomo.buildReasoningCard(data.content);
       root.appendChild(wrap);
       return wrap;
     }

@@ -25,17 +25,17 @@
 
     var skipTools = 0;
     var skipResults = 0;
-    var skipAssistants = 0;
+    var skipThinking = 0;
     var toolSeen = 0;
     var resultSeen = 0;
-    var assistantSeen = 0;
+    var thinkingSeen = 0;
 
     if (!isLive) {
       skipTools = ctx.turn.querySelectorAll('.tool').length;
       ctx.turn.querySelectorAll('.tool').forEach(function (c) {
         if (c._res && c._res.textContent) skipResults++;
       });
-      skipAssistants = ctx.turn.querySelectorAll('.msg.assistant').length;
+      skipThinking = ctx.turn.querySelectorAll('.si-think').length;
     }
 
     var subagentSet = new Set();
@@ -137,6 +137,18 @@
       asstEl = null;
       asstBody = null;
       raw = '';
+    }
+
+    function appendReasoningCard(content) {
+      if (window.Tomo && Tomo.buildReasoningCard) {
+        ctx.turn.appendChild(Tomo.buildReasoningCard(content));
+        return;
+      }
+      var details = document.createElement('details');
+      details.className = 'reasoning-card';
+      details.innerHTML = '<summary>Reasoning</summary><pre></pre>';
+      details.querySelector('pre').textContent = content;
+      ctx.turn.appendChild(details);
     }
 
     function errorBubble(bodyHtml) {
@@ -757,30 +769,22 @@
       var content = d.content || '';
       if (!content.trim() || /^\s*\[Swarm\]/.test(content)) return;
       if (!isLive) {
-        // Skip assistant segments already rendered in history. History shows
-        // completed thinking rows as bubbles; replaying them would add a
-        // duplicate bubble per segment.
-        assistantSeen++;
-        if (assistantSeen <= skipAssistants) return;
+        // Skip reasoning segments already rendered in history; replaying them
+        // would add a duplicate card per segment.
+        thinkingSeen++;
+        if (thinkingSeen <= skipThinking) return;
+      }
+      // Tool-call rounds may have streamed the model's reasoning as deltas
+      // before the canonical `thinking` event arrives. Replace that temporary
+      // bubble with one durable, collapsible reasoning card.
+      if (asstEl) {
+        asstEl.remove();
+        asstEl = null;
+        asstBody = null;
       }
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
-      var hasStreamed = !!(asstEl && asstBody && (asstBody.textContent || '').trim());
-      if (hasStreamed) {
-        // Thinking `content` is canonical (what gets persisted). Deltas may
-        // have streamed a truncated/partial version into the current bubble —
-        // always apply the full canonical content, then seal. Never show a
-        // second block.
-        raw = content;
-        ctx.setMarkdown(asstBody, raw);
-        sealAssistantBubble();
-      } else {
-        // No streamed content yet (or an empty leftover bubble) — render the
-        // thinking text as an assistant bubble, then seal it.
-        if (!asstEl) ensureAssistantBubble();
-        raw = content;
-        ctx.setMarkdown(asstBody, raw);
-        sealAssistantBubble();
-      }
+      raw = '';
+      appendReasoningCard(content);
       ctx.atBottom();
     });
 

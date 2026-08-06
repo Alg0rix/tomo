@@ -531,9 +531,8 @@
       detailPanel = null;
     }
 
-    // Render a primary-agent assistant message bubble in place (same structure
-    // as the `final` handler) so intermediate `thinking` rows stay interleaved
-    // between tool cards in DB order.
+    // Render a primary-agent final answer bubble in place. Intermediate
+    // reasoning is rendered as a collapsible timeline card below.
     function appendAssistantMessage(aid, text) {
       var who = agentName(aid);
       var row = document.createElement('div');
@@ -550,6 +549,19 @@
         body.textContent = text;
       }
       turn.appendChild(row);
+    }
+
+    function appendReasoningCard(text) {
+      if (!text || !turn) return;
+      if (window.Tomo && Tomo.buildReasoningCard) {
+        turn.appendChild(Tomo.buildReasoningCard(text));
+        return;
+      }
+      var details = document.createElement('details');
+      details.className = 'reasoning-card';
+      details.innerHTML = '<summary>Reasoning</summary><pre></pre>';
+      details.querySelector('pre').textContent = text;
+      turn.appendChild(details);
     }
 
     function ensureSwarmCard() {
@@ -958,11 +970,11 @@
           bumpSwarmProgress(key);
           return;
         }
-        // Primary agent: render intermediate text as an assistant bubble in
+        // Primary agent: render intermediate text as a collapsible card in
         // place so it stays interleaved with the tool cards that follow.
         var text = (e.content || '').trim();
         if (!text || text.indexOf('[Swarm]') === 0) return;
-        appendAssistantMessage(aid, text);
+        appendReasoningCard(text);
         return;
       }
 
