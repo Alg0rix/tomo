@@ -549,6 +549,10 @@
         body.textContent = text;
       }
       turn.appendChild(row);
+      // Keep Interactive hero after assistant text.
+      turn.querySelectorAll('.gen-ui-block').forEach(function (block) {
+        turn.appendChild(block);
+      });
     }
 
     function appendReasoningCard(text) {
@@ -566,6 +570,11 @@
 
     function appendGenerativeUI(spec) {
       if (!spec || !spec.ui_id || (!spec.tree && !spec.patch) || !window.TomoGenerativeUI) return;
+      turn.querySelectorAll('.tool[data-tool-name="render_ui"]').forEach(function (card) {
+        card.classList.remove('expanded');
+        card.classList.add('is-ui-ledger');
+        if (card._chip) card._chip.textContent = 'rendered';
+      });
       var mounted = TomoGenerativeUI.mount(turn, spec, {
         dispatch: function (action) {
           if (chatHandle && chatHandle.uiAction) return chatHandle.uiAction(action);
@@ -577,9 +586,11 @@
         asBlock: true,
       });
       if (mounted) {
-        turn.appendChild(mounted.closest
+        var block = mounted.closest
           ? (mounted.closest('.gen-ui-block') || mounted)
-          : mounted);
+          : mounted;
+        block.classList.add('is-hero');
+        turn.appendChild(block);
       }
     }
 

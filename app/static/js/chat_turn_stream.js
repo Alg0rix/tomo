@@ -114,7 +114,10 @@
       var tmp = document.createElement('div');
       tmp.innerHTML = ctx.bubbleHtml('assistant', turnAgentName, turnAgentId);
       asstEl = tmp.firstElementChild;
-      ctx.turn.appendChild(asstEl);
+      // Keep assistant intro ABOVE the Interactive hero when gen-ui already mounted.
+      var hero = ctx.turn.querySelector('.gen-ui-block');
+      if (hero) ctx.turn.insertBefore(asstEl, hero);
+      else ctx.turn.appendChild(asstEl);
       asstBody = asstEl.querySelector('.bubble-body');
       return asstEl;
     }
@@ -157,6 +160,35 @@
       ctx.turn.appendChild(details);
     }
 
+    function collapseRenderUiTools() {
+      ctx.turn.querySelectorAll('.tool[data-tool-name="render_ui"]').forEach(function (card) {
+        card.classList.remove('expanded');
+        card.classList.add('is-ui-ledger');
+        if (card._head) card._head.setAttribute('aria-expanded', 'false');
+        if (card._chip && !card.classList.contains('error')) {
+          card._chip.textContent = 'rendered';
+          card._chip.classList.remove('err');
+        }
+      });
+    }
+
+    function placeGenUiAsHero() {
+      // Order: … tools … assistant text … Interactive hero.
+      var blocks = ctx.turn.querySelectorAll('.gen-ui-block');
+      if (!blocks.length) return;
+      var msgs = ctx.turn.querySelectorAll('.msg.assistant');
+      var lastAsst = msgs.length ? msgs[msgs.length - 1] : null;
+      var anchor = lastAsst ? lastAsst.nextSibling : null;
+      // Skip over other gen-ui-blocks when computing insert point.
+      while (anchor && anchor.classList && anchor.classList.contains('gen-ui-block')) {
+        anchor = anchor.nextSibling;
+      }
+      Array.prototype.forEach.call(blocks, function (block) {
+        if (anchor) ctx.turn.insertBefore(block, anchor);
+        else ctx.turn.appendChild(block);
+      });
+    }
+
     function appendGenerativeUI(spec) {
       if (!spec || !spec.ui_id || (!spec.tree && !spec.patch)) return null;
       if (!window.TomoGenerativeUI) {
@@ -168,20 +200,21 @@
         if (typeof ctx.sendMessage === 'function') return ctx.sendMessage(body);
         return null;
       };
-      // First-class stream block (option A): not nested under the tool ledger.
       clearPending();
-      sealAssistantBubble();
+      // Do NOT seal the assistant bubble — intro text should stay above the hero.
+      collapseRenderUiTools();
       var mounted = TomoGenerativeUI.mount(ctx.turn, spec, {
         dispatch: ctx.dispatchUiAction || sendAction,
         sessionId: ctx.currentSessionId ? ctx.currentSessionId() : '',
         asBlock: true,
       });
       if (mounted) {
-        // Keep the interactive panel at the end of the turn trail so it reads
-        // as the result, while the render_ui tool card stays a debug ledger.
-        ctx.turn.appendChild(mounted.closest
+        var block = mounted.closest
           ? (mounted.closest('.gen-ui-block') || mounted)
-          : mounted);
+          : mounted;
+        block.classList.add('is-hero');
+        ctx.turn.appendChild(block);
+        placeGenUiAsHero();
       }
       return mounted;
     }
@@ -1028,6 +1061,8 @@
         clearPending();
         dropEmptyAssistant();
       }
+      ctx.atBottom();
+      placeGenUiAsHero();
       ctx.atBottom();
       ctx.setStatus('amber', ctx.busyStatusLabel());
     });
