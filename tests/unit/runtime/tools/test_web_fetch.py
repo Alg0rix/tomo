@@ -37,6 +37,40 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
     assert result == "hello from web"
 
 
+def test_web_fetch_extracts_main_text_before_truncating_html(monkeypatch) -> None:
+    """Large page chrome must not hide the useful document content."""
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "text/html; charset=utf-8"}
+    mock_resp.text = (
+        "<html><head><title>Mermaid configuration</title>"
+        f"<script>{'x' * (web_fetch._MAX_CHARS + 1)}</script></head>"
+        "<body><nav>Navigation noise</nav><main>"
+        "<h1>Using the Mermaid configuration</h1>"
+        "<p>Set securityLevel to strict or loose.</p>"
+        "</main></body></html>"
+    )
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.url = "https://mermaid.js.org/config/usage.html"
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.get.return_value = mock_resp
+
+    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+        result = execute(
+            "web_fetch", {"url": "https://mermaid.js.org/config/usage.html"}
+        )
+
+    assert "Using the Mermaid configuration" in result
+    assert "securityLevel" in result
+    assert "Navigation noise" not in result
+    assert "x" * 100 not in result
+    assert "truncated" not in result
+
+
 def test_web_fetch_blocks_loopback() -> None:
     result = execute("web_fetch", {"url": "http://127.0.0.1/"})
     assert result.startswith("Error")

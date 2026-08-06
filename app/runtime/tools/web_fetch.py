@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -12,6 +14,86 @@ import httpx
 _TIMEOUT = 15.0
 _MAX_CHARS = 100_000
 _MAX_REDIRECTS = 5
+
+_HIDDEN_TAGS = frozenset({"script", "style", "noscript", "svg", "template"})
+_NOISE_TAGS = frozenset({"nav", "footer", "aside"})
+_BREAK_TAGS = frozenset(
+    {"address", "article", "blockquote", "br", "div", "h1", "h2", "h3",
+     "h4", "h5", "h6", "hr", "li", "main", "p", "pre", "section", "tr"}
+)
+
+
+class _ReadableHTMLParser(HTMLParser):
+    """Collect readable body/main text without page chrome and executable code."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.body: list[str] = []
+        self.main: list[str] = []
+        self.title: list[str] = []
+        self._body_depth = 0
+        self._main_depth = 0
+        self._hidden_depth = 0
+        self._title_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "body":
+            self._body_depth += 1
+        if tag == "main":
+            self._main_depth += 1
+        if tag == "title":
+            self._title_depth += 1
+        if tag in _HIDDEN_TAGS or tag in _NOISE_TAGS:
+            self._hidden_depth += 1
+        if tag in _BREAK_TAGS:
+            self._append("\n")
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag.lower() in _BREAK_TAGS:
+            self._append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in _BREAK_TAGS:
+            self._append("\n")
+        if tag in _HIDDEN_TAGS or tag in _NOISE_TAGS:
+            self._hidden_depth = max(0, self._hidden_depth - 1)
+        if tag == "title":
+            self._title_depth = max(0, self._title_depth - 1)
+        if tag == "main":
+            self._main_depth = max(0, self._main_depth - 1)
+        if tag == "body":
+            self._body_depth = max(0, self._body_depth - 1)
+
+    def handle_data(self, data: str) -> None:
+        if self._title_depth and not self._hidden_depth:
+            self.title.append(data)
+        self._append(data)
+
+    def _append(self, text: str) -> None:
+        if self._hidden_depth:
+            return
+        if self._body_depth:
+            self.body.append(text)
+        if self._main_depth:
+            self.main.append(text)
+
+
+def _readable_html(text: str) -> str:
+    parser = _ReadableHTMLParser()
+    parser.feed(text)
+    parser.close()
+    chunks = parser.main or parser.body
+    content = "".join(chunks)
+    lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in content.splitlines()]
+    readable = "\n".join(line for line in lines if line)
+    title = re.sub(r"\s+", " ", "".join(parser.title)).strip()
+    if title and title not in readable[: max(200, len(title))]:
+        readable = f"{title}\n\n{readable}" if readable else title
+    return readable
 
 
 def _is_blocked_host(hostname: str) -> str | None:
@@ -90,6 +172,7 @@ def run(arguments: dict[str, Any]) -> str:
             assert resp is not None
             resp.raise_for_status()
             text = resp.text
+            content_type = (resp.headers.get("content-type") or "").lower()
     except httpx.TimeoutException:
         return f"Error: request timed out after {_TIMEOUT:g}s"
     except httpx.HTTPStatusError as exc:
@@ -98,6 +181,9 @@ def run(arguments: dict[str, Any]) -> str:
         return f"Error: could not fetch URL: {exc}"
     except OSError as exc:
         return f"Error: could not fetch URL: {exc}"
+
+    if "html" in content_type or re.match(r"\s*(?:<!doctype\s+html|<html\b)", text, re.I):
+        text = _readable_html(text)
 
     if len(text) > _MAX_CHARS:
         return text[:_MAX_CHARS] + f"\n...[truncated, {len(text)} chars total]"
