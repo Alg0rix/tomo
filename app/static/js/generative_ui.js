@@ -327,6 +327,23 @@
     return found;
   }
 
+  function ensureBlock(parent, root, uiId) {
+    var block = root.closest ? root.closest(".gen-ui-block") : null;
+    if (block) return block;
+    block = document.createElement("section");
+    block.className = "gen-ui-block";
+    block.setAttribute("data-ui-id", uiId);
+    block.setAttribute("aria-label", "Interactive UI");
+    var hd = document.createElement("div");
+    hd.className = "gen-ui-block-hd";
+    hd.innerHTML = '<span class="gen-ui-block-kicker">Interactive</span>';
+    block.appendChild(hd);
+    if (root.parentNode === parent) parent.insertBefore(block, root);
+    else parent.appendChild(block);
+    block.appendChild(root);
+    return block;
+  }
+
   function mount(parent, spec, opts) {
     if (!parent || !spec) return null;
     opts = opts || {};
@@ -339,6 +356,7 @@
       root.setAttribute("data-ui-id", uiId);
       parent.appendChild(root);
     }
+    if (opts.asBlock) ensureBlock(parent, root, uiId);
     if (!materialize(parent, spec, root, opts, uiId)) return null;
     root.replaceChildren();
     var onAction = opts.onAction;

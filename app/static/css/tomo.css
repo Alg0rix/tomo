@@ -1264,15 +1264,42 @@ html.is-rail-collapsed .app-rail-collapse {
   border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));
 }
 
-/* Generative UI */
+/* Generative UI — first-class stream block (not a tool-ledger child) */
+.gen-ui-block {
+  display: block;
+  width: 100%;
+  margin: 14px 0 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.gen-ui-block-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+.gen-ui-block-kicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
 .gen-ui-anchor { display: block; width: 100%; }
 .gen-ui {
-  margin: 0.7em 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
+.gen-ui-block > .gen-ui { margin: 0; }
 .gen-ui-node { display: flex; flex-direction: column; gap: 10px; }
 .gen-ui-card { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .gen-ui-stack { gap: 10px; }

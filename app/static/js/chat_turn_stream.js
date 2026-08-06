@@ -157,7 +157,7 @@
       ctx.turn.appendChild(details);
     }
 
-    function appendGenerativeUI(spec, afterEl) {
+    function appendGenerativeUI(spec) {
       if (!spec || !spec.ui_id || (!spec.tree && !spec.patch)) return null;
       if (!window.TomoGenerativeUI) {
         console.warn('[tomo] TomoGenerativeUI missing — generative_ui.js not loaded');
@@ -168,36 +168,33 @@
         if (typeof ctx.sendMessage === 'function') return ctx.sendMessage(body);
         return null;
       };
-      // Always mount under the turn so later `ui` SSE events reuse the same
-      // root via data-ui-id (no duplicate panels).
+      // First-class stream block (option A): not nested under the tool ledger.
+      clearPending();
+      sealAssistantBubble();
       var mounted = TomoGenerativeUI.mount(ctx.turn, spec, {
         dispatch: ctx.dispatchUiAction || sendAction,
         sessionId: ctx.currentSessionId ? ctx.currentSessionId() : '',
+        asBlock: true,
       });
-      if (mounted && afterEl && afterEl.parentNode === ctx.turn) {
-        afterEl.parentNode.insertBefore(mounted, afterEl.nextSibling);
-      }
-      if (mounted && afterEl && afterEl.classList) {
-        afterEl.classList.remove('expanded');
-        if (afterEl._head) afterEl._head.setAttribute('aria-expanded', 'false');
-        if (afterEl._chip) {
-          afterEl._chip.textContent = 'UI ready';
-          afterEl._chip.classList.remove('err');
-        }
+      if (mounted) {
+        // Keep the interactive panel at the end of the turn trail so it reads
+        // as the result, while the render_ui tool card stays a debug ledger.
+        ctx.turn.appendChild(mounted.closest
+          ? (mounted.closest('.gen-ui-block') || mounted)
+          : mounted);
       }
       return mounted;
     }
 
-    function tryMountRenderUiFromResult(d, toolCard) {
+    function tryMountRenderUiFromResult(d) {
       if (d && d.error) return null;
       var toolName = ((d && (d.tool || d.name)) || '').toString();
       var raw = typeof (d && d.result) === 'string' ? d.result : '';
-      if (toolName && toolName !== 'render_ui') return null;
-      if (!raw && toolName !== 'render_ui') return null;
+      if (toolName !== 'render_ui') return null;
       var spec = null;
       try { spec = JSON.parse(raw); } catch (_) { return null; }
       if (!spec || !spec.ui_id || (!spec.tree && !spec.patch)) return null;
-      return appendGenerativeUI(spec, toolCard || null);
+      return appendGenerativeUI(spec);
     }
 
     function errorBubble(bodyHtml) {
@@ -364,8 +361,7 @@
           // path as artifacts) — do not rely solely on a separate SSE `ui` event.
           if (!d.error) {
             tryMountRenderUiFromResult(
-              { tool: toolName, result: resultText, error: !!d.error },
-              last
+              { tool: toolName, result: resultText, error: !!d.error }
             );
           }
         } catch (_) {}

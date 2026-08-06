@@ -566,7 +566,7 @@
 
     function appendGenerativeUI(spec) {
       if (!spec || !spec.ui_id || (!spec.tree && !spec.patch) || !window.TomoGenerativeUI) return;
-      TomoGenerativeUI.mount(turn, spec, {
+      var mounted = TomoGenerativeUI.mount(turn, spec, {
         dispatch: function (action) {
           if (chatHandle && chatHandle.uiAction) return chatHandle.uiAction(action);
           var body = '[UI action]\n' + JSON.stringify(action);
@@ -574,7 +574,13 @@
           return null;
         },
         sessionId: chatWrap.dataset.sessionId || '',
+        asBlock: true,
       });
+      if (mounted) {
+        turn.appendChild(mounted.closest
+          ? (mounted.closest('.gen-ui-block') || mounted)
+          : mounted);
+      }
     }
 
     function ensureSwarmCard() {
