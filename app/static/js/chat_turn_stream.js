@@ -157,17 +157,47 @@
       ctx.turn.appendChild(details);
     }
 
-    function appendGenerativeUI(spec) {
-      if (!spec || !spec.ui_id || (!spec.tree && !spec.patch) || !window.TomoGenerativeUI) return;
+    function appendGenerativeUI(spec, afterEl) {
+      if (!spec || !spec.ui_id || (!spec.tree && !spec.patch)) return null;
+      if (!window.TomoGenerativeUI) {
+        console.warn('[tomo] TomoGenerativeUI missing — generative_ui.js not loaded');
+        return null;
+      }
       var sendAction = function (action) {
         var body = '[UI action]\n' + JSON.stringify(action);
         if (typeof ctx.sendMessage === 'function') return ctx.sendMessage(body);
         return null;
       };
-      TomoGenerativeUI.mount(ctx.turn, spec, {
+      // Always mount under the turn so later `ui` SSE events reuse the same
+      // root via data-ui-id (no duplicate panels).
+      var mounted = TomoGenerativeUI.mount(ctx.turn, spec, {
         dispatch: ctx.dispatchUiAction || sendAction,
         sessionId: ctx.currentSessionId ? ctx.currentSessionId() : '',
       });
+      if (mounted && afterEl && afterEl.parentNode === ctx.turn) {
+        afterEl.parentNode.insertBefore(mounted, afterEl.nextSibling);
+      }
+      if (mounted && afterEl && afterEl.classList) {
+        afterEl.classList.remove('expanded');
+        if (afterEl._head) afterEl._head.setAttribute('aria-expanded', 'false');
+        if (afterEl._chip) {
+          afterEl._chip.textContent = 'UI ready';
+          afterEl._chip.classList.remove('err');
+        }
+      }
+      return mounted;
+    }
+
+    function tryMountRenderUiFromResult(d, toolCard) {
+      if (d && d.error) return null;
+      var toolName = ((d && (d.tool || d.name)) || '').toString();
+      var raw = typeof (d && d.result) === 'string' ? d.result : '';
+      if (toolName && toolName !== 'render_ui') return null;
+      if (!raw && toolName !== 'render_ui') return null;
+      var spec = null;
+      try { spec = JSON.parse(raw); } catch (_) { return null; }
+      if (!spec || !spec.ui_id || (!spec.tree && !spec.patch)) return null;
+      return appendGenerativeUI(spec, toolCard || null);
     }
 
     function errorBubble(bodyHtml) {
@@ -329,6 +359,14 @@
           if (!d.error && parsedArt) {
             ctx.turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
             if (TomoArtifacts.maybeAutoOpen) TomoArtifacts.maybeAutoOpen(parsedArt);
+          }
+          // Mount interactive UI from render_ui tool_result (same reliability
+          // path as artifacts) — do not rely solely on a separate SSE `ui` event.
+          if (!d.error) {
+            tryMountRenderUiFromResult(
+              { tool: toolName, result: resultText, error: !!d.error },
+              last
+            );
           }
         } catch (_) {}
       }
@@ -862,7 +900,11 @@
 
     es.addEventListener('ui', function (e) {
       bumpActivity();
-      var d = JSON.parse(e.data || '{}');
+      var d = null;
+      try { d = JSON.parse(e.data || '{}'); } catch (err) {
+        console.warn('[tomo] ui event JSON parse failed', err);
+        return;
+      }
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, d.agent_id);

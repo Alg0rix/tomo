@@ -1265,6 +1265,7 @@ html.is-rail-collapsed .app-rail-collapse {
 }
 
 /* Generative UI */
+.gen-ui-anchor { display: block; width: 100%; }
 .gen-ui {
   margin: 0.7em 0;
   padding: 12px;

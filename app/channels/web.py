@@ -281,10 +281,19 @@ async def _drain_agent_turn(
         chunks, entries, seq = map_loop_event(
             ev, ev_agent_id, ev_agent_name, seq, turn_id
         )
-        for entry in entries:
-            store.append_session_history(session_id, entry)
+        # Wire first: a failed history write must not drop live UI/tool events
+        # (user would see render_ui OUTPUT succeed with no interactive panel).
         for chunk in chunks:
             yield chunk, seq
+        for entry in entries:
+            try:
+                store.append_session_history(session_id, entry)
+            except Exception:
+                logger.exception(
+                    "history append failed session_id=%s type=%s",
+                    session_id,
+                    entry.get("type"),
+                )
 
 
 async def _maybe_upgrade_title(

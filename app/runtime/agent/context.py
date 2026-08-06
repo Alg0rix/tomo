@@ -263,14 +263,15 @@ def _ui_prompt_section(agent_id: str | None) -> str:
     return (
         "## Generative UI\n\n"
         "When the user benefits from an interactive form, dashboard, table, chart, "
-        "diagram, or structured result, use **render_ui**. It accepts a safe "
-        "declarative tree and supports text, markdown, card, stack, grid, table, "
-        "chart, mermaid, image, link, input, select, and button nodes. Do not put "
-        "HTML or JavaScript in the tree. Give each interactive node a stable id and "
-        "action; UI actions return to you as a structured `[UI action]` message "
-        "through the typed action bridge. Use mode=replace for a new/full UI and "
-        "reuse the same ui_id with mode=patch for small JSON updates under /tree "
-        "or /state; state is retained across reconnects. "
+        "diagram, or structured result, use **render_ui**. Every node MUST include "
+        "a string ``type`` (card, stack, grid, text, markdown, table, chart, "
+        "mermaid, badge, divider, image, link, input, select, button). Root is "
+        "usually ``{type: card|stack, children: [...]}``. Prefer declarative "
+        "``chart`` / ``table`` nodes — never invent custom SVG/canvas chart HTML. "
+        "Do not put HTML or JavaScript in the tree. Give each interactive node a "
+        "stable id and action; UI actions return as a structured `[UI action]` "
+        "message. Use mode=replace for a new/full UI and reuse the same ui_id with "
+        "mode=patch for small JSON updates under /tree or /state. "
         "For a full custom HTML/JS app, use **save_artifact** instead."
     )
 

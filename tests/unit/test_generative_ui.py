@@ -119,3 +119,36 @@ def test_ui_patch_event_keeps_patch_and_state_on_wire_and_history():
     assert '"patch"' in chunks[0]
     assert entries[0]["params"]["patch"][0]["path"] == "/state/status"
     assert entries[0]["params"]["state"] == {"status": "running"}
+
+
+def test_render_ui_infers_type_for_containers_missing_type():
+    """Models often omit type on wrapper nodes that only have children."""
+    payload = validate_ui_payload(
+        {
+            "ui_id": "dash_1",
+            "tree": {
+                "title": "Penjualan",
+                "children": [
+                    {
+                        "children": [
+                            {"type": "text", "value": "Omzet"},
+                            {
+                                "data": [
+                                    {"label": "Jan", "value": 10},
+                                    {"label": "Feb", "value": 20},
+                                ]
+                            },
+                        ]
+                    }
+                ],
+            },
+        }
+    )
+    assert payload["tree"]["type"] == "card"
+    assert payload["tree"]["children"][0]["type"] == "stack"
+    assert payload["tree"]["children"][0]["children"][1]["type"] == "chart"
+
+
+def test_render_ui_still_rejects_empty_uninferable_node():
+    with pytest.raises(UIValidationError, match="node.type must be a string"):
+        validate_ui_payload({"ui_id": "x", "tree": {"title": "Nope"}})

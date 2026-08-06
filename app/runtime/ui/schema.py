@@ -66,7 +66,46 @@ def _safe_id(value: Any, *, field: str) -> str:
     return result
 
 
-def _node(value: Any, *, depth: int, count: list[int]) -> dict[str, Any]:
+
+def _infer_node_type(value: dict[str, Any]) -> str | None:
+    """Best-effort type when the model omits ``type`` (common LLM slip).
+
+    Prefer structural clues over guessing free-form content nodes.
+    """
+    if "columns" in value or "rows" in value:
+        return "table"
+    if isinstance(value.get("data"), list):
+        return "chart"
+    if "options" in value:
+        return "select"
+    if "href" in value:
+        return "link"
+    if "src" in value:
+        return "image"
+    children = value.get("children")
+    if isinstance(children, list):
+        # Title + children → card; bare children → stack (layout wrapper).
+        if value.get("title") or value.get("description"):
+            return "card"
+        return "stack"
+    if "label" in value and ("action" in value or "id" in value):
+        # Prefer button when it looks interactive without options/input shape.
+        if value.get("placeholder") is not None or (
+            "value" in value and "action" not in value
+        ):
+            return "input"
+        return "button"
+    if "placeholder" in value or ("id" in value and "value" in value and "action" in value):
+        return "input"
+    if "value" in value and isinstance(value.get("value"), str):
+        raw = value["value"]
+        if "\n" in raw or len(raw) > 80:
+            return "markdown"
+        return "text"
+    return None
+
+
+def _node(value: Any, *, depth: int, count: list[int], path: str = "/tree") -> dict[str, Any]:
     if depth > MAX_DEPTH:
         raise UIValidationError(f"UI tree exceeds depth {MAX_DEPTH}")
     if not isinstance(value, dict):
@@ -75,9 +114,21 @@ def _node(value: Any, *, depth: int, count: list[int]) -> dict[str, Any]:
     if count[0] > MAX_NODES:
         raise UIValidationError(f"UI tree exceeds {MAX_NODES} nodes")
 
-    kind = _string(value.get("type"), field="node.type", limit=32).strip().lower()
+    raw_type = value.get("type")
+    if raw_type is None or (isinstance(raw_type, str) and not raw_type.strip()):
+        inferred = _infer_node_type(value)
+        if inferred is None:
+            raise UIValidationError(
+                f"{path}: node.type must be a string "
+                f"(one of: {', '.join(sorted(NODE_TYPES))})"
+            )
+        kind = inferred
+    else:
+        kind = _string(raw_type, field=f"{path}.type", limit=32).strip().lower()
     if kind not in NODE_TYPES:
-        raise UIValidationError(f"unsupported UI node type: {kind or '(empty)'}")
+        raise UIValidationError(
+            f"{path}: unsupported UI node type: {kind or '(empty)'}"
+        )
     out: dict[str, Any] = {"type": kind}
     if "id" in value:
         out["id"] = _safe_id(value["id"], field="node.id")
@@ -107,7 +158,13 @@ def _node(value: Any, *, depth: int, count: list[int]) -> dict[str, Any]:
         if not isinstance(children, list):
             raise UIValidationError(f"{kind}.children must be an array")
         out["children"] = [
-            _node(child, depth=depth + 1, count=count) for child in children
+            _node(
+                child,
+                depth=depth + 1,
+                count=count,
+                path=f"{path}/children/{idx}",
+            )
+            for idx, child in enumerate(children)
         ]
     elif "children" in value:
         raise UIValidationError(f"{kind} cannot contain children")

@@ -356,6 +356,7 @@
       persist: function () { persist(root); },
     });
     if (rendered) root.appendChild(rendered);
+    else root.appendChild(textNode("UI tree could not be rendered", "gen-ui-error"));
     persist(root);
     return root;
   }

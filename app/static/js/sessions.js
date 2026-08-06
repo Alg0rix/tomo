@@ -988,6 +988,16 @@
               turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
             }
           }
+          // Fallback: mount from render_ui tool_output when a dedicated `ui`
+          // history row is missing (or was skipped).
+          if (!e.error && resultText && resultText.charAt(0) === '{') {
+            try {
+              var uiSpec = JSON.parse(resultText);
+              if (uiSpec && uiSpec.ui_id && (uiSpec.tree || uiSpec.patch)) {
+                appendGenerativeUI(uiSpec);
+              }
+            } catch (_) {}
+          }
         }
         return;
       }

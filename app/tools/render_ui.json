@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "render_ui",
-      "description": "Render or update an interactive UI tree in the chat. The tree is declarative JSON, not HTML or JavaScript. Supported nodes: text, markdown, card, stack, grid, badge, divider, table, chart, mermaid, image, link, input, select, button. Use stable ui_id values. mode=replace sends a full tree; mode=patch sends JSON patch operations such as {op:replace,path:/tree/children/0/value,value:...} and optional state. Every input/select/button needs an id and action; actions are sent through the typed UI action bridge. Use save_artifact for arbitrary HTML/JS mini-apps.",
+      "description": "Render or update an interactive UI tree in the chat. The tree is declarative JSON, not HTML or JavaScript. EVERY node needs a string type. Supported types: text, markdown, card, stack, grid, badge, divider, table, chart, mermaid, image, link, input, select, button. Root is usually type=card or type=stack with a children array. Example: {type:card,title:Sales,children:[{type:chart,data:[{label:Jan,value:10}]},{type:button,id:refresh,label:Refresh,action:refresh}]}. Prefer chart/table nodes over custom SVG/HTML. Use stable ui_id values. mode=replace sends a full tree; mode=patch sends JSON patch ops under /tree or /state. Every input/select/button needs id and action. Use save_artifact only for full custom HTML/JS apps.",
       "parameters": {
         "type": "object",
         "properties": {
