@@ -529,7 +529,22 @@
           var preview = document.createElement("div");
           preview.className = "md-mermaid md-mermaid-nested";
           preview.setAttribute("data-mermaid", "1");
-          preview.innerHTML = '<div class="md-mermaid-label">Mermaid preview</div>';
+          preview.innerHTML =
+            '<div class="md-mermaid-head">' +
+              '<span class="md-mermaid-label">Mermaid preview</span>' +
+              '<button type="button" class="md-mermaid-raw-toggle" aria-expanded="false">Show raw</button>' +
+            '</div>';
+          wrap.classList.add("md-raw-hidden");
+          var rawToggle = preview.querySelector(".md-mermaid-raw-toggle");
+          rawToggle.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var button = e.currentTarget;
+            var showing = wrap.classList.toggle("md-raw-hidden") === false;
+            button.textContent = showing ? "Hide raw" : "Show raw";
+            button.setAttribute("aria-expanded", showing ? "true" : "false");
+            if (showing) wrap.scrollIntoView({ block: "nearest" });
+          });
           nested.forEach(function (diagram) {
             var diagramPre = document.createElement("pre");
             diagramPre.className = "mermaid";

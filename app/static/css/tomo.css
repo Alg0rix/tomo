@@ -1223,13 +1223,31 @@ html.is-rail-collapsed .app-rail-collapse {
   overflow-x: auto;
 }
 .md-mermaid-label {
-  margin-bottom: 8px;
   color: var(--text-faint);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.md-mermaid-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.md-mermaid-raw-toggle {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.md-mermaid-raw-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+.md-code-wrap.md-raw-hidden { display: none; }
 .md-mermaid .mermaid { margin: 0; background: transparent; border: 0; }
 .md-mermaid-error {
   border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));
