@@ -650,6 +650,39 @@
     if (!root) return;
     var nodes = root.querySelectorAll(".md-mermaid pre.mermaid, pre.mermaid");
     if (!nodes.length) return;
+
+    // Keep the Mermaid source available without making users copy it from
+    // the rendered SVG. Nested markdown blocks already provide this control;
+    // add the same control for regular ```mermaid fences as well.
+    var containers = root.querySelectorAll(".md-mermaid");
+    for (var c = 0; c < containers.length; c++) {
+      var container = containers[c];
+      if (container.querySelector(".md-mermaid-raw-toggle")) continue;
+      var sourceNode = container.querySelector("pre.mermaid");
+      if (!sourceNode) continue;
+      var raw = document.createElement("pre");
+      raw.className = "md-mermaid-raw md-raw-hidden";
+      raw.textContent = sourceNode.textContent || "";
+      var head = document.createElement("div");
+      head.className = "md-mermaid-head";
+      head.innerHTML =
+        '<span class="md-mermaid-label">Mermaid preview</span>' +
+        '<button type="button" class="md-mermaid-raw-toggle" aria-expanded="false">Show raw</button>';
+      var rawToggle = head.querySelector(".md-mermaid-raw-toggle");
+      rawToggle.addEventListener("click", function (rawBlock) {
+        return function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var button = e.currentTarget;
+          var showing = rawBlock.classList.toggle("md-raw-hidden") === false;
+          button.textContent = showing ? "Hide raw" : "Show raw";
+          button.setAttribute("aria-expanded", showing ? "true" : "false");
+        };
+      }(raw));
+      container.insertBefore(head, sourceNode);
+      container.appendChild(raw);
+    }
+
     ensureMermaid(function (err, mermaid) {
       if (err || !mermaid) {
         for (var i = 0; i < nodes.length; i++) {

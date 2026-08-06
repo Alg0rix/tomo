@@ -1247,7 +1247,18 @@ html.is-rail-collapsed .app-rail-collapse {
   cursor: pointer;
 }
 .md-mermaid-raw-toggle:hover { color: var(--text); border-color: var(--border-strong); }
-.md-code-wrap.md-raw-hidden { display: none; }
+.md-raw-hidden { display: none; }
+.md-mermaid-raw {
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+}
 .md-mermaid .mermaid { margin: 0; background: transparent; border: 0; }
 .md-mermaid-error {
   border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));
