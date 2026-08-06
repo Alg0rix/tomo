@@ -891,6 +891,10 @@
       return Tomo.upsertTodoPanel(root, data.todos || []);
     }
 
+    if (kind === 'ui' && window.TomoGenerativeUI) {
+      return TomoGenerativeUI.mount(root, data, {});
+    }
+
     if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {
       var answerWrap = body.querySelector('.si-answer');
       if (!answerWrap) {

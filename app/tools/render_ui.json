@@ -1,0 +1,22 @@
+{
+  "id": "render_ui",
+  "name": "Render UI",
+  "description": "Render a safe, interactive declarative UI in the chat. Use for dashboards, forms, tables, charts, diagrams, and structured interactive results. For a full custom app with arbitrary HTML/JS, save an HTML artifact instead.",
+  "backend": "app.runtime.tools.render_ui",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "render_ui",
+      "description": "Render an interactive UI tree in the chat. The tree is declarative JSON, not HTML or JavaScript. Supported nodes: text, markdown, card, stack, grid, badge, divider, table, chart, mermaid, image, link, input, select, button. Use stable ui_id values and mode=patch only when updating an existing UI. Every input/select/button needs an id and action; actions are sent back to you as structured UI action messages. Use save_artifact for arbitrary HTML/JS mini-apps.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ui_id": {"type": "string", "description": "Stable UI instance id (letters, numbers, _, ., :, -)."},
+          "mode": {"type": "string", "enum": ["replace", "patch"], "description": "replace renders the tree; patch reserves the id for future updates."},
+          "tree": {"type": "object", "description": "Root declarative UI node. Containers use children; table uses columns/rows; chart uses data [{label,value}]."}
+        },
+        "required": ["ui_id", "tree"]
+      }
+    }
+  }
+}

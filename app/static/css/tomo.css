@@ -1264,6 +1264,46 @@ html.is-rail-collapsed .app-rail-collapse {
   border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));
 }
 
+/* Generative UI */
+.gen-ui {
+  margin: 0.7em 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+.gen-ui-node { display: flex; flex-direction: column; gap: 10px; }
+.gen-ui-card { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+.gen-ui-stack { gap: 10px; }
+.gen-ui-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.gen-ui-title { color: var(--text); font-size: 14px; font-weight: 700; }
+.gen-ui-description { color: var(--text-dim); font-size: 12px; }
+.gen-ui-text { white-space: pre-wrap; color: var(--text); }
+.gen-ui-badge { display: inline-flex; width: fit-content; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim); font-size: 11px; }
+.gen-ui-badge.success { color: var(--ok, #22c55e); }
+.gen-ui-badge.warning { color: var(--warn, #f59e0b); }
+.gen-ui-divider { width: 100%; border: 0; border-top: 1px solid var(--border); }
+.gen-ui-table-wrap { overflow-x: auto; }
+.gen-ui-table-wrap table { width: 100%; border-collapse: collapse; }
+.gen-ui-table-wrap th, .gen-ui-table-wrap td { padding: 7px 9px; border-bottom: 1px solid var(--border); text-align: left; }
+.gen-ui-table-wrap th { color: var(--text-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.gen-ui-chart { display: flex; flex-direction: column; gap: 7px; }
+.gen-ui-chart-row { display: grid; grid-template-columns: minmax(70px, 0.25fr) 1fr auto; align-items: center; gap: 8px; }
+.gen-ui-chart-label, .gen-ui-chart-value { font-size: 11px; color: var(--text-dim); }
+.gen-ui-chart-value { font-family: var(--font-mono); text-align: right; }
+.gen-ui-chart-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-2); }
+.gen-ui-chart-bar { height: 100%; border-radius: inherit; background: var(--accent); }
+.gen-ui-image { display: block; max-width: 100%; max-height: 420px; border-radius: 7px; object-fit: contain; }
+.gen-ui-link { color: var(--accent); }
+.gen-ui-field { display: flex; flex-direction: column; gap: 5px; }
+.gen-ui-field-label { color: var(--text-dim); font-size: 11px; }
+.gen-ui-field input, .gen-ui-field select { width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; }
+.gen-ui-button { align-self: flex-start; min-height: 32px; padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; cursor: pointer; }
+.gen-ui-button:hover { filter: brightness(1.08); }
+.gen-ui-button.secondary { background: var(--surface-2); color: var(--text); }
+.gen-ui-button:disabled, .gen-ui-field input:disabled, .gen-ui-field select:disabled { cursor: not-allowed; opacity: 0.55; }
+.gen-ui-error { color: var(--danger, #ef4444); font-size: 12px; }
+
 /* Lightbox */
 .md-lightbox {
   position: fixed;

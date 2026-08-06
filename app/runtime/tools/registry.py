@@ -34,6 +34,7 @@ from app.runtime.tools import portal as _portal_backend
 from app.runtime.tools import process as _process_backend
 from app.runtime.tools import read_file as _read_file_backend
 from app.runtime.tools import recall as _recall_backend
+from app.runtime.tools import render_ui as _render_ui_backend
 from app.runtime.tools import register_workplace as _register_workplace_backend
 from app.runtime.tools import remember as _remember_backend
 from app.runtime.tools import runpy as _runpy_backend
@@ -81,6 +82,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "clarify": _clarify_backend.run,
     "forget_memory": _forget_memory_backend.run,
     "recall": _recall_backend.run,
+    "render_ui": _render_ui_backend.run,
     "remember": _remember_backend.run,
     "agent_state": _agent_state_backend.run,
     "save_artifact": _save_artifact_backend.run,

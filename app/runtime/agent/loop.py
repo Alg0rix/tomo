@@ -10,6 +10,7 @@ onto SSE:
 * ``{"kind": "delta", "content": str}``             # streamed text token/chunk
 * ``{"kind": "tool", "tool": str, "args": dict, "call_id": str}``
 * ``{"kind": "tool_result", "tool": str, "result": str, "error": bool, "call_id": str}``
+* ``{"kind": "ui", "ui_id": str, "mode": str, "tree": dict}``
 * ``{"kind": "delegate", "from": str, "to": str, "reason": str,
    "task": str, "parallel_index": int, "parallel_total": int}``
 * ``{"kind": "subagent_start", "agent_id": str, "task": str,
@@ -94,6 +95,7 @@ _READ_ONLY_TOOLS = frozenset(
         "web_fetch",
         "web_search",
         "recall",
+        "render_ui",
         "session_search",
         "list_skills",
         "list_workplaces",
@@ -952,6 +954,12 @@ async def run_turn(
                                 "agent_id": agent_id or "",
                             }
                     yield payload
+                    if call.name == "render_ui" and not err:
+                        from app.runtime.tools.render_ui import parse_result
+
+                        ui_payload = parse_result(text_res)
+                        if ui_payload is not None:
+                            yield {"kind": "ui", **ui_payload}
                 elif call.name == "todo" and not err:
                     # Already yielded (shouldn't happen for todo) — still sync UI.
                     todos = todo_mod.parse_todos_payload(text_res)

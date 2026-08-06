@@ -564,6 +564,17 @@
       turn.appendChild(details);
     }
 
+    function appendGenerativeUI(spec) {
+      if (!spec || !spec.tree || !window.TomoGenerativeUI) return;
+      TomoGenerativeUI.mount(turn, spec, {
+        send: function (action) {
+          var body = '[UI action]\n' + JSON.stringify(action);
+          if (chatHandle && chatHandle.send) return chatHandle.send(body);
+          return null;
+        },
+      });
+    }
+
     function ensureSwarmCard() {
       if (swarmCard) return swarmCard;
       swarmCard = document.createElement('div');
@@ -894,6 +905,23 @@
       if (e.type === 'subagent_done') {
         var p = e.params || {};
         markSwarmDone(keyForEntry(e, e.agent_id || ''), p.status || 'ok');
+        return;
+      }
+
+      if (e.type === 'ui') {
+        var uiAid = e.agent_id || '';
+        if (subagentSet.has(uiAid)) {
+          bufferEvent(keyForEntry(e, uiAid), 'ui', e.params || {});
+          return;
+        }
+        var spec = e.params || null;
+        if (!spec || !spec.tree) {
+          try { spec = JSON.parse(e.content || '{}'); } catch (_) { spec = null; }
+        }
+        if (spec) {
+          spec.agent_id = e.agent_id || '';
+          appendGenerativeUI(spec);
+        }
         return;
       }
 

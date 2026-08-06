@@ -1088,6 +1088,7 @@
         setSending: function (v) { sending = !!v; syncGeneratingUi(); },
         getSending: function () { return sending; },
         messageQueue: messageQueue,
+        sendMessage: send,
         currentSessionId: currentSessionId,
         onBindHitl: function (stream, turnEl, onEvent) {
           bindHitl(stream, turnEl, onEvent);

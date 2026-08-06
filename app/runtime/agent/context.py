@@ -220,6 +220,9 @@ def build_system_prompt(
         arts_block = _artifacts_prompt_section(agent_id)
         if arts_block:
             parts.append(arts_block)
+        ui_block = _ui_prompt_section(agent_id)
+        if ui_block:
+            parts.append(ui_block)
 
     try:
         from app.runtime.memory.curated import MEMORY_GUIDANCE, prompt_block
@@ -246,6 +249,27 @@ def _agent_has_memory_tool(agent_id: str | None) -> bool:
         return "memory" in store.get_enabled_tool_ids(agent_id)
     except Exception:
         return False
+
+
+def _ui_prompt_section(agent_id: str | None) -> str:
+    """Guidance for choosing declarative UI over raw HTML in chat."""
+    try:
+        from app.services import store
+
+        if agent_id and "render_ui" not in store.get_enabled_tool_ids(agent_id):
+            return ""
+    except Exception:
+        return ""
+    return (
+        "## Generative UI\n\n"
+        "When the user benefits from an interactive form, dashboard, table, chart, "
+        "diagram, or structured result, use **render_ui**. It accepts a safe "
+        "declarative tree and supports text, markdown, card, stack, grid, table, "
+        "chart, mermaid, image, link, input, select, and button nodes. Do not put "
+        "HTML or JavaScript in the tree. Give each interactive node a stable id and "
+        "action; UI actions return to you as a structured `[UI action]` message. "
+        "For a full custom HTML/JS app, use **save_artifact** instead."
+    )
 
 
 def _skills_prompt_section(agent_id: str) -> str:

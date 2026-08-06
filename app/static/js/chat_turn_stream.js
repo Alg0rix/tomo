@@ -26,9 +26,11 @@
     var skipTools = 0;
     var skipResults = 0;
     var skipThinking = 0;
+    var skipUi = 0;
     var toolSeen = 0;
     var resultSeen = 0;
     var thinkingSeen = 0;
+    var uiSeen = 0;
 
     if (!isLive) {
       skipTools = ctx.turn.querySelectorAll('.tool').length;
@@ -36,6 +38,7 @@
         if (c._res && c._res.textContent) skipResults++;
       });
       skipThinking = ctx.turn.querySelectorAll('.si-think').length;
+      skipUi = ctx.turn.querySelectorAll('.gen-ui[data-ui-id]').length;
     }
 
     var subagentSet = new Set();
@@ -149,6 +152,16 @@
       details.innerHTML = '<summary>Reasoning</summary><pre></pre>';
       details.querySelector('pre').textContent = content;
       ctx.turn.appendChild(details);
+    }
+
+    function appendGenerativeUI(spec) {
+      if (!spec || !spec.tree || !window.TomoGenerativeUI) return;
+      var sendAction = function (action) {
+        var body = '[UI action]\n' + JSON.stringify(action);
+        if (typeof ctx.sendMessage === 'function') return ctx.sendMessage(body);
+        return null;
+      };
+      TomoGenerativeUI.mount(ctx.turn, spec, { send: sendAction });
     }
 
     function errorBubble(bodyHtml) {
@@ -839,6 +852,25 @@
         if (resultSeen <= skipResults) return;
       }
       applyToolResult(d);
+    });
+
+    es.addEventListener('ui', function (e) {
+      bumpActivity();
+      var d = JSON.parse(e.data || '{}');
+      if (!isLive) sawTurnEvent = true;
+      if (isSubagentEvent(d)) {
+        var ik = instanceKeyFrom(d, d.agent_id);
+        if (isLive) { bufferEvent(ik, 'ui', d); }
+        bumpSwarmProgress(ik);
+        return;
+      }
+      if (!isLive) {
+        uiSeen++;
+        if (uiSeen <= skipUi) return;
+      }
+      adoptAgent(d.agent_id, d.agent);
+      appendGenerativeUI(d);
+      ctx.atBottom();
     });
 
     es.addEventListener('todos', function (e) {

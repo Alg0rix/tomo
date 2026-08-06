@@ -73,6 +73,8 @@ def sse_summary(name: str, data: dict[str, Any]) -> str:
         )
     if name == "heartbeat":
         return "ok"
+    if name == "ui":
+        return f"ui_id={data.get('ui_id')} mode={data.get('mode', 'replace')}"
     try:
         return json.dumps(data, separators=(",", ":"))[:200]
     except TypeError:
@@ -307,6 +309,41 @@ def map_loop_event(
                     }
                 )
             )
+    elif kind == "ui":
+        seq += 1
+        payload = {
+            "ui_id": ev.get("ui_id") or "",
+            "mode": ev.get("mode") or "replace",
+            "tree": ev.get("tree") or {},
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
+        payload = _stamp_dcid(payload, ev)
+        chunks.append(fmt_sse({"event": "ui", "data": payload, "seq": seq}))
+        entries.append(
+            _stamp_dcid(
+                {
+                    "type": "ui",
+                    "content": json.dumps(
+                        {
+                            "ui_id": payload["ui_id"],
+                            "mode": payload["mode"],
+                            "tree": payload["tree"],
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    "params": {
+                        "ui_id": payload["ui_id"],
+                        "mode": payload["mode"],
+                        "tree": payload["tree"],
+                    },
+                    "agent_id": agent_id,
+                    "ts": now(),
+                },
+                ev,
+            )
+        )
     elif kind == "final":
         content = ev["content"] or ""
         # Models sometimes echo internal swarm notes; never show/persist those.
