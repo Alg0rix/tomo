@@ -15,7 +15,10 @@ from app.runtime.html_md import HtmlToMarkdown
 _TIMEOUT = 15.0
 _MAX_CHARS = 100_000
 _MAX_REDIRECTS = 5
-_HTML_CONVERTER_MAX_INPUT = 250_000
+# Keep the DOM-to-Markdown walker away from pages with large client-side
+# bundles. Mermaid's own Usage page is ~159 KB and is already pathological
+# for the converter, so the bounded text extractor must handle it.
+_HTML_CONVERTER_MAX_INPUT = 100_000
 
 _HTML_CT = re.compile(r"text/html|application/xhtml\+xml", re.I)
 _LOOKS_LIKE_HTML = re.compile(
