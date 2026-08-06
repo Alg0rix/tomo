@@ -1222,6 +1222,14 @@ html.is-rail-collapsed .app-rail-collapse {
   background: color-mix(in srgb, var(--surface) 70%, transparent);
   overflow-x: auto;
 }
+.md-mermaid-label {
+  margin-bottom: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .md-mermaid .mermaid { margin: 0; background: transparent; border: 0; }
 .md-mermaid-error {
   border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));

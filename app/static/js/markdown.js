@@ -516,6 +516,30 @@
       }
       pre.parentNode.insertBefore(wrap, pre);
 
+      // Models sometimes wrap a copy-pasteable Mermaid document in an outer
+      // ```markdown fence. Keep that source block intact, but also expose the
+      // nested diagram as a preview so it renders in chat as users expect.
+      if (/^markdown$/i.test(lang)) {
+        var source = (pre.querySelector("code") || pre).textContent || "";
+        var nestedRe = /(?:^|\n)[ \t]*```mermaid[^\n]*\n([\s\S]*?)\n[ \t]*```(?=\n|$)/gi;
+        var nested = [];
+        var match;
+        while ((match = nestedRe.exec(source))) nested.push(match[1]);
+        if (nested.length) {
+          var preview = document.createElement("div");
+          preview.className = "md-mermaid md-mermaid-nested";
+          preview.setAttribute("data-mermaid", "1");
+          preview.innerHTML = '<div class="md-mermaid-label">Mermaid preview</div>';
+          nested.forEach(function (diagram) {
+            var diagramPre = document.createElement("pre");
+            diagramPre.className = "mermaid";
+            diagramPre.textContent = diagram;
+            preview.appendChild(diagramPre);
+          });
+          wrap.parentNode.insertBefore(preview, wrap);
+        }
+      }
+
       var bar = document.createElement("div");
       bar.className = "md-code-bar";
       bar.innerHTML =
