@@ -1,4 +1,4 @@
-/* dashboard.js — chat-home composer + overview stats. */
+/* dashboard.js — chat-home composer + dashboard overview. */
 (function () {
   "use strict";
   function esc(s) { return Tomo.escapeHtml(s); }
@@ -8,6 +8,10 @@
   const sendBtn = document.getElementById('homeChatSend');
   const coordNameEl = document.getElementById('homeCoordName');
   const recentHome = document.getElementById('homeRecentChats');
+  const promptChips = document.querySelectorAll('.prompt-chip');
+  const agentRosterCount = document.getElementById('agentRosterCount');
+  const scheduleCount = document.getElementById('scheduleCount');
+  const schedulesHome = document.getElementById('dashboardSchedules');
   let coordinatorId = null;
 
   function resizeHomeInput() {
@@ -126,16 +130,32 @@
     syncSend();
   }
 
+  promptChips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      if (!input) return;
+      input.value = chip.dataset.prompt || '';
+      resizeHomeInput();
+      syncSend();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  });
+
   function renderHomeRecent(sessions) {
     if (!recentHome) return;
     if (!sessions.length) {
-      recentHome.innerHTML = '<div class="empty">No chats yet — send from the left</div>';
+      recentHome.innerHTML = '<div class="dashboard-empty-state dashboard-empty-state-compact"><div><strong>No chats yet</strong><p>Start with the composer or open chat history.</p></div><a class="btn ghost sm" href="/sessions?swarm=1">Open chat ↗</a></div>';
       return;
     }
     recentHome.innerHTML = sessions.slice(0, 6).map(function (s) {
-      return '<a class="chat-home-recent-row" href="/sessions?s=' + encodeURIComponent(s.id) + '">' +
-        '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') + '</div>' +
-        '<div class="desc">' + esc(s.agent_id || '') + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
+      var title = s.title || 'Conversation';
+      var kind = s.is_swarm ? 'Swarm' : (s.agent_id || 'Tomo');
+      var marker = String(kind).slice(0, 1).toUpperCase();
+      return '<a class="chat-home-recent-row" role="listitem" aria-label="Open ' + esc(title) + '" href="/sessions?s=' + encodeURIComponent(s.id) + '">' +
+        '<span class="chat-home-recent-mark' + (s.is_swarm ? ' swarm' : '') + '" aria-hidden="true">' + esc(marker) + '</span>' +
+        '<div class="meta"><div class="title">' + esc(title) + '</div>' +
+        '<div class="desc"><span class="chat-home-recent-kind">' + esc(kind) + '</span><span>' + esc(String(s.message_count || 0)) + ' msgs</span></div></div>' +
+        '<span class="chat-home-recent-arrow" aria-hidden="true">↗</span>' +
         '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></a>';
     }).join('');
   }
@@ -158,32 +178,46 @@
       fillHomeWorkplaceSelect(d.workplaces || []);
     }
     const s = d.stats || {};
-    set('s-agents', s.enabled_agent_count, s.agent_count, 'agents');
-    set('s-sessions', s.session_count, null, 'sessions');
-    set('s-tools', s.tool_count, null, 'tools');
-    set('s-skills', s.skill_count, null, 'skills');
-    var wp = (d.workplaces || []).length;
+    set('s-agents', s.enabled_agent_count, s.agent_count, null);
+    set('s-sessions', s.session_count, null, null);
+    set('s-tools', s.tool_count, null, null);
+    set('s-skills', s.skill_count, null, null);
+    var wp = s.workplace_count != null ? s.workplace_count : (d.workplaces || []).length;
     set('s-workplaces', wp, null, 'connected');
     renderAgents(d.recent_agents || []);
-    renderSessions(d.recent_sessions || []);
+    renderSchedules(d.schedules || []);
   }
   function set(id, v, total, unit) {
     const el = document.getElementById(id); if (!el) return;
-    el.innerHTML = v + (total != null ? '<span class="unit">/' + total + ' ' + unit + '</span>' : (unit ? '<span class="unit"> ' + unit + '</span>' : ''));
+    el.innerHTML = v + (total != null ? '<span class="unit">/' + total + (unit ? ' ' + unit : '') + '</span>' : (unit ? '<span class="unit"> ' + unit + '</span>' : ''));
   }
   function renderAgents(agents) {
     const box = document.getElementById('recentAgents'); if (!box) return;
-    if (!agents.length) { box.innerHTML = '<div class="empty">No agents yet</div>'; return; }
+    if (agentRosterCount) agentRosterCount.textContent = agents.length ? agents.length + ' shown' : '';
+    if (!agents.length) {
+      box.innerHTML = '<div class="dashboard-empty-state"><div><strong>No agents yet</strong><p>Add a specialist to make the swarm more useful.</p></div><a class="btn ghost sm" href="/agents">Add agent ↗</a></div>';
+      return;
+    }
     box.innerHTML = agents.map(function (a) {
       const badge = a.busy ? '<span class="badge amber"><span class="pulse"></span>busy</span>' : (a.enabled ? '<span class="badge ok"><span class="pulse"></span>online</span>' : '<span class="badge muted">off</span>');
-      return '<a class="row" href="/agents/' + encodeURIComponent(a.id) + '"><div class="avatar" style="background:' + Tomo.avatarColor(a.id) + '">' + esc((a.name || a.id).slice(0, 1).toUpperCase()) + '</div><div class="meta"><div class="title">' + esc(a.name) + '</div><div class="desc">' + esc(Tomo.truncate(a.description || '—', 52)) + '</div></div>' + badge + '</a>';
+      const role = a.role || (a.enabled ? 'Available specialist' : 'Disabled');
+      return '<a class="row dashboard-agent-row" role="listitem" href="/agents/' + encodeURIComponent(a.id) + '"><div class="avatar" style="background:' + Tomo.avatarColor(a.id) + '">' + esc((a.name || a.id).slice(0, 1).toUpperCase()) + '</div><div class="meta"><div class="title">' + esc(a.name) + '<span class="agent-role">' + esc(role) + '</span></div><div class="desc">' + esc(Tomo.truncate(a.description || '—', 68)) + '</div></div><div class="dashboard-agent-end">' + badge + '<span class="dashboard-row-arrow" aria-hidden="true">↗</span></div></a>';
     }).join('');
   }
-  function renderSessions(sessions) {
-    const box = document.getElementById('recentSessions'); if (!box) return;
-    if (!sessions.length) { box.innerHTML = '<div class="empty">No sessions yet</div>'; return; }
-    box.innerHTML = sessions.map(function (s) {
-      return '<a class="row" href="/sessions?s=' + encodeURIComponent(s.id) + '"><div class="meta"><div class="title">' + esc(s.title) + '</div><div class="desc">' + esc(s.agent_id) + ' · ' + s.message_count + ' msgs</div></div><span class="faint mono" style="font-size:11px">' + esc(s.id) + '</span></a>';
+
+  function renderSchedules(schedules) {
+    if (!schedulesHome) return;
+    var active = (schedules || []).filter(function (s) {
+      return s.enabled && s.state !== 'completed';
+    });
+    if (scheduleCount) scheduleCount.textContent = active.length ? active.length + ' active' : 'none active';
+    if (!active.length) {
+      schedulesHome.innerHTML = '<div class="dashboard-empty-state"><div><strong>No active automations</strong><p>Schedule recurring work when you are ready.</p></div><a class="btn ghost sm" href="/scheduler">Create one ↗</a></div>';
+      return;
+    }
+    schedulesHome.innerHTML = active.slice(0, 4).map(function (s) {
+      var when = s.next_run ? (Tomo.ts ? Tomo.ts(s.next_run) : '') : 'Next run not set';
+      return '<a class="dashboard-schedule-row" role="listitem" href="/scheduler"><span class="dashboard-schedule-icon" aria-hidden="true">↻</span><span class="meta"><span class="title">' + esc(s.name || 'Scheduled task') + '</span><span class="desc"><span>' + esc(s.agent_id || 'Tomo') + '</span><span>· ' + esc(s.schedule_display || s.cron || 'Recurring run') + '</span></span></span><span class="dashboard-schedule-when">' + esc(when) + '</span></a>';
     }).join('');
   }
   load();

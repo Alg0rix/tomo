@@ -1,53 +1,49 @@
-{# Hallmark · Split Studio — composer (ask) | recent (proof) #}
+{# Dashboard composer — the primary action on the home screen. #}
 <section class="chat-home" aria-label="Start a chat">
-  <div class="chat-home-split">
-    <div class="chat-home-ask">
-      <p class="chat-home-kicker">友 · Tomo</p>
-      <h1 class="chat-home-title">Message the swarm</h1>
-      <p class="chat-home-sub">Ask anything. Tomo routes to the right agent — or @mention one.</p>
+  <div class="chat-home-ask">
+    <div class="chat-home-eyebrow"><span>Start with a task</span><span class="chat-home-status"><span class="status-dot on" aria-hidden="true"></span> Swarm ready</span></div>
+    <h1 class="chat-home-title">Message the swarm</h1>
+    <p class="chat-home-sub">Ask anything. Tomo routes to the right agent — or @mention one.</p>
 
-      <form class="chat-home-form" id="homeChatForm" autocomplete="off">
+    <form class="chat-home-form" id="homeChatForm" autocomplete="off">
+      <div class="chat-home-composer">
         <label class="chat-home-label" for="homeChatInput">New chat</label>
-        <div class="chat-home-composer">
-          <textarea
-            id="homeChatInput"
-            class="chat-home-input"
-            rows="3"
-            placeholder="Message Tomo…"
-            aria-label="Message Tomo"
-          ></textarea>
-          <div class="chat-home-composer-bar">
-            <div class="chat-home-route-wrap">
-              <p class="chat-home-route" id="homeChatRoute">
-                via <strong id="homeCoordName">Tomo</strong>
-              </p>
-              <label class="chat-home-wp">
-                <span class="faint">Folder</span>
-                <select id="homeWorkplace" class="input sm" title="Default: Tomo work dir. Pick a local workplace for a fixed root path.">
-                  <option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>
-                </select>
-                <button type="button" class="btn ghost sm" id="homeBrowseFolder" title="Browse server folders">Browse…</button>
-              </label>
-            </div>
-            <button type="submit" class="btn primary chat-home-send" id="homeChatSend" disabled>
-              Send
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M5 12h14M13 6l6 6-6 6"/>
-              </svg>
-            </button>
+        <textarea
+          id="homeChatInput"
+          class="chat-home-input"
+          rows="3"
+          placeholder="Message Tomo…"
+          aria-label="Message Tomo"
+        ></textarea>
+        <div class="chat-home-composer-bar">
+          <div class="chat-home-route-wrap">
+            <p class="chat-home-route" id="homeChatRoute">
+              via <strong id="homeCoordName">Tomo</strong>
+              <span class="chat-home-route-hint">Enter to send · Shift+Enter for a new line</span>
+            </p>
+            <label class="chat-home-wp">
+              <span class="faint">Folder</span>
+              <select id="homeWorkplace" class="input sm" title="Default: Tomo work dir. Pick a local workplace for a fixed root path.">
+                <option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>
+              </select>
+            </label>
+            <button type="button" class="btn ghost sm" id="homeBrowseFolder" title="Browse server folders">Browse…</button>
           </div>
+          <button type="submit" class="btn primary chat-home-send" id="homeChatSend" disabled>
+            Send
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6"/>
+            </svg>
+          </button>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
 
-    <aside class="chat-home-proof" aria-label="Recent chats">
-      <div class="chat-home-recent-head">
-        <span>Recent</span>
-        <a class="chat-home-all" href="/sessions">All chats</a>
-      </div>
-      <div id="homeRecentChats" class="chat-home-recent-list">
-        <div class="empty">Loading…</div>
-      </div>
-    </aside>
+    <div class="chat-home-prompts" aria-label="Prompt starters">
+      <span class="chat-home-prompts-label">Try asking</span>
+      <button class="prompt-chip" type="button" data-prompt="Plan a new project and break it into clear next steps">Plan a project</button>
+      <button class="prompt-chip" type="button" data-prompt="Inspect this codebase and summarize the most important risks">Inspect a codebase</button>
+      <button class="prompt-chip" type="button" data-prompt="Research this topic and save a concise brief with sources">Research a topic</button>
+    </div>
   </div>
 </section>

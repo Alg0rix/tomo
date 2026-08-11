@@ -130,13 +130,19 @@
       })
       .join('');
 
-    // Cell 12px + gap 3px = 15px per week column
-    var cellStep = 15;
+    // Keep the activity grid legible on desktop while preserving the compact
+    // card on narrow screens.
+    var compact = window.matchMedia && window.matchMedia('(max-width: 899px)').matches;
+    var cellSize = compact ? 6 : 10;
+    var cellGap = compact ? 2 : 3;
+    var cellStep = cellSize + cellGap;
     var cols = Math.max(1, Math.ceil(days.length / 7));
-    var gridW = cols * 12 + Math.max(0, cols - 1) * 3;
+    var gridW = cols * cellSize + Math.max(0, cols - 1) * cellGap;
     var monthsHtml = (hm.months || [])
       .map(function (m) {
-        var col = Math.floor((m.index || 0) / 7);
+        // A month can begin near the end of a week column. Rounding keeps
+        // adjacent labels separated instead of rendering “FebMar”.
+        var col = Math.round((m.index || 0) / 7);
         var left = col * cellStep;
         return (
           '<span class="cp-heat-month" style="left:' +
