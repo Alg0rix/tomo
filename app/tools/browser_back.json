@@ -1,0 +1,26 @@
+{
+  "id": "browser_back",
+  "name": "Browser Back",
+  "description": "Go back in the tab history.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_back",
+      "description": "History back in an authorized tab.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

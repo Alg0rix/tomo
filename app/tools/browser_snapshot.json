@@ -1,0 +1,27 @@
+{
+  "id": "browser_snapshot",
+  "name": "Browser Snapshot",
+  "description": "Capture an accessibility-oriented snapshot of a page with element refs.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_snapshot",
+      "description": "Take a semantic snapshot of an authorized tab (interactive elements with refs e1, e2, \u2026). Use refs from this snapshot for click/type. Re-snapshot after navigation or STALE_ELEMENT.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Virtual tab id from browser_tabs."
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

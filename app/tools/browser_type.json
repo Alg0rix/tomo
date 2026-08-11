@@ -1,0 +1,41 @@
+{
+  "id": "browser_type",
+  "name": "Browser Type",
+  "description": "Type text into an interactive browser element.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_type",
+      "description": "Type text into an element (ref from snapshot). Set submit=true to press Enter after typing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "submit": {
+            "type": "boolean",
+            "description": "Press Enter after typing (default false)."
+          },
+          "snapshot_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "ref",
+          "text"
+        ]
+      }
+    }
+  }
+}

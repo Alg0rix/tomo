@@ -591,6 +591,42 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ON execution_snippets(created_at DESC)"
         )
 
+    # Browser control audit log (client tools; redacted args only).
+    table_names = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "browser_audit" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS browser_audit (
+                id                   TEXT PRIMARY KEY,
+                user_id              TEXT NOT NULL DEFAULT '',
+                conversation_id      TEXT NOT NULL DEFAULT '',
+                agent_id             TEXT NOT NULL DEFAULT '',
+                browser_session_id   TEXT NOT NULL DEFAULT '',
+                tab_id               TEXT NOT NULL DEFAULT '',
+                domain               TEXT NOT NULL DEFAULT '',
+                tool                 TEXT NOT NULL DEFAULT '',
+                arguments_meta_json  TEXT NOT NULL DEFAULT '{}',
+                status               TEXT NOT NULL DEFAULT '',
+                error_code           TEXT NOT NULL DEFAULT '',
+                duration_ms          REAL NOT NULL DEFAULT 0,
+                created_at           REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_audit_user "
+            "ON browser_audit(user_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_audit_session "
+            "ON browser_audit(conversation_id, created_at DESC)"
+        )
+
     from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts
 
     rebuild_knowledge_fts(conn)

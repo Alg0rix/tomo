@@ -124,3 +124,13 @@ BRAND_SUBTITLE = "友達 · agent swarm"
 # --- Feature flags ---
 # Eval / evaluator UI + API are deferred (roadmap); keep seed/code, hide surface.
 EVAL_UI_ENABLED = _env_bool("TOMO_EVAL_UI", default=False)
+
+# --- Browser Control (Chrome extension as client tool executor) ---
+# Set after loading the unpacked extension once (chrome://extensions → ID).
+# Required for chrome.runtime.sendMessage from the Tomo web app.
+BROWSER_EXTENSION_ID = os.environ.get("TOMO_BROWSER_EXTENSION_ID", "").strip()
+# Optional docs / download link shown when the extension is missing.
+BROWSER_EXTENSION_DOWNLOAD_URL = os.environ.get(
+    "TOMO_BROWSER_EXTENSION_DOWNLOAD_URL",
+    "",
+).strip()

@@ -1121,9 +1121,34 @@ class Store:
         enabled = {t["id"]: bool(t.get("enabled")) for t in rows}
         self.set_agent_tools(agent_id, enabled)
 
-    def get_agent_openai_tools(self, agent_id: str) -> list[dict[str, Any]]:
-        """OpenAI schemas filtered to tools enabled for ``agent_id``."""
-        return get_openai_tools(self.get_enabled_tool_ids(agent_id))
+    def get_agent_openai_tools(
+        self, agent_id: str, *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """OpenAI schemas filtered to tools enabled for ``agent_id``.
+
+        Browser client tools are only advertised when ``user_id`` has a live
+        browser extension session (dynamic tool registration).
+        """
+        tools = get_openai_tools(self.get_enabled_tool_ids(agent_id))
+        try:
+            from app.runtime.browser import filter_tools_for_browser, get_gateway
+
+            gw = get_gateway()
+            uid = (user_id or "").strip()
+            connected = bool(uid and gw.is_connected(uid))
+            caps = gw.capabilities_for_user(uid) if uid else set()
+            return filter_tools_for_browser(
+                tools, connected=connected, capabilities=caps
+            )
+        except Exception:
+            # Fail closed: hide browser tools if gateway unavailable.
+            from app.runtime.browser.tools_meta import BROWSER_TOOL_NAMES
+
+            return [
+                t
+                for t in tools
+                if (t.get("function") or {}).get("name") not in BROWSER_TOOL_NAMES
+            ]
 
     def get_agent_skills(self, agent_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -1323,6 +1348,43 @@ class Store:
             return ex.search_execution_snippets(
                 self._conn, query, session_id=session_id, limit=limit
             )
+
+    # -- browser control audit -------------------------------------------
+    def append_browser_audit(self, row: dict[str, Any]) -> None:
+        """Insert a redacted browser tool execution row (best-effort)."""
+        import json as _json
+
+        with self._lock:
+            meta = row.get("arguments_meta") or {}
+            try:
+                meta_json = _json.dumps(meta, default=str)
+            except Exception:
+                meta_json = "{}"
+            self._conn.execute(
+                """
+                INSERT INTO browser_audit (
+                    id, user_id, conversation_id, agent_id, browser_session_id,
+                    tab_id, domain, tool, arguments_meta_json, status,
+                    error_code, duration_ms, created_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(row.get("id") or ""),
+                    str(row.get("user_id") or ""),
+                    str(row.get("conversation_id") or ""),
+                    str(row.get("agent_id") or ""),
+                    str(row.get("browser_session_id") or ""),
+                    str(row.get("tab_id") or ""),
+                    str(row.get("domain") or ""),
+                    str(row.get("tool") or ""),
+                    meta_json,
+                    str(row.get("status") or ""),
+                    str(row.get("error_code") or ""),
+                    float(row.get("duration_ms") or 0),
+                    float(row.get("created_at") or time.time()),
+                ),
+            )
+            self._conn.commit()
 
 
 store = Store()

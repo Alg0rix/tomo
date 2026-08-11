@@ -1,0 +1,33 @@
+{
+  "id": "browser_extract",
+  "name": "Browser Extract",
+  "description": "Extract readable text content from the page.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_extract",
+      "description": "Extract main readable text from an authorized tab (not full HTML).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Optional element ref to extract from."
+          },
+          "snapshot_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from .approvals import router as approvals_router
+from .browser import router as browser_router
 from .connector import router as connector_router
 from .openai_compat import router as openai_compat_router
 from .platform import router as platform_router
@@ -14,6 +15,7 @@ router.include_router(rest_router)
 router.include_router(platform_router)
 router.include_router(stream_router)
 router.include_router(connector_router)
+router.include_router(browser_router)
 router.include_router(approvals_router)
 router.include_router(openai_compat_router)
 

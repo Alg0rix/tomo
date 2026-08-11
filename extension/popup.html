@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tomo Browser</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">Tomo Browser</div>
+    <div class="sub">Tabs Tomo may control</div>
+  </header>
+
+  <section class="mode">
+    <label class="mode-row">
+      <input type="checkbox" id="allowAll" checked />
+      <span>
+        <strong>Control all tabs</strong>
+        <span class="hint">Saved permanently — stays on after you close this popup</span>
+      </span>
+    </label>
+  </section>
+
+  <main>
+    <div id="listHint" class="list-hint"></div>
+    <div id="list" class="list">Loading…</div>
+  </main>
+  <footer>
+    <button type="button" id="resyncAll" class="primary">Resync all tabs</button>
+    <button type="button" id="authActive" class="ghost">Allow this tab only</button>
+    <button type="button" id="refresh" class="ghost">Refresh list</button>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

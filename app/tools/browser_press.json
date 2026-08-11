@@ -1,0 +1,38 @@
+{
+  "id": "browser_press",
+  "name": "Browser Press",
+  "description": "Press a keyboard key in an authorized browser tab.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_press",
+      "description": "Press a key (e.g. Enter, Escape, Tab, ArrowDown) in the tab. Optionally focus a ref first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Key name (Enter, Escape, Tab, \u2026)."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Optional element to focus first."
+          },
+          "snapshot_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "key"
+        ]
+      }
+    }
+  }
+}

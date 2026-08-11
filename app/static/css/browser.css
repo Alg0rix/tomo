@@ -1,0 +1,222 @@
+/* Browser Control — composer chip + popover (no floating HUD).
+ * Stack: standard CSS (not Tailwind).
+ */
+
+/* ── Status chip (in .composer-meta) ─────────────────────────────── */
+.browser-status-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.browser-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  background: color-mix(in srgb, var(--surface-2, #222) 80%, transparent);
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.95;
+  max-width: min(200px, 42vw);
+  line-height: 1.2;
+}
+.browser-status-chip:hover {
+  border-color: color-mix(in srgb, var(--accent, #3d8bfd) 40%, var(--border));
+}
+.browser-status-chip:focus-visible {
+  outline: 2px solid var(--accent, #3d8bfd);
+  outline-offset: 2px;
+}
+.browser-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6b7280;
+  flex-shrink: 0;
+}
+.browser-status-chip.is-on .browser-status-dot { background: #3ecf8e; }
+.browser-status-chip.is-live {
+  border-color: rgba(61, 139, 253, 0.45);
+  color: #9ec9ff;
+  background: rgba(61, 139, 253, 0.12);
+}
+.browser-status-chip.is-live .browser-status-dot {
+  background: #3d8bfd;
+  animation: browserDotPulse 1.1s ease-in-out infinite;
+}
+.browser-status-chip.is-warn .browser-status-dot { background: #e6b84d; }
+.browser-status-chip.is-off { opacity: 0.55; }
+.browser-status-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes browserDotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.75; }
+}
+
+/* ── Popover anchored to chip (opens upward) ─────────────────────── */
+.browser-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 90;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(360px, 50vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.65rem 0.75rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, rgba(255,255,255,0.14));
+  background: color-mix(in srgb, var(--surface, #1a1d26) 96%, transparent);
+  box-shadow: var(--shadow-2, 0 12px 40px rgba(0,0,0,0.35));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-size: 0.85rem;
+}
+.browser-popover.hidden,
+.browser-popover[hidden] {
+  display: none !important;
+}
+
+.browser-panel-inner.is-controlling { border-radius: 8px; }
+.browser-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+}
+.browser-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.browser-dot.ok { background: #3ecf8e; box-shadow: 0 0 6px #3ecf8e88; }
+.browser-dot.warn { background: #e6b84d; box-shadow: 0 0 6px #e6b84d66; }
+.browser-dot.err { background: #e06c75; box-shadow: 0 0 6px #e06c7566; }
+.browser-dot.live {
+  background: #3d8bfd;
+  box-shadow: 0 0 8px #3d8bfd99;
+  animation: browserDotPulse 1.1s ease-in-out infinite;
+}
+.browser-live-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 0 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(61, 139, 253, 0.12);
+  border: 1px solid rgba(61, 139, 253, 0.28);
+  font-size: 0.82rem;
+}
+.browser-live-banner strong { display: block; font-weight: 650; }
+.browser-live-pulse {
+  width: 8px;
+  height: 8px;
+  margin-top: 0.35rem;
+  border-radius: 50%;
+  background: #3d8bfd;
+  flex-shrink: 0;
+  animation: browserDotPulse 1.1s ease-in-out infinite;
+}
+.browser-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+  margin: 0.35rem 0 0.2rem;
+}
+.browser-tab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.browser-tab-list li {
+  padding: 0.28rem 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.05));
+}
+.browser-tab-list li:last-child { border-bottom: 0; }
+.browser-tab-title {
+  display: block;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-tab-url {
+  display: block;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+.browser-muted {
+  opacity: 0.65;
+  margin: 0.25rem 0;
+  line-height: 1.4;
+}
+.browser-muted code { font-size: 0.78em; }
+
+/* ── Chat tool cards for browser_* ───────────────────────────────── */
+.turn .tool.is-browser {
+  --tool-rail: #3d8bfd;
+}
+.turn .tool.is-browser.loading {
+  --tool-rail: #3d8bfd;
+  background: rgba(61, 139, 253, 0.06);
+}
+.turn .tool.is-browser .tbrowser-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8ec5ff;
+  background: rgba(61, 139, 253, 0.16);
+  border: 1px solid rgba(61, 139, 253, 0.3);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  flex-shrink: 0;
+}
+.turn .tool.is-browser.loading .tname {
+  color: #9ec9ff;
+}
+.si-tag.tool.browser {
+  color: #8ec5ff;
+  background: rgba(61, 139, 253, 0.16);
+  border-color: rgba(61, 139, 253, 0.3);
+}
+.si-item.si-tool.is-browser.running .si-card {
+  border-color: rgba(61, 139, 253, 0.25);
+}
+
+/* Legacy: kill any leftover fixed HUD nodes */
+.tomo-browser-hud { display: none !important; }
+
+@media (max-width: 760px) {
+  .browser-status-chip { max-width: 120px; }
+  .browser-popover {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(300px, calc(100vw - 24px));
+  }
+}

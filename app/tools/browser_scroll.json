@@ -1,0 +1,41 @@
+{
+  "id": "browser_scroll",
+  "name": "Browser Scroll",
+  "description": "Scroll the page or an element.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_scroll",
+      "description": "Scroll in a tab. direction: up|down|left|right. Optional ref to scroll an element into view.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "description": "up, down, left, or right (default down)."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Optional element to scroll into view."
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Pixel amount (default 600)."
+          },
+          "snapshot_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

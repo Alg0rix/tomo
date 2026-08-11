@@ -1,0 +1,38 @@
+{
+  "id": "browser_select",
+  "name": "Browser Select",
+  "description": "Select an option in a select/combobox element.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_select",
+      "description": "Choose an option by value or label on a select element (ref from snapshot).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "Option value or visible label."
+          },
+          "snapshot_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "ref",
+          "value"
+        ]
+      }
+    }
+  }
+}

@@ -132,8 +132,14 @@ img { max-width: 100%; display: block; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100vh; height: 100dvh;
-  position: sticky; top: 0;
+  /* Full viewport column so margin-top:auto on the foot pins to bottom */
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  position: sticky;
+  top: 0;
+  align-self: stretch;
   z-index: 40;
   background: color-mix(in srgb, var(--surface) 92%, #000 8%);
   border-right: 1px solid var(--border);
@@ -230,14 +236,17 @@ button.app-rail-item.active { color: var(--accent); }
   min-width: 0;
 }
 
+/* Grows between nav and footer (Chat recents only). On other pages the
+   footer uses margin-top:auto alone to pin to the bottom of the rail. */
 .app-rail-recents {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 8px var(--rail-pad) 0;
   border-top: 1px solid var(--border);
   margin-top: 6px;
+  overflow: hidden;
 }
 .app-rail-section-label {
   font-family: var(--font-mono);
@@ -249,21 +258,26 @@ button.app-rail-item.active { color: var(--accent); }
   flex-shrink: 0;
 }
 .app-rail-session-list.sessions-list {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   padding: 0 0 8px;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
+/* Pin user/theme/settings to the bottom of the full-height rail */
 .app-rail-foot {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px var(--rail-pad) 12px;
+  padding: 10px var(--rail-pad) max(12px, env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
   margin-top: auto;
+  background: color-mix(in srgb, var(--surface) 96%, #000 4%);
+  z-index: 1;
 }
 .app-rail-user {
   flex: 1;
@@ -3627,44 +3641,79 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-/* sessions chat — floating composer over the thread */
+/* sessions chat — bottom dock = floating composer only (browser chip inside toolbar) */
 .sessions-chat .chat-main {
   position: relative;
-  overflow: visible;
+  overflow: hidden;
+  /* Height reserved for absolute .chat-dock; JS may refine via --chat-dock-h */
+  --chat-dock-h: 148px;
 }
-.sessions-chat .composer.composer-float {
+.sessions-chat .chat-dock {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 6;
-  border-top: 0;
-  overflow: visible;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0;
+  max-height: min(48vh, 360px);
+  padding: 36px 16px 12px;
+  box-sizing: border-box;
+  pointer-events: none;
+  /* Opaque enough that thread text never bleeds through the composer */
   background: linear-gradient(
     to top,
     var(--bg) 0%,
-    color-mix(in srgb, var(--bg) 72%, transparent) 38%,
-    color-mix(in srgb, var(--bg) 28%, transparent) 68%,
+    var(--bg) 48%,
+    color-mix(in srgb, var(--bg) 88%, transparent) 72%,
+    color-mix(in srgb, var(--bg) 40%, transparent) 90%,
     transparent 100%
   );
-  padding: 48px 20px 14px;
-  pointer-events: none;
 }
-.sessions-chat .composer.composer-float .composer-shell {
+.sessions-chat .chat-dock > * {
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+}
+/* Composer is in-flow inside the dock (not a second absolute layer). */
+.sessions-chat .chat-dock .composer.composer-float {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 2;
+  border-top: 0;
+  overflow: visible; /* browser popover opens upward */
+  background: transparent;
+  padding: 0 4px;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.sessions-chat .chat-dock .composer.composer-float .composer-shell {
   pointer-events: auto;
   box-shadow: var(--shadow-2);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: visible;
+}
+.sessions-chat .chat-dock .composer.composer-float .composer-toolbar {
+  overflow: visible;
 }
 .sessions-chat .chat-scroll {
   padding-top: 18px;
-  /* Room for taller command bar (min 80px input + toolbar) */
-  padding-bottom: 200px;
+  /* Clear absolute dock + breathing room */
+  padding-bottom: calc(var(--chat-dock-h, 148px) + 28px);
+  scroll-padding-bottom: calc(var(--chat-dock-h, 148px) + 16px);
 }
 .sessions-chat .chat-todo-dock {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 168px;
-  z-index: 5;
+  bottom: calc(var(--chat-dock-h, 148px) + 4px);
+  z-index: 7;
   border-top: 0;
   background: transparent;
   padding: 4px 20px 0;

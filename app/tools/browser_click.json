@@ -1,0 +1,35 @@
+{
+  "id": "browser_click",
+  "name": "Browser Click",
+  "description": "Click an interactive element in an authorized browser tab.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_click",
+      "description": "Click an interactive element identified by ref from the latest browser_snapshot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Element ref from snapshot (e.g. e2)."
+          },
+          "snapshot_version": {
+            "type": "integer",
+            "description": "Optional snapshot version to detect stale refs."
+          }
+        },
+        "required": [
+          "tab_id",
+          "ref"
+        ]
+      }
+    }
+  }
+}

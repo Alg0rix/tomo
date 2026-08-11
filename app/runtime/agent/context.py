@@ -235,6 +235,10 @@ def build_system_prompt(
     except Exception:
         pass
 
+    browser_block = _browser_prompt_section(session_id)
+    if browser_block:
+        parts.append(browser_block)
+
     # Time last so the stable prefix stays cache-friendly when the host supports it.
     return inject_current_time("\n\n".join(parts))
 
@@ -312,6 +316,63 @@ def _artifacts_prompt_section(agent_id: str) -> str:
             "After saving an image, embed it with "
             f'`<img src="/api/sessions/{sid}/artifacts/NAME" alt="...">`.'
         )
+    except Exception:
+        return ""
+
+
+def _browser_prompt_section(session_id: str | None) -> str:
+    """Live browser control status for this turn (no page snapshots)."""
+    try:
+        from app.runtime.browser.context import current_browser_user_id
+        from app.runtime.browser.gateway import get_gateway
+
+        uid = current_browser_user_id()
+        if not uid and session_id:
+            from app.services import store
+
+            sess = store.get_session(session_id)
+            if sess:
+                uid = str(sess.get("user_id") or "") or None
+        gw = get_gateway()
+        connected = bool(uid and gw.is_connected(uid))
+        if not connected:
+            return (
+                "## Browser control\n\n"
+                "Status: **not connected** for this turn — `browser_*` tools are "
+                "not available.\n"
+                "Do **not** claim browser control is permanently impossible. "
+                "Ask the user to Connect Tomo Browser (extension + Chat → "
+                "Browser Control). Do **not** recommend Playwright / "
+                "`--remote-debugging-port` as the default path on Tomo."
+            )
+        status = gw.public_status(uid or "")
+        tabs = status.get("authorized_tabs") or []
+        lines = [
+            "## Browser control",
+            "",
+            "Status: **connected** — the user's real Chrome is available via the "
+            "Tomo Browser extension. You **can** interactively control authorized "
+            "tabs. Prefer `browser_*` tools over `web_fetch` for logged-in / "
+            "open-tab work.",
+            "",
+            "Loop: `browser_tabs` → `browser_snapshot` → act with **refs** "
+            "(`browser_click` / `browser_type` / `browser_navigate` / …) → "
+            "re-snapshot after changes. Never invent CSS selectors or CDP.",
+            f"Authorized tabs: {len(tabs)}",
+        ]
+        for t in tabs[:8]:
+            if not isinstance(t, dict):
+                continue
+            lines.append(
+                f"- [{t.get('id')}] {t.get('title') or '(untitled)'} "
+                f"({t.get('domain') or t.get('url') or ''})"
+            )
+        if not tabs:
+            lines.append(
+                "- (none listed yet — call `browser_tabs`; ensure extension "
+                "“Control all tabs” or authorize tabs in the popup)"
+            )
+        return "\n".join(lines)
     except Exception:
         return ""
 

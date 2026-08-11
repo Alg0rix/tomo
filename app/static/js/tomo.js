@@ -519,6 +519,19 @@
       };
     }
 
+    if (String(tool || '').indexOf('browser_') === 0) {
+      var b = Tomo.browserToolPresentation(tool, args);
+      return {
+        summary: b.summary,
+        detailHtml: b.detailHtml,
+        isEdit: false,
+        autoExpand: false,
+        isBrowser: true,
+        displayName: b.displayName,
+        activity: b.activity,
+      };
+    }
+
     var sum = Tomo.formatToolSummary(tool, args);
     var json;
     try { json = JSON.stringify(args, null, 2); } catch (_) { json = String(args); }
@@ -530,8 +543,60 @@
     };
   };
 
+  /** Friendly labels for browser_* client tools (Perplexity-style activity copy). */
+  Tomo.browserToolPresentation = function (tool, args) {
+    args = args || {};
+    var map = {
+      browser_tabs: { name: 'Browser', activity: 'Listing tabs', summary: 'authorized tabs' },
+      browser_attach: { name: 'Browser', activity: 'Attaching', summary: 'attach tab' },
+      browser_snapshot: { name: 'Browser', activity: 'Reading page', summary: 'snapshot' },
+      browser_click: { name: 'Browser', activity: 'Clicking', summary: 'click' },
+      browser_type: { name: 'Browser', activity: 'Typing', summary: 'type' },
+      browser_press: { name: 'Browser', activity: 'Key press', summary: 'press' },
+      browser_select: { name: 'Browser', activity: 'Selecting', summary: 'select' },
+      browser_scroll: { name: 'Browser', activity: 'Scrolling', summary: 'scroll' },
+      browser_navigate: { name: 'Browser', activity: 'Navigating', summary: 'navigate' },
+      browser_back: { name: 'Browser', activity: 'Going back', summary: 'history back' },
+      browser_forward: { name: 'Browser', activity: 'Going forward', summary: 'history forward' },
+      browser_wait: { name: 'Browser', activity: 'Waiting', summary: 'wait' },
+      browser_screenshot: { name: 'Browser', activity: 'Screenshot', summary: 'capture' },
+      browser_extract: { name: 'Browser', activity: 'Extracting text', summary: 'extract' },
+    };
+    var meta = map[tool] || { name: 'Browser', activity: tool, summary: tool };
+    var bits = [];
+    if (args.tab_id) bits.push(String(args.tab_id));
+    if (args.ref) bits.push('ref ' + args.ref);
+    if (args.url) bits.push(String(args.url));
+    if (args.key) bits.push(String(args.key));
+    if (args.text != null && String(args.text).length) {
+      bits.push(Tomo.truncate(String(args.text).replace(/\s+/g, ' '), 32));
+    }
+    if (args.value) bits.push(String(args.value));
+    if (args.direction) bits.push(String(args.direction));
+    var summary = bits.length ? bits.join(' · ') : meta.summary;
+    var safe = {};
+    Object.keys(args).forEach(function (k) {
+      if (k === 'text') {
+        safe.text = { redacted: true, length: String(args.text || '').length };
+      } else {
+        safe[k] = args[k];
+      }
+    });
+    var json;
+    try { json = JSON.stringify(safe, null, 2); } catch (_) { json = String(args); }
+    return {
+      displayName: meta.name,
+      activity: meta.activity,
+      summary: summary,
+      detailHtml: '<pre class="tool-code-block">' + Tomo.escapeHtml(json) + '</pre>',
+    };
+  };
+
   Tomo.formatToolSummary = function (tool, args) {
     args = args || {};
+    if (String(tool || '').indexOf('browser_') === 0) {
+      return Tomo.browserToolPresentation(tool, args).summary;
+    }
     if (tool === 'bash' && args.command) return String(args.command);
     if (tool === 'patch' && (args.path || args.patch)) {
       var st = Tomo.diffStat(args.patch || '');
@@ -578,21 +643,31 @@
     presented = Tomo.presentToolArgs(tool, args);
     var running = !!opts.running;
     var expanded = !!presented.autoExpand;
+    var isBrowser = !!presented.isBrowser || String(tool || '').indexOf('browser_') === 0;
     var card = document.createElement('div');
     card.className = 'tool' +
       (running ? ' loading' : ' ok') +
       (presented.isEdit ? ' is-edit' : '') +
+      (isBrowser ? ' is-browser' : '') +
       (expanded ? ' expanded' : '');
     var callId = (opts.call_id || opts.callId ||
       (toolOrData && toolOrData.call_id) || (toolOrData && toolOrData.callId) || '').toString();
     if (callId) card.dataset.callId = callId;
     card.dataset.toolName = tool;
+    if (isBrowser) card.dataset.browserTool = '1';
+    var displayName = presented.displayName || tool;
     var summary = presented.summary || '';
+    if (isBrowser && presented.activity) {
+      summary = presented.activity + (summary ? ' · ' + summary : '');
+    }
     card.innerHTML =
       '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
         '<span class="tstatus" aria-hidden="true"></span>' +
-        '<span class="tname">' + Tomo.escapeHtml(tool) + '</span>' +
-        '<span class="targs">' + Tomo.escapeHtml(summary) + '</span>' +
+        (isBrowser
+          ? '<span class="tbrowser-badge" aria-hidden="true">Browser</span>'
+          : '') +
+        '<span class="tname">' + Tomo.escapeHtml(isBrowser ? (presented.activity || displayName) : displayName) + '</span>' +
+        '<span class="targs">' + Tomo.escapeHtml(isBrowser ? (presented.summary || '') : summary) + '</span>' +
         '<span class="tchip"></span>' +
         '<span class="chevron" aria-hidden="true"></span>' +
       '</button>' +
@@ -606,6 +681,11 @@
     card._chip = card.querySelector('.tchip');
     card._head = card.querySelector('.tool-head');
     Tomo.wireToolCard(card);
+    if (isBrowser && running && window.Tomo && Tomo.browser && Tomo.browser.noteAgentTool) {
+      try {
+        Tomo.browser.noteAgentTool(tool, args, callId, true);
+      } catch (_) {}
+    }
     return card;
   };
 
@@ -632,6 +712,10 @@
   /**
    * Session-scoped todo dock — lives in chat chrome (above composer), not
    * inside the scrolling message thread.
+   *
+   * Composer may sit inside ``.chat-dock`` (sessions layout). Only insert
+   * relative to a *direct* child of ``.chat-main`` so insertBefore never
+   * throws NotFoundError.
    */
   Tomo.ensureTodoDock = function (fromEl) {
     var wrap = null;
@@ -647,9 +731,26 @@
     dock.className = 'chat-todo-dock';
     dock.hidden = true;
     dock.setAttribute('aria-label', 'Session todo list');
-    var composer = main.querySelector('.composer');
-    if (composer) main.insertBefore(dock, composer);
-    else main.appendChild(dock);
+    // Prefer: before .chat-dock (composer lives inside it).
+    // Fallback: before a direct-child .composer, else append.
+    var chatDock = null;
+    var directComposer = null;
+    var kids = main.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].classList && kids[i].classList.contains('chat-dock')) {
+        chatDock = kids[i];
+      }
+      if (kids[i].classList && kids[i].classList.contains('composer')) {
+        directComposer = kids[i];
+      }
+    }
+    if (chatDock) {
+      main.insertBefore(dock, chatDock);
+    } else if (directComposer) {
+      main.insertBefore(dock, directComposer);
+    } else {
+      main.appendChild(dock);
+    }
     return dock;
   };
 
@@ -775,6 +876,17 @@
       card.classList.add('expanded');
       if (card._head) card._head.setAttribute('aria-expanded', 'true');
     }
+    if (card.dataset && card.dataset.browserTool === '1' &&
+        window.Tomo && Tomo.browser && Tomo.browser.noteAgentTool) {
+      try {
+        Tomo.browser.noteAgentTool(
+          card.dataset.toolName || 'browser',
+          {},
+          card.dataset.callId || '',
+          false
+        );
+      } catch (_) {}
+    }
   };
 
   /** Return (or create) the timeline container inside an inspector body. */
@@ -826,17 +938,25 @@
     if (kind === 'tool') {
       var toolName = data.tool || 'tool';
       var presented = Tomo.presentToolArgs(toolName, data.args || {});
+      var isBrowser = !!presented.isBrowser || String(toolName).indexOf('browser_') === 0;
       var cmd = presented.summary || fmt(toolName, data.args || {});
+      if (isBrowser && presented.activity) {
+        cmd = presented.activity + (presented.summary ? ' · ' + presented.summary : '');
+      }
       var card = document.createElement('div');
-      card.className = 'si-item si-tool running' + (presented.autoExpand ? ' expanded' : '');
+      card.className = 'si-item si-tool running' +
+        (presented.autoExpand ? ' expanded' : '') +
+        (isBrowser ? ' is-browser' : '');
       if (data.call_id) card.dataset.callId = data.call_id;
       card.dataset.toolName = toolName;
+      if (isBrowser) card.dataset.browserTool = '1';
+      var tagLabel = isBrowser ? 'Browser' : toolName;
       card.innerHTML =
         '<span class="si-node" aria-hidden="true"></span>' +
         '<div class="si-card">' +
           '<button type="button" class="si-card-hd">' +
             '<div class="si-hd-top">' +
-              '<span class="si-tag tool">' + esc(toolName) + '</span>' +
+              '<span class="si-tag tool' + (isBrowser ? ' browser' : '') + '">' + esc(tagLabel) + '</span>' +
               '<span class="si-hd-meta"></span>' +
             '</div>' +
             (cmd ? '<div class="si-hd-preview mono">' + esc(Tomo.truncate(cmd, 140)) + '</div>' : '') +
@@ -856,6 +976,11 @@
         card.classList.toggle('expanded');
       });
       root.appendChild(card);
+      if (isBrowser && window.Tomo && Tomo.browser && Tomo.browser.noteAgentTool) {
+        try {
+          Tomo.browser.noteAgentTool(toolName, data.args || {}, data.call_id || '', true);
+        } catch (_) {}
+      }
       return card;
     }
 
@@ -882,6 +1007,17 @@
           last._meta.classList.add('err');
         }
         last._meta.textContent = hint;
+      }
+      if (last.dataset && last.dataset.browserTool === '1' &&
+          window.Tomo && Tomo.browser && Tomo.browser.noteAgentTool) {
+        try {
+          Tomo.browser.noteAgentTool(
+            last.dataset.toolName || 'browser',
+            {},
+            last.dataset.callId || data.call_id || '',
+            false
+          );
+        } catch (_) {}
       }
       if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
       return last;

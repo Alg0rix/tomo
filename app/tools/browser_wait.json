@@ -1,0 +1,30 @@
+{
+  "id": "browser_wait",
+  "name": "Browser Wait",
+  "description": "Wait briefly for page activity (load / timeout).",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_wait",
+      "description": "Wait for load or a short delay (ms, default 1000, max 10000) before continuing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "ms": {
+            "type": "integer",
+            "description": "Milliseconds to wait (default 1000, max 10000)."
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

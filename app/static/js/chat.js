@@ -209,8 +209,11 @@
   }
 
   function initChat(wrap) {
-    if (!wrap || wrap.dataset.chatInit === '1') return;
-    wrap.dataset.chatInit = '1';
+    if (!wrap) return null;
+    // Reuse live handle when already initialized (sessions re-opens often).
+    if (wrap.dataset.chatInit === '1' && wrap._tomoChatHandle) {
+      return wrap._tomoChatHandle;
+    }
 
     const agentId = wrap.dataset.agentId;
     const userId = wrap.dataset.userId || 'web';
@@ -228,6 +231,13 @@
     const composerEl = wrap.querySelector('.composer');
     const modeBtn = wrap.querySelector('.composer-mode') || document.getElementById('composerModeBtn');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
+
+    // Sessions shell may mount before a session is chosen; require core nodes.
+    if (!scroll || !input || !sendBtn) {
+      console.warn('[tomo] chat init skipped — missing .chat-scroll / .chat-input / .chat-send');
+      return null;
+    }
+    wrap.dataset.chatInit = '1';
 
     /** @type {{id: string, name: string, size: number}[]} */
     let uploadedAttachments = [];
@@ -1506,13 +1516,15 @@
       return true;
     }
 
-    return {
+    var api = {
       destroy: function () {
         messageQueue = [];
         if (es) { es.close(); es = null; }
         sending = false;
         syncGeneratingUi();
         delete wrap.dataset.liveStream;
+        delete wrap.dataset.chatInit;
+        wrap._tomoChatHandle = null;
       },
       send: send,
       uiAction: dispatchUiAction,
@@ -1520,6 +1532,8 @@
       resume: resumeActiveTurn,
       rehydratePending: rehydratePendingHitl,
     };
+    wrap._tomoChatHandle = api;
+    return api;
   }
 
   window.TomoChat = {
@@ -1531,6 +1545,9 @@
   };
 
   document.querySelectorAll('.chat-wrap').forEach(function (wrap) {
+    // Sessions page keeps an empty shell until a conversation is selected —
+    // let sessions.js call init after sessionId is set.
+    if (wrap.classList.contains('sessions-chat') && !wrap.dataset.sessionId) return;
     var handle = initChat(wrap);
     if (!handle) return;
     // Agent detail / hard refresh: restore HITL cards and re-attach mid-turn stream.

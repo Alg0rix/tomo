@@ -1,0 +1,27 @@
+{
+  "id": "browser_attach",
+  "name": "Browser Attach",
+  "description": "Attach the debugger to an authorized tab before interaction.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_attach",
+      "description": "Attach the browser driver to an authorized tab. Prefer snapshot/click which attach automatically; use when you need an explicit attach.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Virtual tab id from browser_tabs."
+          }
+        },
+        "required": [
+          "tab_id"
+        ]
+      }
+    }
+  }
+}

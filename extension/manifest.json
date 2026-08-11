@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Tomo Browser",
+  "version": "0.1.6",
+  "description": "Lets Tomo control authorized Chrome tabs via chrome.debugger (CDP).",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tomo Browser"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/control-overlay.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://127.0.0.1/*",
+      "http://localhost/*",
+      "https://127.0.0.1/*",
+      "https://localhost/*",
+      "https://app.tomo.dev/*",
+      "https://staging.tomo.dev/*"
+    ]
+  },
+  "icons": {}
+}

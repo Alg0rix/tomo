@@ -1,0 +1,20 @@
+{
+  "id": "browser_tabs",
+  "name": "Browser Tabs",
+  "description": "List authorized browser tabs Tomo may control.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_tabs",
+      "description": "List authorized browser tabs (virtual tab ids). Only tabs the user granted via the Tomo Browser extension appear. Call this first to discover tab_id values.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  }
+}

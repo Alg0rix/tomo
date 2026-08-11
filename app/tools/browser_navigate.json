@@ -1,0 +1,30 @@
+{
+  "id": "browser_navigate",
+  "name": "Browser Navigate",
+  "description": "Navigate an authorized tab to a URL.",
+  "backend": "app.runtime.tools.browser_tools",
+  "executor": "client",
+  "target": "browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser_navigate",
+      "description": "Navigate a tab to an http(s) URL. Privileged schemes (chrome://, file://, \u2026) are blocked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "url"
+        ]
+      }
+    }
+  }
+}

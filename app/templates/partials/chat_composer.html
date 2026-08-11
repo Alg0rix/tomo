@@ -39,6 +39,15 @@
             <span class="ctx-usage-label">Context</span>
           </button>
           {% if toolbar %}
+          {# Browser Control status lives in the composer dock (no floating HUD). #}
+          <div class="browser-status-wrap" id="browserStatusWrap">
+            <button type="button" id="browserStatusChip" class="browser-status-chip is-off"
+                    aria-haspopup="dialog" aria-expanded="false" title="Browser control">
+              <span class="browser-status-dot" aria-hidden="true"></span>
+              <span class="browser-status-label">Browser</span>
+            </button>
+            <div id="browserControlPanel" class="browser-popover hidden" role="dialog" aria-label="Browser control" hidden></div>
+          </div>
           <span class="composer-status chat-status" id="chatStatus" title="Connection">
             <span class="composer-status-dot" aria-hidden="true"></span>
             Online

@@ -17,6 +17,7 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 | **Swarm coordination** | Multiple specialized agents delegate to each other; the coordinator routes work without a single bottleneck |
 | **Talk from anywhere** | Web UI today; Telegram bot available (token in Settings); WhatsApp planned |
 | **Reach any machine** | Workplaces over WebSocket tunnel, SSH, or local path jail — same tools everywhere |
+| **Control your browser** | Chrome extension as client tool executor — agent tools run on your device via CDP (no daemon for V1) |
 | **Easy to extend** | Tools = JSON schema + Python backend (register in the tool registry); skills are filesystem playbooks |
 
 ---
@@ -573,6 +574,7 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 - [x] Memory engine — curated MD + FTS5; optional embeddings when an API key is set
 - [x] Portals — file bridge across workplaces with chunked binary + progress
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
+- [x] Browser Control V1 — Chrome extension as client tool executor (`extension/`, `browser_*` tools)
 - [x] Interval scheduler — SQLite schedules + background runner + UI
 - [x] Telegram channel — Settings token + long-poll (routes to coordinator; e2e polish TBD)
 - [ ] Channel adapters — WhatsApp, Discord, Slack; CLI-as-chat; multi-agent routing; media tools

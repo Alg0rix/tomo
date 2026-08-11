@@ -104,6 +104,12 @@ _READ_ONLY_TOOLS = frozenset(
         "use_skill",
         "agent_state",
         "recall",
+        # Browser client tools (read-only subset).
+        "browser_tabs",
+        "browser_snapshot",
+        "browser_screenshot",
+        "browser_extract",
+        "browser_wait",
     }
 )
 
@@ -618,6 +624,14 @@ async def run_turn(
     consumer. The function is an async generator — iterate with ``async for``.
     """
     from app.runtime.tools import todo as todo_mod
+    from app.runtime.browser.context import (
+        bind_browser_agent,
+        bind_browser_chat_session,
+        bind_browser_user,
+        reset_browser_agent,
+        reset_browser_chat_session,
+        reset_browser_user,
+    )
 
     metrics = TurnMetrics(agent_id=agent_id, session_id=session_id)
     sandbox_token = sandbox.bind_agent(agent_id)
@@ -627,6 +641,22 @@ async def run_turn(
     arts_token = artifacts_fs.bind_session(session_id)
     # Stable system-prompt clock for this turn (hour precision + freeze).
     clock_token = freeze_prompt_clock()
+
+    # Resolve Tomo user for browser client-tool routing + dynamic tools.
+    browser_user_id: str | None = None
+    if session_id:
+        try:
+            from app.services import store as _store_for_user
+
+            sess = _store_for_user.get_session(session_id)
+            if sess:
+                browser_user_id = str(sess.get("user_id") or "") or None
+        except Exception:
+            browser_user_id = None
+    browser_user_tok = bind_browser_user(browser_user_id)
+    browser_chat_tok = bind_browser_chat_session(session_id)
+    browser_agent_tok = bind_browser_agent(agent_id)
+
     skills_touched: list[str] = []
     try:
         try:
@@ -636,9 +666,24 @@ async def run_turn(
             elif agent_id:
                 from app.services import store
 
-                tool_schemas = store.get_agent_openai_tools(agent_id)
+                tool_schemas = store.get_agent_openai_tools(
+                    agent_id, user_id=browser_user_id
+                )
             else:
                 tool_schemas = get_openai_tools()
+                # Dynamic browser tools when a user browser is connected.
+                try:
+                    from app.runtime.browser import filter_tools_for_browser, get_gateway
+
+                    gw = get_gateway()
+                    uid = browser_user_id or ""
+                    tool_schemas = filter_tools_for_browser(
+                        tool_schemas,
+                        connected=bool(uid and gw.is_connected(uid)),
+                        capabilities=gw.capabilities_for_user(uid) if uid else (),
+                    )
+                except Exception:
+                    pass
             limit = (
                 max_iterations
                 if max_iterations is not None
@@ -1166,6 +1211,9 @@ async def run_turn(
         artifacts_fs.reset_session(arts_token)
         todo_mod.reset_session(todo_token)
         sandbox.reset_agent(sandbox_token)
+        reset_browser_agent(browser_agent_tok)
+        reset_browser_chat_session(browser_chat_tok)
+        reset_browser_user(browser_user_tok)
 
 
 async def _stream_delegate_bundle(

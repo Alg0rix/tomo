@@ -39,10 +39,13 @@
         </div>
       </div>
 
-      {{ chat_composer(
-           'Message…  @ agent · / skill',
-           toolbar=True
-         ) }}
+      {# Bottom dock: floating composer (browser status chip lives inside toolbar). #}
+      <div class="chat-dock" id="chatDock">
+        {{ chat_composer(
+             'Message…  @ agent · / skill',
+             toolbar=True
+           ) }}
+      </div>
     </div>
     {% include 'partials/chat_agent_panel.html' %}
   </div>

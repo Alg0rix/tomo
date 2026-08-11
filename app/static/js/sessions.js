@@ -1093,7 +1093,6 @@
     chatWrap.dataset.agentIds = ids.join(',');
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.agentName = label;
-    chatWrap.dataset.chatInit = '0';
     delete chatWrap.dataset.ctxInit;
     delete chatWrap.dataset.agentId;
 
@@ -1102,17 +1101,38 @@
 
     if (chatHandle && chatHandle.destroy) chatHandle.destroy();
     chatHandle = null;
+    // Allow a clean re-init (destroy clears this; be explicit).
+    delete chatWrap.dataset.chatInit;
+    chatWrap._tomoChatHandle = null;
     stopHistoryPoll();
     lastHistLen = -1;
     inspectorOpenKey = null;
 
     try {
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
+      if (!hist || typeof hist !== 'object') {
+        throw new Error('Empty session response (auth or network)');
+      }
       renderHistory(hist.entries || []);
+      if (!window.TomoChat || !TomoChat.init) {
+        throw new Error('TomoChat not loaded');
+      }
       chatHandle = TomoChat.init(chatWrap);
+      if (!chatHandle) {
+        // One retry after resetting init flags (stale auto-init race).
+        delete chatWrap.dataset.chatInit;
+        chatWrap._tomoChatHandle = null;
+        chatHandle = TomoChat.init(chatWrap);
+      }
+      if (!chatHandle) {
+        throw new Error('Chat UI failed to initialize (missing composer nodes?)');
+      }
       // init may re-touch markdown; stick again after layout settles
       var scrollEl = chatWrap.querySelector('.chat-scroll');
       stickChatScrollBottom(scrollEl);
+      if (window.Tomo && Tomo.browser && typeof Tomo.browser.syncDockHeight === 'function') {
+        try { Tomo.browser.syncDockHeight(); } catch (_) {}
+      }
       // Web fonts / late paint can reflow long prose after the first pin.
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(function () {
@@ -1148,7 +1168,9 @@
 
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
-      Tomo.toast('Could not load session', 'err');
+      console.error('[tomo] selectSession failed', e);
+      var msg = (e && e.message) ? String(e.message) : 'Could not load session';
+      Tomo.toast(msg.length > 80 ? 'Could not load session' : msg, 'err');
     }
   }
 
