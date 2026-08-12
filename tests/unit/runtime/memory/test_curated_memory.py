@@ -17,13 +17,13 @@ def test_add_list_user_and_agent_memory(tmp_path: Path, monkeypatch) -> None:
 
     out = curated.add_entry("user", "Prefers short answers.", agent_id="main")
     assert out["ok"] is True
-    assert home.user_memory_path(tmp_path).is_file()
+    assert home.user_memory_path("web", tmp_path).is_file()
 
     out2 = curated.add_entry(
         "memory", "Staging host is staging.tomo.internal", agent_id="ops"
     )
     assert out2["ok"] is True
-    path = home.agent_memory_path("ops", tmp_path)
+    path = home.agent_memory_path("ops", tmp_path, user_id="web")
     assert path.is_file()
     assert "Staging host" in path.read_text(encoding="utf-8")
 
@@ -93,9 +93,9 @@ def test_memory_tool_add(tmp_path: Path, monkeypatch) -> None:
             {"action": "add", "target": "memory", "content": "VPN needs MFA"}
         )
         assert msg.startswith("added") or "added" in msg.lower()
-        assert "VPN needs MFA" in home.agent_memory_path("ops", tmp_path).read_text(
-            encoding="utf-8"
-        )
+        assert "VPN needs MFA" in home.agent_memory_path(
+            "ops", tmp_path, user_id="web"
+        ).read_text(encoding="utf-8")
     finally:
         sandbox.reset_agent()
 
@@ -109,7 +109,9 @@ def test_replace_and_remove(tmp_path: Path, monkeypatch) -> None:
         "memory", "8080", "Port is 9090", agent_id="coder", home_root=tmp_path
     )
     assert r["ok"] is True
-    assert "9090" in home.agent_memory_path("coder", tmp_path).read_text(encoding="utf-8")
+    assert "9090" in home.agent_memory_path(
+        "coder", tmp_path, user_id="web"
+    ).read_text(encoding="utf-8")
     r2 = curated.remove_entry(
         "memory", "9090", agent_id="coder", home_root=tmp_path
     )

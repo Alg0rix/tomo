@@ -6,9 +6,12 @@ Owns the **config** root (default ``~/.tomo``), not agent workspaces::
     ├── tomo.yaml
     ├── .env / .secret_key
     ├── SOUL.md
-    ├── memories/USER.md        # curated user profile (memory tool)
+    ├── memories/users/<user_id>/USER.md   # per-login profile (memory tool)
+    ├── memories/USER.md                   # legacy shared profile (web only)
     ├── library/{skills,memory}
-    ├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
+    ├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge}
+    ├── agents/<id>/users/<user_id>/MEMORY.md  # per-login agent notes
+    ├── agents/<id>/MEMORY.md                  # legacy shared agent notes (web only)
     ├── sessions/<session_id>/artifacts/   # per-chat durable outputs
     ├── workplaces/
     └── state/tomo.db
@@ -106,20 +109,61 @@ def library_memory_dir(root: Path | None = None) -> Path:
 
 
 def memories_dir(root: Path | None = None) -> Path:
-    """Curated memory root — ``USER.md`` lives here."""
+    """Curated memory root — per-user profiles and shared legacy paths."""
     return _root(root) / "memories"
 
 
-def user_memory_path(root: Path | None = None) -> Path:
+def _safe_user_id(user_id: str | None) -> str:
+    uid = (user_id or "").strip() or "web"
+    if "/" in uid or "\\" in uid or ".." in uid or uid in {".", ".."}:
+        return "web"
+    return uid
+
+
+def legacy_user_memory_path(root: Path | None = None) -> Path:
+    """Pre-multi-user path: ``memories/USER.md`` (read fallback for ``web`` only)."""
     return memories_dir(root) / "USER.md"
 
 
-def agent_memory_path(agent_id: str | None, root: Path | None = None) -> Path:
-    """Per-agent curated notes: ``agents/<id>/MEMORY.md``."""
+def user_memory_path(
+    user_id: str | Path | None = None, root: Path | None = None
+) -> Path:
+    """Per-account profile: ``memories/users/<user_id>/USER.md``.
+
+    Back-compat: ``user_memory_path(home_root)`` still accepts a single Path
+    as the home root (pre multi-user API).
+    """
+    if isinstance(user_id, Path) and root is None:
+        root = user_id
+        user_id = None
+    uid = _safe_user_id(user_id if isinstance(user_id, str) or user_id is None else None)
+    return memories_dir(root) / "users" / uid / "USER.md"
+
+
+def _safe_agent_id(agent_id: str | None) -> str:
     aid = (agent_id or "").strip() or "_default"
     if "/" in aid or "\\" in aid or ".." in aid or aid in {".", ".."}:
-        aid = "_default"
-    return agent_dir(aid, root) / "MEMORY.md"
+        return "_default"
+    return aid
+
+
+def legacy_agent_memory_path(
+    agent_id: str | None, root: Path | None = None
+) -> Path:
+    """Pre-multi-user path: ``agents/<id>/MEMORY.md`` (web read fallback)."""
+    return agent_dir(_safe_agent_id(agent_id), root) / "MEMORY.md"
+
+
+def agent_memory_path(
+    agent_id: str | None,
+    root: Path | None = None,
+    *,
+    user_id: str | None = None,
+) -> Path:
+    """Per-login agent notes: ``agents/<id>/users/<user_id>/MEMORY.md``."""
+    aid = _safe_agent_id(agent_id)
+    uid = _safe_user_id(user_id)
+    return agent_dir(aid, root) / "users" / uid / "MEMORY.md"
 
 
 def sessions_dir(root: Path | None = None) -> Path:
@@ -193,6 +237,7 @@ def ensure_tomo_home(root: Path | None = None) -> Path:
         library_skills_dir(home_root),
         library_memory_dir(home_root),
         memories_dir(home_root),
+        memories_dir(home_root) / "users",
         home_root / "agents",
         workplaces_dir(home_root),
         state_dir(home_root),
@@ -226,6 +271,8 @@ __all__ = [
     "library_memory_dir",
     "memories_dir",
     "user_memory_path",
+    "legacy_user_memory_path",
+    "legacy_agent_memory_path",
     "agent_memory_path",
     "workplaces_dir",
     "state_dir",

@@ -3,8 +3,8 @@
 Persistent notes the agent maintains across sessions. Entries are ``§``-delimited
 Markdown fragments on disk under ``$TOMO_HOME``.
 
-* ``USER.md`` — shared user profile (preferences, style, habits)
-* ``agents/<id>/MEMORY.md`` — that agent's personal notes
+* ``USER.md`` — per-login user profile (preferences, style, habits)
+* ``agents/<id>/users/<user_id>/MEMORY.md`` — per-login agent notes
 
 A **frozen snapshot** is captured at the first turn of a session and injected
 into the system prompt for the rest of that session (prefix-cache friendly).
@@ -30,12 +30,15 @@ USER_CHAR_LIMIT = 2000
 # Injected into the system prompt so the model saves without being asked.
 MEMORY_GUIDANCE = (
     "You have persistent curated memory across sessions via the `memory` tool "
-    "(USER.md / MEMORY.md). Save durable facts **proactively** — do not wait for "
-    "the user to say \"remember\" or \"save this\". "
+    "(per-user USER.md / MEMORY.md). Save durable facts **proactively** — do not "
+    "wait for the user to say \"remember\" or \"save this\". "
     "Priority: preferences & corrections > environment facts > procedures. "
     "Write compact declarative facts (\"User prefers short answers\"), not "
-    "self-instructions. Skip task progress, TODOs, and one-off chatter; "
-    "put reusable procedures in `manage_skill`, longer docs in `remember`."
+    "self-instructions. Skip task progress, TODOs, and one-off chatter. "
+    "If a file is near its char limit, replace/remove stale entries or use "
+    "`remember` for longer docs — do not invent skills just to store facts. "
+    "Reusable multi-step how-tos belong in `manage_skill`; long searchable "
+    "facts in `remember`."
 )
 
 _HEADERS = {
@@ -68,12 +71,71 @@ def memories_dir(*, home_root: Path | None = None) -> Path:
     return home.memories_dir(home_root)
 
 
-def user_path(*, home_root: Path | None = None) -> Path:
-    return home.user_memory_path(home_root)
+def user_path(
+    *, user_id: str | None = None, home_root: Path | None = None
+) -> Path:
+    """Per-login USER.md. Defaults to the turn-bound account when unbound."""
+    uid = user_id
+    if uid is None:
+        try:
+            from app.runtime.tools.user_ctx import current_user_id
+
+            uid = current_user_id()
+        except Exception:
+            uid = "web"
+    return home.user_memory_path(uid, home_root)
 
 
-def memory_path(agent_id: str | None, *, home_root: Path | None = None) -> Path:
-    return home.agent_memory_path(agent_id, home_root)
+def legacy_user_path(*, home_root: Path | None = None) -> Path:
+    return home.legacy_user_memory_path(home_root)
+
+
+def _resolve_uid(user_id: str | None = None) -> str:
+    if user_id is not None:
+        return (user_id or "").strip() or "web"
+    try:
+        from app.runtime.tools.user_ctx import current_user_id
+
+        return current_user_id()
+    except Exception:
+        return "web"
+
+
+def memory_path(
+    agent_id: str | None,
+    *,
+    user_id: str | None = None,
+    home_root: Path | None = None,
+) -> Path:
+    """Per-login agent MEMORY.md (turn-bound user when unbound)."""
+    return home.agent_memory_path(
+        agent_id, home_root, user_id=_resolve_uid(user_id)
+    )
+
+
+def legacy_memory_path(
+    agent_id: str | None, *, home_root: Path | None = None
+) -> Path:
+    return home.legacy_agent_memory_path(agent_id, home_root)
+
+
+def read_agent_entries(
+    agent_id: str | None,
+    *,
+    user_id: str | None = None,
+    home_root: Path | None = None,
+) -> list[str]:
+    """Read per-user agent MEMORY.md; ``web`` falls back to legacy shared file."""
+    uid = _resolve_uid(user_id)
+    path = memory_path(agent_id, user_id=uid, home_root=home_root)
+    entries = read_entries(path, home_root=home_root)
+    if entries:
+        return entries
+    if uid == "web":
+        return read_entries(
+            legacy_memory_path(agent_id, home_root=home_root), home_root=home_root
+        )
+    return []
 
 
 def parse_entries(raw: str) -> list[str]:
@@ -150,11 +212,29 @@ def _char_limit(target: str) -> int:
 
 
 def _path_for(
-    target: str, agent_id: str | None, *, home_root: Path | None = None
+    target: str,
+    agent_id: str | None,
+    *,
+    user_id: str | None = None,
+    home_root: Path | None = None,
 ) -> Path:
     if target == "user":
-        return user_path(home_root=home_root)
-    return memory_path(agent_id, home_root=home_root)
+        return user_path(user_id=user_id, home_root=home_root)
+    return memory_path(agent_id, user_id=user_id, home_root=home_root)
+
+
+def read_user_entries(
+    *, user_id: str | None = None, home_root: Path | None = None
+) -> list[str]:
+    """Read per-user USER.md; ``web`` falls back to legacy shared file."""
+    path = user_path(user_id=user_id, home_root=home_root)
+    entries = read_entries(path, home_root=home_root)
+    if entries:
+        return entries
+    uid = _resolve_uid(user_id)
+    if uid == "web":
+        return read_entries(legacy_user_path(home_root=home_root), home_root=home_root)
+    return []
 
 
 def render_block(target: str, entries: list[str]) -> str:
@@ -166,16 +246,19 @@ def render_block(target: str, entries: list[str]) -> str:
 
 
 def render_from_disk(
-    agent_id: str | None, *, home_root: Path | None = None
+    agent_id: str | None,
+    *,
+    user_id: str | None = None,
+    home_root: Path | None = None,
 ) -> str:
     """Build the live curated-memory prompt section from disk."""
     parts: list[str] = []
-    user_entries = read_entries(user_path(home_root=home_root), home_root=home_root)
+    user_entries = read_user_entries(user_id=user_id, home_root=home_root)
     if user_entries:
         parts.append(render_block("user", user_entries))
     if agent_id:
-        mem_entries = read_entries(
-            memory_path(agent_id, home_root=home_root), home_root=home_root
+        mem_entries = read_agent_entries(
+            agent_id, user_id=user_id, home_root=home_root
         )
         if mem_entries:
             parts.append(render_block("memory", mem_entries))
@@ -208,6 +291,19 @@ def prompt_block(
     return render_from_disk(agent_id, home_root=home_root)
 
 
+def _load_target_entries(
+    target: str,
+    agent_id: str | None,
+    *,
+    home_root: Path | None = None,
+) -> tuple[Path, list[str]]:
+    """Resolve path + entries (USER.md and MEMORY.md are per-login)."""
+    path = _path_for(target, agent_id, home_root=home_root)
+    if target == "user":
+        return path, read_user_entries(home_root=home_root)
+    return path, read_agent_entries(agent_id, home_root=home_root)
+
+
 def add_entry(
     target: str,
     content: str,
@@ -223,8 +319,7 @@ def add_entry(
     text = (content or "").strip()
     if not text:
         return {"ok": False, "error": "content is empty"}
-    path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path, home_root=home_root)
+    path, entries = _load_target_entries(target, agent_id, home_root=home_root)
     if text in entries:
         return {"ok": True, "message": "already present", "count": len(entries)}
     dup = near_duplicate(entries, text)
@@ -237,12 +332,19 @@ def add_entry(
         }
     limit = _char_limit(target)
     trial = entries + [text]
+    used = _char_count(entries)
     if _char_count(trial) > limit:
         return {
             "ok": False,
-            "error": f"would exceed {target} char limit ({limit})",
+            "error": (
+                f"would exceed {target} char limit ({used}/{limit} used). "
+                "Do not create a skill as overflow. Instead: list entries, "
+                "replace or remove a stale one then re-add; or use `remember` "
+                "for a searchable KB fact; or `agent_state` for a short key/value."
+            ),
             "count": len(entries),
-            "chars": _char_count(entries),
+            "chars": used,
+            "limit": limit,
         }
     write_entries(path, trial, home_root=home_root)
     return {
@@ -271,8 +373,7 @@ def replace_entry(
         return {"ok": False, "error": "old must be a non-empty substring"}
     if not replacement:
         return {"ok": False, "error": "new content is empty"}
-    path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path, home_root=home_root)
+    path, entries = _load_target_entries(target, agent_id, home_root=home_root)
     matches = [i for i, e in enumerate(entries) if needle in e]
     if not matches:
         return {"ok": False, "error": f"no entry matching {needle!r}"}
@@ -311,8 +412,7 @@ def remove_entry(
     needle = (old or "").strip()
     if not needle:
         return {"ok": False, "error": "old must be a non-empty substring"}
-    path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path, home_root=home_root)
+    path, entries = _load_target_entries(target, agent_id, home_root=home_root)
     matches = [i for i, e in enumerate(entries) if needle in e]
     if not matches:
         return {"ok": False, "error": f"no entry matching {needle!r}"}
@@ -340,8 +440,7 @@ def list_entries(
     target = (target or "memory").strip().lower()
     if target not in ("memory", "user"):
         return {"ok": False, "error": "target must be memory or user"}
-    path = _path_for(target, agent_id, home_root=home_root)
-    entries = read_entries(path, home_root=home_root)
+    path, entries = _load_target_entries(target, agent_id, home_root=home_root)
     return {
         "ok": True,
         "target": target,
@@ -368,5 +467,9 @@ __all__ = [
     "parse_entries",
     "near_duplicate",
     "read_entries",
+    "read_user_entries",
+    "read_agent_entries",
+    "user_path",
+    "memory_path",
     "write_entries",
 ]
