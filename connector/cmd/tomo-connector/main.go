@@ -75,7 +75,7 @@ Usage:
 Environment:
   TOMO_CONNECTOR_HOME   state directory (default ~/.tomo-connector)
   TOMO_CONNECTOR_ROOT   jail root for bash/files (default $HOME/.tomo-connector/work)
-  TOMO_CONNECTOR_BIN    install path for binary (default ~/.local/bin/tomo-connector)
+  TOMO_CONNECTOR_BIN    install path for binary (default ~/.local/bin/…, or /usr/local/bin as root)
   TOMO_CONNECTOR_PAIR_AND_RUN=1   after pair, start run immediately
 `, version.Version)
 }

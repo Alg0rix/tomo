@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build tomo-connector and install a systemd --user unit.
+# Build tomo-connector and install a systemd unit (user or system if root).
 # Usage: bash scripts/install-service.sh [--no-start]
 set -euo pipefail
 
@@ -11,7 +11,10 @@ while [[ $# -gt 0 ]]; do
     --no-start) NO_START=1; shift ;;
     -h|--help)
       cat <<'EOF'
-Build tomo-connector, install to ~/.local/bin, and enable systemd --user unit.
+Build tomo-connector and enable a systemd unit.
+
+  Non-root: user unit (~/.config/systemd/user), binary → ~/.local/bin
+  Root:     system unit (/etc/systemd/system), binary → /usr/local/bin
 
 Options:
   --no-start   Write/enable unit but do not start

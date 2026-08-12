@@ -220,9 +220,32 @@ def test_normalize_os_arch() -> None:
 
 
 def test_systemd_unit_sane() -> None:
-    unit = mod._systemd_unit()
+    unit = mod._systemd_user_unit()
     assert "ExecStart=%h/.local/bin/tomo-connector run" in unit
     assert "WantedBy=default.target" in unit
+
+
+def test_systemd_system_unit_for_root() -> None:
+    unit = mod._systemd_system_unit(
+        bin_path="/usr/local/bin/tomo-connector",
+        home="/root/.tomo-connector",
+    )
+    assert "ExecStart=/usr/local/bin/tomo-connector run" in unit
+    assert "TOMO_CONNECTOR_HOME=/root/.tomo-connector" in unit
+    assert "WantedBy=multi-user.target" in unit
+    assert "%h" not in unit
+
+
+def test_install_service_script_branches_on_root() -> None:
+    script = mod._install_service_script(
+        "$HOME/.local/bin/tomo-connector",
+        "linux amd64",
+    )
+    assert 'id -u' in script
+    assert "/etc/systemd/system/" in script
+    assert "multi-user.target" in script
+    assert "systemctl --user" in script
+    assert "/usr/local/bin/tomo-connector" in script
 
 
 def test_ensure_pair_ok() -> None:

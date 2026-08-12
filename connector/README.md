@@ -54,9 +54,18 @@ Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
 State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).  
 Jail: `$TOMO_CONNECTOR_ROOT` or `$TOMO_CONNECTOR_HOME/work`.
 
-## systemd user service
+## systemd service
 
-Keep the connector online across reboots/logouts (Linux):
+Keep the connector online across reboots/logouts (Linux). Install mode depends
+on the installing user:
+
+| Who runs install | Unit type | Binary default | Unit path |
+|------------------|-----------|----------------|-----------|
+| Normal user | `systemd --user` | `~/.local/bin/tomo-connector` | `~/.config/systemd/user/` |
+| **root** | **system** (`multi-user.target`) | `/usr/local/bin/tomo-connector` | `/etc/systemd/system/` |
+
+Root cannot reliably use `systemctl --user` (no user session / D-Bus for uid 0),
+so root installs a **system** unit instead.
 
 ```bash
 # Pair first (once), then:
@@ -66,16 +75,18 @@ make build
 # or: make install-service
 
 tomo-connector service status
+# non-root only:
 loginctl enable-linger $USER   # optional: survive logout
 ```
 
 | Command | Effect |
 |---------|--------|
-| `service install [--no-start]` | Copy binary → `~/.local/bin`, write `~/.config/systemd/user/tomo-connector.service`, enable (+ start) |
+| `service install [--no-start]` | Copy binary, write unit (user or system), enable (+ start) |
 | `service uninstall` | Disable/stop and remove the unit (keeps binary + pairing state) |
-| `service start\|stop\|restart\|status` | `systemctl --user … tomo-connector` |
+| `service start\|stop\|restart\|status` | `systemctl [--user] … tomo-connector` |
 
-Unit template: [`deploy/tomo-connector.service`](deploy/tomo-connector.service).  
+Unit templates: [`deploy/tomo-connector.service`](deploy/tomo-connector.service) (user),
+[`deploy/tomo-connector.system.service`](deploy/tomo-connector.system.service) (root).  
 Override binary path with `TOMO_CONNECTOR_BIN` if needed.
 
 ## Protocol (v1)
