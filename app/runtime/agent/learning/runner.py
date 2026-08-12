@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from app.runtime.agent.learning.diary import derive_diary
 from app.runtime.agent.learning.digest import (
     build_review_digest,
+    format_memory_capacity,
     format_skill_catalog,
     format_user_snippet,
 )
@@ -47,9 +48,12 @@ _ALLOWED_REVIEW_TOOLS = frozenset(
 
 
 def _gather_digest_context(
-    *, agent_id: str | None = None, session_id: str | None = None
-) -> tuple[str, str, str, str, str, str, str]:
-    """catalog, user, project, conversation, agent_snip, semantic_hint, shared."""
+    *,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+) -> tuple[str, str, str, str, str, str, str, str]:
+    """catalog, user, project, conversation, agent_snip, semantic, shared, capacity."""
     catalog = "(empty catalog)"
     user_snip = "(empty)"
     project_snip = "(no workplace)"
@@ -57,6 +61,21 @@ def _gather_digest_context(
     agent_snip = "(empty)"
     semantic = "(use remember for durable searchable facts — not chat dumps)"
     shared = "(none yet)"
+    capacity = "(capacity unknown)"
+    uid = (user_id or "").strip() or None
+    if uid is None and session_id:
+        try:
+            from app.services import store
+
+            sess = store.get_session(session_id)
+            if sess:
+                uid = (sess.get("user_id") or "web").strip() or "web"
+        except Exception:
+            uid = "web"
+    if not uid:
+        uid = "web"
+    user_entries: list[str] = []
+    agent_entries: list[str] = []
     try:
         from app.services import store
 
@@ -67,8 +86,8 @@ def _gather_digest_context(
     try:
         from app.runtime.memory import curated
 
-        entries = curated.read_entries(curated.user_path())
-        user_snip = format_user_snippet(entries)
+        user_entries = curated.read_user_entries(user_id=uid)
+        user_snip = format_user_snippet(user_entries)
     except Exception as exc:
         _logger.debug("learning USER snippet gather failed: %s", exc)
     try:
@@ -94,15 +113,33 @@ def _gather_digest_context(
         if agent_id:
             from app.runtime.memory import curated
 
-            path = curated.memory_path(agent_id)
-            entries = curated.read_entries(path) if path else []
-            agent_snip = format_user_snippet(entries)
+            agent_entries = curated.read_agent_entries(agent_id, user_id=uid)
+            agent_snip = format_user_snippet(agent_entries)
     except Exception as exc:
         _logger.debug("learning agent memory snippet failed: %s", exc)
     try:
+        from app.runtime.memory import curated
+
+        def _chars(entries: list[str]) -> int:
+            cleaned = [e.strip() for e in entries if (e or "").strip()]
+            if not cleaned:
+                return 0
+            return len(curated.ENTRY_DELIMITER.join(cleaned))
+
+        capacity = format_memory_capacity(
+            user_chars=_chars(user_entries),
+            user_limit=curated.USER_CHAR_LIMIT,
+            user_entries=len([e for e in user_entries if (e or "").strip()]),
+            agent_chars=_chars(agent_entries),
+            agent_limit=curated.MEMORY_CHAR_LIMIT,
+            agent_entries=len([e for e in agent_entries if (e or "").strip()]),
+        )
+    except Exception as exc:
+        _logger.debug("learning capacity gather failed: %s", exc)
+    try:
         from app.services import store
 
-        rows = store.list_knowledge_entries() or []
+        rows = store.list_knowledge_entries(user_id=uid) or []
         titles = []
         for r in rows[:8]:
             if not isinstance(r, dict):
@@ -128,7 +165,16 @@ def _gather_digest_context(
                 shared = text
     except Exception as exc:
         _logger.debug("learning shared notes failed: %s", exc)
-    return catalog, user_snip, project_snip, conversation, agent_snip, semantic, shared
+    return (
+        catalog,
+        user_snip,
+        project_snip,
+        conversation,
+        agent_snip,
+        semantic,
+        shared,
+        capacity,
+    )
 
 
 def _record_learning_event(
@@ -191,13 +237,17 @@ def _record_learning_event(
 
 
 @contextmanager
-def _review_isolation(agent_id: str | None) -> Iterator[None]:
-    """Bind agent sandbox + block nested observe_turn during the review."""
+def _review_isolation(
+    agent_id: str | None, *, user_id: str | None = None
+) -> Iterator[None]:
+    """Bind agent sandbox + user scope; block nested observe_turn during review."""
     from app.runtime.tools.sandbox import bind_agent, reset_agent
+    from app.runtime.tools.user_ctx import bind_user, reset_user
 
     scope_token = enter_review_scope()
     try:
         agent_token = bind_agent(agent_id)
+        user_token = bind_user(user_id)
     except Exception as exc:
         exit_review_scope(scope_token)
         _logger.warning("learning review sandbox bind failed: %s", exc)
@@ -209,6 +259,10 @@ def _review_isolation(agent_id: str | None) -> Iterator[None]:
             reset_agent(agent_token)
         except Exception:
             _logger.debug("sandbox reset failed", exc_info=True)
+        try:
+            reset_user(user_token)
+        except Exception:
+            _logger.debug("user_ctx reset failed", exc_info=True)
         exit_review_scope(scope_token)
 
 
@@ -289,6 +343,7 @@ async def _run_review_llm(
     agent_id: str | None,
     review_memory: bool,
     review_skills: bool,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     from app.runtime.agent.retry import with_llm_retry
     from app.runtime.agent.learning.memory_types import (
@@ -350,7 +405,7 @@ async def _run_review_llm(
             label="learning-review",
         )
 
-    with _review_isolation(agent_id):
+    with _review_isolation(agent_id, user_id=user_id):
         for _ in range(_MAX_REVIEW_ROUNDS):
             resp: LLMResponse = await _complete(messages, schemas)
             if not resp.has_tool_calls:
@@ -482,10 +537,29 @@ async def run_learning_review(
         return None
 
     review_client, routed = _resolve_review_client(client)
-    catalog, user_snip, project_snip, conversation, agent_snip, semantic, shared = (
-        _gather_digest_context(
-            agent_id=metrics.agent_id, session_id=metrics.session_id
-        )
+    review_user_id = "web"
+    if metrics.session_id:
+        try:
+            from app.services import store as _st
+
+            _sess = _st.get_session(metrics.session_id)
+            if _sess:
+                review_user_id = (_sess.get("user_id") or "web").strip() or "web"
+        except Exception:
+            review_user_id = "web"
+    (
+        catalog,
+        user_snip,
+        project_snip,
+        conversation,
+        agent_snip,
+        semantic,
+        shared,
+        capacity,
+    ) = _gather_digest_context(
+        agent_id=metrics.agent_id,
+        session_id=metrics.session_id,
+        user_id=review_user_id,
     )
     digest = build_review_digest(
         messages=messages,
@@ -501,6 +575,7 @@ async def run_learning_review(
         agent_snippet=agent_snip,
         semantic_hint=semantic,
         shared_snippet=shared,
+        memory_capacity=capacity,
     )
 
     result: dict[str, Any] = {
@@ -522,6 +597,7 @@ async def run_learning_review(
             agent_id=metrics.agent_id,
             review_memory=plan.review_memory,
             review_skills=plan.review_skills,
+            user_id=review_user_id,
         )
         result["saved"] = bool(llm_out.get("saved"))
         result["actions"] = list(llm_out.get("actions") or [])

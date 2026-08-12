@@ -114,6 +114,47 @@ def format_user_snippet(entries: list[str] | None, *, limit: int = _MAX_USER_SNI
     return text
 
 
+def format_memory_capacity(
+    *,
+    user_chars: int = 0,
+    user_limit: int = 2000,
+    user_entries: int = 0,
+    agent_chars: int = 0,
+    agent_limit: int = 4000,
+    agent_entries: int = 0,
+) -> str:
+    """Tell the reviewer how full curated files are (avoids skill-as-overflow)."""
+
+    def _line(label: str, chars: int, limit: int, n: int) -> str:
+        lim = max(1, int(limit or 1))
+        pct = min(100, int(100 * max(0, int(chars)) / lim))
+        room = max(0, lim - max(0, int(chars)))
+        if pct >= 90:
+            status = "FULL — replace/remove before add, or use remember/agent_state"
+        elif pct >= 70:
+            status = "tight — prefer replace over add; remember for long facts"
+        else:
+            status = "ok"
+        return (
+            f"- {label}: {chars}/{lim} chars ({pct}%), "
+            f"{n} entries, room≈{room} — {status}"
+        )
+
+    lines = [
+        _line("USER (memory target=user)", user_chars, user_limit, user_entries),
+        _line(
+            "agent MEMORY (memory target=memory)",
+            agent_chars,
+            agent_limit,
+            agent_entries,
+        ),
+        "- semantic KB (`remember`): no curated char cap — good overflow for long facts",
+        "- agent_state: short key/value facts when files are full",
+        "- skills (`manage_skill`): procedures only — NEVER use as memory overflow",
+    ]
+    return "\n".join(lines)
+
+
 def build_review_digest(
     *,
     messages: list[dict[str, Any]],
@@ -129,6 +170,7 @@ def build_review_digest(
     agent_snippet: str | None = None,
     semantic_hint: str | None = None,
     shared_snippet: str | None = None,
+    memory_capacity: str | None = None,
 ) -> str:
     """Structured digest the reviewer consumes as its sole user message body."""
     trail = compact_tool_trail(messages)
@@ -167,6 +209,8 @@ def build_review_digest(
         )
     if skill_catalog is not None:
         parts.append(f"## Existing skill catalog [agent/skills]\n{skill_catalog}")
+    if memory_capacity is not None:
+        parts.append(f"## Memory capacity\n{memory_capacity}")
     if agent_snippet is not None:
         parts.append(f"## Agent memory [agent]\n{agent_snippet}")
     if user_snippet is not None:
@@ -191,6 +235,8 @@ def build_review_digest(
     )
     parts.append(
         "Pick the correct memory lane before writing. "
+        "If curated memory is full, replace/remove or use remember — "
+        "do not create a skill as overflow. "
         "Act with tools if warranted; otherwise reply exactly: Nothing to save."
     )
     return "\n\n".join(parts)
@@ -200,5 +246,6 @@ __all__ = [
     "compact_tool_trail",
     "format_skill_catalog",
     "format_user_snippet",
+    "format_memory_capacity",
     "build_review_digest",
 ]

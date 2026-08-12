@@ -31,10 +31,16 @@ Rules:
 3. Memory = who the user is / durable prefs. Skills = how to do this class of task.
    If a similar preference already exists in USER profile, replace or skip —
    do not stack near-duplicates.
-4. Style/workflow complaints belong in the governing skill body, not only memory.
-5. If genuinely nothing durable stands out, reply exactly: Nothing to save.
-6. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
-7. After any successful write tool, your final text MUST include a line:
+4. Style/workflow complaints: first try `memory` (user/agent) or `remember`.
+   Only put them in a skill when they are a reusable procedure for a class of task.
+5. Memory capacity (see digest "## Memory capacity"):
+   - If a lane is near/full, do NOT create a skill as overflow storage.
+   - Prefer: replace/remove an outdated entry, then add; or use `remember`
+     (semantic KB, no char cap); or `agent_state` for short keyed facts.
+   - Never invent a skill just because `memory` returned a char-limit error.
+6. If genuinely nothing durable stands out, reply exactly: Nothing to save.
+7. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
+8. After any successful write tool, your final text MUST include a line:
    Diary: <1–3 sentences, past tense, what future sessions should know>
 """
 
@@ -45,7 +51,9 @@ If something stands out, save with `memory` (target=user for who they are; targe
 for env/conventions; target=project for workplace stack/architecture) even if the user
 never said "remember".
 Use `remember` for longer searchable KB docs; `agent_state` for short keyed facts.
-Only touch skills if a clear procedural lesson appeared.
+If capacity is tight: list entries, replace/remove stale ones, then add — or use
+`remember` / `agent_state`. Do NOT create skills as a dump for full memory files.
+Only touch skills if a clear procedural lesson appeared (how-to, not who they are).
 """
 
 _FOCUS_SKILLS = """
@@ -53,15 +61,18 @@ Focus this pass: SKILLS primarily — be ACTIVE when a signal fired.
 Preference order:
   1. PATCH a skill touched this turn if it covers the lesson
   2. PATCH an existing class-level skill (list_skills → use_skill → manage_skill patch)
-  3. CREATE a new class-level skill only when nothing covers the class
+  3. CREATE a new class-level skill only when nothing covers the class AND the
+     lesson is a reusable procedure (not a preference and not memory overflow)
 Only save memory if a clear durable preference/correction appeared.
+Prefs/persona never go into manage_skill create — use memory / remember.
 """
 
 _FOCUS_BOTH = """
-Focus this pass: BOTH memory and skills.
-Memory: who the user is — prefs, corrections, persona. Be ACTIVE with `memory`.
-Skills: how to do this class of task. Prefer patching skills touched this turn,
-then existing umbrellas, then create class-level only if needed.
+Focus this pass: BOTH memory and skills — but they are different jobs.
+Memory first for who the user is (prefs, corrections, persona): `memory` /
+`remember` / `agent_state`. If a file is near capacity, replace or use `remember`.
+Skills only for how to do a class of task. Prefer patch; create only when no
+class-level skill exists. Never create a skill because memory was full.
 """
 
 

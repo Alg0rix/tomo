@@ -158,6 +158,7 @@ def list_learning_events(
     before: float | None = None,
     agent_id: str | None = None,
     saved_only: bool = False,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
     lim = max(1, min(int(limit or 30), 200))
     clauses: list[str] = []
@@ -171,6 +172,10 @@ def list_learning_events(
         params.append(aid)
     if saved_only:
         clauses.append("saved = 1")
+    uid = (user_id or "").strip()
+    if uid:
+        clauses.append("user_id = ?")
+        params.append(uid)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(lim)
     rows = conn.execute(
@@ -185,15 +190,33 @@ def list_learning_events(
     return [_row_to_event(r) for r in rows]
 
 
-def learning_event_stats(conn: sqlite3.Connection) -> dict[str, int]:
-    total = int(
-        conn.execute("SELECT COUNT(*) AS c FROM learning_events").fetchone()["c"]
-    )
-    saved = int(
-        conn.execute(
-            "SELECT COUNT(*) AS c FROM learning_events WHERE saved=1"
-        ).fetchone()["c"]
-    )
+def learning_event_stats(
+    conn: sqlite3.Connection, *, user_id: str | None = None
+) -> dict[str, int]:
+    uid = (user_id or "").strip()
+    if uid:
+        total = int(
+            conn.execute(
+                "SELECT COUNT(*) AS c FROM learning_events WHERE user_id=?",
+                (uid,),
+            ).fetchone()["c"]
+        )
+        saved = int(
+            conn.execute(
+                "SELECT COUNT(*) AS c FROM learning_events "
+                "WHERE saved=1 AND user_id=?",
+                (uid,),
+            ).fetchone()["c"]
+        )
+    else:
+        total = int(
+            conn.execute("SELECT COUNT(*) AS c FROM learning_events").fetchone()["c"]
+        )
+        saved = int(
+            conn.execute(
+                "SELECT COUNT(*) AS c FROM learning_events WHERE saved=1"
+            ).fetchone()["c"]
+        )
     return {
         "events_total": total,
         "events_saved": saved,
@@ -202,7 +225,7 @@ def learning_event_stats(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def learning_events_by_month(
-    conn: sqlite3.Connection, *, months: int = 12
+    conn: sqlite3.Connection, *, months: int = 12, user_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Last ``months`` calendar months (UTC) with event counts."""
     n = max(1, min(int(months or 12), 36))
@@ -220,10 +243,19 @@ def learning_events_by_month(
     y0, m0 = int(buckets[0]["month"][:4]), int(buckets[0]["month"][5:7])
     start_ts = datetime(y0, m0, 1, tzinfo=timezone.utc).timestamp()
 
-    for row in conn.execute(
-        "SELECT created_at, saved FROM learning_events WHERE created_at >= ?",
-        (start_ts,),
-    ):
+    uid = (user_id or "").strip()
+    if uid:
+        rows = conn.execute(
+            "SELECT created_at, saved FROM learning_events "
+            "WHERE created_at >= ? AND user_id=?",
+            (start_ts, uid),
+        )
+    else:
+        rows = conn.execute(
+            "SELECT created_at, saved FROM learning_events WHERE created_at >= ?",
+            (start_ts,),
+        )
+    for row in rows:
         ts = float(row["created_at"] or 0)
         if ts <= 0:
             continue

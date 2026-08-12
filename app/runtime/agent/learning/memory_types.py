@@ -225,16 +225,17 @@ def lanes_prompt_block() -> str:
     """Short rules block for the learning-review system prompt."""
     lines = [
         "Memory lanes (choose the right store — never dump everything into USER):",
-        "- user → memory target=user (who they are, prefs, style)",
-        "- agent → memory target=memory / agent_state (your notes, env quirks)",
+        "- user → memory target=user (who they are, prefs, style) — hard char limit",
+        "- agent → memory target=memory / agent_state (your notes, env quirks) — hard char limit",
         "- project → memory target=project (stack, architecture for the workplace)",
-        "- semantic → remember (searchable KB facts/procedures)",
+        "- semantic → remember (searchable KB; use when curated files are full or fact is long)",
         "- execution → save_artifact / tool outcomes (not USER prefs)",
         "- episodic → diary only (this turn's outcome; do NOT copy chat into KB)",
         "- conversation → session summary (automatic; do not re-save chat)",
         "- shared → cross-agent session facts (prefer session-visible notes)",
+        "Skills (manage_skill) are NOT a memory lane. Only for reusable how-to procedures.",
         "Wrong lane examples: deploy logs → USER; one-off ticket IDs → skills;",
-        "preferences → remember as orphan KB docs.",
+        "full MEMORY.md → create skill; preferences → skill body only.",
     ]
     return "\n".join(lines)
 

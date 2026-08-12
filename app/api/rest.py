@@ -45,22 +45,27 @@ async def dashboard_data(request: Request, _: AuthDep):
 
 
 @router.get("/companion")
-async def companion_snapshot_api(_: AuthDep):
-    """Bond, growth ledger, profile preview for the Companion page."""
-    return store.companion_snapshot()
+async def companion_snapshot_api(request: Request, _: AuthDep):
+    """Bond, growth ledger, profile preview for the Companion page (per login)."""
+    return store.companion_snapshot(user_id=session_user_id(request))
 
 
 @router.get("/companion/events")
 async def companion_events_api(
+    request: Request,
     _: AuthDep,
     limit: int = Query(30, ge=1, le=200),
     before: float | None = Query(None),
     agent_id: str | None = Query(None),
     saved_only: bool = Query(False),
 ):
-    """Paginated growth log (learning events)."""
+    """Paginated growth log (learning events for this account only)."""
     events = store.list_learning_events(
-        limit=limit, before=before, agent_id=agent_id, saved_only=saved_only
+        limit=limit,
+        before=before,
+        agent_id=agent_id,
+        saved_only=saved_only,
+        user_id=session_user_id(request),
     )
     next_before = None
     if events and len(events) >= limit:
