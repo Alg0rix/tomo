@@ -178,6 +178,105 @@ def test_web_fetch_http_error(monkeypatch) -> None:
     assert result.startswith("Error")
 
 
+def _mock_client_for(text: str, *, content_type: str = "text/plain") -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": content_type}
+    mock_resp.text = text
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.url = "https://example.com/page"
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.get.return_value = mock_resp
+    return mock_client
+
+
+def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> None:
+    """A page over _MAX_CHARS must stay fully retrievable via offset, not lost."""
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    full_text = "".join(f"line{i:06d}\n" for i in range(20_000))  # ~ 220k chars
+    assert len(full_text) > web_fetch._MAX_CHARS
+
+    with patch(
+        "app.runtime.tools.web_fetch.httpx.Client",
+        return_value=_mock_client_for(full_text),
+    ):
+        first = execute("web_fetch", {"url": "https://example.com/page"})
+    assert "truncated" not in first
+    assert len(first) > web_fetch._MAX_CHARS  # continuation note appended, page itself full-sized
+    assert full_text[: web_fetch._MAX_CHARS] in first
+    assert "Continue with offset=" in first
+
+    next_offset = int(first.rsplit("offset=", 1)[1].strip().rstrip("."))
+    assert next_offset == web_fetch._MAX_CHARS
+
+    # Walk every remaining page via offset until nothing is left, reassembling
+    # the pages' raw content (stripped of continuation notes) as we go.
+    reassembled = first.split("\n\n… more content")[0]
+    offset = next_offset
+    pages_walked = 1
+    while True:
+        with patch(
+            "app.runtime.tools.web_fetch.httpx.Client",
+            return_value=_mock_client_for(full_text),
+        ):
+            page = execute(
+                "web_fetch", {"url": "https://example.com/page", "offset": offset}
+            )
+        pages_walked += 1
+        assert pages_walked < 10  # sanity bound — must terminate quickly
+        if "Continue with offset=" in page:
+            body, note = page.split("\n\n… more content", 1)
+            reassembled += body
+            offset = int(note.rsplit("offset=", 1)[1].strip().rstrip("."))
+        else:
+            reassembled += page
+            break
+
+    # Concatenating every page recovers the entire original document losslessly.
+    assert reassembled == full_text
+
+
+def test_web_fetch_respects_explicit_limit(monkeypatch) -> None:
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    text = "abcdefghij" * 10  # 100 chars
+    with patch(
+        "app.runtime.tools.web_fetch.httpx.Client",
+        return_value=_mock_client_for(text),
+    ):
+        result = execute(
+            "web_fetch", {"url": "https://example.com/page", "limit": 10}
+        )
+    assert result.startswith("abcdefghij\n\n")
+    assert "Continue with offset=10" in result
+
+
+def test_web_fetch_offset_past_end_is_error(monkeypatch) -> None:
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    with patch(
+        "app.runtime.tools.web_fetch.httpx.Client",
+        return_value=_mock_client_for("short"),
+    ):
+        result = execute(
+            "web_fetch", {"url": "https://example.com/page", "offset": 999}
+        )
+    assert result.startswith("Error")
+
+
+def test_web_fetch_invalid_offset_is_error(monkeypatch) -> None:
+    monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
+    with patch(
+        "app.runtime.tools.web_fetch.httpx.Client",
+        return_value=_mock_client_for("short"),
+    ):
+        result = execute(
+            "web_fetch", {"url": "https://example.com/page", "offset": "nope"}
+        )
+    assert result.startswith("Error")
+
+
 def test_html_to_markdown_direct() -> None:
     md = web_fetch._html_to_markdown(
         "<html><body><h2>Title</h2><ul><li>One</li><li>Two</li></ul></body></html>"

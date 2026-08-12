@@ -7,13 +7,21 @@
     "type": "function",
     "function": {
       "name": "web_fetch",
-      "description": "HTTP GET a URL. HTML responses are converted to Markdown. Private/loopback hosts are blocked.",
+      "description": "HTTP GET a URL. HTML responses are converted to Markdown. Private/loopback hosts are blocked. Long content pages instead of truncating — when the response ends with 'Continue with offset=N', call again with that offset to get the rest.",
       "parameters": {
         "type": "object",
         "properties": {
           "url": {
             "type": "string",
             "description": "http or https URL to fetch."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "0-based character offset to start the page from (default 0). Use the offset from a prior response's 'Continue with offset=N' to fetch the next page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max characters to return in this page (default 100000, max 400000)."
           }
         },
         "required": ["url"]

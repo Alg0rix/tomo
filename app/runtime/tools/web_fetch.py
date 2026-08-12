@@ -11,9 +11,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from app.runtime.html_md import HtmlToMarkdown
+from app.runtime.tools.file_util import parse_positive_int
 
 _TIMEOUT = 15.0
 _MAX_CHARS = 100_000
+_MAX_PAGE_CHARS = 400_000
 _MAX_REDIRECTS = 5
 # Keep the DOM-to-Markdown walker away from pages with large client-side
 # bundles. Mermaid's own Usage page is ~159 KB and is already pathological
@@ -120,14 +122,51 @@ def _html_to_markdown(html: str) -> str:
     return md
 
 
+def _paginate(text: str, *, offset: int, limit: int) -> str:
+    """Return a char-range page of *text* with a continuation hint.
+
+    Never drops content: a page beyond the first is always reachable via
+    ``offset``, so the full document is retrievable across calls instead of
+    being silently cut off.
+    """
+    total = len(text)
+    if total == 0:
+        return "(empty response)"
+    if offset >= total:
+        return (
+            f"Error: offset {offset} is past end of content ({total} chars). "
+            f"Use offset=0..{total - 1}."
+        )
+    end = min(offset + limit, total)
+    page = text[offset:end]
+    if end < total:
+        page += (
+            f"\n\n… more content after char {end} ({total - end} char(s) left). "
+            f"Continue with offset={end}."
+        )
+    return page
+
+
 def run(arguments: dict[str, Any]) -> str:
-    """Fetch ``url`` and return truncated text/Markdown; always returns a string."""
+    """Fetch ``url`` and return paginated text/Markdown; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: web_fetch expects a dict of arguments"
     url = arguments.get("url")
     if not isinstance(url, str) or not url.strip():
         return "Error: 'url' argument must be a non-empty string"
     url = url.strip()
+
+    offset = parse_positive_int(
+        arguments.get("offset", 0), 0, name="offset", minimum=0
+    )
+    if isinstance(offset, str):
+        return offset
+    limit = parse_positive_int(
+        arguments.get("limit", _MAX_CHARS), _MAX_CHARS, name="limit", minimum=1
+    )
+    if isinstance(limit, str):
+        return limit
+    limit = min(int(limit), _MAX_PAGE_CHARS)
 
     blocked = _check_url(url)
     if blocked:
@@ -176,9 +215,7 @@ def run(arguments: dict[str, Any]) -> str:
         except Exception as exc:  # noqa: BLE001 — tool must always return a string
             return f"Error: HTML→Markdown conversion failed: {exc}"
 
-    if len(text) > _MAX_CHARS:
-        return text[:_MAX_CHARS] + f"\n...[truncated, {len(text)} chars total]"
-    return text if text else "(empty response)"
+    return _paginate(text, offset=int(offset), limit=limit)
 
 
 __all__ = ["run"]
