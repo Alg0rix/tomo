@@ -210,21 +210,26 @@ async def _llm_round_with_retry(
 ) -> AsyncIterator[dict[str, Any]]:
     """Like ``_llm_round`` but retries the whole round on transient failures.
 
-    Streaming cannot resume mid-flight; on failure we discard partial deltas
-    and restart the round (caller only sees deltas from the successful attempt).
+    Forwards each piece to the caller as soon as ``_llm_round`` produces it —
+    real provider token-streaming must reach the SSE layer immediately, not
+    only after the whole round finishes (buffering the full round here turns
+    live streaming into one long wait followed by the whole reply appearing
+    at once). Retry only kicks in for a failure that happens before any
+    piece has reached the caller — once a delta has been forwarded it cannot
+    be un-sent, so a failure past that point propagates instead of silently
+    restarting the round.
     """
     last_exc: BaseException | None = None
     for attempt in range(2):
-        pieces: list[dict[str, Any]] = []
+        forwarded = False
         try:
             async for piece in _llm_round(client, messages, tool_schemas):
-                pieces.append(piece)
-            for piece in pieces:
+                forwarded = True
                 yield piece
             return
         except Exception as exc:
             last_exc = exc
-            if attempt == 0 and is_transient_llm_error(exc):
+            if attempt == 0 and not forwarded and is_transient_llm_error(exc):
                 if metrics is not None:
                     metrics.llm_retries += 1
                 _logger.warning("LLM round transient failure — retrying: %s", exc)

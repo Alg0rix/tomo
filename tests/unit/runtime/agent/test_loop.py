@@ -112,6 +112,44 @@ async def test_metrics_estimate_usage_when_provider_omits() -> None:
     assert int(metrics.get("completion_tokens") or 0) > 0
 
 
+async def test_deltas_stream_as_produced_not_buffered_until_round_end() -> None:
+    """Regression: the LLM round must forward each delta as it arrives.
+
+    ``_llm_round_with_retry`` used to fully drain the underlying
+    ``stream_complete`` generator into a list before yielding anything, which
+    turns real provider token-streaming into one big burst at the very end
+    (long "typing" wait, then the whole reply appears at once). The consumer
+    must see the first delta while the producer has only made the first of
+    several chunks available — not after all of them.
+    """
+    produced = {"n": 0}
+    total_chunks = 5
+
+    class _StreamingLLM:
+        async def complete(self, messages, tools=None):
+            raise AssertionError("stream_complete is available — must not fall back")
+
+        async def stream_complete(self, messages, tools=None):
+            for i in range(total_chunks):
+                produced["n"] = i + 1
+                yield {"type": "delta", "content": f"chunk{i} "}
+            yield {"type": "done", "response": text_reply("chunk0 chunk1 chunk2 chunk3 chunk4 ")}
+
+    first_delta_producer_count = None
+    async for ev in run_turn(
+        "hello", llm=_StreamingLLM(), tools=[], enable_atg=False
+    ):
+        if ev["kind"] == "delta" and first_delta_producer_count is None:
+            first_delta_producer_count = produced["n"]
+            break
+
+    assert first_delta_producer_count == 1, (
+        "first delta reached the consumer after producing "
+        f"{first_delta_producer_count}/{total_chunks} chunks — the round is "
+        "buffered instead of streamed"
+    )
+
+
 async def test_bash_path_emits_tool_then_result_then_final() -> None:
     llm = ScriptedLLM(tool_then_text(bash_call("echo 4"), _BASH_FINAL))
     events = await _collect("run: echo 4", llm=llm, tools=_bash_tools())
