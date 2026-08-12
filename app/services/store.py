@@ -1366,5 +1366,55 @@ class Store:
                 self._conn, query, session_id=session_id, limit=limit
             )
 
+    # -- episodic memories (concrete past experiences) -------------------
+    def insert_episode(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.insert_episode(
+                self._conn,
+                user_id=str(data.get("user_id") or "web"),
+                session_id=str(data.get("session_id") or ""),
+                agent_id=str(data.get("agent_id") or ""),
+                title=str(data.get("title") or ""),
+                tried=str(data.get("tried") or ""),
+                context=str(data.get("context") or ""),
+                error=str(data.get("error") or ""),
+                fix=str(data.get("fix") or ""),
+                outcome=str(data.get("outcome") or ""),
+                summary=str(data.get("summary") or ""),
+            )
+
+    def search_episodes(
+        self,
+        query: str,
+        *,
+        user_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.search_episodes(
+                self._conn, query, user_id=user_id, limit=limit
+            )
+
+    def list_episodes(
+        self,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.list_episodes(
+                self._conn,
+                user_id=user_id,
+                session_id=session_id,
+                limit=limit,
+            )
+
 
 store = Store()

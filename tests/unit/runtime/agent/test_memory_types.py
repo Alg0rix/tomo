@@ -13,8 +13,9 @@ from app.runtime.agent.learning.memory_types import (
 )
 
 
-def test_eight_memory_types() -> None:
-    assert len(MEMORY_TYPES) == 8
+def test_nine_memory_types() -> None:
+    assert len(MEMORY_TYPES) == 9
+    assert "diary" in MEMORY_TYPES
     assert "episodic" in MEMORY_TYPES
     assert "semantic" in MEMORY_TYPES
     assert "shared" in MEMORY_TYPES
@@ -28,6 +29,8 @@ def test_memory_type_for_tool_targets() -> None:
     assert memory_type_for_tool("memory", arguments={"target": "project"}) == "project"
     assert memory_type_for_tool("memory", arguments={"target": "memory"}) == "agent"
     assert memory_type_for_tool("save_artifact") == "execution"
+    assert memory_type_for_tool("record_episode") == "episodic"
+    assert memory_type_for_tool("recall_episodes") == "episodic"
     assert memory_type_for_tool("list_skills") == "agent"
 
 

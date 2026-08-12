@@ -186,7 +186,22 @@ def retrieve_for_turn(
         except Exception as exc:
             _logger.debug("project retrieve failed: %s", exc)
 
-    # 3) High-confidence semantic KB (per login account).
+    # 3) Concrete past experiences (episodic), then semantic KB.
+    try:
+        episodes = store.search_episodes(query, limit=max(2, limit // 2 or 2), user_id=uid)
+        if episodes:
+            lines = []
+            for ep in episodes:
+                summary = (ep.get("summary") or ep.get("title") or "").strip().replace(
+                    "\n", " "
+                )
+                if len(summary) > 200:
+                    summary = summary[:197] + "…"
+                lines.append(f"- {ep.get('title') or ep.get('id')}: {summary}")
+            parts.append("Past experiences [episodic]:\n" + "\n".join(lines))
+    except Exception as exc:
+        _logger.debug("episodic retrieve failed: %s", exc)
+
     try:
         kb_hits = store.search_knowledge(query, limit=limit, user_id=uid)
         if kb_hits:

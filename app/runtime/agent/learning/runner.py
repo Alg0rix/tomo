@@ -43,6 +43,8 @@ _ALLOWED_REVIEW_TOOLS = frozenset(
         "manage_skill",
         "list_artifacts",
         "save_artifact",
+        "record_episode",
+        "recall_episodes",
     }
 )
 
@@ -305,6 +307,8 @@ def _learning_tool_schemas(*, review_memory: bool, review_skills: bool) -> list[
                 "save_artifact",
                 "list_artifacts",
                 "memory",
+                "record_episode",
+                "recall_episodes",
             }
         )
     if review_skills:

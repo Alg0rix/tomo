@@ -1,6 +1,9 @@
 """Canonical memory-OS types for Tomo (SQLite + filesystem lanes).
 
-Eight typed lanes — not one vector store. Skills stay adjacent (workflows).
+Nine typed lanes — not one vector store. Skills stay adjacent (workflows).
+
+``diary`` is the learning-review growth line on ``learning_events``.
+``episodic`` is concrete past experiences (``episodic_memories``).
 """
 
 from __future__ import annotations
@@ -8,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 MemoryType = Literal[
+    "diary",
     "episodic",
     "semantic",
     "user",
@@ -19,6 +23,7 @@ MemoryType = Literal[
 ]
 
 MEMORY_TYPES: tuple[MemoryType, ...] = (
+    "diary",
     "episodic",
     "semantic",
     "user",
@@ -31,7 +36,15 @@ MEMORY_TYPES: tuple[MemoryType, ...] = (
 
 # Types that count as a durable "saved lesson" when a write succeeds.
 SAVED_LESSON_TYPES: frozenset[str] = frozenset(
-    {"semantic", "user", "project", "agent", "execution", "shared"}
+    {
+        "episodic",
+        "semantic",
+        "user",
+        "project",
+        "agent",
+        "execution",
+        "shared",
+    }
 )
 
 # Tools that can persist durable state during learning review.
@@ -42,6 +55,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "agent_state",
         "manage_skill",
         "save_artifact",
+        "record_episode",
     }
 )
 
@@ -50,6 +64,7 @@ READ_TOOLS: frozenset[str] = frozenset(
         "list_skills",
         "use_skill",
         "list_artifacts",
+        "recall_episodes",
     }
 )
 
@@ -59,17 +74,20 @@ _TOOL_DEFAULT_TYPE: dict[str, MemoryType] = {
     "agent_state": "agent",
     "manage_skill": "agent",  # skill update adjacent; tagged agent lane for extract
     "save_artifact": "execution",
+    "record_episode": "episodic",
+    "recall_episodes": "episodic",
     "list_skills": "agent",
     "use_skill": "agent",
     "list_artifacts": "execution",
 }
 
 _STORE_HINTS: dict[MemoryType, str] = {
-    "episodic": "learning_events diary + turn trail (do not copy full chat into KB)",
+    "diary": "learning_events.diary — short growth-log line for Companion (not full episode)",
+    "episodic": "episodic_memories — concrete past experiences (tried/error/fix/outcome)",
     "semantic": "knowledge_entries via remember/recall (FTS)",
-    "user": "$TOMO_HOME/memories/USER.md via memory target=user",
+    "user": "$TOMO_HOME/memories/users/<user_id>/USER.md via memory target=user",
     "project": "$TOMO_HOME/workplaces/<id>/PROJECT.md",
-    "agent": "agents/<id>/MEMORY.md + agent_state",
+    "agent": "agents/<id>/users/<user_id>/MEMORY.md + agent_state",
     "execution": "artifacts + execution_snippets index + tagged review actions",
     "conversation": "messages + session_summaries (session-scoped)",
     "shared": "swarm_notes (session-scoped; published on delegate complete)",
@@ -104,6 +122,10 @@ def memory_type_for_tool(
         return "agent"
     if name == "manage_skill":
         return "agent"
+    if name == "record_episode":
+        return "episodic"
+    if name == "recall_episodes":
+        return "episodic"
     if name in READ_TOOLS:
         return _TOOL_DEFAULT_TYPE.get(name)
     return _TOOL_DEFAULT_TYPE.get(name)
@@ -201,11 +223,12 @@ def _extract_confidence(items: list[dict[str, Any]], *, saved: bool) -> float:
     writes = [i for i in items if i.get("saved_eligible")]
     if not writes:
         return 0.0
-    # Prefer durable preference/project/semantic lanes.
+    # Prefer durable preference/project/semantic/episodic lanes.
     weights = {
         "user": 1.0,
         "project": 0.95,
         "semantic": 0.9,
+        "episodic": 0.88,
         "agent": 0.85,
         "execution": 0.75,
         "shared": 0.7,
@@ -228,14 +251,15 @@ def lanes_prompt_block() -> str:
         "- user → memory target=user (who they are, prefs, style) — hard char limit",
         "- agent → memory target=memory / agent_state (your notes, env quirks) — hard char limit",
         "- project → memory target=project (stack, architecture for the workplace)",
-        "- semantic → remember (searchable KB; use when curated files are full or fact is long)",
+        "- semantic → remember (searchable general facts; use when files full or fact is long)",
+        "- episodic → record_episode (concrete past experience: tried / error / fix / outcome)",
         "- execution → save_artifact / tool outcomes (not USER prefs)",
-        "- episodic → diary only (this turn's outcome; do NOT copy chat into KB)",
+        "- diary → Diary: line only (Companion growth log; NOT a full episode)",
         "- conversation → session summary (automatic; do not re-save chat)",
         "- shared → cross-agent session facts (prefer session-visible notes)",
         "Skills (manage_skill) are NOT a memory lane. Only for reusable how-to procedures.",
-        "Wrong lane examples: deploy logs → USER; one-off ticket IDs → skills;",
-        "full MEMORY.md → create skill; preferences → skill body only.",
+        "Episodic example: tried deploy X on project Y, hit error Z, fixed with A, succeeded.",
+        "Wrong lane: episode story → skill create; prefs → skill; full MEMORY → skill overflow.",
     ]
     return "\n".join(lines)
 

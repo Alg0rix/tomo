@@ -228,13 +228,15 @@ def build_review_digest(
             "do not put them in USER.)"
         )
     final = (final_content or "").strip()[:_MAX_FINAL_CHARS] or "(empty)"
-    parts.append(f"## Final answer (excerpt) [episodic]\n{final}")
+    parts.append(f"## Final answer (excerpt) [conversation/diary context]\n{final}")
     parts.append(
         f"## Stats\ntool_calls={tool_calls} messages={len(messages)} "
         f"skills_touched={len(skills_touched)}"
     )
     parts.append(
         "Pick the correct memory lane before writing. "
+        "If this turn was a concrete experience (tried X, error Y, fixed with Z), "
+        "call record_episode. Diary: line is only a short Companion growth note. "
         "If curated memory is full, replace/remove or use remember — "
         "do not create a skill as overflow. "
         "Act with tools if warranted; otherwise reply exactly: Nothing to save."

@@ -6,38 +6,43 @@
 
 ## Principle
 
-Reasoning, execution, and learning stay separated. Memory is **eight typed lanes** mapped onto SQLite + markdown + FTS (optional embeddings later), not one undifferentiated vector table.
+Reasoning, execution, and learning stay separated. Memory is **nine typed lanes** mapped onto SQLite + markdown + FTS (optional embeddings later), not one undifferentiated vector table.
 
-## Eight types
+## Nine types
 
 | Type | Meaning | Store | Write | Read / inject |
 |------|---------|-------|-------|---------------|
-| **episodic** | One completed task / turn outcome | `learning_events` diary + digest trail | Review ledger only | Digest; Companion growth log |
+| **diary** | Short growth-log line for Companion | `learning_events.diary` | Review final `Diary:` line only | Companion growth log |
+| **episodic** | Concrete past experiences | `episodic_memories` (per user) | `record_episode` | `recall_episodes` / turn retrieve |
 | **semantic** | Durable facts / procedures | `knowledge_entries` + FTS | `remember` | `recall` / turn retrieve |
-| **user** | Preferences, style, profile | `$TOMO_HOME/memories/USER.md` | `memory` target=user | Frozen into system prompt |
+| **user** | Preferences, style, profile | `$TOMO_HOME/memories/users/<id>/USER.md` | `memory` target=user | Frozen into system prompt |
 | **project** | Architecture / stack / open tasks | `$TOMO_HOME/workplaces/<id>/PROJECT.md` | `memory` target=project | Context when workplace bound |
-| **agent** | Per-agent notes / KV | `agents/<id>/MEMORY.md` + `agent_state` | `memory` / `agent_state` | Agent prompt + retrieve |
+| **agent** | Per-agent notes / KV | `agents/<id>/users/<uid>/MEMORY.md` + `agent_state` | `memory` / `agent_state` | Agent prompt + retrieve |
 | **execution** | Tool outcomes worth keeping | Artifacts + `execution_snippets` | `save_artifact` / review tags | Digest trail + retrieve search |
 | **conversation** | Session-scoped working memory | `messages` + `session_summaries` | Chat + summary update | Session history / summary |
 | **shared** | Swarm-visible mid-task notes | SQLite `swarm_notes` | Auto on delegate complete | Sibling agents via session retrieve |
+
+**Episodic example:** “Tried deployment X on project Y, hit error Z, fixed with A, result succeeded.”
+
+**Diary is not episodic:** diary is a 1–3 sentence Companion note; full experiences go in `record_episode`.
 
 **Skills** stay adjacent (executable workflows via `manage_skill` / `SKILL.md`) — not a ninth memory type. Review may emit skill updates alongside memory writes.
 
 ## Do / don't (review LLM)
 
 - **Do** choose a lane before writing; put prefs in **user**, stack in **project**, searchable procedures in **semantic**, env quirks in **agent**.
-- **Don't** dump deploy logs or one-off ticket IDs into USER; don't put preferences into orphan KB docs via `remember`; don't copy full chat into knowledge (**episodic** / diary only).
+- **Don't** dump deploy logs or one-off ticket IDs into USER; don't put preferences into orphan KB docs via `remember`; don't copy full chat into knowledge (**diary** only for growth log; use **episodic** for concrete experiences).
 - Near-duplicates on curated USER/agent/project: prefer replace/skip (soft evaluator → `saved=0`).
 
 ## `saved` truth
 
-`saved=1` only when at least one **write** tool succeeds for a durable lesson type (`semantic`, `user`, `project`, `agent`, `execution`, `shared`).
+`saved=1` only when at least one **write** tool succeeds for a durable lesson type (`episodic`, `semantic`, `user`, `project`, `agent`, `execution`, `shared`).
 
-Write tools: `remember`, `memory`, `agent_state`, `manage_skill`, `save_artifact`.
+Write tools: `remember`, `memory`, `agent_state`, `manage_skill`, `save_artifact`, `record_episode`.
 
 Read-only (`list_skills`, `use_skill`, `list_artifacts`) and near-duplicate / error results → audit only, `saved=0`.
 
-Episodic diary / conversation summary alone do **not** count as saved lessons.
+Diary line / conversation summary alone do **not** count as saved lessons (use `record_episode` for episodic).
 
 ## Soft evaluator
 

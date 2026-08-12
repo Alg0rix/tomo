@@ -20,6 +20,7 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``learning_agent_state`` — Sticky learning counters across restart
 * ``swarm_notes`` — Session-scoped shared notes from delegate completes
 * ``execution_snippets`` — Lightweight index of execution-lane outcomes
+* ``episodic_memories`` — Concrete past experiences (per-user episodic lane)
 
 Booleans are stored as INTEGER (0/1); dict payloads (e.g. tool ``params``) are
 JSON-encoded into ``params_json``. Foreign keys are enforced by
@@ -362,6 +363,26 @@ CREATE INDEX IF NOT EXISTS idx_execution_snippets_session
     ON execution_snippets(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_execution_snippets_created
     ON execution_snippets(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS episodic_memories (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT 'web',
+    session_id  TEXT NOT NULL DEFAULT '',
+    agent_id    TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    tried       TEXT NOT NULL DEFAULT '',
+    context     TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    fix         TEXT NOT NULL DEFAULT '',
+    outcome     TEXT NOT NULL DEFAULT '',
+    summary     TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_user_created
+    ON episodic_memories(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodic_session
+    ON episodic_memories(session_id, created_at DESC);
 """
 
 
@@ -599,6 +620,41 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_execution_snippets_created "
             "ON execution_snippets(created_at DESC)"
+        )
+
+    # Episodic experiences (concrete past episodes), distinct from learning diary.
+    table_names = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "episodic_memories" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episodic_memories (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL DEFAULT 'web',
+                session_id  TEXT NOT NULL DEFAULT '',
+                agent_id    TEXT NOT NULL DEFAULT '',
+                title       TEXT NOT NULL DEFAULT '',
+                tried       TEXT NOT NULL DEFAULT '',
+                context     TEXT NOT NULL DEFAULT '',
+                error       TEXT NOT NULL DEFAULT '',
+                fix         TEXT NOT NULL DEFAULT '',
+                outcome     TEXT NOT NULL DEFAULT '',
+                summary     TEXT NOT NULL DEFAULT '',
+                created_at  REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_user_created "
+            "ON episodic_memories(user_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_session "
+            "ON episodic_memories(session_id, created_at DESC)"
         )
 
     from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts

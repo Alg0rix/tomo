@@ -41,7 +41,10 @@ Rules:
 6. If genuinely nothing durable stands out, reply exactly: Nothing to save.
 7. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
 8. After any successful write tool, your final text MUST include a line:
-   Diary: <1–3 sentences, past tense, what future sessions should know>
+   Diary: <1–3 sentences, past tense, Companion growth note only>
+9. When the turn was a concrete experience (tried X on project Y, error Z, fix A,
+   outcome), call `record_episode` with structured fields. That is episodic memory.
+   Do not put the full episode only in Diary: or invent a skill for it.
 """
 
 _FOCUS_MEMORY = """

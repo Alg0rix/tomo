@@ -1,0 +1,27 @@
+{
+  "id": "recall_episodes",
+  "name": "Recall episodes",
+  "description": "Search this account's episodic memory for concrete past experiences.",
+  "backend": "app.runtime.tools.recall_episodes",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "recall_episodes",
+      "description": "Keyword search over recorded episodes (tried/error/fix/outcome) for the current login. Use when past experience might help (similar deploy failure, prior workaround).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search terms (error text, project name, action, …)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max episodes to return (default 5)."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  }
+}

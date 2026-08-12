@@ -1,0 +1,47 @@
+{
+  "id": "record_episode",
+  "name": "Record episode",
+  "description": "Save a concrete past experience (tried / error / fix / outcome) into episodic memory.",
+  "backend": "app.runtime.tools.record_episode",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "record_episode",
+      "description": "Persist one concrete episode: what was tried, in what context, what failed, how it was fixed, and the outcome. Use for real experiences (e.g. deploy X on project Y hit error Z, fixed with A, succeeded). Not for general prefs (use memory) or abstract facts (use remember).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short label for the episode."
+          },
+          "tried": {
+            "type": "string",
+            "description": "What was attempted."
+          },
+          "context": {
+            "type": "string",
+            "description": "Where/when: project, workplace, environment."
+          },
+          "error": {
+            "type": "string",
+            "description": "What went wrong (if anything)."
+          },
+          "fix": {
+            "type": "string",
+            "description": "What resolved it."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Final result (succeeded, blocked, deferred, …)."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Optional full narrative; auto-built from fields if omitted."
+          }
+        },
+        "required": ["title"]
+      }
+    }
+  }
+}
