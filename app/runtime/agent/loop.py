@@ -623,8 +623,21 @@ async def run_turn(
     sandbox_token = sandbox.bind_agent(agent_id)
     todo_token = todo_mod.bind_session(session_id)
     from app.runtime.artifacts import fs as artifacts_fs
+    from app.runtime.tools import user_ctx as user_ctx_mod
 
     arts_token = artifacts_fs.bind_session(session_id)
+    # Bind session owner so knowledge / session_search / USER.md stay private.
+    turn_user_id = "web"
+    if session_id:
+        try:
+            from app.services import store as _store_for_uid
+
+            _sess = _store_for_uid.get_session(session_id)
+            if _sess:
+                turn_user_id = (_sess.get("user_id") or "web").strip() or "web"
+        except Exception:
+            turn_user_id = "web"
+    user_token = user_ctx_mod.bind_user(turn_user_id)
     # Stable system-prompt clock for this turn (hour precision + freeze).
     clock_token = freeze_prompt_clock()
     skills_touched: list[str] = []
@@ -1166,6 +1179,7 @@ async def run_turn(
         artifacts_fs.reset_session(arts_token)
         todo_mod.reset_session(todo_token)
         sandbox.reset_agent(sandbox_token)
+        user_ctx_mod.reset_user(user_token)
 
 
 async def _stream_delegate_bundle(
