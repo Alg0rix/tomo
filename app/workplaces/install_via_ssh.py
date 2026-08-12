@@ -1,9 +1,10 @@
 """Install the Tomo Connector on a remote host over SSH.
 
 Fetches a prebuilt ``tomo-connector-{os}-{arch}`` binary from GitHub Releases
-(repo ``Alg0rix/tomo``), installs it into ``~/.local/bin``, registers a
-systemd ``--user`` unit, pairs it against this coordinator, and registers the
-host as a ``tunnel`` workplace.
+(repo ``Alg0rix/tomo``), installs it into ``~/.local/bin`` (or
+``/usr/local/bin`` when the remote user is root), registers a systemd unit
+(``--user`` for normal users, system unit for root), pairs it against this
+coordinator, and registers the host as a ``tunnel`` workplace.
 
 Design notes
 ------------
@@ -263,7 +264,7 @@ def _download_script(
     return script
 
 
-def _systemd_unit() -> str:
+def _systemd_user_unit() -> str:
     """User unit template — mirrors connector/deploy/tomo-connector.service."""
     return (
         "[Unit]\n"
@@ -285,30 +286,98 @@ def _systemd_unit() -> str:
     )
 
 
+def _systemd_system_unit(*, bin_path: str, home: str) -> str:
+    """System unit for root installs (no systemd --user session for uid 0)."""
+    return (
+        "[Unit]\n"
+        "Description=Tomo Connector\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"ExecStart={bin_path} run\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        f"Environment=TOMO_CONNECTOR_HOME={home}\n"
+        "StandardOutput=journal\n"
+        "StandardError=journal\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
 def _install_service_script(dest: str, os_arch: str) -> str:
-    """Bash: write + enable + start a systemd --user unit (Linux only)."""
+    """Bash: write + enable + start a systemd unit (Linux only).
+
+    Root → system unit in /etc/systemd/system (``systemctl`` without ``--user``).
+    Non-root → user unit under ``~/.config/systemd/user``.
+    """
     os_name = os_arch.split()[0]
     if os_name not in _SUPPORTED_SYSTEMD:
         return (
-            "echo \"ℹ systemd --user service skipped on ${os_name} — "
+            "echo \"ℹ systemd service skipped on ${os_name} — "
             "run 'tomo-connector service install' manually\"\n"
         )
-    unit = _systemd_unit().replace("%h", '"$HOME"')
-    return (
-        "command -v systemctl >/dev/null 2>&1 || { "
-        "echo '⚠ systemctl not found — connector installed; start manually with "
-        "'tomo-connector run''; exit 0; }\n"
-        "mkdir -p \"$HOME/.config/systemd/user\"\n"
-        f"UNIT_DIR=\"$HOME/.config/systemd/user\"\n"
-        f"UNIT=\"$UNIT_DIR/{_UNIT_NAME}\"\n"
-        f"cat > \"$UNIT\" <<'TOMOCONNECTOR'\n"
-        f"{unit}\n"
-        "TOMOCONNECTOR\n"
-        "systemctl --user daemon-reload\n"
-        "systemctl --user enable \"$UNIT_DIR/tomo-connector.service\"\n"
-        "systemctl --user start tomo-connector.service\n"
-        "systemctl --user is-active tomo-connector.service\n"
-    )
+    # Keep %h in the user unit — systemd expands it; do not substitute $HOME.
+    user_unit = _systemd_user_unit().rstrip() + "\n"
+    # dest is typically ``$HOME/.local/bin/tomo-connector`` (shell-expanded remotely).
+    return f"""
+command -v systemctl >/dev/null 2>&1 || {{
+  echo '⚠ systemctl not found — connector installed; start manually with tomo-connector run'
+  exit 0
+}}
+DEST_BIN={dest}
+if [ "$(id -u)" -eq 0 ]; then
+  echo "→ systemd system unit (root)"
+  case "$DEST_BIN" in
+    */.local/bin/tomo-connector)
+      SYS_BIN=/usr/local/bin/tomo-connector
+      mkdir -p /usr/local/bin
+      if [ -x "$DEST_BIN" ] && [ "$DEST_BIN" != "$SYS_BIN" ]; then
+        cp -f "$DEST_BIN" "$SYS_BIN" && chmod 755 "$SYS_BIN"
+        DEST_BIN="$SYS_BIN"
+      fi
+      ;;
+  esac
+  CONN_HOME="${{TOMO_CONNECTOR_HOME:-$HOME/.tomo-connector}}"
+  UNIT="/etc/systemd/system/{_UNIT_NAME}"
+  cat > "$UNIT" <<EOF
+[Unit]
+Description=Tomo Connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$DEST_BIN run
+Restart=always
+RestartSec=5
+Environment=TOMO_CONNECTOR_HOME=$CONN_HOME
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable {_UNIT_NAME}
+  systemctl start {_UNIT_NAME}
+  systemctl is-active {_UNIT_NAME}
+else
+  echo "→ systemd --user unit"
+  mkdir -p "$HOME/.config/systemd/user"
+  UNIT_DIR="$HOME/.config/systemd/user"
+  UNIT="$UNIT_DIR/{_UNIT_NAME}"
+  cat > "$UNIT" <<'TOMOCONNECTOR'
+{user_unit}TOMOCONNECTOR
+  systemctl --user daemon-reload
+  systemctl --user enable "$UNIT_DIR/{_UNIT_NAME}"
+  systemctl --user start {_UNIT_NAME}
+  systemctl --user is-active {_UNIT_NAME}
+fi
+"""
 
 
 def install_via_ssh(

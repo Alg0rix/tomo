@@ -1,0 +1,18 @@
+# System unit for root installs (tomo-connector service install as root).
+# Paths are rewritten at install time to the real binary + state home.
+[Unit]
+Description=Tomo Connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tomo-connector run
+Restart=always
+RestartSec=5
+Environment=TOMO_CONNECTOR_HOME=/root/.tomo-connector
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

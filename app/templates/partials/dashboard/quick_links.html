@@ -1,6 +1,27 @@
-<div class="quick-links">
-  <a class="quick-link" href="/sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Swarm chat</a>
-  <a class="quick-link" href="/workplaces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Workplaces</a>
-  <a class="quick-link" href="/scheduler"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Scheduler</a>
-  <a class="quick-link" href="/system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2"/></svg>System</a>
-</div>
+<section class="dashboard-start" aria-labelledby="dashboardStartTitle">
+  <div class="dashboard-section-head">
+    <div>
+      <p class="dashboard-kicker">Navigate</p>
+      <h2 id="dashboardStartTitle">Start here</h2>
+    </div>
+    <span class="dashboard-section-note">Common next steps</span>
+  </div>
+  <nav class="quick-links" aria-label="Dashboard shortcuts">
+    <a class="quick-link" href="/sessions?swarm=1">
+      <span class="quick-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="quick-link-copy"><strong>New swarm chat</strong><small>Bring the right agents in</small></span><span class="quick-link-arrow" aria-hidden="true">↗</span>
+    </a>
+    <a class="quick-link" href="/agents">
+      <span class="quick-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5M15 16c2.7 0 5 1.5 5 4"/></svg></span>
+      <span class="quick-link-copy"><strong>Browse agents</strong><small>Find a focused specialist</small></span><span class="quick-link-arrow" aria-hidden="true">↗</span>
+    </a>
+    <a class="quick-link" href="/workplaces">
+      <span class="quick-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+      <span class="quick-link-copy"><strong>Choose a workplace</strong><small>Set the working context</small></span><span class="quick-link-arrow" aria-hidden="true">↗</span>
+    </a>
+    <a class="quick-link" href="/scheduler">
+      <span class="quick-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+      <span class="quick-link-copy"><strong>Automate a task</strong><small>Run recurring work hands-free</small></span><span class="quick-link-arrow" aria-hidden="true">↗</span>
+    </a>
+  </nav>
+</section>

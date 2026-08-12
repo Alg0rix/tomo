@@ -1,38 +1,79 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page page-chat-home">
-  {% include 'partials/dashboard/chat_home.html' %}
-
-  <section class="chat-home-overview" aria-label="Swarm overview">
-    <div class="chat-home-overview-head">
-      <h2 class="chat-home-overview-title">Swarm</h2>
-      <a class="btn ghost sm" href="/agents">Manage agents</a>
-    </div>
-
-    <div class="stat-grid" id="stats">
-      <div class="stat amber"><div class="glow"></div><div class="k">Agents</div><div class="v" id="s-agents"><span class="skeleton">···</span></div></div>
-      <div class="stat jade"><div class="glow"></div><div class="k">Sessions</div><div class="v" id="s-sessions"><span class="skeleton">···</span></div></div>
-      <div class="stat sky"><div class="glow"></div><div class="k">Tools</div><div class="v" id="s-tools"><span class="skeleton">···</span></div></div>
-      <div class="stat"><div class="k">Skills</div><div class="v" id="s-skills"><span class="skeleton">···</span></div></div>
-      <div class="stat rose"><div class="glow"></div><div class="k">Workplaces</div><div class="v" id="s-workplaces"><span class="skeleton">···</span></div></div>
-    </div>
-
-    {% include 'partials/dashboard/quick_links.html' %}
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-head"><h3>Recent agents</h3><a class="btn ghost sm" href="/agents">All</a></div>
-        <div class="card-body" id="recentAgents"><div class="empty">Loading…</div></div>
+  <div class="dashboard-columns">
+    <main class="dashboard-main">
+      <div class="dashboard-main-head">
+        <div>
+          <p class="dashboard-kicker">Command center</p>
+          <p class="dashboard-main-note">Ask, delegate, and pick up where you left off.</p>
+        </div>
+        <a class="dashboard-history-link" href="/sessions">Chat history <span aria-hidden="true">↗</span></a>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>Recent sessions</h3><a class="btn ghost sm" href="/sessions">All</a></div>
-        <div class="card-body" id="recentSessions"><div class="empty">Loading…</div></div>
-      </div>
-    </div>
-  </section>
+      {% include 'partials/dashboard/chat_home.html' %}
+      {% include 'partials/dashboard/quick_links.html' %}
+
+      <section class="dashboard-lower" aria-label="Recent activity">
+        <section class="card dashboard-card dashboard-agents-card" aria-labelledby="agentsReadyTitle">
+          <div class="card-head dashboard-card-head">
+            <div>
+              <p class="dashboard-card-kicker">Roster</p>
+              <h3 id="agentsReadyTitle">Agents ready to help <span class="dashboard-count" id="agentRosterCount"></span></h3>
+              <p>Jump into a specialist or let Tomo route the work.</p>
+            </div>
+            <a class="btn ghost sm" href="/agents">View all <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="card-body dashboard-agent-list" id="recentAgents" role="list">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+
+        <section class="card dashboard-card dashboard-schedule-card" aria-labelledby="scheduleTitle">
+          <div class="card-head dashboard-card-head">
+            <div>
+              <p class="dashboard-card-kicker">Automation</p>
+              <h3 id="scheduleTitle">Scheduled work <span class="dashboard-count" id="scheduleCount"></span></h3>
+              <p>Keep recurring tasks moving in the background.</p>
+            </div>
+            <a class="btn ghost sm" href="/scheduler">Manage <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="card-body dashboard-schedule-list" id="dashboardSchedules" role="list">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <aside class="dashboard-aside" aria-label="Swarm metrics and recent chats">
+      <section class="dashboard-metrics" aria-labelledby="dashboardMetricsTitle">
+        <div class="dashboard-aside-head">
+          <h2 id="dashboardMetricsTitle">Swarm metrics</h2>
+          <span class="dashboard-live-state"><span class="dashboard-live-dot" title="Live"></span>Live</span>
+        </div>
+        <div class="stat-grid" id="stats">
+          <a class="stat amber" href="/agents" aria-label="Open agents"><div class="glow"></div><div class="k">Agents</div><div class="v" id="s-agents"><span class="skeleton">···</span></div><span class="stat-arrow" aria-hidden="true">↗</span></a>
+          <a class="stat jade" href="/sessions" aria-label="Open chat sessions"><div class="glow"></div><div class="k">Sessions</div><div class="v" id="s-sessions"><span class="skeleton">···</span></div><span class="stat-arrow" aria-hidden="true">↗</span></a>
+          <a class="stat sky" href="/system#tools" aria-label="Open tools"><div class="glow"></div><div class="k">Tools</div><div class="v" id="s-tools"><span class="skeleton">···</span></div><span class="stat-arrow" aria-hidden="true">↗</span></a>
+          <a class="stat violet" href="/skills" aria-label="Open skills"><div class="glow"></div><div class="k">Skills</div><div class="v" id="s-skills"><span class="skeleton">···</span></div><span class="stat-arrow" aria-hidden="true">↗</span></a>
+          <a class="stat rose stat-workplaces" href="/workplaces" aria-label="Open workplaces"><div class="glow"></div><div class="k">Workplaces</div><div class="v" id="s-workplaces"><span class="skeleton">···</span></div><span class="stat-arrow" aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+
+      <section class="dashboard-recent" aria-labelledby="recentChatsTitle">
+        <div class="dashboard-aside-head">
+          <h2 id="recentChatsTitle">Recent chats</h2>
+          <a class="dashboard-aside-link" href="/sessions">All chats ↗</a>
+        </div>
+        <p class="dashboard-aside-note">Pick up where you left off.</p>
+        <div id="homeRecentChats" class="chat-home-recent-list" role="list" aria-live="polite">
+          <div class="empty">Loading…</div>
+        </div>
+      </section>
+    </aside>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', path='js/folder_picker.js') }}?v=1"></script>
-<script src="{{ url_for('static', path='js/dashboard.js') }}?v=wp1"></script>
+<script src="{{ url_for('static', path='js/dashboard.js') }}?v=dashboard-ux1"></script>
 {% endblock %}

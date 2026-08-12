@@ -66,14 +66,24 @@ case ":$PATH:" in
   *) echo "  Add to PATH: export PATH=\"${BIN_DIR}:\$PATH\"" ;;
 esac
 
-# Pick up the new binary if the user unit is already installed.
+# Pick up the new binary if a unit is already installed (user or system).
 if command -v systemctl >/dev/null 2>&1; then
-  if systemctl --user is-enabled "$UNIT" >/dev/null 2>&1 \
-    || systemctl --user is-active "$UNIT" >/dev/null 2>&1; then
-    echo "→ Restarting ${UNIT}…"
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user restart "$UNIT" || die "binary updated but service restart failed"
-    echo "✓ ${UNIT} restarted"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    if systemctl is-enabled "$UNIT" >/dev/null 2>&1 \
+      || systemctl is-active "$UNIT" >/dev/null 2>&1; then
+      echo "→ Restarting system ${UNIT}…"
+      systemctl daemon-reload 2>/dev/null || true
+      systemctl restart "$UNIT" || die "binary updated but service restart failed"
+      echo "✓ ${UNIT} restarted"
+    fi
+  else
+    if systemctl --user is-enabled "$UNIT" >/dev/null 2>&1 \
+      || systemctl --user is-active "$UNIT" >/dev/null 2>&1; then
+      echo "→ Restarting user ${UNIT}…"
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user restart "$UNIT" || die "binary updated but service restart failed"
+      echo "✓ ${UNIT} restarted"
+    fi
   fi
 fi
 
@@ -81,5 +91,5 @@ if [[ "$UPDATING" -eq 0 ]]; then
   echo
   echo "Next:"
   echo "  tomo-connector pair --code <CODE> --server https://your-coordinator.example.com"
-  echo "  tomo-connector service install   # systemd --user (Linux)"
+  echo "  tomo-connector service install   # systemd user unit (or system unit if root)"
 fi

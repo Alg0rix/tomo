@@ -763,6 +763,37 @@
     if (panel) panel.remove();
   };
 
+  /** Parse ``{todos:[...]}`` from a todo tool JSON result string. */
+  Tomo.parseTodosResult = function (text) {
+    if (!text || typeof text !== 'string') return null;
+    var s = text.trim();
+    if (s.charAt(0) !== '{') return null;
+    try {
+      var data = JSON.parse(s);
+      if (data && Array.isArray(data.todos)) return data.todos;
+    } catch (_) {}
+    return null;
+  };
+
+  /**
+   * Restore the todo dock from the latest ``todo`` tool_output in history.
+   * Used when the pending API is empty or as a first paint before rehydrate.
+   */
+  Tomo.restoreTodosFromHistory = function (fromEl, entries) {
+    if (!Array.isArray(entries) || !entries.length) return null;
+    for (var i = entries.length - 1; i >= 0; i--) {
+      var e = entries[i];
+      if (!e || e.type !== 'tool_output' || e.error) continue;
+      var fn = (e.function || e.tool || '').toString();
+      if (fn !== 'todo') continue;
+      var todos = Tomo.parseTodosResult(e.content || '');
+      if (todos && todos.length) {
+        return Tomo.upsertTodoPanel(fromEl, todos);
+      }
+    }
+    return null;
+  };
+
   /**
    * Upsert the session Todo checklist into the chrome dock (not the thread).
    * ``parent`` is any element inside the chat wrap (used to locate the dock).

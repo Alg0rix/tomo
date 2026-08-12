@@ -281,10 +281,9 @@ async def _drain_agent_turn(
         chunks, entries, seq = map_loop_event(
             ev, ev_agent_id, ev_agent_name, seq, turn_id
         )
-        # Wire first: a failed history write must not drop live UI/tool events
-        # (user would see render_ui OUTPUT succeed with no interactive panel).
-        for chunk in chunks:
-            yield chunk, seq
+        # Persist before yield so a mid-turn disconnect still leaves history
+        # durable for refresh/resume. History failures are logged and never
+        # block the live wire (UI must keep streaming tools/ui events).
         for entry in entries:
             try:
                 store.append_session_history(session_id, entry)
@@ -294,6 +293,8 @@ async def _drain_agent_turn(
                     session_id,
                     entry.get("type"),
                 )
+        for chunk in chunks:
+            yield chunk, seq
 
 
 async def _maybe_upgrade_title(

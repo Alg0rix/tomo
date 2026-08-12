@@ -8,14 +8,76 @@ from unittest.mock import patch
 import pytest
 
 from app.services import chat as chat_mod
-from app.services.chat import SessionTurnBusy, _ActiveTurn, get_active_session_turn
+from app.services.chat import SessionTurnBusy, _ActiveTurn, _REPLAY_MAX, get_active_session_turn
+
+
+def _drain(q: asyncio.Queue) -> list:
+    got = []
+    while not q.empty():
+        got.append(q.get_nowait())
+    return got
+
+
+def _is_caught_up(chunk: str | None) -> bool:
+    return bool(chunk and "event: caught_up" in chunk)
+
+
+@pytest.mark.asyncio
+async def test_subscribe_replays_buffered_events() -> None:
+    turn = _ActiveTurn(session_id="s_replay")
+    # Seed via broadcast so ring buffer is populated.
+    for i in range(5):
+        turn._broadcast(f"id: {i}\nevent: delta\ndata: {{\"n\":{i}}}\n\n")
+    q = turn.subscribe(after_seq=2)
+    got = _drain(q)
+    # Only seq > 2, then caught_up boundary
+    assert len(got) == 3
+    assert "id: 3" in got[0]
+    assert "id: 4" in got[1]
+    assert _is_caught_up(got[2])
+
+
+@pytest.mark.asyncio
+async def test_subscribe_after_zero_replays_all() -> None:
+    turn = _ActiveTurn(session_id="s_all")
+    turn._broadcast("id: 1\nevent: tool\ndata: {}\n\n")
+    turn._broadcast("id: 2\nevent: tool_result\ndata: {}\n\n")
+    q = turn.subscribe(after_seq=0)
+    got = _drain(q)
+    assert len(got) == 3
+    assert "id: 1" in got[0]
+    assert "id: 2" in got[1]
+    assert _is_caught_up(got[2])
+
+
+@pytest.mark.asyncio
+async def test_subscribe_empty_buffer_still_emits_caught_up() -> None:
+    """Resume mid-quiet-tool must still enter live mode without waiting for events."""
+    turn = _ActiveTurn(session_id="s_empty")
+    q = turn.subscribe(after_seq=0)
+    got = _drain(q)
+    assert len(got) == 1
+    assert _is_caught_up(got[0])
+
+
+@pytest.mark.asyncio
+async def test_replay_ring_caps_at_max() -> None:
+    turn = _ActiveTurn(session_id="s_cap")
+    for i in range(_REPLAY_MAX + 50):
+        turn._broadcast(f"id: {i}\nevent: delta\ndata: {{}}\n\n")
+    assert len(turn._replay) == _REPLAY_MAX
+    # Oldest dropped; first kept seq is 50
+    first_seq = turn._replay[0][0]
+    assert first_seq == 50
 
 
 @pytest.mark.asyncio
 async def test_broadcast_none_delivered_when_queue_full() -> None:
     turn = _ActiveTurn(session_id="s1")
     q = turn.subscribe()
-    # Fill to capacity with dummy chunks.
+    # Drain caught_up so we can fill to capacity with dummy chunks.
+    while not q.empty():
+        q.get_nowait()
     for i in range(q.maxsize):
         q.put_nowait(f"chunk-{i}")
     assert q.full()

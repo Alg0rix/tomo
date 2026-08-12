@@ -59,6 +59,10 @@
       lastHistLen = entries.length;
       renderHistory(entries);
       if (!chatHandle) chatHandle = TomoChat.init(chatWrap);
+      // History wipe removes HITL cards + todo dock — rehydrate from server.
+      if (chatHandle && chatHandle.rehydratePending) {
+        chatHandle.rehydratePending();
+      }
       if (cb) cb(entries);
     }).catch(function () {});
   }
@@ -475,6 +479,11 @@
       scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
       stickChatScrollBottom(scroll);
       return;
+    }
+    // First paint of plan from history so the dock is not blank while pending
+    // rehydrate (or when the in-memory store was lost after process restart).
+    if (window.Tomo && Tomo.restoreTodosFromHistory) {
+      Tomo.restoreTodosFromHistory(chatWrap, entries);
     }
 
     // ── Per-turn state ──────────────────────────────────────────────
@@ -1005,6 +1014,11 @@
               turn.appendChild(TomoArtifacts.buildSavedCard(parsedArt));
             }
           }
+          // Keep todo dock current as later tool_outputs walk history.
+          if (!e.error && (e.function || '') === 'todo' && window.Tomo && Tomo.parseTodosResult) {
+            var histTodos = Tomo.parseTodosResult(resultText);
+            if (histTodos && histTodos.length) Tomo.upsertTodoPanel(chatWrap, histTodos);
+          }
           // Fallback: mount from render_ui tool_output when a dedicated `ui`
           // history row is missing (or was skipped).
           if (!e.error && resultText && resultText.charAt(0) === '{') {
@@ -1035,13 +1049,16 @@
         return;
       }
 
-      if (e.type === 'final') {
+      if (e.type === 'final' || e.type === 'subagent_final') {
         var aid = e.agent_id || '';
         var text = (e.content || '').trim();
         if (!text || text.indexOf('[Swarm]') === 0) return;
-        if (subagentSet.has(aid)) {
+        // subagent_final never closes the parent turn; always buffer under swarm.
+        if (e.type === 'subagent_final' || subagentSet.has(aid)) {
           var key = keyForEntry(e, aid);
+          if (aid) subagentSet.add(aid);
           bufferEvent(key, 'final', { content: text });
+          markSwarmDone(key, 'done');
         } else {
           appendAssistantMessage(aid, text);
         }
@@ -1144,8 +1161,9 @@
       }
 
       // Mid-turn / HITL wait: rehydrate cards + re-attach listen stream.
-      // resume() always rehydrates pending; history "complete" can still have HITL.
-      if (!pending && chatHandle && chatHandle.resume) {
+      // Prefer server active_turn (pending API) over history heuristics —
+      // last entry can be a subagent final while the parent turn still runs.
+      if (!pending && chatHandle) {
         var entries = hist.entries || [];
         var last = entries[entries.length - 1];
         var maybeMidTurn = last && last.type !== 'final' && last.type !== 'error';
@@ -1155,14 +1173,16 @@
             statusEl.className = 'composer-status chat-status warn';
             statusEl.innerHTML = '<span class="composer-status-dot" aria-hidden="true"></span>Busy';
           }
-          if (!chatHandle.resume()) startHistoryPoll(sessionId);
+          if (chatHandle.resume && chatHandle.resume()) return;
+          startHistoryPoll(sessionId);
         };
-        if (maybeMidTurn) {
+        var afterProbe = function (needs) {
+          if (needs || maybeMidTurn) tryResume();
+        };
+        if (chatHandle.rehydratePending) {
+          chatHandle.rehydratePending().then(afterProbe);
+        } else if (maybeMidTurn) {
           tryResume();
-        } else if (chatHandle.rehydratePending) {
-          chatHandle.rehydratePending().then(function (needs) {
-            if (needs) tryResume();
-          });
         }
       }
 

@@ -26,7 +26,8 @@ from .store import store
 
 logger = logging.getLogger(__name__)
 
-_REPLAY_MAX = 256
+# Long subagent turns produce many tool/delta events; keep enough for reconnect.
+_REPLAY_MAX = 2048
 
 
 def _extract_seq(chunk: str) -> int | None:
@@ -38,6 +39,11 @@ def _extract_seq(chunk: str) -> int | None:
             except ValueError:
                 pass
     return None
+
+
+def _caught_up_chunk() -> str:
+    """Marker after replay so the client can switch from skip-history to live."""
+    return _fmt_sse({"event": "caught_up", "data": {"ok": True}, "seq": 0})
 
 
 # ── Active turn registry ─────────────────────────────────────────────
@@ -63,8 +69,13 @@ class _ActiveTurn:
         If *after_seq* > 0, replay buffered chunks with ``seq > after_seq``
         into the queue first — so a reconnecting client catches up on
         events it missed during the disconnect gap.
+
+        Always ends the replay phase with a ``caught_up`` event so the UI
+        can render subsequent deltas/tools live instead of treating them as
+        history duplicates to skip.
         """
-        q: asyncio.Queue = asyncio.Queue(maxsize=512)
+        # Large enough to hold full replay + a burst of live events.
+        q: asyncio.Queue = asyncio.Queue(maxsize=max(512, _REPLAY_MAX + 256))
         # Replay: push past chunks the client hasn't seen yet.
         if after_seq > 0:
             for seq, chunk in self._replay:
@@ -74,12 +85,26 @@ class _ActiveTurn:
                     except asyncio.QueueFull:
                         break
         elif after_seq == 0:
-            # Fresh connect: replay everything (client dedups by seq).
+            # Fresh connect: replay everything (client skips history via
+            # skip counters until ``caught_up``).
             for _seq, chunk in self._replay:
                 try:
                     q.put_nowait(chunk)
                 except asyncio.QueueFull:
                     break
+        # Boundary between replay and live tail — always emit, even with an
+        # empty buffer, so resume mode can start streaming new activity.
+        try:
+            q.put_nowait(_caught_up_chunk())
+        except asyncio.QueueFull:
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                q.put_nowait(_caught_up_chunk())
+            except asyncio.QueueFull:
+                pass
         self._consumers.append(q)
         return q
 
