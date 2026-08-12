@@ -610,15 +610,11 @@ def insert_episode(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
             except Exception:
                 pass
 
-    # Optional embedding index (best-effort).
-    try:
-        from app.runtime.memory.embeddings import upsert_embedding
+    # Phase 3: no vector embeddings — SQLite lexical/index only (embed_text is FTS corpus).
 
-        if norm["embed_text"]:
-            upsert_embedding(
-                conn, scope="episodic", ref_id=eid, text=norm["embed_text"]
-            )
-            conn.commit()
+    # Auto-link to similar prior episodes (experience graph).
+    try:
+        _auto_link_similar(conn, eid, user_id=norm["user_id"], embed_text=norm["embed_text"])
     except Exception:
         pass
 
@@ -730,52 +726,49 @@ def search_episodes(
     *,
     user_id: str | None = None,
     workplace_id: str | None = None,
+    agent_id: str | None = None,
+    cross_agent: bool = True,
     limit: int = 5,
     touch: bool = True,
+    expand_graph: bool = True,
 ) -> list[dict[str, Any]]:
-    """Hybrid lexical (+ optional embedding) search with quality/recency boost."""
+    """SQLite lexical retrieval with learned utility, context, and graph expand.
+
+    No vector embeddings — Phase 3 uses FTS-style token overlap + metadata.
+    Cross-agent: default searches all agents for the same user_id.
+    """
     text = (query or "").strip()
     if not text:
         return []
     k = max(1, min(int(limit or 5), 20))
     uid = (user_id or "").strip() or None
     wid = (workplace_id or "").strip() or None
+    aid = (agent_id or "").strip() or None
 
     candidates = list_episodes(
-        conn, user_id=uid, workplace_id=wid, state="active", limit=150
+        conn, user_id=uid, workplace_id=wid, state="active", limit=200
     )
-    # Also include validated candidates if few actives.
-    if len(candidates) < 20:
+    if len(candidates) < 30:
         more = list_episodes(
-            conn, user_id=uid, workplace_id=wid, state="candidate", limit=50
+            conn, user_id=uid, workplace_id=wid, state="candidate", limit=80
         )
         seen = {c["id"] for c in candidates}
         for m in more:
             if m["id"] not in seen:
                 candidates.append(m)
 
+    # Cross-agent is default (user-scoped). Optional agent filter.
+    if not cross_agent and aid:
+        candidates = [c for c in candidates if (c.get("agent_id") or "") == aid]
+
     tokens = [t for t in re.split(r"\s+", text.lower()) if len(t) > 1]
     now = _now()
-
-    # Optional semantic scores via shared embeddings table.
-    sem_scores: dict[str, float] = {}
-    try:
-        from app.runtime.memory import embeddings as emb
-
-        ranked = emb.semantic_rank(
-            conn, scope="episodic", query=text, limit=max(k * 4, 20)
-        )
-        if ranked:
-            # Normalize ranks to 0-1-ish scores.
-            for i, (rid, score) in enumerate(ranked):
-                # score may already be cosine; clamp
-                sem_scores[rid] = max(float(score or 0), 1.0 / (i + 2))
-    except Exception:
-        pass
+    # Learned ranking: boost from historical retrieval feedback.
+    weights = _learned_rank_weights(conn, user_id=uid)
 
     scored: list[tuple[float, dict[str, Any]]] = []
     for ep in candidates:
-        if ep.get("state") == "archived":
+        if ep.get("state") in {"archived", "superseded"}:
             continue
         hay = " ".join(
             [
@@ -787,6 +780,7 @@ def search_episodes(
                 ep.get("reflection_summary") or "",
                 ep.get("trigger_summary") or "",
                 ep.get("content") or "",
+                " ".join(str(e) for e in (ep.get("entities") or [])),
             ]
         ).lower()
         lex = 0.0
@@ -797,13 +791,13 @@ def search_episodes(
                     lex += 0.5
                 if tok in (ep.get("objective") or "").lower():
                     lex += 0.3
+                if tok in (ep.get("context_summary") or "").lower():
+                    lex += 0.2
         if tokens:
             lex = lex / (len(tokens) * 1.8)
         else:
             lex = 0.0
         lex = min(1.0, lex)
-
-        sem = min(1.0, max(0.0, sem_scores.get(ep["id"], 0.0)))
 
         # Context compatibility: same workplace boost.
         ctx = 0.5
@@ -826,35 +820,57 @@ def search_episodes(
         if reuse_s + reuse_f > 0:
             reuse = 0.6 * reuse + 0.4 * (reuse_s / (reuse_s + reuse_f))
         decay = float(ep.get("decay_score") or 1.0)
-        # Prefer failure episodes when the query looks like a problem/debug case.
         qlow = text.lower()
         negative_intent = any(
             w in qlow
             for w in ("fail", "error", "broke", "outage", "bug", "never", "avoid", "wrong")
         )
         failure_boost = 0.0
-        if negative_intent and (ep.get("outcome_status") or "") in {"failure", "blocked", "partial"}:
+        if negative_intent and (ep.get("outcome_status") or "") in {
+            "failure",
+            "blocked",
+            "partial",
+        }:
             failure_boost = 0.12
 
-        # Must match the query textually or via embedding — do not rank
-        # unrelated high-quality episodes for arbitrary queries.
-        if lex <= 0 and sem <= 0:
+        # Must match the query textually — no embedding path.
+        if lex <= 0:
             continue
 
-        # Spec §15 practical weights (simplified).
         score = (
-            0.35 * max(lex, sem)
-            + 0.15 * lex
-            + 0.10 * sem
-            + 0.15 * ctx
-            + 0.10 * quality
-            + 0.05 * float(ep.get("importance") or 0.5)
-            + 0.05 * recency
-            + 0.05 * reuse
+            weights["lex"] * lex
+            + weights["ctx"] * ctx
+            + weights["quality"] * quality
+            + weights["importance"] * float(ep.get("importance") or 0.5)
+            + weights["recency"] * recency
+            + weights["reuse"] * reuse
         ) * max(0.15, decay) + failure_boost
         scored.append((score, ep))
 
     scored.sort(key=lambda p: (-p[0], -(p[1].get("memory_score") or 0)))
+
+    # Experience graph: pull 1-hop neighbors of top seeds (related/supersedes).
+    if expand_graph and scored:
+        seed_ids = [ep["id"] for _, ep in scored[: max(3, k)]]
+        neighbor_ids = graph_neighbors(conn, seed_ids, limit=k * 2)
+        by_id = {ep["id"]: (sc, ep) for sc, ep in scored}
+        for nid in neighbor_ids:
+            if nid in by_id:
+                continue
+            row = conn.execute(
+                "SELECT * FROM episodic_memories WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                continue
+            ep = _public_episode(row)
+            if uid and ep.get("user_id") != uid:
+                continue
+            if ep.get("state") in {"archived", "superseded"}:
+                continue
+            # Soft score from parent seed.
+            by_id[nid] = (0.35, ep)
+        scored = sorted(by_id.values(), key=lambda p: (-p[0], -(p[1].get("memory_score") or 0)))
+
     # Diversity: avoid near-identical titles/objectives in top-k.
     out: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -871,17 +887,217 @@ def search_episodes(
                 pass
         item = dict(ep)
         item["retrieval_score"] = round(score, 4)
-        # Attach compact events for injection depth when useful.
         try:
             item["events"] = list_events(conn, ep["id"])[:12]
         except Exception:
             item["events"] = []
+        try:
+            item["related"] = graph_neighbors(conn, [ep["id"]], limit=5)
+        except Exception:
+            item["related"] = []
         out.append(item)
         if len(out) >= k:
             break
     return out
 
 
+def _learned_rank_weights(
+    conn: sqlite3.Connection, *, user_id: str | None
+) -> dict[str, float]:
+    """Adaptive retrieval weights from aggregate feedback (no embeddings)."""
+    base = {
+        "lex": 0.45,
+        "ctx": 0.15,
+        "quality": 0.12,
+        "importance": 0.08,
+        "recency": 0.08,
+        "reuse": 0.12,
+    }
+    try:
+        uid = (user_id or "").strip()
+        if uid:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(reuse_success),0) AS s, "
+                "COALESCE(SUM(reuse_fail),0) AS f FROM episodic_memories WHERE user_id=?",
+                (uid,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(reuse_success),0) AS s, "
+                "COALESCE(SUM(reuse_fail),0) AS f FROM episodic_memories"
+            ).fetchone()
+        s = float(row["s"] or 0) if row else 0.0
+        f = float(row["f"] or 0) if row else 0.0
+        total = s + f
+        if total >= 5:
+            # More successful reuse → trust quality/reuse more; failures → trust lex/ctx.
+            rate = s / total
+            base["reuse"] = 0.08 + 0.12 * rate
+            base["quality"] = 0.08 + 0.10 * rate
+            base["lex"] = 0.55 - 0.15 * rate
+            base["ctx"] = 0.12 + 0.06 * (1.0 - rate)
+    except Exception:
+        pass
+    # Normalize.
+    ssum = sum(base.values()) or 1.0
+    return {k: v / ssum for k, v in base.items()}
+
+
+def _auto_link_similar(
+    conn: sqlite3.Connection,
+    episode_id: str,
+    *,
+    user_id: str,
+    embed_text: str,
+) -> int:
+    """Link new episode to up to 3 similar priors (experience graph edges)."""
+    text = (embed_text or "").strip()
+    if len(text) < 20:
+        return 0
+    tokens = [t for t in re.split(r"\s+", text.lower()) if len(t) > 2][:24]
+    if not tokens:
+        return 0
+    priors = list_episodes(conn, user_id=user_id, state="active", limit=40)
+    linked = 0
+    for ep in priors:
+        if ep["id"] == episode_id:
+            continue
+        hay = " ".join(
+            [
+                ep.get("objective") or "",
+                ep.get("context_summary") or "",
+                ep.get("trajectory_summary") or "",
+                ep.get("outcome_summary") or "",
+            ]
+        ).lower()
+        hits = sum(1 for t in tokens if t in hay)
+        if hits < max(3, len(tokens) // 5):
+            continue
+        link_episodes(
+            conn,
+            from_episode_id=episode_id,
+            to_episode_id=ep["id"],
+            relation="similar",
+            weight=min(1.0, hits / max(1, len(tokens))),
+        )
+        linked += 1
+        if linked >= 3:
+            break
+    return linked
+
+
+def graph_neighbors(
+    conn: sqlite3.Connection,
+    episode_ids: list[str],
+    *,
+    limit: int = 10,
+    relations: tuple[str, ...] = ("related", "similar", "supersedes", "caused_by", "part_of"),
+) -> list[str]:
+    """1-hop neighbors on the experience graph (SQLite relations table)."""
+    tables = {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "episodic_relations" not in tables:
+        return []
+    ids = [i for i in episode_ids if (i or "").strip()]
+    if not ids:
+        return []
+    out: list[str] = []
+    seen = set(ids)
+    rels = list(relations) or ["related", "similar"]
+    placeholders = ",".join("?" for _ in ids)
+    rel_ph = ",".join("?" for _ in rels)
+    rows = conn.execute(
+        f"""
+        SELECT from_episode_id, to_episode_id FROM episodic_relations
+        WHERE relation IN ({rel_ph})
+          AND (from_episode_id IN ({placeholders}) OR to_episode_id IN ({placeholders}))
+        ORDER BY weight DESC
+        LIMIT ?
+        """,
+        [*rels, *ids, *ids, max(1, min(int(limit or 10), 50))],
+    ).fetchall()
+    for r in rows:
+        for col in ("from_episode_id", "to_episode_id"):
+            nid = r[col]
+            if nid and nid not in seen:
+                seen.add(nid)
+                out.append(nid)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def find_contradictions(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    episode: dict[str, Any] | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Episodes with similar objectives/context but conflicting outcomes."""
+    uid = (user_id or "").strip() or "web"
+    base = list_episodes(conn, user_id=uid, state="active", limit=120)
+    if episode:
+        pool = [episode] + [e for e in base if e["id"] != episode.get("id")]
+    else:
+        pool = base
+    out: list[dict[str, Any]] = []
+    for i, a in enumerate(pool[:40]):
+        a_obj = _normalize_text(a.get("objective") or a.get("title") or "")
+        if len(a_obj) < 8:
+            continue
+        for b in pool[i + 1 : i + 30]:
+            b_obj = _normalize_text(b.get("objective") or b.get("title") or "")
+            if not b_obj:
+                continue
+            # Token overlap on objectives.
+            at = set(a_obj.split())
+            bt = set(b_obj.split())
+            if not at or not bt:
+                continue
+            overlap = len(at & bt) / max(1, len(at | bt))
+            if overlap < 0.35:
+                continue
+            sa = (a.get("outcome_status") or "unknown").lower()
+            sb = (b.get("outcome_status") or "unknown").lower()
+            conflict = (
+                sa in {"success", "failure", "blocked", "partial"}
+                and sb in {"success", "failure", "blocked", "partial"}
+                and sa != sb
+                and {sa, sb} != {"partial", "success"}
+            )
+            if not conflict:
+                continue
+            out.append(
+                {
+                    "episode_a": a["id"],
+                    "episode_b": b["id"],
+                    "objective_overlap": round(overlap, 3),
+                    "context_a": a.get("context_summary") or "",
+                    "context_b": b.get("context_summary") or "",
+                    "outcome_a": sa,
+                    "outcome_b": sb,
+                    "summary_a": a.get("outcome_summary") or "",
+                    "summary_b": b.get("outcome_summary") or "",
+                    "title_a": a.get("title") or "",
+                    "title_b": b.get("title") or "",
+                }
+            )
+            # Soft graph edge for contradictions.
+            try:
+                link_episodes(
+                    conn,
+                    from_episode_id=a["id"],
+                    to_episode_id=b["id"],
+                    relation="contradicts",
+                    weight=overlap,
+                )
+            except Exception:
+                pass
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def _normalize_text(s: str) -> str:
@@ -1201,4 +1417,8 @@ __all__ = [
     "record_retrieval_feedback",
     "apply_decay",
     "set_episode_state",
+    "graph_neighbors",
+    "find_contradictions",
+    "_learned_rank_weights",
+    "_auto_link_similar",
 ]

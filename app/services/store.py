@@ -1379,6 +1379,8 @@ class Store:
         *,
         user_id: str | None = None,
         workplace_id: str | None = None,
+        agent_id: str | None = None,
+        cross_agent: bool = True,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         from app.models.mixins import episodic as ep
@@ -1389,6 +1391,8 @@ class Store:
                 query,
                 user_id=user_id,
                 workplace_id=workplace_id,
+                agent_id=agent_id,
+                cross_agent=cross_agent,
                 limit=limit,
             )
 
@@ -1471,6 +1475,20 @@ class Store:
 
         with self._lock:
             return ep.apply_decay(self._conn, user_id=user_id)
+
+    def episode_contradictions(
+        self, *, user_id: str, episode_id: str | None = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        from app.runtime.memory.episodes import contradictions
+
+        return contradictions(
+            user_id=user_id, episode_id=episode_id, limit=limit
+        )
+
+    def optimize_episodic_ltm(self, *, user_id: str) -> dict[str, Any]:
+        from app.runtime.memory.episodes import optimize_ltm
+
+        return optimize_ltm(user_id=user_id)
 
 
 store = Store()

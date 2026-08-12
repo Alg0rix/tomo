@@ -22,11 +22,11 @@ Reasoning, execution, and learning stay separated. Memory is **nine typed lanes*
 | **conversation** | Session-scoped working memory | `messages` + `session_summaries` | Chat + summary update | Session history / summary |
 | **shared** | Swarm-visible mid-task notes | SQLite `swarm_notes` | Auto on delegate complete | Sibling agents via session retrieve |
 
-**Episodic (production):** full experience model — trigger, objective, context, trajectory (+ `episodic_events`), outcome, evaluation scores, reflection, hierarchy, relations (supersedes/related), dedupe, decay, retrieval feedback (`reuse_success`/`reuse_fail`), hybrid search, compact injection. Freeform `content` remains a fallback. Auto-built from learning reviews when the turn is non-trivial. Failures are valuable.
+**Episodic (production + Phase 3, SQLite only):** full experience model — trigger, objective, context, trajectory (+ `episodic_events`), outcome, evaluation scores, reflection, hierarchy, relations (supersedes/related/similar/contradicts), dedupe, decay, retrieval feedback (`reuse_success`/`reuse_fail`), **lexical search with learned rank weights + graph expand** (no vector embeddings yet), experience-graph auto-link, contradiction analysis, semantic consolidation → per-user `knowledge_entries`, procedural extraction, session open/close boundaries, cross-agent (same-user) retrieval, LTM optimize pass. Freeform `content` remains a fallback. Auto-built from learning reviews when the turn is non-trivial. Failures are valuable.
 
 **Diary is not episodic:** diary is a 1–3 sentence Companion growth note only.
 
-**HTTP:** `GET/POST /api/episodes`, `GET /api/episodes/{id}`, `POST /api/episodes/{id}/feedback`.
+**HTTP:** `GET/POST /api/episodes`, `GET /api/episodes/{id}`, `POST /api/episodes/{id}/feedback`, `GET /api/episodes/meta/contradictions`, `POST /api/episodes/meta/optimize`, `POST /api/episodes/session/{id}/open|close`.
 
 **Skills** stay adjacent (executable workflows via `manage_skill` / `SKILL.md`) — not a ninth memory type. Review may emit skill updates alongside memory writes.
 
