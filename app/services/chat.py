@@ -319,6 +319,78 @@ _FENCE_LANG = {
 }
 
 
+# Formats anydoc converts to Markdown. CSV/PDF text-ish extensions already
+# covered by _TEXT_EXT are handled there instead — no double-conversion.
+_OFFICE_DOC_EXT = {
+    ".doc", ".docx", ".docm", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx",
+    ".xls", ".xlsx", ".xlsm", ".xlsb", ".odt", ".ods", ".odp", ".rtf",
+    ".epub", ".pdf",
+}
+
+
+def _looks_office_doc_attachment(att: dict[str, Any]) -> bool:
+    name = (att.get("original_name") or att.get("filename") or "").lower()
+    return Path(name).suffix in _OFFICE_DOC_EXT
+
+
+def _convert_office_attachment(att: dict[str, Any]) -> str | None:
+    """Convert an Office/PDF attachment to Markdown via anydoc, or None.
+
+    Any conversion failure (corrupt, encrypted, unsupported variant, missing
+    file) falls back to None so the caller can show the plain binary-file
+    note instead of crashing the turn.
+    """
+    path = Path(att.get("file_path") or "")
+    if not path.is_file():
+        return None
+    try:
+        import anydoc
+
+        text = (anydoc.to_markdown(str(path)) or "").strip()
+    except Exception as exc:
+        logger.info("anydoc conversion failed for %s: %s", path.name, exc)
+        return None
+    if not text:
+        return None
+    if len(text) > _MAX_INLINE_CHARS:
+        omitted = len(text) - _MAX_INLINE_CHARS
+        text = (
+            text[:_MAX_INLINE_CHARS]
+            + f"\n\n… [truncated, {omitted} more characters not shown]"
+        )
+    return text
+
+
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+
+def _looks_image_attachment(att: dict[str, Any]) -> bool:
+    mime = (att.get("mime_type") or "").lower()
+    if mime.startswith("image/"):
+        return True
+    name = (att.get("original_name") or att.get("filename") or "").lower()
+    return Path(name).suffix in _IMAGE_EXT
+
+
+def _image_data_url(att: dict[str, Any]) -> str | None:
+    """Base64 data: URL for an image attachment, or None if unreadable."""
+    path = Path(att.get("file_path") or "")
+    if not path.is_file():
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data:
+        return None
+    import base64
+    import mimetypes as _mimetypes
+
+    mime = att.get("mime_type") or _mimetypes.guess_type(path.name)[0] or "image/png"
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
 def _looks_text_attachment(att: dict[str, Any]) -> bool:
     mime = (att.get("mime_type") or "").lower()
     if mime.startswith("text/") or mime in {
@@ -381,11 +453,17 @@ def attachment_meta_for_ids(attachment_ids: list[str] | None) -> list[dict[str, 
     return out
 
 
-def attachment_info_lines(attachment_ids: list[str] | None) -> str:
+def attachment_info_lines(
+    attachment_ids: list[str] | None, *, vision_capable: bool = False
+) -> str:
     """Build attachment blocks for the LLM only (not for chat UI history).
 
     Text-like files (html, md, code, …) are inlined so the agent can read them.
-    Absolute filesystem paths are never included.
+    Office docs (docx/pdf/xlsx/…) convert to Markdown via anydoc. Images are
+    skipped here (just a header note) when ``vision_capable`` — the pixels
+    themselves go out as a separate ``image_url`` content part instead of a
+    text block (see :func:`expand_user_content_for_llm`). Absolute filesystem
+    paths are never included.
     """
     if not attachment_ids:
         return ""
@@ -398,7 +476,15 @@ def attachment_info_lines(attachment_ids: list[str] | None) -> str:
         name = att.get("original_name") or att.get("filename") or aid
         mime = att.get("mime_type") or "application/octet-stream"
         header = f"[Attached: {name} ({mime}, {_format_size(size)}) id={att.get('id')}]"
+        if vision_capable and _looks_image_attachment(att):
+            blocks.append(header + " (image content included below)")
+            continue
         if not _looks_text_attachment(att):
+            if _looks_office_doc_attachment(att):
+                converted = _convert_office_attachment(att)
+                if converted is not None:
+                    blocks.append(f"{header}\n```markdown\n{converted}\n```")
+                    continue
             blocks.append(
                 header
                 + "\n(Binary file — content not inlined. Ask the user to paste "
@@ -416,8 +502,10 @@ def attachment_info_lines(attachment_ids: list[str] | None) -> str:
     return "\n\n".join(blocks)
 
 
-def prepend_attachment_info(message: str, attachment_ids: list[str] | None) -> str:
-    info = attachment_info_lines(attachment_ids)
+def prepend_attachment_info(
+    message: str, attachment_ids: list[str] | None, *, vision_capable: bool = False
+) -> str:
+    info = attachment_info_lines(attachment_ids, vision_capable=vision_capable)
     if not info:
         return message
     return info + ("\n\n" + message if message else "")
@@ -517,13 +605,43 @@ def expand_slash_skill(message: str) -> str:
     return "\n".join(parts)
 
 
-def expand_user_content_for_llm(entry: dict[str, Any]) -> str:
-    """User bubble text for the model — expands slash skills + attachments."""
+def expand_user_content_for_llm(
+    entry: dict[str, Any], *, vision_capable: bool = False
+) -> str | list[dict[str, Any]]:
+    """User bubble content for the model — expands slash skills + attachments.
+
+    Returns a plain string by default (unchanged behavior — images are noted
+    as opaque binary attachments like any other unreadable file). When
+    ``vision_capable`` and at least one attachment is an image, returns an
+    OpenAI-style multimodal content list instead: a leading ``text`` part
+    (same text as the string form, minus the per-image binary note) followed
+    by one ``image_url`` part per readable image. Unreadable images are
+    silently skipped from the image parts (the text part still notes them).
+    """
     content = entry.get("content") or ""
     ids = entry.get("attachment_ids")
     if not ids and isinstance(entry.get("params"), dict):
         ids = entry["params"].get("attachment_ids")
-    return prepend_attachment_info(expand_slash_skill(content), ids)
+    text = prepend_attachment_info(
+        expand_slash_skill(content), ids, vision_capable=vision_capable
+    )
+    if not vision_capable or not ids:
+        return text
+
+    image_urls: list[str] = []
+    for aid in ids:
+        att = store.get_attachment(aid)
+        if not att or not _looks_image_attachment(att):
+            continue
+        url = _image_data_url(att)
+        if url:
+            image_urls.append(url)
+    if not image_urls:
+        return text
+
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    parts.extend({"type": "image_url", "image_url": {"url": u}} for u in image_urls)
+    return parts
 
 
 async def run_session_turn(

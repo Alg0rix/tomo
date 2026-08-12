@@ -19,6 +19,7 @@ dependencies = [
     "markitdown[docx]>=0.1.0",
     "pdf-inspector>=0.2.0",
     "apscheduler>=3.10.4,<4",
+    "firecrawl-anydoc>=0.1.8",
 ]
 
 [build-system]

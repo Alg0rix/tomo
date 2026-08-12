@@ -665,12 +665,16 @@ async def run_turn(
             prompt = system_prompt
             if prompt is None:
                 prompt = build_system_prompt(agent_id, session_id=session_id)
+            from app.runtime.llm.vision import agent_supports_vision
+
+            vision_capable = agent_supports_vision(agent_id)
             messages = build_messages(
                 history,
                 user_message,
                 system_prompt=prompt,
                 for_agent_id=agent_id,
                 session_id=session_id,
+                vision_capable=vision_capable,
             )
         except Exception as exc:
             metrics.ended_kind = "error"

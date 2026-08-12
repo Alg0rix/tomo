@@ -118,6 +118,77 @@ def test_user_and_final_map_to_chat_roles(tmp_path: Path) -> None:
     ]
 
 
+def _attach_image(
+    tmp_path: Path, db_name: str, name: str = "photo.png"
+) -> tuple[str, str]:
+    """Persist a real session + image attachment row + file.
+
+    Returns ``(session_id, attachment_id)``.
+    """
+    store.rebind(tmp_path / db_name)
+    sid = store.create_swarm_session(["main"], user_id="web")
+    f = tmp_path / name
+    f.write_bytes(b"\x89PNG\r\n\x1a\nnot a real png but bytes are enough")
+    att = store.create_attachment(
+        attachment_id="att_vis1",
+        session_id=sid,
+        filename="att_vis1.png",
+        original_name=name,
+        mime_type="image/png",
+        size_bytes=f.stat().st_size,
+        file_path=str(f),
+    )
+    return sid, att["id"]
+
+
+def test_history_to_messages_defaults_plain_string_with_image_attachment(
+    tmp_path: Path,
+) -> None:
+    """vision_capable defaults False — unchanged behavior, plain string."""
+    sid, aid = _attach_image(tmp_path, "ctx_vis_default.db")
+    store.append_session_history(
+        sid, {"type": "user", "content": "what is this", "attachment_ids": [aid]}
+    )
+    history = store.get_session_history(sid)
+    msgs = history_to_messages(history)
+    assert len(msgs) == 1
+    assert isinstance(msgs[0]["content"], str)
+    assert "Binary file" in msgs[0]["content"]
+
+
+def test_history_to_messages_vision_capable_builds_multimodal_content(
+    tmp_path: Path,
+) -> None:
+    sid, aid = _attach_image(tmp_path, "ctx_vis_on.db")
+    store.append_session_history(
+        sid, {"type": "user", "content": "what is this", "attachment_ids": [aid]}
+    )
+    history = store.get_session_history(sid)
+    msgs = history_to_messages(history, vision_capable=True)
+    assert len(msgs) == 1
+    content = msgs[0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert "what is this" in content[0]["text"]
+    image_parts = [p for p in content if p["type"] == "image_url"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_build_messages_threads_vision_capable_through(tmp_path: Path) -> None:
+    sid, aid = _attach_image(tmp_path, "ctx_vis_build.db")
+    store.append_session_history(
+        sid, {"type": "user", "content": "what is this", "attachment_ids": [aid]}
+    )
+    history = store.get_session_history(sid)
+    msgs = build_messages(
+        history, None, system_prompt="s", vision_capable=True
+    )
+    user_msgs = [m for m in msgs if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert isinstance(user_msgs[0]["content"], list)
+
+
 def test_tool_call_and_output_are_paired(tmp_path: Path) -> None:
     history = _hist(
         tmp_path,

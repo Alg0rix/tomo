@@ -791,6 +791,7 @@ def history_to_messages(
     history: list[dict[str, Any]] | None,
     *,
     for_agent_id: str | None = None,
+    vision_capable: bool = False,
 ) -> list[dict[str, Any]]:
     """Map session history entries to OpenAI-style chat messages.
 
@@ -798,6 +799,12 @@ def history_to_messages(
     self ``tool_call``/``tool_output`` -> OpenAI tool pairing; other agents'
     tools -> ``[From Name — tool run]`` notes; ``delegate`` -> swarm note when
     ``for_agent_id`` is set.
+
+    ``vision_capable`` lets image attachments on ``user`` entries ride along
+    as real ``image_url`` content parts instead of an opaque binary note —
+    applies uniformly across the whole history (not just the newest turn),
+    same as any other multimodal chat product re-sending prior images each
+    turn.
     """
     messages: list[dict[str, Any]] = []
     if not history:
@@ -814,7 +821,12 @@ def history_to_messages(
             from app.services.chat import expand_user_content_for_llm
 
             messages.append(
-                {"role": "user", "content": expand_user_content_for_llm(entry)}
+                {
+                    "role": "user",
+                    "content": expand_user_content_for_llm(
+                        entry, vision_capable=vision_capable
+                    ),
+                }
             )
             i += 1
             continue
@@ -941,6 +953,7 @@ def build_messages(
     *,
     for_agent_id: str | None = None,
     session_id: str | None = None,
+    vision_capable: bool = False,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for one agent turn.
 
@@ -952,6 +965,11 @@ def build_messages(
     (required for the coordinator to see Ops results correctly).
     When a user message is present, inject a compact retrieved-memory block
     into the system prompt (Reuse step of the learning loop).
+
+    ``vision_capable`` threads through to :func:`history_to_messages` — see
+    there. Only affects history-derived user messages; a caller-supplied
+    ``user_message`` string is appended as-is (already-expanded callers, e.g.
+    the ``@mention`` handoff path, don't carry attachment ids at this layer).
     """
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
     query = (user_message or "").strip()
@@ -975,7 +993,9 @@ def build_messages(
     prompt = inject_current_time(prompt)
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
     messages.extend(
-        history_to_messages(history, for_agent_id=for_agent_id)
+        history_to_messages(
+            history, for_agent_id=for_agent_id, vision_capable=vision_capable
+        )
     )
     if user_message:
         messages.append({"role": "user", "content": user_message})

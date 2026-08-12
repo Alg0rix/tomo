@@ -1305,6 +1305,19 @@
       const files = Array.from(e.dataTransfer.files || []);
       if (files.length) uploadFiles(files);
     });
+    // Ctrl+V / Cmd+V one or more images straight into the composer — same
+    // upload path as drag-drop/the attach button, so paste is additive, not
+    // a replacement for either.
+    input.addEventListener('paste', function (e) {
+      const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+      const images = items
+        .filter(function (it) { return it.kind === 'file' && it.type.indexOf('image/') === 0; })
+        .map(function (it) { return it.getAsFile(); })
+        .filter(Boolean);
+      if (!images.length) return; // let normal text paste through untouched
+      e.preventDefault();
+      uploadFiles(images);
+    });
     input.addEventListener('keydown', function (e) {
       if (slashOpen && slashMatches.length) {
         if (e.key === 'ArrowDown') {
