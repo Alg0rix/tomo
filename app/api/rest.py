@@ -34,6 +34,14 @@ def _uid(request: Request, explicit: str | None = None) -> str:
     return session_user_id(request)
 
 
+@router.get("/dashboard/prompts")
+async def dashboard_prompts_api(request: Request, _: AuthDep):
+    """Dynamic 'Try asking' chip prompts, personalized per account."""
+    from app.runtime import dashboard_prompts
+
+    return await dashboard_prompts.get_dashboard_prompts(session_user_id(request))
+
+
 @router.get("/dashboard/data")
 async def dashboard_data(request: Request, _: AuthDep):
     data = store.dashboard_data(user_id=session_user_id(request))
@@ -81,6 +89,63 @@ async def create_episode_api(request: Request, body: dict, _: AuthDep):
     return ep
 
 
+# Static path segments must be registered before /episodes/{episode_id}.
+@router.get("/episodes/meta/contradictions")
+async def episode_contradictions_api(request: Request, _: AuthDep):
+    """Conflicting outcomes for similar objectives (same account)."""
+    return {
+        "contradictions": store.episode_contradictions(
+            user_id=session_user_id(request), limit=30
+        )
+    }
+
+
+@router.post("/episodes/meta/optimize")
+async def episode_optimize_api(request: Request, _: AuthDep):
+    """LTM pass: decay, semantic consolidation, procedure extraction."""
+    return store.optimize_episodic_ltm(user_id=session_user_id(request))
+
+
+@router.post("/episodes/session/{session_id}/open")
+async def episode_open_api(
+    session_id: str, request: Request, body: dict, _: AuthDep
+):
+    """Start an open episode boundary for a chat session."""
+    from app.runtime.memory.episodes import open_episode
+
+    require_owned_session(request, session_id)
+    data = body if isinstance(body, dict) else {}
+    ep = open_episode(
+        session_id=session_id,
+        user_id=session_user_id(request),
+        agent_id=str(data.get("agent_id") or ""),
+        objective=str(data.get("objective") or data.get("message") or ""),
+        context_summary=str(data.get("context_summary") or ""),
+        workplace_id=str(data.get("workplace_id") or ""),
+    )
+    if not ep:
+        raise HTTPException(status_code=400, detail="Could not open episode")
+    return ep
+
+
+@router.post("/episodes/session/{session_id}/close")
+async def episode_close_api(
+    session_id: str, request: Request, body: dict, _: AuthDep
+):
+    """Close the open episode for a chat session."""
+    from app.runtime.memory.episodes import close_episode
+
+    require_owned_session(request, session_id)
+    data = body if isinstance(body, dict) else {}
+    ep = close_episode(
+        session_id,
+        outcome_status=str(data.get("outcome_status") or "success"),
+        outcome_summary=str(data.get("outcome_summary") or ""),
+        reflection=str(data.get("reflection") or ""),
+    )
+    return {"ok": True, "episode": ep}
+
+
 @router.get("/episodes/{episode_id}")
 async def get_episode_api(episode_id: str, request: Request, _: AuthDep):
     from app.models.mixins import episodic as ep_mod
@@ -93,6 +158,7 @@ async def get_episode_api(episode_id: str, request: Request, _: AuthDep):
         if ep:
             ep = dict(ep)
             ep["events"] = ep_mod.list_events(store._conn, episode_id)
+            ep["related"] = ep_mod.graph_neighbors(store._conn, [episode_id], limit=8)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
     return ep

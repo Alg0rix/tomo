@@ -160,6 +160,20 @@
     }).join('');
   }
 
+  async function loadPrompts() {
+    // Independent, non-blocking: SSR chips stay active on any failure.
+    let d;
+    try { d = await Tomo.api('/api/dashboard/prompts'); } catch (e) { return; }
+    var prompts = d && d.prompts;
+    if (!Array.isArray(prompts)) return;
+    promptChips.forEach(function (chip, i) {
+      var p = prompts[i];
+      if (!p || !p.label || !p.prompt) return;
+      chip.textContent = p.label;
+      chip.dataset.prompt = p.prompt;
+    });
+  }
+
   async function load() {
     let d;
     try { d = await Tomo.api('/api/dashboard/data'); } catch (e) { return; }
@@ -221,4 +235,5 @@
     }).join('');
   }
   load();
+  loadPrompts();
 })();
