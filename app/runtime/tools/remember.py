@@ -41,11 +41,13 @@ def run(arguments: dict[str, Any]) -> str:
             confidence = None
 
     from app.services import store
+    from app.runtime.tools.user_ctx import current_user_id
 
     payload: dict[str, Any] = {
         "title": title.strip(),
         "body": body.strip(),
         "tags": tags_list,
+        "user_id": current_user_id(),
     }
     if confidence is not None:
         payload["confidence"] = confidence

@@ -196,19 +196,33 @@ def search_messages_like(
     query: str,
     *,
     limit: int = 10,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Keyword LIKE search over message ``content`` across all sessions."""
+    """Keyword LIKE search over message ``content``.
+
+    When ``user_id`` is set, only sessions owned by that account are searched.
+    """
     text = (query or "").strip()
     if not text:
         return []
     k = max(1, min(int(limit or 10), 50))
     pattern = f"%{text}%"
-    rows = conn.execute(
-        "SELECT session_id, type, content, agent_id, function, ts "
-        "FROM messages WHERE content LIKE ? COLLATE NOCASE "
-        "ORDER BY ts DESC LIMIT ?",
-        (pattern, k),
-    ).fetchall()
+    if user_id is None:
+        rows = conn.execute(
+            "SELECT session_id, type, content, agent_id, function, ts "
+            "FROM messages WHERE content LIKE ? COLLATE NOCASE "
+            "ORDER BY ts DESC LIMIT ?",
+            (pattern, k),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT m.session_id, m.type, m.content, m.agent_id, m.function, m.ts "
+            "FROM messages m "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE m.content LIKE ? COLLATE NOCASE AND s.user_id = ? "
+            "ORDER BY m.ts DESC LIMIT ?",
+            (pattern, user_id, k),
+        ).fetchall()
     return [
         {
             "session_id": r["session_id"],
@@ -227,8 +241,9 @@ def search_messages(
     query: str,
     *,
     limit: int = 10,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid message search (FTS + LIKE fallback)."""
+    """Hybrid message search (FTS + LIKE fallback), optionally per account."""
     from app.runtime.memory.retrieve import search_messages_hybrid
 
-    return search_messages_hybrid(conn, query, limit=limit)
+    return search_messages_hybrid(conn, query, limit=limit, user_id=user_id)

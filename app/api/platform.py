@@ -430,23 +430,28 @@ async def install_via_ssh(body: WorkplaceInstallViaSsh, _: AuthDep):
 
 @router.get("/knowledge")
 async def list_knowledge(
+    request: Request,
     _: AuthDep,
     q: str | None = Query(None, max_length=500),
     limit: int = Query(50, ge=1, le=200),
 ):
+    uid = session_user_id(request)
     query = (q or "").strip()
     if query:
         return {
-            "entries": store.search_knowledge(query, limit=limit),
+            "entries": store.search_knowledge(query, limit=limit, user_id=uid),
             "query": query,
         }
-    return {"entries": store.list_knowledge_entries()}
+    return {"entries": store.list_knowledge_entries(user_id=uid)}
 
 
 @router.post("/knowledge")
-async def create_knowledge(body: KnowledgeEntryCreate, _: AuthDep):
+async def create_knowledge(
+    body: KnowledgeEntryCreate, request: Request, _: AuthDep
+):
     try:
         data = body.model_dump(exclude_none=True)
+        data["user_id"] = session_user_id(request)
         return store.create_knowledge_entry(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -486,6 +491,7 @@ def _dedupe_tags(tags: list[str]) -> list[str]:
 
 @router.post("/knowledge/upload")
 async def upload_knowledge(
+    request: Request,
     _: AuthDep,
     file: UploadFile = File(...),
     title: str | None = Form(None),
@@ -522,6 +528,7 @@ async def upload_knowledge(
                 "title": entry_title,
                 "body": parsed.body,
                 "tags": tag_list,
+                "user_id": session_user_id(request),
             }
         )
     except ValueError as e:
@@ -539,18 +546,22 @@ async def upload_knowledge(
 
 
 @router.get("/knowledge/{entry_id}")
-async def get_knowledge(entry_id: str, _: AuthDep):
-    entry = store.get_knowledge_entry(entry_id)
+async def get_knowledge(entry_id: str, request: Request, _: AuthDep):
+    entry = store.get_knowledge_entry(entry_id, user_id=session_user_id(request))
     if not entry:
         raise HTTPException(status_code=404, detail="Knowledge entry not found")
     return entry
 
 
 @router.put("/knowledge/{entry_id}")
-async def update_knowledge(entry_id: str, body: KnowledgeEntryUpdate, _: AuthDep):
+async def update_knowledge(
+    entry_id: str, body: KnowledgeEntryUpdate, request: Request, _: AuthDep
+):
     try:
         entry = store.update_knowledge_entry(
-            entry_id, body.model_dump(exclude_unset=True)
+            entry_id,
+            body.model_dump(exclude_unset=True),
+            user_id=session_user_id(request),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -560,8 +571,10 @@ async def update_knowledge(entry_id: str, body: KnowledgeEntryUpdate, _: AuthDep
 
 
 @router.delete("/knowledge/{entry_id}")
-async def delete_knowledge(entry_id: str, _: AuthDep):
-    if not store.delete_knowledge_entry(entry_id):
+async def delete_knowledge(entry_id: str, request: Request, _: AuthDep):
+    if not store.delete_knowledge_entry(
+        entry_id, user_id=session_user_id(request)
+    ):
         raise HTTPException(status_code=404, detail="Knowledge entry not found")
     return {"success": True}
 

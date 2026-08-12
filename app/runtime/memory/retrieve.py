@@ -23,9 +23,16 @@ def _rrf_fuse(
 
 
 def search_knowledge_hybrid(
-    conn: Any, query: str, *, limit: int = 5
+    conn: Any,
+    query: str,
+    *,
+    limit: int = 5,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid KB search: FTS + semantic (+ lexical fallback), confidence-ranked."""
+    """Hybrid KB search: FTS + semantic (+ lexical fallback), confidence-ranked.
+
+    When ``user_id`` is set, only that account's knowledge rows are returned.
+    """
     from app.models.mixins import knowledge_entries as kb
     from app.runtime.memory import embeddings as emb
     from app.runtime.memory import fts
@@ -43,11 +50,21 @@ def search_knowledge_hybrid(
     fused = _rrf_fuse([fts_ids, sem_ids], limit=k * 2)
     hits: list[dict[str, Any]] = []
     for eid in fused:
-        entry = kb.get_entry(conn, eid)
+        entry = kb.get_entry(conn, eid, user_id=user_id)
         if entry:
             hits.append(entry)
     if not hits:
-        hits = kb.search_entries_lexical(conn, text, limit=k * 2)
+        hits = kb.search_entries_lexical(conn, text, limit=k * 2, user_id=user_id)
+    else:
+        # Drop other-users' FTS/sem hits when scoping.
+        if user_id is not None:
+            hits = [
+                h
+                for h in hits
+                if (h.get("user_id") or "web") == (user_id or "web")
+            ]
+        if not hits:
+            hits = kb.search_entries_lexical(conn, text, limit=k * 2, user_id=user_id)
 
     # Prefer high-confidence semantic knowledge among fused hits.
     ranked = kb.rank_entries_by_confidence(hits, limit=k)
@@ -55,7 +72,11 @@ def search_knowledge_hybrid(
 
 
 def search_messages_hybrid(
-    conn: Any, query: str, *, limit: int = 10
+    conn: Any,
+    query: str,
+    *,
+    limit: int = 10,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
     from app.runtime.memory import fts
 
@@ -63,14 +84,23 @@ def search_messages_hybrid(
     if not text:
         return []
     k = max(1, min(int(limit or 10), 50))
-    msg_ids = fts.search_messages_fts(conn, text, limit=k)
+    msg_ids = fts.search_messages_fts(conn, text, limit=max(k * 3, k))
     if msg_ids:
         placeholders = ",".join("?" for _ in msg_ids)
-        rows = conn.execute(
-            f"SELECT session_id, type, content, agent_id, function, ts, id "
-            f"FROM messages WHERE id IN ({placeholders})",
-            msg_ids,
-        ).fetchall()
+        if user_id is None:
+            rows = conn.execute(
+                f"SELECT session_id, type, content, agent_id, function, ts, id "
+                f"FROM messages WHERE id IN ({placeholders})",
+                msg_ids,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT m.session_id, m.type, m.content, m.agent_id, m.function, "
+                f"m.ts, m.id FROM messages m "
+                f"JOIN sessions s ON s.id = m.session_id "
+                f"WHERE m.id IN ({placeholders}) AND s.user_id = ?",
+                [*msg_ids, user_id],
+            ).fetchall()
         by_id = {int(r["id"]): r for r in rows}
         out = []
         for mid in msg_ids:
@@ -87,13 +117,15 @@ def search_messages_hybrid(
                     "ts": r["ts"],
                 }
             )
+            if len(out) >= k:
+                break
         if out:
             return out
 
     # LIKE fallback
     from app.models.mixins import messages as msg_mod
 
-    return msg_mod.search_messages_like(conn, text, limit=k)
+    return msg_mod.search_messages_like(conn, text, limit=k, user_id=user_id)
 
 
 def retrieve_for_turn(
@@ -101,12 +133,15 @@ def retrieve_for_turn(
     *,
     agent_id: str | None = None,
     session_id: str | None = None,
+    user_id: str | None = None,
     limit: int = 4,
 ) -> str:
     """Build a compact memory block for system-prompt injection (Reuse step).
 
     Ranking preference (Learning OS Slice 2):
     user prefs → bound project → high-confidence semantic KB → rest.
+
+    Knowledge and USER.md are scoped to ``user_id`` (turn-bound account).
     """
     if not (query or "").strip():
         return ""
@@ -115,13 +150,22 @@ def retrieve_for_turn(
     except Exception:
         return ""
 
+    uid = user_id
+    if uid is None:
+        try:
+            from app.runtime.tools.user_ctx import current_user_id
+
+            uid = current_user_id()
+        except Exception:
+            uid = "web"
+
     parts: list[str] = []
 
     # 1) User lane (prefs / style) — highest priority retrieval signal.
     try:
         from app.runtime.memory import curated
 
-        user_entries = curated.read_entries(curated.user_path())
+        user_entries = curated.read_user_entries(user_id=uid)
         cleaned = [e.strip() for e in user_entries if (e or "").strip()]
         if cleaned:
             snippet = "\n".join(f"- {e[:160]}" for e in cleaned[:4])
@@ -142,9 +186,9 @@ def retrieve_for_turn(
         except Exception as exc:
             _logger.debug("project retrieve failed: %s", exc)
 
-    # 3) High-confidence semantic KB.
+    # 3) High-confidence semantic KB (per login account).
     try:
-        kb_hits = store.search_knowledge(query, limit=limit)
+        kb_hits = store.search_knowledge(query, limit=limit, user_id=uid)
         if kb_hits:
             lines = []
             for h in kb_hits[:limit]:

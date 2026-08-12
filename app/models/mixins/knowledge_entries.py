@@ -63,12 +63,15 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     confidence = 0.7
     use_count = 0
     success_count = 0
+    user_id = "web"
     if "confidence" in keys:
         confidence = _clamp_confidence(row["confidence"], 0.7)
     if "use_count" in keys:
         use_count = int(row["use_count"] or 0)
     if "success_count" in keys:
         success_count = int(row["success_count"] or 0)
+    if "user_id" in keys:
+        user_id = (row["user_id"] or "web").strip() or "web"
     return {
         "id": row["id"],
         "title": row["title"],
@@ -77,9 +80,22 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
         "confidence": confidence,
         "use_count": use_count,
         "success_count": success_count,
+        "user_id": user_id,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def _resolve_user_id(explicit: str | None = None) -> str | None:
+    """``None`` = no filter; string = owner scope (defaults from turn context)."""
+    if explicit is not None:
+        return (explicit or "").strip() or "web"
+    try:
+        from app.runtime.tools.user_ctx import current_user_id
+
+        return current_user_id()
+    except Exception:
+        return "web"
 
 
 def _index_entry(conn: sqlite3.Connection, entry: dict[str, Any]) -> None:
@@ -113,17 +129,39 @@ def _drop_index(conn: sqlite3.Connection, entry_id: str) -> None:
         pass
 
 
-def list_entries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT * FROM knowledge_entries ORDER BY updated_at DESC, created_at DESC"
-    ).fetchall()
+def list_entries(
+    conn: sqlite3.Connection, *, user_id: str | None = None
+) -> list[dict[str, Any]]:
+    uid = _resolve_user_id(user_id)
+    if uid is None:
+        rows = conn.execute(
+            "SELECT * FROM knowledge_entries ORDER BY updated_at DESC, created_at DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM knowledge_entries WHERE user_id=? "
+            "ORDER BY updated_at DESC, created_at DESC",
+            (uid,),
+        ).fetchall()
     return [_row_to_entry(r) for r in rows]
 
 
-def get_entry(conn: sqlite3.Connection, entry_id: str) -> dict[str, Any] | None:
-    row = conn.execute(
-        "SELECT * FROM knowledge_entries WHERE id=?", (entry_id,)
-    ).fetchone()
+def get_entry(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    *,
+    user_id: str | None = None,
+) -> dict[str, Any] | None:
+    uid = _resolve_user_id(user_id)
+    if uid is None:
+        row = conn.execute(
+            "SELECT * FROM knowledge_entries WHERE id=?", (entry_id,)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM knowledge_entries WHERE id=? AND user_id=?",
+            (entry_id, uid),
+        ).fetchone()
     return _row_to_entry(row) if row else None
 
 
@@ -144,8 +182,27 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
     confidence = _clamp_confidence(data.get("confidence"), 0.7)
     use_count = max(0, int(data.get("use_count") or 0))
     success_count = max(0, int(data.get("success_count") or 0))
+    owner = (data.get("user_id") or "").strip() or _resolve_user_id(None) or "web"
     cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
-    if {"confidence", "use_count", "success_count"} <= cols:
+    if "user_id" in cols and {"confidence", "use_count", "success_count"} <= cols:
+        conn.execute(
+            "INSERT INTO knowledge_entries "
+            "(id, title, body, tags_json, confidence, use_count, success_count, "
+            "user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                eid,
+                title,
+                (data.get("body") or "").strip(),
+                _tags_json(data.get("tags")),
+                confidence,
+                use_count,
+                success_count,
+                owner,
+                now,
+                now,
+            ),
+        )
+    elif {"confidence", "use_count", "success_count"} <= cols:
         conn.execute(
             "INSERT INTO knowledge_entries "
             "(id, title, body, tags_json, confidence, use_count, success_count, "
@@ -176,7 +233,7 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
             ),
         )
     conn.commit()
-    entry = get_entry(conn, eid)
+    entry = get_entry(conn, eid, user_id=owner)
     assert entry is not None
     _index_entry(conn, entry)
     conn.commit()
@@ -184,11 +241,13 @@ def create_entry(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
 
 
 def update_entry(
-    conn: sqlite3.Connection, entry_id: str, data: dict[str, Any]
+    conn: sqlite3.Connection,
+    entry_id: str,
+    data: dict[str, Any],
+    *,
+    user_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if not conn.execute(
-        "SELECT 1 FROM knowledge_entries WHERE id=?", (entry_id,)
-    ).fetchone():
+    if get_entry(conn, entry_id, user_id=user_id) is None:
         return None
     sets: list[str] = []
     params: list[Any] = []
@@ -218,17 +277,20 @@ def update_entry(
             params,
         )
         conn.commit()
-    entry = get_entry(conn, entry_id)
+    entry = get_entry(conn, entry_id, user_id=user_id)
     if entry:
         _index_entry(conn, entry)
         conn.commit()
     return entry
 
 
-def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
-    if not conn.execute(
-        "SELECT 1 FROM knowledge_entries WHERE id=?", (entry_id,)
-    ).fetchone():
+def delete_entry(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    *,
+    user_id: str | None = None,
+) -> bool:
+    if get_entry(conn, entry_id, user_id=user_id) is None:
         return False
     conn.execute("DELETE FROM knowledge_entries WHERE id=?", (entry_id,))
     _drop_index(conn, entry_id)
@@ -241,6 +303,7 @@ def search_entries_lexical(
     query: str,
     *,
     limit: int = 5,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Token-overlap scorer (fallback when FTS/semantic miss)."""
     text = (query or "").strip()
@@ -251,7 +314,13 @@ def search_entries_lexical(
     if not tokens:
         return []
 
-    rows = conn.execute("SELECT * FROM knowledge_entries").fetchall()
+    uid = _resolve_user_id(user_id)
+    if uid is None:
+        rows = conn.execute("SELECT * FROM knowledge_entries").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM knowledge_entries WHERE user_id=?", (uid,)
+        ).fetchall()
     scored: list[tuple[int, dict[str, Any]]] = []
     for row in rows:
         entry = _row_to_entry(row)
@@ -341,11 +410,13 @@ def search_entries(
     query: str,
     *,
     limit: int = 5,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search (FTS + semantic + lexical fallback), confidence-ranked."""
     from app.runtime.memory.retrieve import search_knowledge_hybrid
 
-    return search_knowledge_hybrid(conn, query, limit=limit)
+    uid = _resolve_user_id(user_id)
+    return search_knowledge_hybrid(conn, query, limit=limit, user_id=uid)
 
 
 __all__ = [

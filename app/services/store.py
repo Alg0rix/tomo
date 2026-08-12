@@ -381,10 +381,12 @@ class Store:
             return attachments_store.delete_attachment(self._conn, attachment_id)
 
     def search_messages(
-        self, query: str, *, limit: int = 10
+        self, query: str, *, limit: int = 10, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         with self._lock:
-            return messages_store.search_messages(self._conn, query, limit=limit)
+            return messages_store.search_messages(
+                self._conn, query, limit=limit, user_id=user_id
+            )
 
     def append_history(self, agent_id: str, user_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
@@ -704,33 +706,49 @@ class Store:
             return workplaces_store.resolve_agent_workplace(self._conn, agent_id)
 
     # -- knowledge entries (SQLite) --------------------------------------
-    def list_knowledge_entries(self) -> list[dict[str, Any]]:
+    def list_knowledge_entries(
+        self, *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         with self._lock:
-            return knowledge_store.list_entries(self._conn)
+            return knowledge_store.list_entries(self._conn, user_id=user_id)
 
-    def get_knowledge_entry(self, entry_id: str) -> dict[str, Any] | None:
+    def get_knowledge_entry(
+        self, entry_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any] | None:
         with self._lock:
-            return knowledge_store.get_entry(self._conn, entry_id)
+            return knowledge_store.get_entry(self._conn, entry_id, user_id=user_id)
 
     def create_knowledge_entry(self, data: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             return knowledge_store.create_entry(self._conn, data)
 
     def update_knowledge_entry(
-        self, entry_id: str, data: dict[str, Any]
+        self,
+        entry_id: str,
+        data: dict[str, Any],
+        *,
+        user_id: str | None = None,
     ) -> dict[str, Any] | None:
         with self._lock:
-            return knowledge_store.update_entry(self._conn, entry_id, data)
+            return knowledge_store.update_entry(
+                self._conn, entry_id, data, user_id=user_id
+            )
 
-    def delete_knowledge_entry(self, entry_id: str) -> bool:
+    def delete_knowledge_entry(
+        self, entry_id: str, *, user_id: str | None = None
+    ) -> bool:
         with self._lock:
-            return knowledge_store.delete_entry(self._conn, entry_id)
+            return knowledge_store.delete_entry(
+                self._conn, entry_id, user_id=user_id
+            )
 
     def search_knowledge(
-        self, query: str, *, limit: int = 5
+        self, query: str, *, limit: int = 5, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         with self._lock:
-            return knowledge_store.search_entries(self._conn, query, limit=limit)
+            return knowledge_store.search_entries(
+                self._conn, query, limit=limit, user_id=user_id
+            )
 
     def bump_knowledge_use(self, entry_id: str, *, success: bool = False) -> None:
         with self._lock:
@@ -1290,6 +1308,7 @@ class Store:
         before: float | None = None,
         agent_id: str | None = None,
         saved_only: bool = False,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         from app.models.mixins import learning_events as le
 
@@ -1300,14 +1319,17 @@ class Store:
                 before=before,
                 agent_id=agent_id,
                 saved_only=saved_only,
+                user_id=user_id,
             )
 
-    def companion_snapshot(self, *, recent_limit: int = 20) -> dict[str, Any]:
-        """Bond + growth log + profile for the Companion page."""
+    def companion_snapshot(
+        self, *, recent_limit: int = 20, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Bond + growth log + profile for the Companion page (per account)."""
         from app.runtime.agent.learning.companion import companion_snapshot as snap
 
         with self._lock:
-            return snap(self._conn, recent_limit=recent_limit)
+            return snap(self._conn, recent_limit=recent_limit, user_id=user_id)
 
     # -- Learning OS shared / execution lanes ----------------------------
     def insert_swarm_note(self, **kwargs: Any) -> dict[str, Any] | None:

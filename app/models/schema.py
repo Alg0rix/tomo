@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     confidence     REAL NOT NULL DEFAULT 0.7,
     use_count      INTEGER NOT NULL DEFAULT 0,
     success_count  INTEGER NOT NULL DEFAULT 0,
+    user_id        TEXT NOT NULL DEFAULT 'web',
     created_at     REAL NOT NULL DEFAULT 0,
     updated_at     REAL NOT NULL DEFAULT 0
 );
@@ -522,7 +523,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             """
         )
 
-    # Slice 2: knowledge confidence / usage counters.
+    # Slice 2: knowledge confidence / usage counters + per-account owner.
     kb_cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
     _kb_alters = {
         "confidence": (
@@ -537,10 +538,19 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE knowledge_entries "
             "ADD COLUMN success_count INTEGER NOT NULL DEFAULT 0"
         ),
+        "user_id": (
+            "ALTER TABLE knowledge_entries "
+            "ADD COLUMN user_id TEXT NOT NULL DEFAULT 'web'"
+        ),
     }
     for col, ddl in _kb_alters.items():
         if col not in kb_cols:
             conn.execute(ddl)
+    # Index for multi-user knowledge list/search.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_user "
+        "ON knowledge_entries(user_id, updated_at DESC)"
+    )
 
     table_names = {
         r[0]

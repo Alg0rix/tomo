@@ -20,8 +20,9 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: 'limit' must be an integer"
 
     from app.services import store
+    from app.runtime.tools.user_ctx import current_user_id
 
-    hits = store.search_messages(query, limit=limit_i)
+    hits = store.search_messages(query, limit=limit_i, user_id=current_user_id())
     if not hits:
         return f"No messages matched query: {query!r}"
     lines: list[str] = []

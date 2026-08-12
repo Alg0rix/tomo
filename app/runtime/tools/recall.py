@@ -35,8 +35,11 @@ def run(arguments: dict[str, Any]) -> str:
 
     # Lazy import avoids circular import with store ↔ registry at module load.
     from app.services import store
+    from app.runtime.tools.user_ctx import current_user_id
 
-    hits = store.search_knowledge(query.strip(), limit=limit_i)
+    hits = store.search_knowledge(
+        query.strip(), limit=limit_i, user_id=current_user_id()
+    )
     if not hits:
         return f"No knowledge entries matched query: {query.strip()!r}"
     return _format_hits(hits)
