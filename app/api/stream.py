@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from pydantic import BaseModel, Field
 
-from app.core.deps import AuthDep, session_user_id
+from app.core.deps import AuthDep, require_owned_session, session_user_id
 from app.runtime.ui import UIValidationError, validate_ui_action
 from app.services import (
     heartbeat_stream,
@@ -148,9 +148,7 @@ async def session_chat_stream_post(
     re-queue. Reconnect/watch uses GET listen — never drop a new message by
     joining an in-flight turn.
     """
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_owned_session(request, session_id)
     message = (body.message or "").strip()
     attachment_ids = list(body.attachment_ids or [])
     if not message and not attachment_ids:
@@ -219,10 +217,9 @@ async def session_chat_stream_post(
 
 
 @router.post("/sessions/{session_id}/chat/stop")
-async def session_chat_stop(session_id: str, _: AuthDep = None):
+async def session_chat_stop(session_id: str, request: Request, _: AuthDep = None):
     """Cancel the in-flight background turn for this session (if any)."""
-    if not store.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
     stopped = cancel_session_turn(session_id)
     return {"ok": True, "stopped": stopped, "session_id": session_id}
 
@@ -231,6 +228,7 @@ async def session_chat_stop(session_id: str, _: AuthDep = None):
 async def session_chat_steer(
     session_id: str,
     body: SessionChatStreamIn,
+    request: Request,
     _: AuthDep = None,
 ):
     """Inject a user message into the running turn (mid-turn steer).
@@ -238,8 +236,7 @@ async def session_chat_steer(
     Used when the composer already has queued follow-ups and the user presses
     Enter again — merge client-side, then POST here. Does not start a new turn.
     """
-    if not store.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
     from app.services.chat import push_session_steer
 
     message = (body.message or "").strip()
@@ -260,9 +257,7 @@ async def session_ui_action(
     _: AuthDep = None,
 ):
     """Dispatch a typed generative-UI action into the session agent turn."""
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
     try:
         action = validate_ui_action(body.model_dump())
     except UIValidationError as exc:
@@ -319,8 +314,7 @@ async def session_chat_stream(
             status_code=405,
             detail="Use POST /api/sessions/{id}/chat/stream to start a turn",
         )
-    if not store.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
@@ -334,7 +328,7 @@ async def session_chat_stream(
         if active:
             # Snapshot *before* replay so a quiet mid-turn gap (empty buffer,
             # long tool wait) still marks the client as attached to a live turn.
-            session = store.get_session(session_id) or {}
+            session = store.get_owned_session(session_id, session_user_id(request)) or {}
             coord = session.get("coordinator_id") or session.get("agent_id") or ""
             yield fmt_sse(
                 {

@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse
 
 from app.core.config import TOMO_HOME
-from app.core.deps import AuthDep, session_user_id
+from app.core.deps import AuthDep, require_owned_session, session_user_id
 from app.schemas import (
     AgentCreate,
     AgentDraft,
@@ -29,14 +29,14 @@ _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 
 def _uid(request: Request, explicit: str | None = None) -> str:
-    uid = (explicit or "").strip()
-    if uid and uid != "web":
-        return uid
+    """Authenticated account id only — never trust client-supplied user_id."""
+    _ = explicit  # retained for call-site compatibility
     return session_user_id(request)
 
+
 @router.get("/dashboard/data")
-async def dashboard_data(_: AuthDep):
-    data = store.dashboard_data()
+async def dashboard_data(request: Request, _: AuthDep):
+    data = store.dashboard_data(user_id=session_user_id(request))
     coord = store.get_coordinator()
     data["coordinator"] = (
         {"id": coord["id"], "name": coord["name"]} if coord else None
@@ -133,11 +133,12 @@ async def delete_agent(agent_id: str, _: AuthDep):
 
 
 @router.get("/sessions")
-async def list_sessions_api(_: AuthDep):
+async def list_sessions_api(request: Request, _: AuthDep):
     agents = store.list_agents()
     agent_map = {a["id"]: a for a in agents}
+    uid = session_user_id(request)
     sessions = []
-    for s in store.list_sessions():
+    for s in store.list_sessions(user_id=uid):
         row = dict(s)
         ids = row.get("agent_ids") or ([row["agent_id"]] if row.get("agent_id") else [])
         row["agent_ids"] = ids
@@ -154,6 +155,7 @@ async def list_sessions_api(_: AuthDep):
 
 @router.get("/sessions/search")
 async def search_sessions_api(
+    request: Request,
     _: AuthDep,
     q: str = Query(default="", description="Search chat titles and message content"),
     limit: int = Query(default=40, ge=1, le=100),
@@ -163,7 +165,8 @@ async def search_sessions_api(
     if not text:
         return {"query": "", "results": []}
 
-    sessions = {s["id"]: s for s in store.list_sessions()}
+    uid = session_user_id(request)
+    sessions = {s["id"]: s for s in store.list_sessions(user_id=uid)}
     seen: dict[str, dict] = {}
     needle = text.lower()
 
@@ -206,10 +209,8 @@ async def search_sessions_api(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session_api(session_id: str, _: AuthDep):
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def get_session_api(session_id: str, request: Request, _: AuthDep):
+    session = require_owned_session(request, session_id)
     agents = store.list_agents()
     agent_map = {a["id"]: a for a in agents}
     ids = session.get("agent_ids") or ([session["agent_id"]] if session.get("agent_id") else [])
@@ -240,8 +241,11 @@ async def create_session(body: SessionCreate, request: Request, _: AuthDep):
 
 
 @router.put("/sessions/{session_id}/workplace")
-async def set_session_workplace_api(session_id: str, body: SessionWorkplaceIn, _: AuthDep):
+async def set_session_workplace_api(
+    session_id: str, body: SessionWorkplaceIn, request: Request, _: AuthDep
+):
     """Set or clear this chat's default workplace (prefer local for folder context)."""
+    require_owned_session(request, session_id)
     try:
         session = store.set_session_workplace(session_id, body.workplace_id or "")
     except ValueError as e:
@@ -252,16 +256,21 @@ async def set_session_workplace_api(session_id: str, body: SessionWorkplaceIn, _
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session_api(session_id: str, _: AuthDep):
+async def delete_session_api(session_id: str, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
     if not store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True}
 
 
 @router.post("/sessions/prune-drafts")
-async def prune_draft_sessions(_: AuthDep, keep_id: str | None = None):
+async def prune_draft_sessions(
+    request: Request, _: AuthDep, keep_id: str | None = None
+):
     """Delete never-messaged draft sessions (default title + zero messages)."""
-    deleted = store.prune_empty_draft_sessions(keep_id=keep_id or None)
+    deleted = store.prune_empty_draft_sessions(
+        keep_id=keep_id or None, user_id=session_user_id(request)
+    )
     return {"deleted": deleted}
 
 
@@ -282,7 +291,10 @@ async def create_home_session(body: HomeSessionIn, request: Request, _: AuthDep)
 
 
 @router.put("/sessions/{session_id}/agents")
-async def update_session_agents(session_id: str, body: SessionCreate, _: AuthDep):
+async def update_session_agents(
+    session_id: str, body: SessionCreate, request: Request, _: AuthDep
+):
+    require_owned_session(request, session_id)
     try:
         session = store.update_session_agents(session_id, body.agent_ids)
     except ValueError as e:
@@ -293,32 +305,27 @@ async def update_session_agents(session_id: str, body: SessionCreate, _: AuthDep
 
 
 @router.get("/sessions/{session_id}/chat")
-async def session_chat_history(session_id: str, _: AuthDep):
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def session_chat_history(session_id: str, request: Request, _: AuthDep):
+    session = require_owned_session(request, session_id)
     entries = store.get_session_history(session_id)
     return {"entries": entries, "has_more": False, "session": session}
 
 
 @router.get("/sessions/{session_id}/attachments")
-async def list_session_attachments_api(session_id: str, _: AuthDep):
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def list_session_attachments_api(session_id: str, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
     return {"attachments": store.list_session_attachments(session_id)}
 
 
 @router.post("/sessions/{session_id}/attachments")
 async def upload_session_attachment(
     session_id: str,
+    request: Request,
     _: AuthDep,
     file: UploadFile = File(...),
     name: str | None = Form(None),
 ):
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
     data = await file.read()
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -353,10 +360,13 @@ async def upload_session_attachment(
 
 
 @router.get("/attachments/{attachment_id}")
-async def download_attachment(attachment_id: str, _: AuthDep):
+async def download_attachment(attachment_id: str, request: Request, _: AuthDep):
     att = store.get_attachment(attachment_id)
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    sid = (att.get("session_id") or "").strip()
+    if sid:
+        require_owned_session(request, sid)
     path = Path(att["file_path"])
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -368,10 +378,13 @@ async def download_attachment(attachment_id: str, _: AuthDep):
 
 
 @router.delete("/attachments/{attachment_id}")
-async def delete_attachment_api(attachment_id: str, _: AuthDep):
+async def delete_attachment_api(attachment_id: str, request: Request, _: AuthDep):
     att = store.get_attachment(attachment_id)
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    sid = (att.get("session_id") or "").strip()
+    if sid:
+        require_owned_session(request, sid)
     try:
         Path(att["file_path"]).unlink(missing_ok=True)
     except OSError:
@@ -381,13 +394,11 @@ async def delete_attachment_api(attachment_id: str, _: AuthDep):
 
 
 @router.get("/sessions/{session_id}/context")
-async def session_context_usage(session_id: str, _: AuthDep):
+async def session_context_usage(session_id: str, request: Request, _: AuthDep):
     from app.runtime.agent.context_usage import compute_context_usage
     from app.runtime.llm.context_window import resolve_context_window
 
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_owned_session(request, session_id)
     agent_id = (
         session.get("coordinator_id")
         or session.get("agent_id")
@@ -401,9 +412,8 @@ async def session_context_usage(session_id: str, _: AuthDep):
 
 
 @router.post("/sessions/{session_id}/chat/clear")
-async def session_chat_clear(session_id: str, _: AuthDep):
-    if not store.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+async def session_chat_clear(session_id: str, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
     store.clear_session_by_id(session_id)
     return {"success": True}
 
@@ -452,16 +462,14 @@ async def chat_clear(agent_id: str, request: Request, _: AuthDep):
 # ── Session artifacts ($TOMO_HOME/sessions/<id>/artifacts/) — Kimi-style ──
 
 
-def _require_session(session_id: str) -> dict:
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+def _require_session(request: Request, session_id: str) -> dict:
+    return require_owned_session(request, session_id)
 
 
 @router.get("/sessions/{session_id}/artifacts")
 async def list_session_artifacts(
     session_id: str,
+    request: Request,
     _: AuthDep,
     sort: str = Query("newest"),
     q: str = Query(""),
@@ -469,7 +477,7 @@ async def list_session_artifacts(
     page: int = Query(1, ge=1),
     limit: int = Query(24, ge=1, le=200),
 ):
-    _require_session(session_id)
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import list_artifact_files
 
     return list_artifact_files(
@@ -483,8 +491,10 @@ async def list_session_artifacts(
 
 
 @router.get("/sessions/{session_id}/artifacts/{filename}")
-async def get_session_artifact(session_id: str, filename: str, _: AuthDep):
-    _require_session(session_id)
+async def get_session_artifact(
+    session_id: str, filename: str, request: Request, _: AuthDep
+):
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import artifacts_dir, validate_filename
 
     err = validate_filename(filename)
@@ -521,8 +531,10 @@ async def get_session_artifact(session_id: str, filename: str, _: AuthDep):
 
 
 @router.delete("/sessions/{session_id}/artifacts/{filename}")
-async def delete_session_artifact(session_id: str, filename: str, _: AuthDep):
-    _require_session(session_id)
+async def delete_session_artifact(
+    session_id: str, filename: str, request: Request, _: AuthDep
+):
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import delete_artifact_file, validate_filename
 
     err = validate_filename(filename)
@@ -534,9 +546,11 @@ async def delete_session_artifact(session_id: str, filename: str, _: AuthDep):
 
 
 @router.post("/sessions/{session_id}/artifacts")
-async def create_session_artifact(session_id: str, body: dict, _: AuthDep):
+async def create_session_artifact(
+    session_id: str, body: dict, request: Request, _: AuthDep
+):
     """Create a text artifact: ``{filename, content}``."""
-    session = _require_session(session_id)
+    session = _require_session(request, session_id)
     from app.runtime.artifacts.fs import validate_filename, write_artifact_text
 
     filename = str((body or {}).get("filename") or "").strip()
@@ -572,6 +586,7 @@ async def create_session_artifact(session_id: str, body: dict, _: AuthDep):
 @router.get("/agents/{agent_id}/artifacts")
 async def list_agent_artifacts_compat(
     agent_id: str,
+    request: Request,
     _: AuthDep,
     session_id: str = Query(..., min_length=1),
     sort: str = Query("newest"),
@@ -582,7 +597,7 @@ async def list_agent_artifacts_compat(
 ):
     if not store.get_agent(agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-    _require_session(session_id)
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import list_artifact_files
 
     return list_artifact_files(
@@ -635,7 +650,7 @@ async def share_session_artifact(
     session_id: str, filename: str, request: Request, _: AuthDep
 ):
     """Create or return the existing public share link for an artifact."""
-    _require_session(session_id)
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import artifacts_dir, validate_filename
 
     err = validate_filename(filename)
@@ -650,9 +665,11 @@ async def share_session_artifact(
 
 
 @router.get("/sessions/{session_id}/artifacts/{filename}/share")
-async def get_session_artifact_share(session_id: str, filename: str, _: AuthDep):
+async def get_session_artifact_share(
+    session_id: str, filename: str, request: Request, _: AuthDep
+):
     """Check whether an artifact already has a public share link."""
-    _require_session(session_id)
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import validate_filename
 
     err = validate_filename(filename)

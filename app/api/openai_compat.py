@@ -95,7 +95,7 @@ def resolve_session_id(
     if provided:
         if _UNSAFE_SESSION_ID.search(provided):
             return None, _openai_error("Invalid session ID")
-        if not store.get_session(provided):
+        if not store.get_owned_session(provided, user_id):
             return None, _openai_error(
                 f"Session not found: {provided}",
                 err_type="not_found_error",

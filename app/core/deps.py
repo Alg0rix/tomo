@@ -134,6 +134,22 @@ def session_username(request: Request) -> str:
     return str(request.session.get("user") or "")
 
 
+def require_owned_session(request: Request, session_id: str) -> dict:
+    """Load a chat session only if it belongs to the authenticated account.
+
+    Missing or other-users' sessions both return 404 so existence is not leaked.
+    """
+    from app.services import store
+
+    uid = session_user_id(request)
+    session = store.get_owned_session(session_id, uid)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    return session
+
+
 def require_auth(request: Request) -> None:
     """Dependency for routes that need a logged-in admin or API key."""
     if _is_authenticated(request):

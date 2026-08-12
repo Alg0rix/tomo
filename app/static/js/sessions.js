@@ -1106,7 +1106,8 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
-    chatWrap.dataset.userId = s.user_id || currentUserId();
+    // Keep the login account id — never adopt another session's user_id.
+    chatWrap.dataset.userId = currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
     chatWrap.dataset.agentsJson = agentsJsonFor(ids);
     chatWrap.dataset.agentName = label;

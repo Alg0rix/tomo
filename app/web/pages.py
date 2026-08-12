@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import EVAL_UI_ENABLED
-from app.core.deps import AuthDep, session_user_id, templates
+from app.core.deps import AuthDep, require_owned_session, session_user_id, templates
 from app.services import store
 from app.web.context import page_ctx
 
@@ -72,8 +72,9 @@ async def companion_page(request: Request, _: AuthDep):
 @router.get("/sessions/{session_id}/artifacts/{filename}/view", response_class=HTMLResponse)
 async def artifact_view_page(request: Request, session_id: str, filename: str, _: AuthDep):
     """Full-page artifact viewer (HTML/media chrome-light; text via artifacts.js)."""
-    session = store.get_session(session_id)
-    if not session:
+    try:
+        session = require_owned_session(request, session_id)
+    except HTTPException:
         return templates.TemplateResponse(
             request,
             "error.html",

@@ -253,16 +253,31 @@ class Store:
                 pass
             return sessions_store.get_session(self._conn, session_id)
 
-    def list_sessions(self) -> list[dict[str, Any]]:
+    def list_sessions(self, user_id: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            rows = sessions_store.list_sessions(self._conn)
+            rows = sessions_store.list_sessions(self._conn, user_id=user_id)
             # Soft-sync swarm membership so new agents appear without a full turn.
             for s in rows:
                 try:
                     sessions_store.sync_swarm_membership(self._conn, s["id"])
                 except Exception:
                     pass
-            return sessions_store.list_sessions(self._conn)
+            return sessions_store.list_sessions(self._conn, user_id=user_id)
+
+    def session_owned_by(self, session_id: str, user_id: str) -> bool:
+        with self._lock:
+            return sessions_store.session_owned_by(self._conn, session_id, user_id)
+
+    def get_owned_session(
+        self, session_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        """Return session only when it exists and belongs to ``user_id``."""
+        session = self.get_session(session_id)
+        if not session:
+            return None
+        if (session.get("user_id") or "web") != (user_id or "web"):
+            return None
+        return session
 
     def create_swarm_session(
         self,
@@ -308,9 +323,13 @@ class Store:
         with self._lock:
             return sessions_store.delete_session(self._conn, session_id)
 
-    def prune_empty_draft_sessions(self, *, keep_id: str | None = None) -> list[str]:
+    def prune_empty_draft_sessions(
+        self, *, keep_id: str | None = None, user_id: str | None = None
+    ) -> list[str]:
         with self._lock:
-            return sessions_store.prune_empty_draft_sessions(self._conn, keep_id=keep_id)
+            return sessions_store.prune_empty_draft_sessions(
+                self._conn, keep_id=keep_id, user_id=user_id
+            )
 
     # -- messages / history (SQLite) -------------------------------------
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
@@ -420,10 +439,11 @@ class Store:
             skills = skills_store.list_skills(self._conn)
             return self._stats_from(agents, sessions, len(wps), len(skills))
 
-    def dashboard_data(self) -> dict[str, Any]:
+    def dashboard_data(self, user_id: str | None = None) -> dict[str, Any]:
         with self._lock:
             agents = agents_store.list_agents(self._conn, self._busy.ids())
-            sessions = sessions_store.list_sessions(self._conn)
+            # Recent chats + session stat are per-account (strict isolation).
+            sessions = sessions_store.list_sessions(self._conn, user_id=user_id)
             workplaces = workplaces_store.list_workplaces(self._conn)
             skills = skills_store.list_skills(self._conn)
             schedules = schedules_store.list_schedules(self._conn)

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from app.core.deps import AuthDep
+from app.core.deps import AuthDep, require_owned_session
 from app.runtime.permissions import hitl
 from app.services import store
 
@@ -12,10 +12,9 @@ router = APIRouter(prefix="/api", tags=["approvals"])
 
 
 @router.get("/sessions/{session_id}/pending")
-async def list_session_pending(session_id: str, _: AuthDep):
+async def list_session_pending(session_id: str, request: Request, _: AuthDep):
     """List unresolved approvals/clarifies + session todos for refresh rehydrate."""
-    if not store.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(request, session_id)
     pending = hitl.list_pending_for_session(session_id)
     todos: list = []
     try:
@@ -37,19 +36,23 @@ async def list_session_pending(session_id: str, _: AuthDep):
 
 
 @router.get("/sessions/{session_id}/approval-mode")
-async def get_approval_mode(session_id: str, _: AuthDep):
+async def get_approval_mode(session_id: str, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
     from app.runtime.permissions.modes import mode_payload
 
     return mode_payload(session_id)
 
 
 @router.put("/sessions/{session_id}/approval-mode")
-async def put_approval_mode(session_id: str, body: dict, _: AuthDep):
+async def put_approval_mode(
+    session_id: str, body: dict, request: Request, _: AuthDep
+):
     """Override approval mode for this session (works mid-turn).
 
     Switching to Auto (``off``) clears pending HITL cards so a stuck turn
     can continue without waiting for Once/Deny.
     """
+    require_owned_session(request, session_id)
     from app.runtime.permissions.modes import apply_session_mode, normalize_mode
 
     raw = body.get("mode") if isinstance(body, dict) else None

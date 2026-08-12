@@ -143,9 +143,36 @@ def get_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | N
     return _session_to_dict(conn, row) if row else None
 
 
-def list_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
+def list_sessions(
+    conn: sqlite3.Connection, *, user_id: str | None = None
+) -> list[dict[str, Any]]:
+    """List sessions newest-first.
+
+    When ``user_id`` is set, only that account's sessions are returned
+    (strict multi-user isolation).
+    """
+    if user_id is None:
+        rows = conn.execute(
+            "SELECT * FROM sessions ORDER BY updated_at DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM sessions WHERE user_id=? ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
     return [_session_to_dict(conn, r) for r in rows]
+
+
+def session_owned_by(
+    conn: sqlite3.Connection, session_id: str, user_id: str
+) -> bool:
+    """True when the session exists and belongs to ``user_id``."""
+    row = conn.execute(
+        "SELECT user_id FROM sessions WHERE id=?", (session_id,)
+    ).fetchone()
+    if not row:
+        return False
+    return (row["user_id"] or "web") == (user_id or "web")
 
 
 def _valid_agent_ids(conn: sqlite3.Connection, agent_ids: list[str]) -> list[str]:
@@ -335,17 +362,28 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> bool:
 
 
 def prune_empty_draft_sessions(
-    conn: sqlite3.Connection, *, keep_id: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    keep_id: str | None = None,
+    user_id: str | None = None,
 ) -> list[str]:
     """Delete never-messaged draft sessions (default title + message_count=0).
 
-    Skips ``keep_id`` so an open draft is not removed mid-compose. Returns
+    Skips ``keep_id`` so an open draft is not removed mid-compose. When
+    ``user_id`` is set, only that account's drafts are pruned. Returns
     deleted session ids.
     """
-    rows = conn.execute(
-        "SELECT id FROM sessions WHERE message_count=0 AND title IN (?,?)",
-        tuple(_DRAFT_TITLES),
-    ).fetchall()
+    if user_id is None:
+        rows = conn.execute(
+            "SELECT id FROM sessions WHERE message_count=0 AND title IN (?,?)",
+            tuple(_DRAFT_TITLES),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id FROM sessions WHERE message_count=0 AND title IN (?,?) "
+            "AND user_id=?",
+            (*_DRAFT_TITLES, user_id),
+        ).fetchall()
     deleted: list[str] = []
     for row in rows:
         sid = row["id"]
