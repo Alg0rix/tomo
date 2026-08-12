@@ -50,6 +50,70 @@ async def companion_snapshot_api(request: Request, _: AuthDep):
     return store.companion_snapshot(user_id=session_user_id(request))
 
 
+@router.get("/episodes")
+async def list_episodes_api(
+    request: Request,
+    _: AuthDep,
+    q: str | None = Query(None, max_length=500),
+    limit: int = Query(20, ge=1, le=100),
+    state: str | None = Query("active"),
+):
+    """List or search this account's episodic experiences."""
+    uid = session_user_id(request)
+    query = (q or "").strip()
+    if query:
+        return {"episodes": store.search_episodes(query, user_id=uid, limit=limit)}
+    return {
+        "episodes": store.list_episodes(user_id=uid, state=state, limit=limit)
+    }
+
+
+@router.post("/episodes")
+async def create_episode_api(request: Request, body: dict, _: AuthDep):
+    """Record a structured episodic experience for the logged-in user."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    data = dict(body)
+    data["user_id"] = session_user_id(request)
+    ep = store.insert_episode(data)
+    if not ep:
+        raise HTTPException(status_code=400, detail="Could not record episode")
+    return ep
+
+
+@router.get("/episodes/{episode_id}")
+async def get_episode_api(episode_id: str, request: Request, _: AuthDep):
+    from app.models.mixins import episodic as ep_mod
+
+    uid = session_user_id(request)
+    with store._lock:
+        ep = ep_mod.get_episode(
+            store._conn, episode_id, user_id=uid, touch=True
+        )
+        if ep:
+            ep = dict(ep)
+            ep["events"] = ep_mod.list_events(store._conn, episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return ep
+
+
+@router.post("/episodes/{episode_id}/feedback")
+async def episode_feedback_api(
+    episode_id: str, request: Request, body: dict, _: AuthDep
+):
+    """Mark whether a retrieved episode was helpful for a later decision."""
+    helpful = True
+    if isinstance(body, dict) and "helpful" in body:
+        helpful = bool(body.get("helpful"))
+    ok = store.episode_feedback(
+        episode_id, helpful=helpful, user_id=session_user_id(request)
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {"ok": True, "episode_id": episode_id, "helpful": helpful}
+
+
 @router.get("/companion/events")
 async def companion_events_api(
     request: Request,

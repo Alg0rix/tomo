@@ -13,7 +13,7 @@ Reasoning, execution, and learning stay separated. Memory is **nine typed lanes*
 | Type | Meaning | Store | Write | Read / inject |
 |------|---------|-------|-------|---------------|
 | **diary** | Short growth-log line for Companion | `learning_events.diary` | Review final `Diary:` line only | Companion growth log |
-| **episodic** | Concrete past experiences | `episodic_memories` (per user) | `record_episode` | `recall_episodes` / turn retrieve |
+| **episodic** | Concrete past experiences (structured) | `episodic_memories` payload + index (per user) | `record_episode` | `recall_episodes` / turn retrieve |
 | **semantic** | Durable facts / procedures | `knowledge_entries` + FTS | `remember` | `recall` / turn retrieve |
 | **user** | Preferences, style, profile | `$TOMO_HOME/memories/users/<id>/USER.md` | `memory` target=user | Frozen into system prompt |
 | **project** | Architecture / stack / open tasks | `$TOMO_HOME/workplaces/<id>/PROJECT.md` | `memory` target=project | Context when workplace bound |
@@ -22,9 +22,11 @@ Reasoning, execution, and learning stay separated. Memory is **nine typed lanes*
 | **conversation** | Session-scoped working memory | `messages` + `session_summaries` | Chat + summary update | Session history / summary |
 | **shared** | Swarm-visible mid-task notes | SQLite `swarm_notes` | Auto on delegate complete | Sibling agents via session retrieve |
 
-**Episodic example:** “Tried deployment X on project Y, hit error Z, fixed with A, result succeeded.”
+**Episodic (production):** full experience model — trigger, objective, context, trajectory (+ `episodic_events`), outcome, evaluation scores, reflection, hierarchy, relations (supersedes/related), dedupe, decay, retrieval feedback (`reuse_success`/`reuse_fail`), hybrid search, compact injection. Freeform `content` remains a fallback. Auto-built from learning reviews when the turn is non-trivial. Failures are valuable.
 
-**Diary is not episodic:** diary is a 1–3 sentence Companion note; full experiences go in `record_episode`.
+**Diary is not episodic:** diary is a 1–3 sentence Companion growth note only.
+
+**HTTP:** `GET/POST /api/episodes`, `GET /api/episodes/{id}`, `POST /api/episodes/{id}/feedback`.
 
 **Skills** stay adjacent (executable workflows via `manage_skill` / `SKILL.md`) — not a ninth memory type. Review may emit skill updates alongside memory writes.
 

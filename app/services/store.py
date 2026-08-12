@@ -1371,32 +1371,25 @@ class Store:
         from app.models.mixins import episodic as ep
 
         with self._lock:
-            return ep.insert_episode(
-                self._conn,
-                user_id=str(data.get("user_id") or "web"),
-                session_id=str(data.get("session_id") or ""),
-                agent_id=str(data.get("agent_id") or ""),
-                title=str(data.get("title") or ""),
-                tried=str(data.get("tried") or ""),
-                context=str(data.get("context") or ""),
-                error=str(data.get("error") or ""),
-                fix=str(data.get("fix") or ""),
-                outcome=str(data.get("outcome") or ""),
-                summary=str(data.get("summary") or ""),
-            )
+            return ep.insert_episode(self._conn, data)
 
     def search_episodes(
         self,
         query: str,
         *,
         user_id: str | None = None,
+        workplace_id: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         from app.models.mixins import episodic as ep
 
         with self._lock:
             return ep.search_episodes(
-                self._conn, query, user_id=user_id, limit=limit
+                self._conn,
+                query,
+                user_id=user_id,
+                workplace_id=workplace_id,
+                limit=limit,
             )
 
     def list_episodes(
@@ -1404,6 +1397,8 @@ class Store:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        workplace_id: str | None = None,
+        state: str | None = "active",
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         from app.models.mixins import episodic as ep
@@ -1413,8 +1408,69 @@ class Store:
                 self._conn,
                 user_id=user_id,
                 session_id=session_id,
+                workplace_id=workplace_id,
+                state=state,
                 limit=limit,
             )
+
+    def append_episode_event(
+        self, episode_id: str, event: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.append_event(self._conn, episode_id, event)
+
+    def list_episode_events(self, episode_id: str) -> list[dict[str, Any]]:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.list_events(self._conn, episode_id)
+
+    def link_episodes(
+        self,
+        *,
+        from_episode_id: str,
+        to_episode_id: str,
+        relation: str = "related",
+        weight: float = 1.0,
+    ) -> dict[str, Any] | None:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.link_episodes(
+                self._conn,
+                from_episode_id=from_episode_id,
+                to_episode_id=to_episode_id,
+                relation=relation,
+                weight=weight,
+            )
+
+    def supersede_episode(
+        self, old_id: str, new_id: str, *, user_id: str | None = None
+    ) -> bool:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.supersede_episode(
+                self._conn, old_id, new_id, user_id=user_id
+            )
+
+    def episode_feedback(
+        self, episode_id: str, *, helpful: bool, user_id: str | None = None
+    ) -> bool:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.record_retrieval_feedback(
+                self._conn, episode_id, helpful=helpful, user_id=user_id
+            )
+
+    def decay_episodes(self, *, user_id: str | None = None) -> dict[str, int]:
+        from app.models.mixins import episodic as ep
+
+        with self._lock:
+            return ep.apply_decay(self._conn, user_id=user_id)
 
 
 store = Store()

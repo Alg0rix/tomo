@@ -1,13 +1,13 @@
 {
   "id": "record_episode",
   "name": "Record episode",
-  "description": "Save a concrete past experience (tried / error / fix / outcome) into episodic memory.",
+  "description": "Save a concrete past experience into episodic memory (structured experience, not raw chat).",
   "backend": "app.runtime.tools.record_episode",
   "schema": {
     "type": "function",
     "function": {
       "name": "record_episode",
-      "description": "Persist one concrete episode: what was tried, in what context, what failed, how it was fixed, and the outcome. Use for real experiences (e.g. deploy X on project Y hit error Z, fixed with A, succeeded). Not for general prefs (use memory) or abstract facts (use remember).",
+      "description": "Persist one coherent experience for future retrieval. Prefer structured fields (objective, context, trajectory, outcome, reflection, evaluation). Freeform `content` is allowed as a fallback narrative. Episodic = what happened this time; not a general fact (remember) or preference (memory). Failures are valuable to record.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -15,32 +15,84 @@
             "type": "string",
             "description": "Short label for the episode."
           },
-          "tried": {
-            "type": "string",
-            "description": "What was attempted."
+          "trigger": {
+            "type": "object",
+            "description": "What started the experience (type/source/description)."
           },
-          "context": {
+          "objective": {
             "type": "string",
-            "description": "Where/when: project, workplace, environment."
+            "description": "What the agent/user was trying to achieve."
           },
-          "error": {
+          "context_summary": {
             "type": "string",
-            "description": "What went wrong (if anything)."
+            "description": "Relevant environment/constraints/entities at the time."
           },
-          "fix": {
+          "trajectory_summary": {
             "type": "string",
-            "description": "What resolved it."
+            "description": "What was observed, decided, and tried (including failures)."
           },
-          "outcome": {
-            "type": "string",
-            "description": "Final result (succeeded, blocked, deferred, …)."
+          "actions": {
+            "type": "array",
+            "items": {},
+            "description": "Optional list of key actions taken."
           },
-          "summary": {
+          "observations": {
+            "type": "array",
+            "items": {},
+            "description": "Optional key observations."
+          },
+          "decisions": {
+            "type": "array",
+            "items": {},
+            "description": "Optional key decisions."
+          },
+          "outcome_status": {
             "type": "string",
-            "description": "Optional full narrative; auto-built from fields if omitted."
+            "description": "success | failure | partial | abandoned | blocked | unknown"
+          },
+          "outcome_summary": {
+            "type": "string",
+            "description": "What finally happened."
+          },
+          "reflection_summary": {
+            "type": "string",
+            "description": "What to remember from this experience."
+          },
+          "what_worked": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "what_failed": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "lessons": {
+            "type": "array",
+            "items": {},
+            "description": "Lessons (strings or {statement, confidence})."
+          },
+          "importance": {
+            "type": "number",
+            "description": "0-1 how important this experience is for the future."
+          },
+          "confidence": {
+            "type": "number",
+            "description": "0-1 confidence in the account."
+          },
+          "utility": {
+            "type": "number",
+            "description": "0-1 likely future usefulness."
+          },
+          "content": {
+            "type": "string",
+            "description": "Optional freeform narrative if structured fields are incomplete."
+          },
+          "parent_episode_id": {
+            "type": "string",
+            "description": "Optional parent for hierarchical episodes."
           }
         },
-        "required": ["title"]
+        "required": []
       }
     }
   }

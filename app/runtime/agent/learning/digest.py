@@ -235,8 +235,8 @@ def build_review_digest(
     )
     parts.append(
         "Pick the correct memory lane before writing. "
-        "If this turn was a concrete experience (tried X, error Y, fixed with Z), "
-        "call record_episode. Diary: line is only a short Companion growth note. "
+        "If this turn was a concrete experience, call record_episode with freeform "
+        "content (what happened). Diary: line is only a short Companion growth note. "
         "If curated memory is full, replace/remove or use remember — "
         "do not create a skill as overflow. "
         "Act with tools if warranted; otherwise reply exactly: Nothing to save."

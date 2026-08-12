@@ -7,13 +7,13 @@
     "type": "function",
     "function": {
       "name": "recall_episodes",
-      "description": "Keyword search over recorded episodes (tried/error/fix/outcome) for the current login. Use when past experience might help (similar deploy failure, prior workaround).",
+      "description": "Keyword search over recorded freeform episodes for the current login. Use when past experience might help.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Search terms (error text, project name, action, …)."
+            "description": "Search terms matching anything in past episode narratives."
           },
           "limit": {
             "type": "integer",

@@ -634,9 +634,30 @@ async def run_learning_review(
         metrics.tool_calls,
     )
 
+    # Auto-build a structured episode when the turn was a real experience.
+    # Selective — skips trivial turns; dedupes inside insert_episode.
+    try:
+        from app.runtime.memory.episodes import build_from_review
+
+        ep = build_from_review(
+            user_id=review_user_id,
+            agent_id=metrics.agent_id,
+            session_id=metrics.session_id,
+            user_message=user_message,
+            final_content=final_content,
+            tool_calls=int(metrics.tool_calls or 0),
+            diary=result.get("diary") or "",
+            actions=list(result.get("actions") or []),
+            note=result.get("note") or "",
+        )
+        if ep:
+            result["episode_id"] = ep.get("id")
+    except Exception as exc:
+        _logger.debug("auto episode build failed: %s", exc)
+
     if result.get("saved"):
         _logger.info(
-            "learning saved agent=%s memory=%s skills=%s routed=%s reason=%s actions=%s diary=%s",
+            "learning saved agent=%s memory=%s skills=%s routed=%s reason=%s actions=%s diary=%s episode=%s",
             metrics.agent_id,
             plan.review_memory,
             plan.review_skills,
@@ -644,13 +665,15 @@ async def run_learning_review(
             plan.reason,
             result.get("actions"),
             (result.get("diary") or "")[:80],
+            result.get("episode_id") or "-",
         )
     else:
         _logger.info(
-            "learning idle agent=%s reason=%s note=%s",
+            "learning idle agent=%s reason=%s note=%s episode=%s",
             metrics.agent_id,
             plan.reason,
             (result.get("note") or "")[:100],
+            result.get("episode_id") or "-",
         )
     return result
 

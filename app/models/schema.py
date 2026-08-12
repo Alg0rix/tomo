@@ -365,24 +365,85 @@ CREATE INDEX IF NOT EXISTS idx_execution_snippets_created
     ON execution_snippets(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS episodic_memories (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL DEFAULT 'web',
-    session_id  TEXT NOT NULL DEFAULT '',
-    agent_id    TEXT NOT NULL DEFAULT '',
-    title       TEXT NOT NULL DEFAULT '',
-    tried       TEXT NOT NULL DEFAULT '',
-    context     TEXT NOT NULL DEFAULT '',
-    error       TEXT NOT NULL DEFAULT '',
-    fix         TEXT NOT NULL DEFAULT '',
-    outcome     TEXT NOT NULL DEFAULT '',
-    summary     TEXT NOT NULL DEFAULT '',
-    created_at  REAL NOT NULL DEFAULT 0
+    id                  TEXT PRIMARY KEY,
+    version             INTEGER NOT NULL DEFAULT 1,
+    user_id             TEXT NOT NULL DEFAULT 'web',
+    agent_id            TEXT NOT NULL DEFAULT '',
+    session_id          TEXT NOT NULL DEFAULT '',
+    workplace_id        TEXT NOT NULL DEFAULT '',
+    parent_episode_id   TEXT NOT NULL DEFAULT '',
+    root_episode_id     TEXT NOT NULL DEFAULT '',
+    title               TEXT NOT NULL DEFAULT '',
+    trigger_summary     TEXT NOT NULL DEFAULT '',
+    objective           TEXT NOT NULL DEFAULT '',
+    context_summary     TEXT NOT NULL DEFAULT '',
+    trajectory_summary  TEXT NOT NULL DEFAULT '',
+    outcome_status      TEXT NOT NULL DEFAULT 'unknown',
+    outcome_summary     TEXT NOT NULL DEFAULT '',
+    reflection_summary  TEXT NOT NULL DEFAULT '',
+    importance          REAL NOT NULL DEFAULT 0.5,
+    confidence          REAL NOT NULL DEFAULT 0.5,
+    utility             REAL NOT NULL DEFAULT 0.5,
+    success_score       REAL NOT NULL DEFAULT 0.5,
+    memory_score        REAL NOT NULL DEFAULT 0.5,
+    state               TEXT NOT NULL DEFAULT 'active',
+    started_at          REAL NOT NULL DEFAULT 0,
+    ended_at            REAL NOT NULL DEFAULT 0,
+    created_at          REAL NOT NULL DEFAULT 0,
+    last_accessed_at    REAL NOT NULL DEFAULT 0,
+    access_count        INTEGER NOT NULL DEFAULT 0,
+    payload_json        TEXT NOT NULL DEFAULT '{}',
+    embed_text          TEXT NOT NULL DEFAULT '',
+    content             TEXT NOT NULL DEFAULT '',
+    content_hash        TEXT NOT NULL DEFAULT '',
+    superseded_by       TEXT NOT NULL DEFAULT '',
+    reuse_success       INTEGER NOT NULL DEFAULT 0,
+    reuse_fail          INTEGER NOT NULL DEFAULT 0,
+    decay_score         REAL NOT NULL DEFAULT 1.0,
+    entities_json       TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_user_created
     ON episodic_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_episodic_session
     ON episodic_memories(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodic_state_score
+    ON episodic_memories(user_id, state, memory_score DESC);
+CREATE INDEX IF NOT EXISTS idx_episodic_content_hash
+    ON episodic_memories(user_id, content_hash);
+
+CREATE TABLE IF NOT EXISTS episodic_events (
+    id            TEXT PRIMARY KEY,
+    episode_id    TEXT NOT NULL,
+    sequence      INTEGER NOT NULL DEFAULT 0,
+    ts            REAL NOT NULL DEFAULT 0,
+    type          TEXT NOT NULL DEFAULT 'observation',
+    actor_type    TEXT NOT NULL DEFAULT '',
+    actor_id      TEXT NOT NULL DEFAULT '',
+    description   TEXT NOT NULL DEFAULT '',
+    input_json    TEXT NOT NULL DEFAULT '{}',
+    output_json   TEXT NOT NULL DEFAULT '{}',
+    result        TEXT NOT NULL DEFAULT '',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (episode_id) REFERENCES episodic_memories(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_events_episode
+    ON episodic_events(episode_id, sequence);
+
+CREATE TABLE IF NOT EXISTS episodic_relations (
+    id               TEXT PRIMARY KEY,
+    from_episode_id  TEXT NOT NULL,
+    to_episode_id    TEXT NOT NULL,
+    relation         TEXT NOT NULL DEFAULT 'related',
+    weight           REAL NOT NULL DEFAULT 1.0,
+    created_at       REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_rel_from
+    ON episodic_relations(from_episode_id, relation);
+CREATE INDEX IF NOT EXISTS idx_episodic_rel_to
+    ON episodic_relations(to_episode_id, relation);
 """
 
 
@@ -633,18 +694,36 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS episodic_memories (
-                id          TEXT PRIMARY KEY,
-                user_id     TEXT NOT NULL DEFAULT 'web',
-                session_id  TEXT NOT NULL DEFAULT '',
-                agent_id    TEXT NOT NULL DEFAULT '',
-                title       TEXT NOT NULL DEFAULT '',
-                tried       TEXT NOT NULL DEFAULT '',
-                context     TEXT NOT NULL DEFAULT '',
-                error       TEXT NOT NULL DEFAULT '',
-                fix         TEXT NOT NULL DEFAULT '',
-                outcome     TEXT NOT NULL DEFAULT '',
-                summary     TEXT NOT NULL DEFAULT '',
-                created_at  REAL NOT NULL DEFAULT 0
+                id                  TEXT PRIMARY KEY,
+                version             INTEGER NOT NULL DEFAULT 1,
+                user_id             TEXT NOT NULL DEFAULT 'web',
+                agent_id            TEXT NOT NULL DEFAULT '',
+                session_id          TEXT NOT NULL DEFAULT '',
+                workplace_id        TEXT NOT NULL DEFAULT '',
+                parent_episode_id   TEXT NOT NULL DEFAULT '',
+                root_episode_id     TEXT NOT NULL DEFAULT '',
+                title               TEXT NOT NULL DEFAULT '',
+                trigger_summary     TEXT NOT NULL DEFAULT '',
+                objective           TEXT NOT NULL DEFAULT '',
+                context_summary     TEXT NOT NULL DEFAULT '',
+                trajectory_summary  TEXT NOT NULL DEFAULT '',
+                outcome_status      TEXT NOT NULL DEFAULT 'unknown',
+                outcome_summary     TEXT NOT NULL DEFAULT '',
+                reflection_summary  TEXT NOT NULL DEFAULT '',
+                importance          REAL NOT NULL DEFAULT 0.5,
+                confidence          REAL NOT NULL DEFAULT 0.5,
+                utility             REAL NOT NULL DEFAULT 0.5,
+                success_score       REAL NOT NULL DEFAULT 0.5,
+                memory_score        REAL NOT NULL DEFAULT 0.5,
+                state               TEXT NOT NULL DEFAULT 'active',
+                started_at          REAL NOT NULL DEFAULT 0,
+                ended_at            REAL NOT NULL DEFAULT 0,
+                created_at          REAL NOT NULL DEFAULT 0,
+                last_accessed_at    REAL NOT NULL DEFAULT 0,
+                access_count        INTEGER NOT NULL DEFAULT 0,
+                payload_json        TEXT NOT NULL DEFAULT '{}',
+                embed_text          TEXT NOT NULL DEFAULT '',
+                content             TEXT NOT NULL DEFAULT ''
             )
             """
         )
@@ -655,6 +734,125 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_episodic_session "
             "ON episodic_memories(session_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_state_score "
+            "ON episodic_memories(user_id, state, memory_score DESC)"
+        )
+    else:
+        ep_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)")
+        }
+        _ep_alters = {
+            "version": "ALTER TABLE episodic_memories ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+            "workplace_id": "ALTER TABLE episodic_memories ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''",
+            "parent_episode_id": "ALTER TABLE episodic_memories ADD COLUMN parent_episode_id TEXT NOT NULL DEFAULT ''",
+            "root_episode_id": "ALTER TABLE episodic_memories ADD COLUMN root_episode_id TEXT NOT NULL DEFAULT ''",
+            "trigger_summary": "ALTER TABLE episodic_memories ADD COLUMN trigger_summary TEXT NOT NULL DEFAULT ''",
+            "objective": "ALTER TABLE episodic_memories ADD COLUMN objective TEXT NOT NULL DEFAULT ''",
+            "context_summary": "ALTER TABLE episodic_memories ADD COLUMN context_summary TEXT NOT NULL DEFAULT ''",
+            "trajectory_summary": "ALTER TABLE episodic_memories ADD COLUMN trajectory_summary TEXT NOT NULL DEFAULT ''",
+            "outcome_status": "ALTER TABLE episodic_memories ADD COLUMN outcome_status TEXT NOT NULL DEFAULT 'unknown'",
+            "outcome_summary": "ALTER TABLE episodic_memories ADD COLUMN outcome_summary TEXT NOT NULL DEFAULT ''",
+            "reflection_summary": "ALTER TABLE episodic_memories ADD COLUMN reflection_summary TEXT NOT NULL DEFAULT ''",
+            "importance": "ALTER TABLE episodic_memories ADD COLUMN importance REAL NOT NULL DEFAULT 0.5",
+            "confidence": "ALTER TABLE episodic_memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5",
+            "utility": "ALTER TABLE episodic_memories ADD COLUMN utility REAL NOT NULL DEFAULT 0.5",
+            "success_score": "ALTER TABLE episodic_memories ADD COLUMN success_score REAL NOT NULL DEFAULT 0.5",
+            "memory_score": "ALTER TABLE episodic_memories ADD COLUMN memory_score REAL NOT NULL DEFAULT 0.5",
+            "state": "ALTER TABLE episodic_memories ADD COLUMN state TEXT NOT NULL DEFAULT 'active'",
+            "started_at": "ALTER TABLE episodic_memories ADD COLUMN started_at REAL NOT NULL DEFAULT 0",
+            "ended_at": "ALTER TABLE episodic_memories ADD COLUMN ended_at REAL NOT NULL DEFAULT 0",
+            "last_accessed_at": "ALTER TABLE episodic_memories ADD COLUMN last_accessed_at REAL NOT NULL DEFAULT 0",
+            "access_count": "ALTER TABLE episodic_memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+            "payload_json": "ALTER TABLE episodic_memories ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",
+            "embed_text": "ALTER TABLE episodic_memories ADD COLUMN embed_text TEXT NOT NULL DEFAULT ''",
+            "content": "ALTER TABLE episodic_memories ADD COLUMN content TEXT NOT NULL DEFAULT ''",
+            "content_hash": "ALTER TABLE episodic_memories ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''",
+            "superseded_by": "ALTER TABLE episodic_memories ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''",
+            "reuse_success": "ALTER TABLE episodic_memories ADD COLUMN reuse_success INTEGER NOT NULL DEFAULT 0",
+            "reuse_fail": "ALTER TABLE episodic_memories ADD COLUMN reuse_fail INTEGER NOT NULL DEFAULT 0",
+            "decay_score": "ALTER TABLE episodic_memories ADD COLUMN decay_score REAL NOT NULL DEFAULT 1.0",
+            "entities_json": "ALTER TABLE episodic_memories ADD COLUMN entities_json TEXT NOT NULL DEFAULT '[]'",
+        }
+        for col, ddl in _ep_alters.items():
+            if col not in ep_cols:
+                conn.execute(ddl)
+        # Backfill embed/content from legacy freeform content if present.
+        ep_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)")
+        }
+        if "content" in ep_cols and "embed_text" in ep_cols:
+            conn.execute(
+                """
+                UPDATE episodic_memories
+                SET embed_text = content
+                WHERE COALESCE(embed_text, '') = '' AND COALESCE(content, '') != ''
+                """
+            )
+            conn.execute(
+                """
+                UPDATE episodic_memories
+                SET objective = CASE WHEN COALESCE(objective,'')='' THEN substr(content,1,500) ELSE objective END,
+                    outcome_summary = CASE WHEN COALESCE(outcome_summary,'')='' THEN content ELSE outcome_summary END
+                WHERE COALESCE(content, '') != ''
+                """
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_content_hash "
+            "ON episodic_memories(user_id, content_hash)"
+        )
+
+    # Trajectory events + inter-episode relations (prod episodic).
+    table_names = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "episodic_events" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episodic_events (
+                id            TEXT PRIMARY KEY,
+                episode_id    TEXT NOT NULL,
+                sequence      INTEGER NOT NULL DEFAULT 0,
+                ts            REAL NOT NULL DEFAULT 0,
+                type          TEXT NOT NULL DEFAULT 'observation',
+                actor_type    TEXT NOT NULL DEFAULT '',
+                actor_id      TEXT NOT NULL DEFAULT '',
+                description   TEXT NOT NULL DEFAULT '',
+                input_json    TEXT NOT NULL DEFAULT '{}',
+                output_json   TEXT NOT NULL DEFAULT '{}',
+                result        TEXT NOT NULL DEFAULT '',
+                evidence_json TEXT NOT NULL DEFAULT '[]'
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_events_episode "
+            "ON episodic_events(episode_id, sequence)"
+        )
+    if "episodic_relations" not in table_names:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episodic_relations (
+                id               TEXT PRIMARY KEY,
+                from_episode_id  TEXT NOT NULL,
+                to_episode_id    TEXT NOT NULL,
+                relation         TEXT NOT NULL DEFAULT 'related',
+                weight           REAL NOT NULL DEFAULT 1.0,
+                created_at       REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_rel_from "
+            "ON episodic_relations(from_episode_id, relation)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_rel_to "
+            "ON episodic_relations(to_episode_id, relation)"
         )
 
     from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts

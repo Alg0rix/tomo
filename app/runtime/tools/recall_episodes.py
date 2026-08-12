@@ -28,10 +28,10 @@ def run(arguments: dict[str, Any]) -> str:
     lines: list[str] = []
     for i, ep in enumerate(hits, start=1):
         title = (ep.get("title") or "").strip() or "Episode"
-        summary = (ep.get("summary") or "").strip().replace("\n", " ")
-        if len(summary) > 220:
-            summary = summary[:217] + "…"
-        lines.append(f"{i}. [{ep.get('id')}] {title}: {summary}")
+        body = (ep.get("content") or "").strip().replace("\n", " ")
+        if len(body) > 220:
+            body = body[:217] + "…"
+        lines.append(f"{i}. [{ep.get('id')}] {title}: {body}")
     return "\n".join(lines)
 
 

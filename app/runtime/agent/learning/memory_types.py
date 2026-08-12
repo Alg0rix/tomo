@@ -83,7 +83,7 @@ _TOOL_DEFAULT_TYPE: dict[str, MemoryType] = {
 
 _STORE_HINTS: dict[MemoryType, str] = {
     "diary": "learning_events.diary — short growth-log line for Companion (not full episode)",
-    "episodic": "episodic_memories — concrete past experiences (tried/error/fix/outcome)",
+    "episodic": "episodic_memories — structured experiences (objective/context/trajectory/outcome/reflection)",
     "semantic": "knowledge_entries via remember/recall (FTS)",
     "user": "$TOMO_HOME/memories/users/<user_id>/USER.md via memory target=user",
     "project": "$TOMO_HOME/workplaces/<id>/PROJECT.md",
@@ -252,14 +252,15 @@ def lanes_prompt_block() -> str:
         "- agent → memory target=memory / agent_state (your notes, env quirks) — hard char limit",
         "- project → memory target=project (stack, architecture for the workplace)",
         "- semantic → remember (searchable general facts; use when files full or fact is long)",
-        "- episodic → record_episode (concrete past experience: tried / error / fix / outcome)",
+        "- episodic → record_episode (structured experience: objective, context, trajectory, outcome, reflection)",
         "- execution → save_artifact / tool outcomes (not USER prefs)",
         "- diary → Diary: line only (Companion growth log; NOT a full episode)",
         "- conversation → session summary (automatic; do not re-save chat)",
         "- shared → cross-agent session facts (prefer session-visible notes)",
         "Skills (manage_skill) are NOT a memory lane. Only for reusable how-to procedures.",
-        "Episodic example: tried deploy X on project Y, hit error Z, fixed with A, succeeded.",
-        "Wrong lane: episode story → skill create; prefs → skill; full MEMORY → skill overflow.",
+        "Episodic = what happened this time (experience). Semantic = what is known. Diary = growth log only.",
+        "Record failures as well as successes. Prefer trajectory (what was tried) over problem→solution only.",
+        "Wrong lane: episode → skill create; prefs → skill; full MEMORY → skill overflow.",
     ]
     return "\n".join(lines)
 

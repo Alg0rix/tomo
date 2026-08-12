@@ -42,9 +42,13 @@ Rules:
 7. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
 8. After any successful write tool, your final text MUST include a line:
    Diary: <1–3 sentences, past tense, Companion growth note only>
-9. When the turn was a concrete experience (tried X on project Y, error Z, fix A,
-   outcome), call `record_episode` with structured fields. That is episodic memory.
-   Do not put the full episode only in Diary: or invent a skill for it.
+9. When the turn was a concrete experience worth remembering, call `record_episode`
+   with structured fields when possible: objective, context_summary,
+   trajectory_summary (incl. failed attempts), outcome_status/outcome_summary,
+   reflection_summary, what_worked/what_failed/lessons, importance/confidence.
+   Freeform `content` is OK if structure is incomplete. That is episodic memory.
+   Diary: is only a short Companion growth note — not the full episode.
+   Failures are valuable. Do not invent a skill just to store the experience.
 """
 
 _FOCUS_MEMORY = """
