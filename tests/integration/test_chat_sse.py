@@ -496,7 +496,13 @@ async def test_parallel_same_agent_emits_distinct_delegate_call_ids(
     assert len(del_entries) == 2
     hist_dcids = {h["params"].get("delegate_call_id") for h in del_entries}
     assert hist_dcids == dcids
-    finals = [h for h in history if h["type"] == "final" and h.get("agent_id") == "ops"]
+    # Nested replies use a distinct type so reconnect logic does not mistake
+    # a child response for the parent turn's terminal final.
+    finals = [
+        h
+        for h in history
+        if h["type"] == "subagent_final" and h.get("agent_id") == "ops"
+    ]
     assert len(finals) == 2
     assert {h.get("delegate_call_id") for h in finals} == dcids
 

@@ -73,7 +73,7 @@ async def companion_page(request: Request, _: AuthDep):
 async def artifact_view_page(request: Request, session_id: str, filename: str, _: AuthDep):
     """Full-page artifact viewer (HTML/media chrome-light; text via artifacts.js)."""
     try:
-        session = require_owned_session(request, session_id)
+        require_owned_session(request, session_id)
     except HTTPException:
         return templates.TemplateResponse(
             request,

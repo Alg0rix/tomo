@@ -755,9 +755,11 @@ async def get_session_artifact_share(
 
 
 @router.delete("/sessions/{session_id}/artifacts/{filename}/share")
-async def revoke_session_artifact_share(session_id: str, filename: str, _: AuthDep):
+async def revoke_session_artifact_share(
+    session_id: str, filename: str, request: Request, _: AuthDep
+):
     """Revoke the public share link for an artifact."""
-    _require_session(session_id)
+    _require_session(request, session_id)
     from app.runtime.artifacts.fs import validate_filename
 
     err = validate_filename(filename)
