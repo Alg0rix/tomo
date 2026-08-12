@@ -577,10 +577,13 @@ def map_loop_event(
                 )
             )
         if content.strip():
+            # Not type "final" — that marks the *parent* turn complete and
+            # previously blocked mid-run resume (last history row looked done
+            # while the main agent / other subagents were still working).
             entries.append(
                 _stamp_dcid(
                     {
-                        "type": "final",
+                        "type": "subagent_final",
                         "content": content,
                         "agent_id": agent_id,
                         "ts": now(),

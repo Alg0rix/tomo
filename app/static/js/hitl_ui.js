@@ -313,6 +313,19 @@
         (data.clarifies || []).forEach(function (d) {
           if (showCard("clarify", d, host, scrollEl)) any = true;
         });
+        // Session todo dock lives outside the thread; restore from server store.
+        if (
+          Array.isArray(data.todos) &&
+          data.todos.length &&
+          window.Tomo &&
+          Tomo.upsertTodoPanel
+        ) {
+          var wrap =
+            (host && host.closest && host.closest(".chat-wrap")) ||
+            host ||
+            document.querySelector(".chat-wrap");
+          Tomo.upsertTodoPanel(wrap, data.todos);
+        }
         return !!(any || data.active_turn);
       })
       .catch(function () {

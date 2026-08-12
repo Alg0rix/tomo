@@ -45,6 +45,60 @@ router = APIRouter(prefix="/api")
 _HEARTBEAT_S = 8.0
 
 
+def _resume_chrome_sse(session_id: str, *, agent_id: str = "") -> list[str]:
+    """SSE chunks that restore HITL cards + todo dock after refresh/reconnect.
+
+    Pending approvals/clarifies and the in-memory todo list live outside the
+    turn ring buffer, so a pure event replay can miss them. Emit a snapshot
+    before replaying buffered turn events.
+    """
+    from app.channels.sse_map import fmt_sse
+
+    chunks: list[str] = []
+    try:
+        from app.runtime.permissions import hitl
+
+        pending = hitl.list_pending_for_session(session_id)
+        for payload in pending.get("approvals") or []:
+            data = dict(payload)
+            if agent_id and not data.get("agent_id"):
+                data["agent_id"] = agent_id
+            chunks.append(
+                fmt_sse({"event": "approval_required", "data": data, "seq": 0})
+            )
+        for payload in pending.get("clarifies") or []:
+            data = dict(payload)
+            if agent_id and not data.get("agent_id"):
+                data["agent_id"] = agent_id
+            chunks.append(
+                fmt_sse({"event": "clarify_required", "data": data, "seq": 0})
+            )
+    except Exception:
+        pass
+    try:
+        from app.runtime.tools import todo as todo_mod
+
+        todos = list(todo_mod.get_store(session_id).snapshot().get("todos") or [])
+        if todos:
+            chunks.append(
+                fmt_sse(
+                    {
+                        "event": "todos",
+                        "data": {
+                            "todos": todos,
+                            "source": "resume",
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                        },
+                        "seq": 0,
+                    }
+                )
+            )
+    except Exception:
+        pass
+    return chunks
+
+
 async def _drain_queue_with_heartbeats(
     queue: asyncio.Queue,
     request: Request,
@@ -278,6 +332,35 @@ async def session_chat_stream(
         # Otherwise, heartbeat stream.
         active = get_active_session_turn(session_id)
         if active:
+            # Snapshot *before* replay so a quiet mid-turn gap (empty buffer,
+            # long tool wait) still marks the client as attached to a live turn.
+            session = store.get_session(session_id) or {}
+            coord = session.get("coordinator_id") or session.get("agent_id") or ""
+            yield fmt_sse(
+                {
+                    "event": "state",
+                    "data": {
+                        "agent_id": coord,
+                        "busy": True,
+                        "session_id": session_id,
+                        "resumed": True,
+                    },
+                    "seq": 0,
+                }
+            )
+            yield fmt_sse(
+                {
+                    "event": "turn.start",
+                    "data": {
+                        "session_id": session_id,
+                        "agent_id": coord,
+                        "resumed": True,
+                    },
+                    "seq": 0,
+                }
+            )
+            for chunk in _resume_chrome_sse(session_id, agent_id=coord):
+                yield chunk
             queue = active.subscribe(after_seq=after)
             owner = active
 
@@ -436,6 +519,33 @@ async def chat_stream(
         if session_id:
             active = get_active_session_turn(session_id)
             if active:
+                # Same resume snapshot as session listen — keeps UI attached
+                # through long quiet gaps after refresh.
+                yield fmt_sse(
+                    {
+                        "event": "state",
+                        "data": {
+                            "agent_id": agent_id,
+                            "busy": True,
+                            "session_id": session_id,
+                            "resumed": True,
+                        },
+                        "seq": 0,
+                    }
+                )
+                yield fmt_sse(
+                    {
+                        "event": "turn.start",
+                        "data": {
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                            "resumed": True,
+                        },
+                        "seq": 0,
+                    }
+                )
+                for chunk in _resume_chrome_sse(session_id, agent_id=agent_id):
+                    yield chunk
                 queue = active.subscribe(after_seq=0)
 
                 def _release() -> None:

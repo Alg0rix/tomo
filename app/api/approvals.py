@@ -13,16 +13,26 @@ router = APIRouter(prefix="/api", tags=["approvals"])
 
 @router.get("/sessions/{session_id}/pending")
 async def list_session_pending(session_id: str, _: AuthDep):
-    """List unresolved approvals/clarifies so a refreshed UI can rehydrate cards."""
+    """List unresolved approvals/clarifies + session todos for refresh rehydrate."""
     if not store.get_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     pending = hitl.list_pending_for_session(session_id)
+    todos: list = []
+    try:
+        from app.runtime.tools import todo as todo_mod
+
+        snap = todo_mod.get_store(session_id).snapshot()
+        todos = list(snap.get("todos") or [])
+    except Exception:
+        todos = []
     return {
         "session_id": session_id,
         "approvals": pending.get("approvals") or [],
         "clarifies": pending.get("clarifies") or [],
         # Lease (lock) is held for the full background-turn lifetime.
         "active_turn": store.is_session_turn_active(session_id),
+        # In-memory session plan — survives refresh while the process is up.
+        "todos": todos,
     }
 
 

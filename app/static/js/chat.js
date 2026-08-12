@@ -67,6 +67,9 @@
             if (closed) return;
             if (result.done) {
               if (buf.trim()) parseSseBuffer(buf, emit);
+              // Body closed without an explicit client close. If turn.end already
+              // ran, listeners no-op; otherwise reconnect can rejoin the turn.
+              emit("stream_closed", "{}");
               return;
             }
             buf += decoder.decode(result.value, { stream: true });
@@ -85,7 +88,8 @@
         var name = err && err.name;
         if (name === "AbortError") return;
         emit("error", JSON.stringify({ message: String(err && err.message ? err.message : err) }));
-        emit("turn.end", "{}");
+        // Do not force turn.end — mid-turn errors should reconnect to listen.
+        emit("stream_closed", "{}");
       });
 
     return api;
@@ -912,6 +916,7 @@
     function rehydratePendingHitl(turnEl) {
       if (!window.TomoHitl || !TomoHitl.rehydrate) return Promise.resolve(false);
       return TomoHitl.rehydrate(currentSessionId(), hitlHost(turnEl), scroll).then(function (needs) {
+        // Keep busy chrome when open HITL cards or an in-flight turn remain.
         if (needs) setStatus('amber', busyStatusLabel());
         return needs;
       });
@@ -1088,6 +1093,41 @@
       return data.session_id;
     }
 
+    /**
+     * Re-attach to an in-flight turn via listen SSE (GET). Used after page
+     * refresh and when the live POST stream dies while the agent keeps running.
+     */
+    function reconnectStream(turnEl) {
+      var url = listenUrl();
+      if (!url) {
+        sending = false;
+        syncGeneratingUi();
+        setStatus('ok', 'online');
+        refreshSendBtn();
+        return false;
+      }
+      if (es) {
+        try { es.close(); } catch (_) {}
+        es = null;
+      }
+      var turn = hitlHost(turnEl);
+      rehydratePendingHitl(turn);
+      sending = true;
+      wrap.dataset.liveStream = '1';
+      setStatus('amber', busyStatusLabel());
+      refreshSendBtn();
+      es = new EventSource(url);
+      if (!window.TomoTurnStream || !TomoTurnStream.attach) {
+        console.error('[tomo] TomoTurnStream missing');
+        closeStream();
+        sending = false;
+        syncGeneratingUi();
+        return false;
+      }
+      TomoTurnStream.attach(es, turnStreamCtx('resume', turn, {}));
+      return true;
+    }
+
     function turnStreamCtx(mode, turn, extra) {
       extra = extra || {};
       return Object.assign({
@@ -1108,6 +1148,7 @@
         refreshSendBtn: refreshSendBtn,
         closeStream: closeStream,
         finishTurn: finishTurn,
+        reconnectStream: reconnectStream,
         scheduleQueueDrain: scheduleQueueDrain,
         setSending: function (v) { sending = !!v; syncGeneratingUi(); },
         getSending: function () { return sending; },
@@ -1490,20 +1531,11 @@
     function resumeActiveTurn() {
       var sid = currentSessionId();
       var url = listenUrl();
-      if (!sid || !url || sending || es) return false;
+      if (!sid || !url) return false;
+      // Already attached to a live stream — leave it alone.
+      if (es && sending) return true;
 
-      var turn = hitlHost(null);
-      rehydratePendingHitl(turn);
-
-      es = new EventSource(url);
-      if (!window.TomoTurnStream || !TomoTurnStream.attach) {
-        console.error('[tomo] TomoTurnStream missing');
-        closeStream();
-        return false;
-      }
-      // attach() sets sending / liveStream / status for resume mode.
-      TomoTurnStream.attach(es, turnStreamCtx('resume', turn, {}));
-      return true;
+      return reconnectStream(null);
     }
 
     return {
@@ -1518,6 +1550,7 @@
       uiAction: dispatchUiAction,
       stop: stopTurn,
       resume: resumeActiveTurn,
+      reconnect: reconnectStream,
       rehydratePending: rehydratePendingHitl,
     };
   }

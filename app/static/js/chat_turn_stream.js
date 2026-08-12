@@ -8,6 +8,9 @@
     var closed = false;
     var sawDone = false;
     var sawTurnEvent = false;
+    // Live starts caught-up. Resume waits for server ``caught_up`` (end of
+    // replay) so new deltas/tools stream instead of being treated as history.
+    var liveCaughtUp = isLive;
     var turnActive = false;
     var turnAgentName = ctx.defaultAgentName;
     var turnAgentId = ctx.agentId || '';
@@ -17,11 +20,14 @@
     var pendingEl = null;
     var raw = '';
     var idleTimer = null;
-    var hardTimer = null;
+    var reconnectTimer = null;
+    var reconnectAttempts = 0;
 
+    // Idle only: no wall-clock hard cap. Long subagent turns can run far past
+    // 12 minutes; heartbeats reset the idle timer. Stale streams reconnect.
     var IDLE_MS = 180000;
     var POST_DONE_MS = 20000;
-    var HARD_MS = 720000;
+    var MAX_RECONNECT = 30;
 
     var skipTools = 0;
     var skipResults = 0;
@@ -37,7 +43,7 @@
       ctx.turn.querySelectorAll('.tool').forEach(function (c) {
         if (c._res && c._res.textContent) skipResults++;
       });
-      skipThinking = ctx.turn.querySelectorAll('.si-think').length;
+      skipThinking = ctx.turn.querySelectorAll('.si-think, .reasoning-card').length;
       skipUi = 0;
       ctx.turn.querySelectorAll('.gen-ui[data-ui-id]').forEach(function (root) {
         skipUi += Number(root.dataset.uiEvents || 1) || 1;
@@ -45,7 +51,9 @@
     }
 
     var subagentSet = new Set();
-    var subagentBuffers = isLive ? new Map() : null;
+    // Always buffer subagent activity so refresh/resume can fill the inspector
+    // for events that arrive after reconnect (not only pure live turns).
+    var subagentBuffers = new Map();
     var swarmCard = null;
     var detailPanel = null;
     var activeDetailAgent = null;
@@ -63,7 +71,56 @@
 
     function clearWatchdogs() {
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-      if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    function markCaughtUp() {
+      if (liveCaughtUp) return;
+      liveCaughtUp = true;
+      // Freeze skip counters at what we already saw during replay; anything
+      // after this boundary is live activity and must render.
+      skipTools = toolSeen;
+      skipResults = resultSeen;
+      skipThinking = thinkingSeen;
+      skipUi = uiSeen;
+    }
+
+    /** True while resume is still replaying buffered history (skip mode). */
+    function inReplaySkip() {
+      return !isLive && !liveCaughtUp;
+    }
+
+    /** Rejoin listen SSE without finishing the turn (refresh / proxy drop / idle). */
+    function tryReconnect(reason) {
+      if (closed) return false;
+      if (typeof ctx.reconnectStream !== 'function') return false;
+      if (reconnectAttempts >= MAX_RECONNECT) {
+        console.warn('[tomo] reconnect exhausted', reason);
+        return false;
+      }
+      reconnectAttempts += 1;
+      var delay = Math.min(800 * reconnectAttempts, 5000);
+      console.warn('[tomo] stream reconnect', reason, 'attempt', reconnectAttempts, 'in', delay + 'ms');
+      clearWatchdogs();
+      closed = true;
+      ctx.closeStream();
+      // Keep busy UI; do not finishTurn — background agent is still running.
+      ctx.setSending(true);
+      ctx.wrap.dataset.liveStream = '1';
+      ctx.setStatus('amber', ctx.busyStatusLabel());
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        try {
+          ctx.reconnectStream(ctx.turn);
+        } catch (err) {
+          console.error('[tomo] reconnect failed', err);
+          ctx.setSending(false);
+          delete ctx.wrap.dataset.liveStream;
+          ctx.setStatus('ok', 'online');
+          ctx.refreshSendBtn();
+        }
+      }, delay);
+      return true;
     }
 
     function armIdle(ms) {
@@ -74,11 +131,14 @@
           endIdleResume();
           return;
         }
-        if (isLive) {
+        // Mid-turn silence usually means the SSE pipe died while the agent
+        // keeps running — rejoin listen instead of "timed out".
+        if (turnActive || sawTurnEvent || sawDone) {
           console.warn('[tomo] turn idle timeout', sawDone ? 'post-done' : 'mid-turn');
-          if (!sawDone && !(asstBody && (asstBody.textContent || '').trim())) {
-            errorBubble('<span style="color:var(--danger)">Turn stalled (no response). You can send again.</span>');
-          }
+          if (tryReconnect(sawDone ? 'idle-post-done' : 'idle-mid-turn')) return;
+        }
+        if (isLive && !sawDone && !(asstBody && (asstBody.textContent || '').trim())) {
+          errorBubble('<span style="color:var(--danger)">Turn stalled (no response). You can send again.</span>');
         }
         endTurn();
       }, ms || IDLE_MS);
@@ -401,6 +461,18 @@
       }
       if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
         Tomo.upsertTodoPanel(ctx.turn, d.todos);
+      } else if (
+        !d.error &&
+        ((d.tool || d.name || '') + '') === 'todo' &&
+        window.Tomo &&
+        Tomo.parseTodosResult
+      ) {
+        var parsedTodos = Tomo.parseTodosResult(
+          typeof d.result === 'string' ? d.result : ''
+        );
+        if (parsedTodos && parsedTodos.length) {
+          Tomo.upsertTodoPanel(ctx.turn, parsedTodos);
+        }
       }
       if (!asstEl && !pendingEl) showPending();
       ctx.atBottom();
@@ -754,12 +826,13 @@
     es.addEventListener('turn.start', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
+      turnActive = true;
       if (isLive) {
-        turnActive = true;
         adoptAgent(d.agent_id, d.agent);
         if (!asstEl) showPending();
       } else {
         sawTurnEvent = true;
+        if (d.agent_id || d.agent) adoptAgent(d.agent_id, d.agent);
         ctx.setStatus('amber', ctx.busyStatusLabel());
       }
       ctx.atBottom();
@@ -776,14 +849,21 @@
       });
     }
 
+    es.addEventListener('caught_up', function () {
+      bumpActivity();
+      markCaughtUp();
+    });
+
     es.addEventListener('delegate', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       var target = d.to || d.agent_id || '';
-      var key = isLive ? allocateInstanceKey(d, target) : instanceKeyFrom(d, target);
+      var key = isLive || liveCaughtUp
+        ? allocateInstanceKey(d, target)
+        : instanceKeyFrom(d, target);
       // Resume without dcid: still try parallel slot / allocate locally.
-      if (!isLive && (!key || key === target)) {
+      if ((!isLive || !key) && (!key || key === target)) {
         key = allocateInstanceKey(d, target);
       }
       var name = d.agent || target;
@@ -791,17 +871,14 @@
       var idx = d.parallel_index || 1;
       var total = d.parallel_total || 1;
       if (target) subagentSet.add(target);
-      if (isLive) {
-        createSwarmCard();
-        var buf = getBuffer(key);
-        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        buf.agentId = target;
-        if (!buf.row) addSwarmRow(key, target, name, task, idx, total);
-        ctx.setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
-      } else {
-        ensureSwarmRow(key, target, name, task, idx, total);
-        ctx.setStatus('amber', ctx.busyStatusLabel());
-      }
+      createSwarmCard();
+      var buf = getBuffer(key);
+      buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
+      buf.agentId = target;
+      // Reuse history-rendered swarm rows on resume so replay does not duplicate cards.
+      if (!buf.row) buf.row = swarmRowFor(key) || swarmRowFor(target);
+      if (!buf.row) addSwarmRow(key, target, name, task, idx, total);
+      ctx.setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
       ctx.atBottom();
     });
 
@@ -812,7 +889,7 @@
       var aid = d.agent_id || '';
       var key = instanceKeyFrom(d, aid);
       // First sighting without a prior delegate: allocate a card.
-      if (!key || (isLive && subagentBuffers && !subagentBuffers.has(key))) {
+      if (!key || !subagentBuffers.has(key)) {
         if (!key || key === aid) key = allocateInstanceKey(d, aid);
       }
       var name = d.agent || aid;
@@ -820,15 +897,12 @@
       var idx = d.parallel_index || 1;
       var total = d.parallel_total || 1;
       if (aid) subagentSet.add(aid);
-      if (isLive) {
-        var buf = getBuffer(key);
-        buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
-        buf.agentId = aid;
-        if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
-        buf.row.classList.add('active');
-      } else {
-        ensureSwarmRow(key, aid, name, task, idx, total);
-      }
+      var buf = getBuffer(key);
+      buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
+      buf.agentId = aid;
+      if (!buf.row) buf.row = swarmRowFor(key) || swarmRowFor(aid);
+      if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
+      if (buf.row) buf.row.classList.add('active');
       ctx.atBottom();
     });
 
@@ -846,7 +920,7 @@
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, d.agent_id);
-        if (isLive) { bufferEvent(ik, 'thinking', d); }
+        bufferEvent(ik, 'thinking', d);
         bumpSwarmProgress(ik);
         return;
       }
@@ -855,8 +929,7 @@
       var content = d.content || '';
       if (!content.trim() || /^\s*\[Swarm\]/.test(content)) return;
       if (!isLive) {
-        // Skip reasoning segments already rendered in history; replaying them
-        // would add a duplicate card per segment.
+        // Skip reasoning already in history until caught_up freezes skipThinking.
         thinkingSeen++;
         if (thinkingSeen <= skipThinking) return;
       }
@@ -881,7 +954,7 @@
       var aid = d.agent_id || '';
       if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
         var ik = instanceKeyFrom(d, aid);
-        if (isLive) { bufferEvent(ik, 'tool', d); }
+        bufferEvent(ik, 'tool', d);
         bumpSwarmProgress(ik);
         return;
       }
@@ -916,7 +989,7 @@
       var aid = d.agent_id || '';
       if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
         var ik = instanceKeyFrom(d, aid);
-        if (isLive) { bufferEvent(ik, 'tool_result', d); }
+        bufferEvent(ik, 'tool_result', d);
         bumpSwarmProgress(ik);
         return;
       }
@@ -937,7 +1010,7 @@
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, d.agent_id);
-        if (isLive) { bufferEvent(ik, 'ui', d); }
+        bufferEvent(ik, 'ui', d);
         bumpSwarmProgress(ik);
         return;
       }
@@ -953,17 +1026,18 @@
     es.addEventListener('todos', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
-      if (!isLive) sawTurnEvent = true;
+      // Resume snapshot (source=resume) restores the dock without pinning mid-turn.
+      if (!isLive && d.source !== 'resume') sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, d.agent_id);
-        if (isLive) { bufferEvent(ik, 'todos', d); }
+        bufferEvent(ik, 'todos', d);
         bumpSwarmProgress(ik);
         return;
       }
       if (Array.isArray(d.todos) && window.Tomo && Tomo.upsertTodoPanel) {
         clearPending();
         Tomo.upsertTodoPanel(ctx.turn, d.todos);
-        if (!asstEl && !pendingEl) showPending();
+        if (d.source !== 'resume' && !asstEl && !pendingEl) showPending();
         ctx.atBottom();
       }
     });
@@ -974,16 +1048,13 @@
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, d.agent_id);
-        if (isLive) { bufferEvent(ik, 'delta', d); }
+        bufferEvent(ik, 'delta', d);
         bumpSwarmProgress(ik);
         return;
       }
-      if (!isLive) {
-        // Resume replays the full SSE buffer including all past deltas, but
-        // history already rendered completed segments from `thinking` rows and
-        // the final from `done`. Replaying deltas would duplicate text in the
-        // wrong place. `thinking`/`done` carry full segment content, so on
-        // resume we render only from those. (sawTurnEvent already set above.)
+      if (inReplaySkip()) {
+        // Replay of past deltas would duplicate history text. After
+        // ``caught_up``, new live tokens stream normally below.
         return;
       }
       adoptAgent(d.agent_id, d.agent);
@@ -1026,8 +1097,9 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       if (isSubagentEvent(d)) {
-        if (isLive) return;
-        bumpSwarmProgress(instanceKeyFrom(d, d.agent_id));
+        var dik = instanceKeyFrom(d, d.agent_id);
+        bufferEvent(dik, 'done', d);
+        bumpSwarmProgress(dik);
         return;
       }
       adoptAgent(d.agent_id, d.agent);
@@ -1090,11 +1162,9 @@
           errAgentId = payload.agent_id || '';
         } catch (_) {}
         if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== ctx.agentId) {
-          if (isLive) {
-            var errKey = instanceKeyFrom(payload, errAgentId);
-            bufferEvent(errKey, 'error', { message: msg });
-            markSwarmDone(errKey, 'error');
-          }
+          var errKey = instanceKeyFrom(payload, errAgentId);
+          bufferEvent(errKey, 'error', { message: msg });
+          markSwarmDone(errKey, 'error');
           return;
         }
         if (isLive && code === 'session_busy' && ctx.text) {
@@ -1120,21 +1190,46 @@
         return;
       }
       if (isLive) {
-        if (turnActive || sawDone) { endTurn(); return; }
+        // Named agent error already handled above. Bare "error" is usually a
+        // transport fault (fetch abort, proxy) — rejoin if the turn was live.
+        if (turnActive || sawDone || sawTurnEvent) {
+          if (tryReconnect('live-error')) return;
+          endTurn();
+          return;
+        }
         errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
         endTurn();
       } else {
-        if (sawTurnEvent) return;
+        // EventSource auto-retries the listen URL; keep the attachment if we
+        // already know a turn is live. Only detach idle heartbeats.
+        if (sawTurnEvent || turnActive) return;
         endIdleResume();
       }
     });
 
+    es.addEventListener('stream_closed', function () {
+      if (closed) return;
+      // POST body ended without turn.end (proxy idle kill, tab sleep, etc.).
+      if (turnActive || sawTurnEvent || sawDone) {
+        if (tryReconnect('stream-closed')) return;
+      }
+      if (!sawDone) {
+        errorBubble('<span style="color:var(--danger)">Stream interrupted</span>');
+      }
+      endTurn();
+    });
+
     es.addEventListener('heartbeat', function () {
       if (sawDone) return;
+      // Idle listen (no active turn) only emits heartbeats + busy:false state.
+      // Active-turn listen always injects turn.start first, so sawTurnEvent is set.
       if (!isLive && !sawTurnEvent) {
         endIdleResume();
         return;
       }
+      // Heartbeat means the server has finished replaying into the queue and
+      // is waiting for new events — treat as caught-up if the marker was lost.
+      if (!isLive) markCaughtUp();
       bumpActivity();
     });
 
@@ -1148,21 +1243,10 @@
       ctx.setStatus('amber', ctx.busyStatusLabel());
       ctx.wrap.dispatchEvent(new CustomEvent('tomo:turn-start', { bubbles: true }));
       ctx.refreshSendBtn();
-      hardTimer = setTimeout(function () {
-        if (closed) return;
-        endTurn();
-      }, HARD_MS);
       armIdle(IDLE_MS);
-      setTimeout(function () {
-        if (!closed && !sawTurnEvent && subagentSet.size === 0) endIdleResume();
-      }, 1000);
+      // Active-turn listen injects turn.start immediately. Idle listen only
+      // heartbeats — the heartbeat handler ends resume when nothing is live.
     } else {
-      hardTimer = setTimeout(function () {
-        if (closed) return;
-        console.warn('[tomo] turn hard timeout');
-        errorBubble('<span style="color:var(--danger)">Turn timed out. You can send again.</span>');
-        endTurn();
-      }, HARD_MS);
       armIdle(IDLE_MS);
     }
 
