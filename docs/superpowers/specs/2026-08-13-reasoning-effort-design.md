@@ -48,10 +48,13 @@ and non-streaming payloads only when a value is effective.
 
 The LLM profile editor gets a one-value-per-line `Reasoning efforts` textarea.
 The profile list shows how many values are configured. The shared composer
-footer gets a `Reasoning: <value>` select control. It loads when a session is
-opened or created, hides when the resolved profile has no configured values,
-and saves changes immediately through the session endpoint. A failed save
-restores the prior value and shows the existing toast error.
+footer gets a compact model/effort trigger. Clicking it opens a darkroom-style
+popover with `Model`, `Effort`, and `Reset to default` rows; the effort row
+opens a flyout listing the configured values with a checkmark on the active
+choice. It loads when a session is opened or created, hides when the resolved
+profile has no configured values, and saves changes immediately through the
+session endpoint. A failed save restores the prior value and shows the
+existing toast error.
 
 Draft chats without a session keep the selector unavailable until their first
 message creates the session; after creation the selector loads the session's
