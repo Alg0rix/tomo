@@ -568,6 +568,7 @@ class OpenAICompatClient:
         api_key: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         timeout: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -579,6 +580,7 @@ class OpenAICompatClient:
         self._base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self._api_key = resolved_key
         self._model = model or "gpt-4o-mini"
+        self._reasoning_effort = (reasoning_effort or "").strip() or None
         # Default 300s — long generations often exceed a 60s HTTP timeout and
         # previously surfaced as a blank "LLM request failed:".
         self._timeout = (
@@ -644,6 +646,8 @@ class OpenAICompatClient:
             "model": self._model,
             "messages": messages,
         }
+        if self._reasoning_effort:
+            payload["reasoning_effort"] = self._reasoning_effort
 
         try:
             resp = await self._client.chat.completions.create(**payload)
@@ -718,6 +722,8 @@ class OpenAICompatClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self._reasoning_effort:
+            payload["reasoning_effort"] = self._reasoning_effort
         if tools:
             payload["tools"] = tools
 

@@ -19,7 +19,9 @@ from app.runtime.llm.openai_compat import (
 )
 
 
-def get_llm(agent_id: str | None = None) -> LLMClient:
+def get_llm(
+    agent_id: str | None = None, reasoning_effort: str | None = None
+) -> LLMClient:
     """Return an OpenAI-compatible client resolved from LLM profiles.
 
     Resolution (Alpha §2.2): the agent's assigned profile (if set and enabled)
@@ -28,17 +30,20 @@ def get_llm(agent_id: str | None = None) -> LLMClient:
     profile has no API key).
     """
     from app.services import store
+    from app.models.mixins.llm_profiles import effective_reasoning_effort
 
     profile = store.resolve_llm_profile(agent_id)
     if not profile:
         raise LLMConfigError("Configure a model profile in System → Models")
     base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
+    effective_effort = effective_reasoning_effort(profile, reasoning_effort)
     # OpenAICompatClient raises LLMConfigError when the API key is empty.
     return OpenAICompatClient(
         base_url=base_url,
         api_key=profile.get("api_key") or "",
         model=model,
+        reasoning_effort=effective_effort,
         timeout=default_llm_timeout_seconds(),
     )
 

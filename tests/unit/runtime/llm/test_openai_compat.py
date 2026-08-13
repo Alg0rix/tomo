@@ -155,6 +155,36 @@ async def test_plain_content_mapped_and_request_shape() -> None:
     assert resp.completion_tokens == 4
 
 
+async def test_reasoning_effort_is_forwarded_to_non_stream_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["reasoning_effort"] == "deep-thought"
+        return httpx.Response(200, json=_completion_body(content="ok"))
+
+    client = _client(
+        httpx.MockTransport(handler), reasoning_effort="deep-thought"
+    )
+    response = await client.complete([{"role": "user", "content": "hi"}])
+    assert response.content == "ok"
+
+
+async def test_reasoning_effort_is_forwarded_to_stream_request() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return _completion_response(request, _completion_body(content="ok"))
+
+    client = _client(
+        httpx.MockTransport(handler), reasoning_effort="xhigh-provider"
+    )
+    await client.complete(
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "noop"}}],
+    )
+    assert seen["reasoning_effort"] == "xhigh-provider"
+
+
 async def test_tools_forwarded_and_tool_calls_mapped() -> None:
     raw_tool_calls = [
         {

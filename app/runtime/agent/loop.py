@@ -605,6 +605,7 @@ async def run_turn(
     max_iterations: int | None = None,
     enable_atg: bool | None = None,
     origin: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one agent turn, yielding internal events.
 
@@ -648,7 +649,20 @@ async def run_turn(
     skills_touched: list[str] = []
     try:
         try:
-            client = llm if llm is not None else get_llm(agent_id)
+            if llm is not None:
+                client = llm
+            else:
+                selected_effort = reasoning_effort
+                if selected_effort is None and session_id:
+                    from app.services import store
+
+                    selected_effort = store.resolve_session_reasoning_effort(
+                        session_id, agent_id
+                    )
+                if selected_effort is None:
+                    client = get_llm(agent_id)
+                else:
+                    client = get_llm(agent_id, reasoning_effort=selected_effort)
             if tools is not None:
                 tool_schemas = tools
             elif agent_id:

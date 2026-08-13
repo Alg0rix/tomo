@@ -30,3 +30,35 @@ def test_get_llm_builds_client_from_default_profile(tmp_path) -> None:
     client = get_llm()
     assert isinstance(client, OpenAICompatClient)
     assert client.endpoint == "https://example.test/v1/chat/completions"
+
+
+def test_get_llm_maps_requested_effort_to_profile_value(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {
+            **_profile("default", "https://example.test/v1", "gpt-test"),
+            "reasoning_efforts": ["balanced", "provider-max"],
+        }
+    )
+    store.set_default_llm_profile("default")
+
+    client = get_llm(reasoning_effort="balanced")
+
+    assert isinstance(client, OpenAICompatClient)
+    assert client._reasoning_effort == "balanced"
+
+
+def test_get_llm_falls_back_to_profile_default_for_unknown_effort(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {
+            **_profile("default", "https://example.test/v1", "gpt-test"),
+            "reasoning_efforts": ["balanced", "provider-max"],
+        }
+    )
+    store.set_default_llm_profile("default")
+
+    client = get_llm(reasoning_effort="foreign-model-value")
+
+    assert isinstance(client, OpenAICompatClient)
+    assert client._reasoning_effort == "provider-max"

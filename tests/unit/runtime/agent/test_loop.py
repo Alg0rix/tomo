@@ -75,6 +75,35 @@ async def test_text_only_path_yields_single_final() -> None:
     assert "".join(e["content"] for e in events if e["kind"] == "delta") == _DEFAULT_REPLY
 
 
+async def test_session_reasoning_effort_reaches_llm_factory(tmp_path, monkeypatch) -> None:
+    store.rebind(tmp_path / "reasoning-loop.db")
+    store.create_llm_profile(
+        {
+            "id": "default",
+            "name": "D",
+            "api_key": "sk-d",
+            "model": "model-a",
+            "reasoning_efforts": ["balanced", "deep"],
+        }
+    )
+    store.set_default_llm_profile("default")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    store.set_session_reasoning_effort(sid, "balanced")
+    seen: dict[str, Any] = {}
+
+    def _get_llm(agent_id=None, reasoning_effort=None):
+        seen["agent_id"] = agent_id
+        seen["reasoning_effort"] = reasoning_effort
+        return ScriptedLLM([text_reply("ok")])
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _get_llm)
+    events = await _collect("hello", session_id=sid, agent_id="main", tools=[])
+
+    assert _final(events)["content"] == "ok"
+    assert seen["agent_id"] == "main"
+    assert seen["reasoning_effort"] == "balanced"
+
+
 async def test_metrics_accumulate_provider_usage_across_rounds() -> None:
     """Final metrics sum prompt/completion tokens from every LLM round."""
     llm = ScriptedLLM(
