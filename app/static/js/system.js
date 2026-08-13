@@ -106,17 +106,26 @@
   var fBase = document.getElementById('profBaseUrl');
   var fKey = document.getElementById('profApiKey');
   var fModel = document.getElementById('profModel');
+  var fReasoning = document.getElementById('profReasoningEfforts');
   var fEnabled = document.getElementById('profEnabled');
   var defaultId = '';
 
   function esc(s) { return Tomo.escapeHtml(s); }
+
+  function parseReasoningEfforts(value) {
+    return String(value || '').split(/\r?\n/).map(function (line) {
+      return line.trim();
+    }).filter(Boolean);
+  }
 
   function rowHtml(p) {
     var b = '';
     if (p.id === defaultId) b += ' <span class="badge accent sm">default</span>';
     b += p.enabled ? (p.api_key_set ? ' <span class="badge ok sm">key set</span>' : ' <span class="badge muted">no key</span>') : ' <span class="badge muted">disabled</span>';
     var def = p.id === defaultId ? '' : ' <button class="btn ghost sm" type="button" data-act="default">Set default</button>';
-    return '<div class="row" data-id="' + esc(p.id) + '"><div class="meta"><div class="title">' + esc(p.name) + ' <span class="faint mono">' + esc(p.id) + '</span></div><div class="desc">' + esc(p.model || '—') + ' · ' + esc(p.base_url || 'default host') + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + b + ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button>' + def + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+    var efforts = Array.isArray(p.reasoning_efforts) ? p.reasoning_efforts.length : 0;
+    var effortLabel = efforts ? (efforts + ' effort' + (efforts === 1 ? '' : 's')) : 'no custom effort';
+    return '<div class="row" data-id="' + esc(p.id) + '"><div class="meta"><div class="title">' + esc(p.name) + ' <span class="faint mono">' + esc(p.id) + '</span></div><div class="desc">' + esc(p.model || '—') + ' · ' + esc(p.base_url || 'default host') + ' · ' + esc(effortLabel) + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + b + ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button>' + def + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
   function render(profiles, dId) {
@@ -137,9 +146,9 @@
     fMode.value = mode;
     document.getElementById('profileFormTitle').textContent = mode === 'add' ? 'Add profile' : 'Edit profile';
     if (mode === 'add') {
-      fId.value = ''; fName.value = ''; fBase.value = ''; fKey.value = ''; fModel.value = ''; fEnabled.checked = true;
+      fId.value = ''; fName.value = ''; fBase.value = ''; fKey.value = ''; fModel.value = ''; fReasoning.value = ''; fEnabled.checked = true;
     } else {
-      fId.value = p.id; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fEnabled.checked = !!p.enabled;
+      fId.value = p.id; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fReasoning.value = (p.reasoning_efforts || []).join('\n'); fEnabled.checked = !!p.enabled;
     }
     formCard.classList.remove('hidden');
   }
@@ -167,7 +176,7 @@
   var saveProf = document.getElementById('profSave');
   if (saveProf) {
     saveProf.addEventListener('click', async function () {
-      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), enabled: fEnabled.checked };
+      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: parseReasoningEfforts(fReasoning.value), enabled: fEnabled.checked };
       var key = fKey.value;
       if (key && key.indexOf('•') === -1) body.api_key = key;
       try {

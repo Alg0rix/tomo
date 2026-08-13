@@ -32,6 +32,12 @@
         <div class="config-row"><div class="lbl">Model</div>
           <input class="input" id="profModel" placeholder="gpt-4o-mini" style="max-width:220px" spellcheck="false">
         </div>
+        <div class="config-row"><div class="lbl">Reasoning efforts</div>
+          <div style="flex:1;max-width:420px">
+            <textarea class="input" id="profReasoningEfforts" rows="5" placeholder="low\nmedium\nhigh\nprovider-max" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:12px" spellcheck="false"></textarea>
+            <p class="faint" style="margin:6px 0 0;font-size:12px">One provider value per line. The last value is the default/highest effort.</p>
+          </div>
+        </div>
         <div class="config-row"><div class="lbl">Enabled</div>
           <label class="toggle"><input type="checkbox" id="profEnabled" checked><span class="track"></span></label>
         </div>

@@ -231,6 +231,14 @@
     const attachPreview = wrap.querySelector('.attachment-preview');
     const composerEl = wrap.querySelector('.composer');
     const modeBtn = wrap.querySelector('.composer-mode') || document.getElementById('composerModeBtn');
+    const reasoningEl = wrap.querySelector('.composer-reasoning');
+    const reasoningTrigger = reasoningEl && reasoningEl.querySelector('.composer-reasoning-trigger');
+    const reasoningPopover = reasoningEl && reasoningEl.querySelector('.composer-reasoning-popover');
+    const reasoningFlyout = reasoningEl && reasoningEl.querySelector('.composer-reasoning-flyout');
+    const reasoningModel = reasoningEl && reasoningEl.querySelector('.composer-reasoning-model');
+    const reasoningTriggerEffort = reasoningEl && reasoningEl.querySelector('.composer-reasoning-trigger-effort');
+    const reasoningRows = reasoningEl ? reasoningEl.querySelectorAll('.composer-reasoning-row') : [];
+    const reasoningReset = reasoningEl && reasoningEl.querySelector('.composer-reasoning-reset');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
 
     /** @type {{id: string, name: string, size: number}[]} */
@@ -253,8 +261,125 @@
     // Cycle: Manual → Smart → Auto(off) → Manual
     var MODE_CYCLE = ['manual', 'smart', 'off'];
     var MODE_LABEL = { manual: 'Manual', smart: 'Smart', off: 'Auto' };
+    var reasoningState = null;
 
     function currentSessionId() { return wrap.dataset.sessionId || ''; }
+
+    function closeReasoningMenus() {
+      if (reasoningPopover) reasoningPopover.classList.add('hidden');
+      if (reasoningFlyout) reasoningFlyout.classList.add('hidden');
+      if (reasoningTrigger) reasoningTrigger.setAttribute('aria-expanded', 'false');
+    }
+
+    function paintReasoningEffort(payload) {
+      reasoningState = payload || null;
+      if (!reasoningEl) return;
+      var efforts = payload && Array.isArray(payload.reasoning_efforts)
+        ? payload.reasoning_efforts : [];
+      if (!payload || !currentSessionId() || !efforts.length) {
+        reasoningEl.classList.add('hidden');
+        closeReasoningMenus();
+        return;
+      }
+      var model = String(payload.model || payload.profile_name || 'Model');
+      var active = String(payload.reasoning_effort || payload.default_reasoning_effort || efforts[efforts.length - 1] || '');
+      reasoningEl.classList.remove('hidden');
+      if (reasoningModel) reasoningModel.textContent = model;
+      if (reasoningTriggerEffort) reasoningTriggerEffort.textContent = active;
+      var rowValues = reasoningEl.querySelectorAll('.composer-reasoning-row-value');
+      if (rowValues[0]) rowValues[0].textContent = model;
+      if (rowValues[1]) rowValues[1].textContent = active;
+      if (reasoningFlyout) {
+        reasoningFlyout.innerHTML = efforts.map(function (effort) {
+          var value = String(effort);
+          var selected = value === active;
+          return '<button type="button" class="composer-reasoning-option' + (selected ? ' is-active' : '') + '" data-effort="' + esc(value) + '" role="menuitemradio" aria-checked="' + (selected ? 'true' : 'false') + '">' +
+            '<span>' + esc(value) + '</span><span class="check" aria-hidden="true">' + (selected ? '✓' : '') + '</span></button>';
+        }).join('');
+        reasoningFlyout.querySelectorAll('.composer-reasoning-option').forEach(function (option) {
+          option.addEventListener('click', function (event) {
+            event.preventDefault();
+            persistReasoningEffort(option.getAttribute('data-effort'));
+          });
+        });
+      }
+    }
+
+    async function persistReasoningEffort(value) {
+      var sid = currentSessionId();
+      if (!sid) return;
+      var before = reasoningState;
+      try {
+        var data = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/reasoning-effort',
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reasoning_effort: value == null ? '' : String(value) }),
+          }
+        );
+        paintReasoningEffort(data);
+        closeReasoningMenus();
+      } catch (e) {
+        paintReasoningEffort(before);
+        if (window.Tomo && Tomo.toast) {
+          Tomo.toast((e && e.message) || 'Could not change reasoning effort', 'err');
+        }
+      }
+    }
+
+    async function refreshReasoningEffort() {
+      var sid = currentSessionId();
+      if (!sid || !reasoningEl) {
+        paintReasoningEffort(null);
+        return;
+      }
+      try {
+        var data = await Tomo.api(
+          '/api/sessions/' + encodeURIComponent(sid) + '/reasoning-effort'
+        );
+        paintReasoningEffort(data);
+      } catch (e) {
+        paintReasoningEffort(null);
+      }
+    }
+
+    function toggleReasoningPopover() {
+      if (!reasoningPopover || reasoningEl.classList.contains('hidden')) return;
+      var open = reasoningPopover.classList.toggle('hidden') === false;
+      if (!open && reasoningFlyout) reasoningFlyout.classList.add('hidden');
+      if (reasoningTrigger) reasoningTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    if (reasoningTrigger) {
+      reasoningTrigger.addEventListener('click', function (event) {
+        event.preventDefault();
+        toggleReasoningPopover();
+      });
+    }
+    if (reasoningRows.length) {
+      reasoningRows.forEach(function (row) {
+        row.addEventListener('click', function (event) {
+          event.preventDefault();
+          if (row.getAttribute('data-reasoning-row') !== 'effort' || !reasoningFlyout) return;
+          reasoningFlyout.classList.toggle('hidden');
+        });
+      });
+    }
+    if (reasoningReset) {
+      reasoningReset.addEventListener('click', function (event) {
+        event.preventDefault();
+        persistReasoningEffort('');
+      });
+    }
+    function onReasoningDocumentClick(event) {
+      if (reasoningEl && !reasoningEl.contains(event.target)) closeReasoningMenus();
+    }
+    document.addEventListener('click', onReasoningDocumentClick);
+    function onReasoningEscape(event) {
+      if (event.key === 'Escape') closeReasoningMenus();
+    }
+    document.addEventListener('keydown', onReasoningEscape);
 
     function paintApprovalMode(payload) {
       if (!modeBtn) return;
@@ -322,6 +447,7 @@
       });
     }
     refreshApprovalMode();
+    refreshReasoningEffort();
 
     function pendingAgentIds() {
       return (wrap.dataset.pendingAgents || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
@@ -1090,6 +1216,7 @@
         },
       }));
       refreshApprovalMode();
+      refreshReasoningEffort();
       return data.session_id;
     }
 
@@ -1557,6 +1684,8 @@
         if (es) { es.close(); es = null; }
         sending = false;
         syncGeneratingUi();
+        document.removeEventListener('click', onReasoningDocumentClick);
+        document.removeEventListener('keydown', onReasoningEscape);
         delete wrap.dataset.liveStream;
       },
       send: send,

@@ -23,6 +23,30 @@
         <button type="button" class="composer-mode" id="composerModeBtn" data-mode="smart" title="Permission mode — click to cycle (/manual /smart /auto)" aria-label="Permission mode">
           <span class="composer-mode-key">Smart</span><span class="composer-mode-suffix"> Mode</span>
         </button>
+        <div class="composer-reasoning hidden" aria-live="polite">
+          <button class="composer-reasoning-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Model and reasoning effort">
+            <span class="composer-reasoning-model">Model</span>
+            <span class="composer-reasoning-trigger-effort">Reasoning</span>
+            <span class="composer-reasoning-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="composer-reasoning-popover hidden" role="menu">
+            <button class="composer-reasoning-row" type="button" data-reasoning-row="model" role="menuitem">
+              <span class="composer-reasoning-row-label">Model</span>
+              <span class="composer-reasoning-row-value"></span>
+              <b aria-hidden="true">›</b>
+            </button>
+            <button class="composer-reasoning-row" type="button" data-reasoning-row="effort" role="menuitem">
+              <span class="composer-reasoning-row-label">Effort</span>
+              <span class="composer-reasoning-row-value"></span>
+              <b aria-hidden="true">›</b>
+            </button>
+            <div class="composer-reasoning-divider"></div>
+            <button class="composer-reasoning-reset" type="button" role="menuitem">
+              <span>Reset to default</span><span aria-hidden="true">↻</span>
+            </button>
+            <div class="composer-reasoning-flyout hidden" role="menu" aria-label="Reasoning effort options"></div>
+          </div>
+        </div>
         <div class="composer-actions">
           <button class="composer-ghost chat-files-btn" type="button" title="Session files / artifacts">Files</button>
           {% if toolbar %}
