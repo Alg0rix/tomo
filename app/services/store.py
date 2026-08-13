@@ -303,6 +303,68 @@ class Store:
                 self._conn, session_id, workplace_id
             )
 
+    def _session_reasoning_effort_payload_locked(
+        self, session: dict[str, Any]
+    ) -> dict[str, Any]:
+        coordinator_id = session.get("coordinator_id") or session.get("agent_id")
+        profile = llm_profiles_store.resolve_profile(self._conn, coordinator_id)
+        efforts = list((profile or {}).get("reasoning_efforts") or [])
+        stored = (session.get("reasoning_effort") or "").strip()
+        effective = llm_profiles_store.effective_reasoning_effort(profile, stored)
+        selected = stored if stored in efforts else ""
+        return {
+            "session_id": session.get("id") or "",
+            "profile_id": (profile or {}).get("id") or "",
+            "profile_name": (profile or {}).get("name") or "",
+            "model": (profile or {}).get("model") or "",
+            "reasoning_efforts": efforts,
+            "default_reasoning_effort": efforts[-1] if efforts else None,
+            "selected_reasoning_effort": selected or None,
+            "reasoning_effort": effective,
+        }
+
+    def get_session_reasoning_effort(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            if not session:
+                return None
+            return self._session_reasoning_effort_payload_locked(session)
+
+    def set_session_reasoning_effort(
+        self, session_id: str, reasoning_effort: str | None
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            if not session:
+                return None
+            coordinator_id = session.get("coordinator_id") or session.get("agent_id")
+            profile = llm_profiles_store.resolve_profile(self._conn, coordinator_id)
+            value = (reasoning_effort or "").strip()
+            efforts = list((profile or {}).get("reasoning_efforts") or [])
+            if value and value not in efforts:
+                raise ValueError(f"Unsupported reasoning effort: {value}")
+            updated = sessions_store.set_session_reasoning_effort(
+                self._conn, session_id, value
+            )
+            if not updated:
+                return None
+            return self._session_reasoning_effort_payload_locked(updated)
+
+    def resolve_session_reasoning_effort(
+        self, session_id: str, agent_id: str | None = None
+    ) -> str | None:
+        with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            if not session:
+                return None
+            target_id = agent_id or session.get("coordinator_id") or session.get("agent_id")
+            profile = llm_profiles_store.resolve_profile(self._conn, target_id)
+            return llm_profiles_store.effective_reasoning_effort(
+                profile, session.get("reasoning_effort")
+            )
+
     def update_session_agents(self, session_id: str, agent_ids: list[str]) -> dict[str, Any] | None:
         with self._lock:
             return sessions_store.update_session_agents(self._conn, session_id, agent_ids)

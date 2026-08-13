@@ -31,10 +31,43 @@ from app.core.secrets import decrypt_secret, encrypt_secret
 from app.models.mixins.settings import mask_api_key
 
 _DEFAULT_MODEL_KEY = "default_model_id"
+_MAX_REASONING_EFFORTS = 24
 
 
 def _now() -> float:
     return time.time()
+
+
+def normalize_reasoning_efforts(value: object) -> list[str]:
+    """Return a compact ordered list of unique provider effort values."""
+    if value is None:
+        return []
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        effort = item.strip()
+        if not effort or effort in out:
+            continue
+        out.append(effort)
+        if len(out) >= _MAX_REASONING_EFFORTS:
+            break
+    return out
+
+
+def _reasoning_efforts_from_row(row: sqlite3.Row) -> list[str]:
+    try:
+        raw = row["reasoning_efforts_json"] or "[]"
+    except (IndexError, KeyError):
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return normalize_reasoning_efforts(value)
 
 
 def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
@@ -44,6 +77,7 @@ def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
         "base_url": row["base_url"],
         "api_key": row["api_key"],  # ciphertext at rest
         "model": row["model"],
+        "reasoning_efforts": _reasoning_efforts_from_row(row),
         "enabled": bool(row["enabled"]),
         "created_at": row["created_at"],
     }
@@ -93,15 +127,18 @@ def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
         prefix="",
         explicit=(data.get("id") or None),
     )
+    reasoning_efforts = normalize_reasoning_efforts(data.get("reasoning_efforts"))
     conn.execute(
-        "INSERT INTO llm_profiles (id, name, base_url, api_key, model, enabled, created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO llm_profiles "
+        "(id, name, base_url, api_key, model, reasoning_efforts_json, enabled, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
         (
             pid,
             name,
             data.get("base_url") or "",
             encrypt_secret(data.get("api_key")),
             data.get("model") or "",
+            json.dumps(reasoning_efforts),
             1 if data.get("enabled", True) else 0,
             _now(),
         ),
@@ -122,6 +159,9 @@ def update_profile(
         if key in data and data[key] is not None:
             sets.append(f"{key}=?")
             params.append(data[key])
+    if "reasoning_efforts" in data:
+        sets.append("reasoning_efforts_json=?")
+        params.append(json.dumps(normalize_reasoning_efforts(data["reasoning_efforts"])))
     # Blank/missing api_key keeps the existing ciphertext (never clears).
     if "api_key" in data:
         incoming = data["api_key"]
@@ -167,6 +207,17 @@ def get_default_model_id(conn: sqlite3.Connection) -> str:
         return ""
 
 
+def effective_reasoning_effort(
+    profile: dict[str, Any] | None, selected: str | None
+) -> str | None:
+    """Use a supported session value or the profile's highest configured value."""
+    efforts = list((profile or {}).get("reasoning_efforts") or [])
+    requested = (selected or "").strip()
+    if requested and requested in efforts:
+        return requested
+    return efforts[-1] if efforts else None
+
+
 def resolve_profile(
     conn: sqlite3.Connection, agent_id: str | None = None
 ) -> dict[str, Any] | None:
@@ -206,4 +257,6 @@ __all__ = [
     "get_default_model_id",
     "resolve_profile",
     "public_profile",
+    "normalize_reasoning_efforts",
+    "effective_reasoning_effort",
 ]

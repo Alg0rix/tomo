@@ -47,13 +47,14 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 
 CREATE TABLE IF NOT EXISTS llm_profiles (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    base_url   TEXT NOT NULL DEFAULT '',
-    api_key    TEXT NOT NULL DEFAULT '',
-    model      TEXT NOT NULL DEFAULT '',
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    created_at REAL NOT NULL DEFAULT 0
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    base_url               TEXT NOT NULL DEFAULT '',
+    api_key                TEXT NOT NULL DEFAULT '',
+    model                  TEXT NOT NULL DEFAULT '',
+    reasoning_efforts_json TEXT NOT NULL DEFAULT '[]',
+    enabled                INTEGER NOT NULL DEFAULT 1,
+    created_at             REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     title          TEXT NOT NULL DEFAULT '',
     message_count  INTEGER NOT NULL DEFAULT 0,
     workplace_id   TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT '',
     created_at     REAL NOT NULL DEFAULT 0,
     updated_at     REAL NOT NULL DEFAULT 0
 );
@@ -479,6 +481,16 @@ def migrate(conn: sqlite3.Connection) -> None:
     if "workplace_id" not in sess_cols:
         conn.execute(
             "ALTER TABLE sessions ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"
+        )
+    if "reasoning_effort" not in sess_cols:
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''"
+        )
+    profile_cols = {r[1] for r in conn.execute("PRAGMA table_info(llm_profiles)")}
+    if "reasoning_efforts_json" not in profile_cols:
+        conn.execute(
+            "ALTER TABLE llm_profiles "
+            "ADD COLUMN reasoning_efforts_json TEXT NOT NULL DEFAULT '[]'"
         )
     # Connector tunnel columns (idempotent ALTER for pre-connector DBs).
     wp_cols = {r[1] for r in conn.execute("PRAGMA table_info(workplaces)")}

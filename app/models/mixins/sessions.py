@@ -123,6 +123,10 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         workplace_id = (row["workplace_id"] or "").strip()
     except (IndexError, KeyError):
         workplace_id = ""
+    try:
+        reasoning_effort = (row["reasoning_effort"] or "").strip()
+    except (IndexError, KeyError):
+        reasoning_effort = ""
     return {
         "id": row["id"],
         "agent_id": coord,
@@ -133,6 +137,7 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "title": row["title"],
         "message_count": row["message_count"],
         "workplace_id": workplace_id,
+        "reasoning_effort": reasoning_effort,
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }
@@ -260,6 +265,22 @@ def set_session_workplace(
     conn.execute(
         "UPDATE sessions SET workplace_id=?, updated_at=? WHERE id=?",
         (wid, _now(), session_id),
+    )
+    conn.commit()
+    return get_session(conn, session_id)
+
+
+def set_session_reasoning_effort(
+    conn: sqlite3.Connection, session_id: str, reasoning_effort: str | None
+) -> dict[str, Any] | None:
+    """Persist the provider-specific effort selected for one session."""
+    row = conn.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
+    if not row:
+        return None
+    value = (reasoning_effort or "").strip()
+    conn.execute(
+        "UPDATE sessions SET reasoning_effort=?, updated_at=? WHERE id=?",
+        (value, _now(), session_id),
     )
     conn.commit()
     return get_session(conn, session_id)
@@ -394,4 +415,3 @@ def prune_empty_draft_sessions(
     if deleted:
         conn.commit()
     return deleted
-

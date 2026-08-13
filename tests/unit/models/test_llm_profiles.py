@@ -133,3 +133,79 @@ def test_resolve_profile_returns_none_when_empty(tmp_path) -> None:
     _rebind(tmp_path)
     assert store.resolve_llm_profile(None) is None
     assert store.resolve_llm_profile("main") is None
+
+
+def test_profile_reasoning_efforts_are_normalized_and_default_to_last(tmp_path) -> None:
+    _rebind(tmp_path)
+    profile = store.create_llm_profile(
+        {
+            "id": "p",
+            "name": "P",
+            "api_key": "sk-p",
+            "model": "model-a",
+            "reasoning_efforts": [" low ", "", "high", "low"],
+        }
+    )
+
+    assert profile["reasoning_efforts"] == ["low", "high"]
+    assert store.resolve_llm_profile(None)["reasoning_efforts"] == ["low", "high"]
+
+
+def test_session_reasoning_effort_persists_and_falls_back_when_profile_changes(
+    tmp_path,
+) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {
+            "id": "default",
+            "name": "D",
+            "api_key": "sk-d",
+            "model": "model-a",
+            "reasoning_efforts": ["low", "high"],
+        }
+    )
+    store.set_default_llm_profile("default")
+    sid = store.create_swarm_session(["main"], user_id="web")
+
+    state = store.get_session_reasoning_effort(sid)
+    assert state["reasoning_efforts"] == ["low", "high"]
+    assert state["reasoning_effort"] == "high"
+
+    store.set_session_reasoning_effort(sid, "low")
+    assert store.get_session(sid)["reasoning_effort"] == "low"
+    assert store.resolve_session_reasoning_effort(sid, "main") == "low"
+
+    store.update_llm_profile("default", {"reasoning_efforts": ["minimal", "max"]})
+    assert store.resolve_session_reasoning_effort(sid, "main") == "max"
+
+    store.create_llm_profile(
+        {
+            "id": "ops_profile",
+            "name": "Ops",
+            "api_key": "sk-ops",
+            "model": "ops-model",
+            "reasoning_efforts": ["quick-ops", "max-ops"],
+        }
+    )
+    store.update_agent("ops", {"model_id": "ops_profile"})
+    assert store.resolve_session_reasoning_effort(sid, "ops") == "max-ops"
+
+
+def test_session_reasoning_effort_rejects_unknown_value(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {
+            "id": "default",
+            "name": "D",
+            "api_key": "sk-d",
+            "model": "model-a",
+            "reasoning_efforts": ["low", "high"],
+        }
+    )
+    store.set_default_llm_profile("default")
+    sid = store.create_swarm_session(["main"])
+
+    import pytest
+
+    with pytest.raises(ValueError, match="reasoning effort"):
+        store.set_session_reasoning_effort(sid, "unsupported")
