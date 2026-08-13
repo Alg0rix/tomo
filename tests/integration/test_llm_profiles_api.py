@@ -35,12 +35,14 @@ def test_profile_crud_via_api(tmp_path) -> None:
                 "base_url": "https://api.openai.com/v1",
                 "api_key": "sk-secret1234",
                 "model": "gpt-4o-mini",
+                "reasoning_efforts": ["low", "provider-max"],
             },
         )
         assert res.status_code == 200
         body = res.json()
         assert body["api_key_set"] is True
         assert body["api_key"] == "••••1234"  # masked, never raw
+        assert body["reasoning_efforts"] == ["low", "provider-max"]
         assert "sk-secret" not in res.text
 
         res = client.get("/api/llm-profiles")
@@ -98,6 +100,51 @@ def test_pages_render_with_profiles(tmp_path) -> None:
         for path in ("/system", "/agents", "/agents/main"):
             res = client.get(path)
             assert res.status_code == 200, f"{path} -> {res.status_code}"
+        assert "profReasoningEfforts" in client.get("/system").text
+        assert "composer-reasoning-trigger" in client.get("/sessions").text
+    finally:
+        _cleanup()
+
+
+def test_session_reasoning_effort_api_round_trip(tmp_path) -> None:
+    client = _client(tmp_path)
+    try:
+        store.create_llm_profile(
+            {
+                "id": "default",
+                "name": "D",
+                "api_key": "sk-d",
+                "model": "model-a",
+                "reasoning_efforts": ["balanced", "deep"],
+            }
+        )
+        store.set_default_llm_profile("default")
+        sid = store.create_swarm_session(["main"], user_id="web")
+
+        res = client.get(f"/api/sessions/{sid}/reasoning-effort")
+        assert res.status_code == 200
+        assert res.json()["reasoning_effort"] == "deep"
+
+        res = client.put(
+            f"/api/sessions/{sid}/reasoning-effort",
+            json={"reasoning_effort": "balanced"},
+        )
+        assert res.status_code == 200
+        assert res.json()["reasoning_effort"] == "balanced"
+        assert store.get_session(sid)["reasoning_effort"] == "balanced"
+
+        bad = client.put(
+            f"/api/sessions/{sid}/reasoning-effort",
+            json={"reasoning_effort": "not-supported"},
+        )
+        assert bad.status_code == 400
+
+        reset = client.put(
+            f"/api/sessions/{sid}/reasoning-effort",
+            json={"reasoning_effort": ""},
+        )
+        assert reset.status_code == 200
+        assert reset.json()["reasoning_effort"] == "deep"
     finally:
         _cleanup()
 

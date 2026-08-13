@@ -18,6 +18,7 @@ from app.schemas import (
     AgentUpdate,
     ChatMessageIn,
     HomeSessionIn,
+    ReasoningEffortUpdate,
     SessionCreate,
     SessionWorkplaceIn,
 )
@@ -359,6 +360,36 @@ async def get_session_api(session_id: str, request: Request, _: AuthDep):
         "is_swarm": is_swarm,
         "approval": mode_payload(session_id),
     }
+
+
+@router.get("/sessions/{session_id}/reasoning-effort")
+async def get_session_reasoning_effort_api(
+    session_id: str, request: Request, _: AuthDep
+):
+    require_owned_session(request, session_id)
+    state = store.get_session_reasoning_effort(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return state
+
+
+@router.put("/sessions/{session_id}/reasoning-effort")
+async def set_session_reasoning_effort_api(
+    session_id: str,
+    body: ReasoningEffortUpdate,
+    request: Request,
+    _: AuthDep,
+):
+    require_owned_session(request, session_id)
+    try:
+        state = store.set_session_reasoning_effort(
+            session_id, body.reasoning_effort
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return state
 
 
 @router.post("/sessions")

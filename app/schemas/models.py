@@ -146,6 +146,7 @@ class LLMProfileCreate(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    reasoning_efforts: list[str] = Field(default_factory=list, max_length=24)
     enabled: bool = True
 
 
@@ -156,7 +157,14 @@ class LLMProfileUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
+    reasoning_efforts: list[str] | None = Field(default=None, max_length=24)
     enabled: bool | None = None
+
+
+class ReasoningEffortUpdate(BaseModel):
+    """Select or clear the provider-specific effort for one chat session."""
+
+    reasoning_effort: str | None = Field(default=None, max_length=200)
 
 
 class UserCreate(BaseModel):
