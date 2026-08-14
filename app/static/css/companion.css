@@ -662,25 +662,30 @@
   grid-template-columns: minmax(0, 1.5fr) minmax(340px, .75fr);
   grid-template-areas:
     "hero hero"
-    "growth activity"
-    "growth know";
+    "growth insights";
   align-items: start;
   gap: 22px;
 }
-.companion-root > .cp-bento:nth-child(1) { grid-area: hero; }
-.companion-root > .cp-bento:nth-child(2) { grid-area: activity; }
-.companion-root > .cp-bento:nth-child(3) { grid-area: growth; }
-.companion-root > .cp-bento:nth-child(4) { grid-area: know; }
-.companion-root > .cp-bento {
+.companion-root > .cp-hero-card { grid-area: hero; }
+.companion-root > .cp-growth-card { grid-area: growth; }
+.companion-root > .cp-insights {
+  grid-area: insights;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  align-self: start;
   min-width: 0;
 }
-.companion-root > .cp-bento:nth-child(3) {
+.cp-insights > .cp-bento {
+  min-width: 0;
+}
+.companion-root > .cp-growth-card {
   padding: 0;
   background: transparent;
   border-color: transparent;
   box-shadow: none;
 }
-.companion-root > .cp-bento:nth-child(3):hover { border-color: transparent; }
+.companion-root > .cp-growth-card:hover { border-color: transparent; }
 .cp-bento-pad { padding: clamp(14px, 1.4vw, 24px); }
 .cp-header { gap: 12px; flex-wrap: nowrap; }
 .cp-header-main { gap: 10px; }
@@ -784,6 +789,12 @@
       "growth"
       "know";
   }
+  .companion-root > .cp-insights {
+    display: contents;
+  }
+  .cp-insights > .cp-activity-card { grid-area: activity; }
+  .companion-root > .cp-growth-card { grid-area: growth; }
+  .cp-insights > .cp-know-card { grid-area: know; }
   .cp-header { flex-wrap: wrap; }
 }
 

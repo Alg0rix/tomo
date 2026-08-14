@@ -438,7 +438,7 @@
 
     root.innerHTML =
       /* Header */
-      '<section class="cp-bento cp-bento-pad">' +
+      '<section class="cp-bento cp-bento-pad cp-hero-card">' +
       '<div class="cp-header">' +
       '<div class="cp-header-main">' +
       '<div class="cp-avatar-wrap">' +
@@ -499,8 +499,9 @@
       '><span class="track"></span></label></div>' +
       renderDiagnostics(data.diagnostics) +
       '</section>' +
-      /* Activity */
-      '<section class="cp-bento cp-bento-pad">' +
+      /* Activity and profile insights share a compact right-side rail. */
+      '<div class="cp-insights">' +
+      '<section class="cp-bento cp-bento-pad cp-activity-card">' +
       '<div class="cp-activity-head">' +
       '<div class="cp-activity-titles">' +
       '<h3>Activity</h3>' +
@@ -546,8 +547,17 @@
       '<div class="cp-panel" id="cpPanelGrowth" data-panel="growth" hidden>' +
       renderGrowthBars(data.growth) +
       '</div></section>' +
+      /* What I know */
+      '<section class="cp-bento cp-bento-pad cp-know-card">' +
+      '<div class="cp-know-head">' +
+      '<h3>What I know</h3>' +
+      '<div class="cp-know-links">' +
+      '<a class="btn ghost sm" href="/skills">Skills</a>' +
+      '<a class="btn ghost sm" href="/system#memory">Memory</a></div></div>' +
+      profileHtml +
+      '</section></div>' +
       /* Growth log */
-      '<section class="cp-bento cp-bento-pad">' +
+      '<section class="cp-bento cp-bento-pad cp-growth-card">' +
       '<div class="cp-log-head">' +
       '<div><h3>Growth log</h3>' +
       '<p>A record of every milestone as Tomo learns with you</p></div>' +
@@ -564,16 +574,7 @@
       '<div class="cp-log-foot" id="companionLogFoot"' +
       (state.nextBefore && events.length >= 20 ? '' : ' hidden') +
       '>' +
-      '<button type="button" class="btn ghost sm" id="companionLoadMore">Load more</button></div></section>' +
-      /* What I know */
-      '<section class="cp-bento cp-bento-pad">' +
-      '<div class="cp-know-head">' +
-      '<h3>What I know</h3>' +
-      '<div class="cp-know-links">' +
-      '<a class="btn ghost sm" href="/skills">Skills</a>' +
-      '<a class="btn ghost sm" href="/system#memory">Memory</a></div></div>' +
-      profileHtml +
-      '</section>';
+      '<button type="button" class="btn ghost sm" id="companionLoadMore">Load more</button></div></section>';
 
     bindControls();
     positionTabInk();
