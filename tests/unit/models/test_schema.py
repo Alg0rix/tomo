@@ -23,6 +23,8 @@ EXPECTED_TABLES = {
     "llm_profiles",
     "api_keys",
     "usage_events",
+    "mcp_servers",
+    "mcp_items",
 }
 
 
@@ -81,3 +83,22 @@ def test_migrate_adds_reasoning_columns_to_legacy_tables(tmp_path):
     session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     assert "reasoning_efforts_json" in profile_cols
     assert "reasoning_effort" in session_cols
+
+
+def test_mcp_tables_have_runtime_columns(tmp_path):
+    db = tmp_path / "mcp.db"
+    conn = sqlite3.connect(db)
+    migrate(conn)
+    server_cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_servers)")}
+    item_cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_items)")}
+    assert {
+        "id", "name", "transport", "command", "args_json", "url",
+        "env_ciphertext", "headers_ciphertext", "enabled", "status",
+        "status_message", "server_info_json", "capabilities_json",
+        "last_connected_at", "last_discovered_at", "created_at", "updated_at",
+    } <= server_cols
+    assert {
+        "id", "server_id", "kind", "runtime_id", "name", "title",
+        "description", "uri", "mime_type", "schema_json", "metadata_json",
+        "enabled", "created_at", "updated_at",
+    } <= item_cols

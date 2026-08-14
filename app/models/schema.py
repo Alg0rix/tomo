@@ -446,6 +446,49 @@ CREATE INDEX IF NOT EXISTS idx_episodic_rel_from
     ON episodic_relations(from_episode_id, relation);
 CREATE INDEX IF NOT EXISTS idx_episodic_rel_to
     ON episodic_relations(to_episode_id, relation);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    transport           TEXT NOT NULL,
+    command             TEXT NOT NULL DEFAULT '',
+    args_json           TEXT NOT NULL DEFAULT '[]',
+    url                 TEXT NOT NULL DEFAULT '',
+    env_ciphertext      TEXT NOT NULL DEFAULT '',
+    headers_ciphertext  TEXT NOT NULL DEFAULT '',
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    status              TEXT NOT NULL DEFAULT 'unknown',
+    status_message      TEXT NOT NULL DEFAULT '',
+    server_info_json    TEXT NOT NULL DEFAULT '{}',
+    capabilities_json   TEXT NOT NULL DEFAULT '{}',
+    last_connected_at   REAL NOT NULL DEFAULT 0,
+    last_discovered_at  REAL NOT NULL DEFAULT 0,
+    created_at          REAL NOT NULL DEFAULT 0,
+    updated_at          REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS mcp_items (
+    id             TEXT PRIMARY KEY,
+    server_id      TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL,
+    runtime_id     TEXT NOT NULL DEFAULT '',
+    name           TEXT NOT NULL DEFAULT '',
+    title          TEXT NOT NULL DEFAULT '',
+    description    TEXT NOT NULL DEFAULT '',
+    uri            TEXT NOT NULL DEFAULT '',
+    mime_type      TEXT NOT NULL DEFAULT '',
+    schema_json    TEXT NOT NULL DEFAULT '{}',
+    metadata_json  TEXT NOT NULL DEFAULT '{}',
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    created_at     REAL NOT NULL DEFAULT 0,
+    updated_at     REAL NOT NULL DEFAULT 0,
+    UNIQUE (server_id, kind, name, uri)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_items_server_kind
+    ON mcp_items(server_id, kind, enabled);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_items_runtime_id
+    ON mcp_items(runtime_id) WHERE runtime_id <> '';
 """
 
 
