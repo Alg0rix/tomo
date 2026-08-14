@@ -932,7 +932,10 @@
     function resize() {
       if (!input) return;
       input.style.height = 'auto';
-      var next = Math.max(80, Math.min(input.scrollHeight, 200));
+      var compact = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+      var minHeight = compact ? 56 : 80;
+      var maxHeight = compact ? 160 : 200;
+      var next = Math.max(minHeight, Math.min(input.scrollHeight, maxHeight));
       input.style.height = next + 'px';
     }
 
