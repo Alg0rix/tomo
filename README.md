@@ -174,6 +174,25 @@ Bootstrap admin password: `TOMO_ADMIN_PASSWORD` (same). Non-loopback bind
 refuses known insecure defaults. Note: `TOMO_SECRET_KEY` is the **at-rest
 master key** (see Secrets policy), not the session secret.
 
+**MCP servers** — open **System → MCP** to add [Model Context Protocol](https://modelcontextprotocol.io)
+servers, distinct from the [Connector tunnel](#machine-connectivity) above
+(the Connector bridges Tomo to a remote *machine*; MCP servers give agents
+new *tools*, resources, and prompts from a local command or a remote
+endpoint):
+
+- **`stdio`** — a local command Tomo launches directly (argument vector,
+  never a shell string), e.g. `npx @modelcontextprotocol/server-filesystem`.
+- **Streamable HTTP** — a remote MCP endpoint, reached with optional custom
+  headers (bearer tokens, API keys).
+
+Every environment value (`stdio`) and header value (Streamable HTTP) is
+encrypted at rest the same way as the LLM API key. A server can be disabled
+without losing its discovered tools/resources/prompts, and each capability
+can be toggled independently of the server. Per-agent tool enablement (Agent
+Studio → Tools) is layered on top and controlled the same way as built-in
+tools — disabling a server or a capability globally always wins over a
+per-agent "on".
+
 ### Tests
 
 ```bash
