@@ -11,6 +11,7 @@
       <textarea class="chat-input" placeholder="{{ placeholder }}" rows="1"></textarea>
       <div class="mention-menu hidden" role="listbox" aria-label="Mention agent"></div>
       <div class="slash-menu hidden" role="listbox" aria-label="Skills"></div>
+      <div class="slash-menu mcp-resource-menu hidden" role="listbox" aria-label="MCP resources"></div>
     </div>
 
     <div class="composer-toolbar composer-footer">
@@ -60,6 +61,7 @@
           <div id="{{ panel_id }}" class="composer-mobile-more-panel" aria-hidden="true">
             <div class="composer-actions">
               <button class="composer-ghost chat-files-btn" type="button" title="Session files / artifacts">Files</button>
+              <button class="composer-ghost chat-mcp-resources-btn" type="button" title="Insert an MCP resource into the message">Resources</button>
               {% if toolbar %}
               <button class="composer-ghost" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
               <button class="composer-ghost chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>

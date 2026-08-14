@@ -218,6 +218,18 @@ def test_get_server_includes_items_and_no_secret_leak(client: TestClient) -> Non
     assert body["env_keys"] == ["TOKEN"]
 
 
+def test_agent_studio_shows_mcp_source_badge(client: TestClient) -> None:
+    client.post(
+        "/api/mcp-servers",
+        json={"id": "badge_srv", "name": "Badge Server", "transport": "stdio", "command": "echo"},
+    )
+    res = client.get("/agents/main")
+    assert res.status_code == 200
+    text = res.text
+    assert 'data-tool-id="mcp__badge_srv__echo"' in text
+    assert "MCP · Badge Server" in text
+
+
 def test_system_page_renders_mcp_section(client: TestClient) -> None:
     res = client.get("/system")
     assert res.status_code == 200

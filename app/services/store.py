@@ -1306,6 +1306,7 @@ class Store:
                             "description": item["description"],
                             "backend": f"mcp:{server_id}",
                             "server_id": server_id,
+                            "server_name": server["name"],
                             "mcp_name": item["name"],
                             "enabled": eff_enabled,
                             "locked": not bool(item["enabled"] and server["enabled"]),

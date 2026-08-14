@@ -226,6 +226,8 @@
     const statusEl = wrap.querySelector('.chat-status');
     const mentionMenu = wrap.querySelector('.mention-menu');
     const slashMenu = wrap.querySelector('.slash-menu');
+    const mcpResourceMenu = wrap.querySelector('.mcp-resource-menu');
+    const mcpResourcesBtn = wrap.querySelector('.chat-mcp-resources-btn');
     const attachBtn = wrap.querySelector('.attach-btn');
     const attachInput = wrap.querySelector('.attachment-input');
     const attachPreview = wrap.querySelector('.attachment-preview');
@@ -260,6 +262,11 @@
     /** @type {{id: string, name: string, description: string}[]} */
     let skillsCache = null;
     let skillsLoading = false;
+    /** @type {{kind: string, serverId: string, itemId: string, id: string, name: string, description: string, args: object[]}[]} */
+    let mcpPromptsCache = null;
+    let mcpPromptsLoading = false;
+    let mcpResourcesCache = null;
+    let mcpResourcesLoading = false;
 
     // Cycle: Manual → Smart → Auto(off) → Manual
     var MODE_CYCLE = ['manual', 'smart', 'off'];
@@ -535,9 +542,17 @@
       }
     }
 
+    function hideMcpResources() {
+      if (mcpResourceMenu) {
+        mcpResourceMenu.classList.add('hidden');
+        mcpResourceMenu.innerHTML = '';
+      }
+    }
+
     function hidePopups() {
       hideMentions();
       hideSlash();
+      hideMcpResources();
     }
 
     function ensureSkills(cb, force) {
@@ -563,6 +578,202 @@
         });
     }
 
+    // MCP prompts entered into the slash menu alongside skills. Only enabled
+    // items on connected, enabled servers are offered.
+    function ensureMcpPrompts(cb, force) {
+      if (mcpPromptsCache && !force) {
+        if (cb) cb(mcpPromptsCache);
+        return;
+      }
+      if (mcpPromptsLoading) return;
+      mcpPromptsLoading = true;
+      fetch('/api/mcp-servers', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : { servers: [] }; })
+        .then(function (data) {
+          var servers = (data.servers || []).filter(function (s) {
+            return s.enabled && s.status === 'connected';
+          });
+          return Promise.all(servers.map(function (s) {
+            return fetch('/api/mcp-servers/' + encodeURIComponent(s.id) + '/prompts', { credentials: 'same-origin' })
+              .then(function (r) { return r.ok ? r.json() : { prompts: [] }; })
+              .then(function (d) {
+                return (d.prompts || []).filter(function (i) { return i.enabled; }).map(function (i) {
+                  return {
+                    kind: 'mcp_prompt',
+                    serverId: s.id,
+                    itemId: i.id,
+                    id: s.id + '/' + i.name,
+                    name: i.name,
+                    description: i.description || i.title || i.name,
+                    args: (i.schema && i.schema.arguments) || [],
+                  };
+                });
+              })
+              .catch(function () { return []; });
+          }));
+        })
+        .then(function (lists) {
+          mcpPromptsCache = [].concat.apply([], lists);
+          mcpPromptsLoading = false;
+          if (cb) cb(mcpPromptsCache);
+        })
+        .catch(function () {
+          mcpPromptsCache = mcpPromptsCache || [];
+          mcpPromptsLoading = false;
+          if (cb) cb(mcpPromptsCache);
+        });
+    }
+
+    // MCP prompts take arguments and are fetched, not slash-expanded —
+    // selecting one must not insert a slash token or auto-send (keeps
+    // services/chat.py skill-expansion semantics untouched).
+    async function selectMcpPrompt(entry) {
+      hideSlash();
+      var argValues = {};
+      var args = entry.args || [];
+      for (var i = 0; i < args.length; i++) {
+        var a = args[i];
+        if (!a.required) continue;
+        var label = a.description ? (a.name + ' — ' + a.description) : a.name;
+        var val = window.prompt(label, '');
+        if (val === null) return; // cancelled
+        argValues[a.name] = val;
+      }
+      try {
+        var res = await fetch('/api/mcp-servers/' + encodeURIComponent(entry.serverId) + '/prompts/get', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: entry.name, arguments: argValues }),
+        });
+        var d = res.ok ? await res.json() : null;
+        if (!d) {
+          Tomo.toast('Could not load MCP prompt', 'err');
+          return;
+        }
+        var text = (d.messages || []).map(function (m) { return m.text; }).join('\n\n');
+        input.value = text;
+        resize();
+        refreshSendBtn();
+        input.focus();
+      } catch (e) {
+        Tomo.toast('Could not load MCP prompt', 'err');
+      }
+    }
+
+    // MCP resources: "Resources" composer action inserts a marked context
+    // block (never raw base64) into the message rather than sending it.
+    function ensureMcpResources(cb, force) {
+      if (mcpResourcesCache && !force) {
+        if (cb) cb(mcpResourcesCache);
+        return;
+      }
+      if (mcpResourcesLoading) return;
+      mcpResourcesLoading = true;
+      fetch('/api/mcp-servers', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : { servers: [] }; })
+        .then(function (data) {
+          var servers = (data.servers || []).filter(function (s) {
+            return s.enabled && s.status === 'connected';
+          });
+          return Promise.all(servers.map(function (s) {
+            return fetch('/api/mcp-servers/' + encodeURIComponent(s.id) + '/resources', { credentials: 'same-origin' })
+              .then(function (r) { return r.ok ? r.json() : { resources: [] }; })
+              .then(function (d) {
+                return (d.resources || []).filter(function (i) {
+                  return i.enabled && i.kind === 'resource';
+                }).map(function (i) {
+                  return {
+                    serverId: s.id,
+                    serverName: s.name,
+                    uri: i.uri,
+                    name: i.title || i.name,
+                    description: i.description,
+                  };
+                });
+              })
+              .catch(function () { return []; });
+          }));
+        })
+        .then(function (lists) {
+          mcpResourcesCache = [].concat.apply([], lists);
+          mcpResourcesLoading = false;
+          if (cb) cb(mcpResourcesCache);
+        })
+        .catch(function () {
+          mcpResourcesCache = mcpResourcesCache || [];
+          mcpResourcesLoading = false;
+          if (cb) cb(mcpResourcesCache);
+        });
+    }
+
+    function renderMcpResourceMenu(items) {
+      if (!mcpResourceMenu) return;
+      if (!items.length) {
+        mcpResourceMenu.innerHTML = '<div class="slash-item" role="option">' +
+          '<span class="slash-name">No MCP resources</span>' +
+          '<span class="slash-desc">Connect a server in System → MCP</span></div>';
+        mcpResourceMenu.classList.remove('hidden');
+        return;
+      }
+      mcpResourceMenu.innerHTML = items.map(function (it, i) {
+        return '<button type="button" class="slash-item" data-idx="' + i + '" role="option">' +
+          '<span class="slash-name">' + esc(it.name) + '</span>' +
+          '<span class="slash-desc">' + esc(it.serverName) + ' · ' + esc(it.description || it.uri) + '</span></button>';
+      }).join('');
+      mcpResourceMenu.classList.remove('hidden');
+      mcpResourceMenu.querySelectorAll('.slash-item[data-idx]').forEach(function (btn) {
+        btn.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          insertMcpResource(items[parseInt(btn.dataset.idx, 10) || 0]);
+        });
+      });
+    }
+
+    async function insertMcpResource(item) {
+      hideMcpResources();
+      try {
+        var res = await fetch('/api/mcp-servers/' + encodeURIComponent(item.serverId) + '/resources/read', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uri: item.uri }),
+        });
+        var d = res.ok ? await res.json() : null;
+        if (!d) {
+          Tomo.toast('Could not read MCP resource', 'err');
+          return;
+        }
+        var blocks = (d.contents || []).map(function (c) {
+          return c.kind === 'text'
+            ? c.text
+            : ('[' + (c.mime_type || 'binary') + ', ' + (c.size_base64_chars || 0) + ' base64 chars — not inserted]');
+        });
+        var marked = '--- MCP resource: ' + item.name + ' (' + item.uri + ') ---\n' +
+          blocks.join('\n\n') + '\n--- end resource ---';
+        input.value = (input.value ? input.value.replace(/\s+$/, '') + '\n\n' : '') + marked + '\n';
+        resize();
+        refreshSendBtn();
+        input.focus();
+      } catch (e) {
+        Tomo.toast('Could not read MCP resource', 'err');
+      }
+    }
+
+    if (mcpResourcesBtn) {
+      mcpResourcesBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (mcpResourceMenu && !mcpResourceMenu.classList.contains('hidden')) {
+          hideMcpResources();
+          return;
+        }
+        hideMentions();
+        hideSlash();
+        closeMoreMenu();
+        ensureMcpResources(function (items) { renderMcpResourceMenu(items); }, false);
+      });
+    }
+
     const APPROVAL_SLASH = [
       { id: 'auto', name: 'auto', description: 'Toggle AUTO — run tools without approval prompts' },
       { id: 'smart', name: 'smart', description: 'Smart approvals — aux LLM assesses risky tools' },
@@ -575,7 +786,7 @@
         if (!q) return true;
         return s.id.indexOf(q) === 0 || s.name.indexOf(q) === 0;
       });
-      var all = skillsCache || [];
+      var all = (skillsCache || []).concat(mcpPromptsCache || []);
       if (!q) {
         return builtins.concat(all.slice(0, Math.max(0, 14 - builtins.length)));
       }
@@ -606,9 +817,10 @@
       }
       slashMenu.innerHTML = slashMatches.map(function (s, i) {
         var active = i === slashIndex ? ' active' : '';
+        var isMcpPrompt = s.kind === 'mcp_prompt';
         var sid = s.id || s.name || '';
-        var label = '/' + sid;
-        var desc = s.description || s.name || '';
+        var label = isMcpPrompt ? ('/' + (s.name || sid)) : ('/' + sid);
+        var desc = (isMcpPrompt ? 'MCP · ' : '') + (s.description || s.name || '');
         return '<button type="button" class="slash-item' + active + '" data-idx="' + i + '" role="option">' +
           '<span class="slash-name">' + esc(label) + '</span>' +
           '<span class="slash-desc">' + esc(desc) + '</span></button>';
@@ -618,7 +830,13 @@
       slashMenu.querySelectorAll('.slash-item').forEach(function (btn) {
         btn.addEventListener('mousedown', function (e) {
           e.preventDefault();
-          insertSlash(parseInt(btn.dataset.idx, 10) || 0);
+          var idx = parseInt(btn.dataset.idx, 10) || 0;
+          var picked = slashMatches[idx];
+          if (picked && picked.kind === 'mcp_prompt') {
+            selectMcpPrompt(picked);
+            return;
+          }
+          insertSlash(idx);
         });
       });
     }
@@ -632,9 +850,13 @@
         return;
       }
       hideMentions();
-      // Re-fetch when opening so mid-session installs show up.
-      ensureSkills(function () {
-        // Re-check — input may have changed while fetch was in flight.
+      // Re-fetch when opening so mid-session installs/servers show up.
+      var forceSkills = !skillsCache || (slashMenu && slashMenu.classList.contains('hidden'));
+      var forcePrompts = !mcpPromptsCache || (slashMenu && slashMenu.classList.contains('hidden'));
+      var pending = 2;
+      function maybeRender() {
+        pending -= 1;
+        if (pending > 0) return;
         var cur = input.value;
         if (!(cur.startsWith('/') && cur.indexOf(' ') < 0)) {
           hideSlash();
@@ -643,7 +865,9 @@
         slashMatches = filterSkills(cur);
         slashIndex = 0;
         renderSlashMenu();
-      }, !skillsCache || (slashMenu && slashMenu.classList.contains('hidden')));
+      }
+      ensureSkills(maybeRender, forceSkills);
+      ensureMcpPrompts(maybeRender, forcePrompts);
     }
 
     function insertSlash(idx) {

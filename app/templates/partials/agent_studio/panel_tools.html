@@ -5,7 +5,10 @@
     {% for t in tools %}
     <div class="tool-row" data-tool-id="{{ t.id }}">
       <div class="meta">
-        <div class="name">{{ t.name }}{% if t.locked %} <span class="badge muted">locked</span>{% endif %}</div>
+        <div class="name">{{ t.name }}
+          {% if t.backend and t.backend.startswith('mcp:') %} <span class="badge accent sm">MCP · {{ t.server_name or t.server_id }}</span>{% endif %}
+          {% if t.locked %} <span class="badge muted">locked</span>{% endif %}
+        </div>
         <div class="desc">{{ t.description }}</div>
       </div>
       <span class="mono faint tool-backend">{{ t.backend }}</span>
