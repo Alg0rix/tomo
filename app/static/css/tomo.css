@@ -4771,7 +4771,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   .composer-reasoning-model { max-width: 58px; }
   .composer-reasoning-trigger-effort { max-width: 40px; }
   .composer-mobile-more {
-    position: relative;
+    position: static;
     display: block;
     flex: 0 0 auto;
     z-index: 20;
@@ -4816,6 +4816,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
     border-radius: 14px;
     background: color-mix(in srgb, var(--surface-2) 96%, #000 4%);
     box-shadow: 0 18px 40px rgba(0, 0, 0, .34), var(--shadow-2);
+    z-index: 30;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
