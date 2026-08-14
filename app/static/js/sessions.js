@@ -1555,6 +1555,13 @@
   chatWrap.addEventListener('tomo:turn-start', function () {
     stopHistoryPoll();
   });
+  chatWrap.addEventListener('tomo:user-turn', function (ev) {
+    appendLiveQuery(ev.detail || {});
+  });
+  chatWrap.addEventListener('tomo:user-turn-removed', function (ev) {
+    var detail = ev.detail || {};
+    removeLiveQuery(detail.queryId || '');
+  });
   chatWrap.addEventListener('tomo:turn-end', function () {
     var sid = chatWrap.dataset.sessionId;
     if (!sid) return;

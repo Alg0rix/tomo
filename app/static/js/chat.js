@@ -890,6 +890,23 @@
       input.style.height = next + 'px';
     }
 
+    function nextQueryIndex() {
+      var max = -1;
+      scroll.querySelectorAll('.turn[data-query-index]').forEach(function (turnEl) {
+        var value = parseInt(turnEl.dataset.queryIndex, 10);
+        if (!isNaN(value)) max = Math.max(max, value);
+      });
+      return max + 1;
+    }
+
+    function notifyUserTurnRemoved(turnEl) {
+      var queryId = turnEl && turnEl.dataset ? turnEl.dataset.queryId : '';
+      if (!queryId) return;
+      wrap.dispatchEvent(new CustomEvent('tomo:user-turn-removed', {
+        detail: { queryId: queryId },
+      }));
+    }
+
     function appendUserBubble(value, queued, attachments, opts) {
       opts = opts || {};
       const empty = scroll.querySelector('.chat-empty');
@@ -915,8 +932,20 @@
       // Match history layout: user bubble lives inside a centered .turn column.
       const turn = document.createElement('div');
       turn.className = 'turn';
+      var queryIndex = nextQueryIndex();
+      var queryId = 'chat-query-' + queryIndex;
+      turn.dataset.queryId = queryId;
+      turn.dataset.queryIndex = String(queryIndex);
       turn.appendChild(bubble);
       scroll.appendChild(turn);
+      wrap.dispatchEvent(new CustomEvent('tomo:user-turn', {
+        detail: {
+          turn: turn,
+          queryId: queryId,
+          queryIndex: queryIndex,
+          text: value || '',
+        },
+      }));
       atBottom();
       return bubble;
     }
@@ -932,7 +961,10 @@
     function removeQueuedBubble(el) {
       if (!el) return;
       var t = el.closest ? el.closest('.turn') : null;
-      if (t) t.remove();
+      if (t) {
+        notifyUserTurnRemoved(t);
+        t.remove();
+      }
       else el.remove();
     }
 
@@ -1089,7 +1121,10 @@
         var dropped = messageQueue.shift();
         if (dropped && dropped.el) {
           var t = dropped.el.closest ? dropped.el.closest('.turn') : null;
-          if (t) t.remove();
+          if (t) {
+            notifyUserTurnRemoved(t);
+            t.remove();
+          }
           else dropped.el.remove();
         }
       }
