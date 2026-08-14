@@ -508,6 +508,10 @@ async def _run_one_gated_tool(
 def _truncate_result(result: Any, *, tool_name: str | None = None) -> str:
     """Truncate oversized tool results to bound the context window."""
     raw = result if isinstance(result, str) else str(result or "")
+    if tool_name == "bash":
+        # Bash applies its own 100k output safety cap. Preserve that complete
+        # result here; shell output has no offset/continuation contract.
+        return raw
     if tool_name == "render_ui":
         limit = _MAX_UI_RESULT_CHARS
     else:

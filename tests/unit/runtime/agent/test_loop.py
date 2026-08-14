@@ -39,10 +39,8 @@ def test_tool_result_caps_are_tool_appropriate() -> None:
     assert "Continue with Continue" not in shortened
     assert "truncated" not in shortened
 
-    unbounded = "output\n" * 1000
-    clipped = _truncate_result(unbounded, tool_name="bash")
-    assert len(clipped) < len(unbounded)
-    assert "[truncated," in clipped
+    bash_output = "output\n" * 1000
+    assert _truncate_result(bash_output, tool_name="bash") == bash_output
 
 
 def _bash_tools() -> list[dict[str, Any]]:
@@ -214,6 +212,21 @@ async def test_bash_path_emits_tool_then_result_then_final() -> None:
     assert result_ev.get("call_id") == tool_ev["call_id"]
     assert final_ev["content"] == _BASH_FINAL
     assert final_ev.get("already_streamed") is True
+
+
+async def test_bash_tool_result_preserves_large_output(monkeypatch) -> None:
+    bash_output = "output\n" * 1000
+    monkeypatch.setattr(
+        "app.runtime.tools.registry.execute",
+        lambda _name, _arguments: bash_output,
+    )
+    llm = ScriptedLLM(tool_then_text(bash_call("generate output"), _BASH_FINAL))
+
+    events = await _collect("run: generate output", llm=llm, tools=_bash_tools())
+
+    result_ev = next(e for e in events if e["kind"] == "tool_result")
+    assert result_ev["tool"] == "bash"
+    assert result_ev["result"] == bash_output
 
 
 async def test_recall_path_returns_seeded_fact(tmp_path) -> None:
