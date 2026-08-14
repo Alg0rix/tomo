@@ -471,11 +471,207 @@
     }
   }
 
+  var queryTracking = { scroll: null, handler: null, raf: 0 };
+  var queryTargetTimer = null;
+
+  function queryId(index) {
+    return 'chat-query-' + String(index);
+  }
+
+  function firstLine(text) {
+    return String(text == null ? '' : text)
+      .split(/\r?\n/)
+      .map(function (line) { return line.trim(); })
+      .find(function (line) { return !!line; }) || '';
+  }
+
+  function previewText(text, maxChars) {
+    var value = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+    if (!value) return '';
+    var limit = Math.max(1, Number(maxChars) || 120);
+    return value.length > limit ? value.slice(0, limit - 1) + '…' : value;
+  }
+
+  function buildQueryRecords(entries) {
+    var records = [];
+    var current = null;
+    (entries || []).forEach(function (entry) {
+      if (!entry) return;
+      if (entry.type === 'user') {
+        current = {
+          index: records.length,
+          id: queryId(records.length),
+          prompt: String(entry.content || '').trim(),
+          context: '',
+        };
+        records.push(current);
+        return;
+      }
+      if (!current || current.context) return;
+      if (entry.type === 'final' || entry.type === 'subagent_final') {
+        var context = String(entry.content || '').trim();
+        if (context) current.context = context;
+      }
+    });
+    return records;
+  }
+
+  function queryRail() {
+    return document.getElementById('chatQueryRail');
+  }
+
+  function queryTurn(queryIdValue) {
+    var scroll = chatWrap.querySelector('.chat-scroll');
+    if (!scroll || !queryIdValue) return null;
+    return Array.from(scroll.querySelectorAll('.turn[data-query-id]')).find(function (turnEl) {
+      return turnEl.dataset.queryId === queryIdValue;
+    }) || null;
+  }
+
+  function setActiveQuery(queryIdValue) {
+    var rail = queryRail();
+    if (!rail) return;
+    rail.querySelectorAll('.chat-query-item.is-active').forEach(function (item) {
+      item.classList.remove('is-active');
+      item.removeAttribute('aria-current');
+    });
+    if (!queryIdValue) return;
+    var active = Array.from(rail.querySelectorAll('.chat-query-item')).find(function (item) {
+      return item.dataset.queryId === queryIdValue;
+    });
+    if (active) {
+      active.classList.add('is-active');
+      active.setAttribute('aria-current', 'location');
+    }
+  }
+
+  function scheduleActiveQuery() {
+    if (queryTracking.raf) return;
+    var raf = window.requestAnimationFrame || function (cb) { return window.setTimeout(cb, 0); };
+    queryTracking.raf = raf(function () {
+      queryTracking.raf = 0;
+      syncActiveQuery();
+    });
+  }
+
+  function syncActiveQuery() {
+    var scroll = chatWrap.querySelector('.chat-scroll');
+    if (!scroll) return;
+    var turns = Array.from(scroll.querySelectorAll('.turn[data-query-id]'));
+    if (!turns.length) {
+      setActiveQuery('');
+      return;
+    }
+    var bounds = scroll.getBoundingClientRect();
+    var center = bounds.top + (scroll.clientHeight / 2);
+    var nearest = turns.reduce(function (best, turnEl) {
+      var rect = turnEl.getBoundingClientRect();
+      var distance = Math.abs((rect.top + (rect.height / 2)) - center);
+      return !best || distance < best.distance ? { turn: turnEl, distance: distance } : best;
+    }, null);
+    setActiveQuery(nearest && nearest.turn.dataset.queryId);
+  }
+
+  function bindQueryTracking(scroll) {
+    if (!scroll) return;
+    if (queryTracking.scroll && queryTracking.handler) {
+      queryTracking.scroll.removeEventListener('scroll', queryTracking.handler);
+    }
+    queryTracking.scroll = scroll;
+    queryTracking.handler = scheduleActiveQuery;
+    scroll.addEventListener('scroll', queryTracking.handler, { passive: true });
+    scheduleActiveQuery();
+  }
+
+  function createQueryRailItem(record) {
+    var item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'chat-query-item';
+    item.dataset.queryId = record.id;
+    var label = previewText(record.prompt, 260) || 'User message';
+    item.setAttribute('aria-label', 'Jump to user message: ' + label);
+
+    var marker = document.createElement('span');
+    marker.className = 'chat-query-marker';
+    marker.setAttribute('aria-hidden', 'true');
+
+    var card = document.createElement('span');
+    card.className = 'chat-query-card';
+    card.setAttribute('aria-hidden', 'true');
+
+    var title = document.createElement('span');
+    title.className = 'chat-query-title';
+    title.textContent = previewText(firstLine(record.prompt), 74) || 'User message';
+
+    var context = document.createElement('span');
+    context.className = 'chat-query-context';
+    context.textContent = previewText(record.context, 150) || 'Waiting for a response…';
+    if (!record.context) context.classList.add('is-empty');
+
+    card.appendChild(title);
+    card.appendChild(context);
+    item.appendChild(marker);
+    item.appendChild(card);
+    item.addEventListener('click', function () {
+      var turn = queryTurn(item.dataset.queryId);
+      if (!turn) return;
+      var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      turn.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
+      setActiveQuery(item.dataset.queryId);
+      turn.classList.remove('is-query-target');
+      void turn.offsetWidth;
+      turn.classList.add('is-query-target');
+      if (queryTargetTimer) window.clearTimeout(queryTargetTimer);
+      queryTargetTimer = window.setTimeout(function () {
+        turn.classList.remove('is-query-target');
+        queryTargetTimer = null;
+      }, reduced ? 0 : 900);
+    });
+    item.addEventListener('focus', function () { setActiveQuery(item.dataset.queryId); });
+    return item;
+  }
+
+  function renderQueryRail(records) {
+    var rail = queryRail();
+    if (!rail) return;
+    rail.innerHTML = '';
+    rail.hidden = !records.length;
+    records.forEach(function (record) { rail.appendChild(createQueryRailItem(record)); });
+  }
+
+  function appendLiveQuery(detail) {
+    var rail = queryRail();
+    if (!rail || !detail || !detail.queryId) return;
+    if (rail.querySelector('.chat-query-item[data-query-id="' + detail.queryId + '"]')) return;
+    rail.hidden = false;
+    rail.appendChild(createQueryRailItem({
+      id: detail.queryId,
+      index: detail.queryIndex,
+      prompt: String(detail.text || ''),
+      context: '',
+    }));
+    scheduleActiveQuery();
+  }
+
+  function removeLiveQuery(queryIdValue) {
+    var rail = queryRail();
+    if (!rail || !queryIdValue) return;
+    var item = Array.from(rail.querySelectorAll('.chat-query-item')).find(function (candidate) {
+      return candidate.dataset.queryId === queryIdValue;
+    });
+    if (item) item.remove();
+    if (!rail.querySelector('.chat-query-item')) rail.hidden = true;
+    scheduleActiveQuery();
+  }
+
   function renderHistory(entries) {
     const scroll = chatWrap.querySelector('.chat-scroll');
+    var queryRecords = buildQueryRecords(entries);
+    renderQueryRail(queryRecords);
     scroll.innerHTML = '';
     if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(chatWrap);
     if (!entries.length) {
+      bindQueryTracking(scroll);
       scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
       stickChatScrollBottom(scroll);
       return;
@@ -490,6 +686,7 @@
     var turn = null;
     var turnId = 0;
     var delegateCounter = 0;          // unique per delegate call within a turn (legacy)
+    var queryCursor = 0;
     var agentToKey = {};               // agent_id → current buffer key (legacy fallback)
     var subagentSet = new Set();
     var subagentBuffers = new Map();  // key → buffer
@@ -525,10 +722,14 @@
       return agentToKey[aid] || aid;
     }
 
-    function startTurn() {
+    function startTurn(record) {
       turnId++;
       turn = document.createElement('div');
       turn.className = 'turn';
+      if (record) {
+        turn.dataset.queryId = record.id;
+        turn.dataset.queryIndex = String(record.index);
+      }
       scroll.appendChild(turn);
       swarmCard = null;
       subagentSet = new Set();
@@ -852,7 +1053,14 @@
     // ── Process entries ─────────────────────────────────────────────
     entries.forEach(function (e, entryIdx) {
       if (e.type === 'user') {
-        startTurn();
+        var queryRecord = queryRecords[queryCursor] || {
+          index: queryCursor,
+          id: queryId(queryCursor),
+          prompt: e.content || '',
+          context: '',
+        };
+        queryCursor++;
+        startTurn(queryRecord);
         var row = document.createElement('div');
         row.className = 'msg user';
         var chips = '';
@@ -1084,6 +1292,7 @@
       if (reopen) openDetailPanel(reopen);
     }
 
+    bindQueryTracking(scroll);
     stickChatScrollBottom(scroll);
   }
 
