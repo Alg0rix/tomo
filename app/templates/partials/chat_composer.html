@@ -1,4 +1,4 @@
-{% macro chat_composer(placeholder='Message…', hint='', toolbar=False) %}
+{% macro chat_composer(placeholder='Message…', hint='', toolbar=False, panel_id='composer-more-panel') %}
 {# Unified command bar. Send/Stop are mutually exclusive via .is-generating.
    Keep class hooks: chat-input, chat-send, chat-stop, attach-*, ctx-usage-*,
    chat-status, chat-files-btn, chat-clear, mention-menu, slash-menu. #}
@@ -47,28 +47,39 @@
             <div class="composer-reasoning-flyout hidden" role="menu" aria-label="Reasoning effort options"></div>
           </div>
         </div>
-        <div class="composer-actions">
-          <button class="composer-ghost chat-files-btn" type="button" title="Session files / artifacts">Files</button>
-          {% if toolbar %}
-          <button class="composer-ghost" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
-          <button class="composer-ghost chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>
-          {% endif %}
+        <div class="composer-mobile-more">
+          <button class="composer-mobile-more-btn" type="button"
+                  aria-label="More chat options" aria-expanded="false"
+                  aria-controls="{{ panel_id }}">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/>
+            </svg>
+          </button>
+          <div id="{{ panel_id }}" class="composer-mobile-more-panel" aria-hidden="true">
+            <div class="composer-actions">
+              <button class="composer-ghost chat-files-btn" type="button" title="Session files / artifacts">Files</button>
+              {% if toolbar %}
+              <button class="composer-ghost" id="editSwarmBtn" type="button" title="Edit participants">Agents</button>
+              <button class="composer-ghost chat-clear" id="chatClearBtn" type="button" title="Clear conversation">Clear</button>
+              {% endif %}
+            </div>
+            <div class="composer-meta">
+              <button type="button" class="ctx-usage-trigger" aria-label="Context usage" aria-haspopup="dialog" aria-expanded="false" title="Context usage">
+                <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
+                <span class="ctx-usage-label">Context</span>
+              </button>
+              {% if toolbar %}
+              <span class="composer-status chat-status" id="chatStatus" title="Connection">
+                <span class="composer-status-dot" aria-hidden="true"></span>
+                Online
+              </span>
+              {% endif %}
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="composer-toolbar-right">
-        <div class="composer-meta">
-          <button type="button" class="ctx-usage-trigger" aria-label="Context usage" aria-haspopup="dialog" aria-expanded="false" title="Context usage">
-            <span class="ctx-usage-ring" style="--ctx-pct:0"><span class="ctx-usage-pct">—</span></span>
-            <span class="ctx-usage-label">Context</span>
-          </button>
-          {% if toolbar %}
-          <span class="composer-status chat-status" id="chatStatus" title="Connection">
-            <span class="composer-status-dot" aria-hidden="true"></span>
-            Online
-          </span>
-          {% endif %}
-        </div>
         {# Single action slot: CSS shows Send XOR Stop based on .is-generating #}
         <div class="composer-submit">
           <button class="stop chat-stop" type="button" aria-label="Stop generating" title="Stop generating" disabled>

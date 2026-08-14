@@ -32,6 +32,8 @@
         <span id="chatWorkplaceBadge">—</span>
       </div>
 
+      <nav id="chatQueryRail" class="chat-query-rail" aria-label="User messages" hidden></nav>
+
       <div class="chat-scroll" data-chat-panel="chat">
         <div class="chat-empty">
           <div class="big">Start talking</div>
@@ -41,7 +43,8 @@
 
       {{ chat_composer(
            'Message…  @ agent · / skill',
-           toolbar=True
+           toolbar=True,
+           panel_id='session-composer-more'
          ) }}
     </div>
     {% include 'partials/chat_agent_panel.html' %}

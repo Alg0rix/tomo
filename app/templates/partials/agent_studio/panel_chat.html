@@ -23,7 +23,7 @@
         {% endfor %}
         {% endif %}
       </div>
-      {{ chat_composer('Message ' + agent.name + '…') }}
+      {{ chat_composer('Message ' + agent.name + '…', panel_id='agent-composer-more') }}
     </div>
     {% include 'partials/chat_agent_panel.html' %}
   </div>
