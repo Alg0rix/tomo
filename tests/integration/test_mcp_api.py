@@ -216,3 +216,15 @@ def test_get_server_includes_items_and_no_secret_leak(client: TestClient) -> Non
     assert len(body["items"]) == 3
     assert "super-secret" not in res.text
     assert body["env_keys"] == ["TOKEN"]
+
+
+def test_system_page_renders_mcp_section(client: TestClient) -> None:
+    res = client.get("/system")
+    assert res.status_code == 200
+    text = res.text
+    assert "MCP" in text
+    assert 'id="sec-mcp"' in text
+    assert 'id="mcpServerList"' in text
+    assert 'id="addMcpServerBtn"' in text
+    assert 'id="mcpFormCard"' in text
+    assert 'id="mcpTransport"' in text

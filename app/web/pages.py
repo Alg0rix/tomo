@@ -280,6 +280,7 @@ async def system_page(request: Request, _: AuthDep):
         tools=store.list_tools(),
         llm_profiles=store.list_llm_profiles(),
         default_model_id=store.get_default_llm_profile_id(),
+        mcp_servers=store.list_mcp_servers(),
         modules=store.list_modules(),
         shared_channels=store.list_shared_channels(),
         users=store.list_users(),

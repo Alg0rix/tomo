@@ -1,0 +1,87 @@
+{% from 'partials/page_head.html' import section_head %}
+
+<section id="sec-mcp" class="sys-section" style="display:none">
+  {{ section_head('MCP', 'Local (stdio) and remote (Streamable HTTP) Model Context Protocol servers. Credentials are encrypted at rest; servers and individual tools/resources/prompts can be disabled without deleting config.') }}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>MCP servers</h3>
+      <button class="btn primary sm" type="button" id="addMcpServerBtn">+ Add server</button>
+    </div>
+    <div class="card-body" id="mcpServerList" style="padding:8px 18px">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="mcpFormCard" style="margin-bottom:16px">
+    <div class="card-head"><h3 id="mcpFormTitle">Add MCP server</h3></div>
+    <div class="card-body" style="padding:16px 18px">
+      <form id="mcpForm" autocomplete="off" onsubmit="return false;">
+        <input type="hidden" id="mcpFormMode" value="add">
+        <input type="hidden" id="mcpServerId" value="">
+        <div class="config-row"><div class="lbl">Name</div>
+          <input class="input" id="mcpName" required placeholder="GitHub" style="max-width:220px">
+        </div>
+        <div class="config-row"><div class="lbl">Transport</div>
+          <select class="input" id="mcpTransport" style="max-width:220px">
+            <option value="stdio">stdio (local command)</option>
+            <option value="streamable_http">Streamable HTTP (remote)</option>
+          </select>
+        </div>
+
+        <div id="mcpStdioFields">
+          <div class="config-row"><div class="lbl">Command</div>
+            <input class="input" id="mcpCommand" placeholder="npx" style="max-width:220px" spellcheck="false">
+          </div>
+          <div class="config-row"><div class="lbl">Args</div>
+            <input class="input" id="mcpArgs" placeholder="-y, @modelcontextprotocol/server-filesystem" style="max-width:420px" spellcheck="false">
+          </div>
+          <div class="config-row" style="align-items:flex-start"><div class="lbl">Environment</div>
+            <div style="flex:1;max-width:420px">
+              <div id="mcpEnvRows"></div>
+              <button class="btn ghost sm" type="button" id="mcpAddEnvRow" style="margin-top:6px">+ Add variable</button>
+              <p class="faint" style="margin:6px 0 0;font-size:12px">Values are encrypted at rest. Leave a value as <code>••••</code> on edit to keep it.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="mcpHttpFields" class="hidden">
+          <div class="config-row"><div class="lbl">URL</div>
+            <input class="input" type="url" id="mcpUrl" placeholder="https://mcp.example.com/mcp" style="max-width:420px" spellcheck="false">
+          </div>
+          <div class="config-row" style="align-items:flex-start"><div class="lbl">Headers</div>
+            <div style="flex:1;max-width:420px">
+              <div id="mcpHeaderRows"></div>
+              <button class="btn ghost sm" type="button" id="mcpAddHeaderRow" style="margin-top:6px">+ Add header</button>
+              <p class="faint" style="margin:6px 0 0;font-size:12px">Values are encrypted at rest. Leave a value as <code>••••</code> on edit to keep it.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-row"><div class="lbl">Enabled</div>
+          <label class="toggle"><input type="checkbox" id="mcpEnabled" checked><span class="track"></span></label>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn ghost" type="button" id="mcpCancel">Cancel</button>
+          <button class="btn primary sm" type="button" id="mcpSave">Save server</button>
+          <button class="btn ghost sm hidden" type="button" id="mcpRefreshBtn">Refresh / Test connection</button>
+          <span class="faint" id="mcpStatusLine" style="align-self:center"></span>
+        </div>
+      </form>
+
+      <div id="mcpCapabilities" class="hidden" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+        <div class="mcp-cap-group">
+          <h4 class="mcp-cap-title">Tools</h4>
+          <div id="mcpToolsList" class="mcp-cap-list"><div class="empty">No tools discovered.</div></div>
+        </div>
+        <div class="mcp-cap-group">
+          <h4 class="mcp-cap-title">Resources</h4>
+          <div id="mcpResourcesList" class="mcp-cap-list"><div class="empty">No resources discovered.</div></div>
+        </div>
+        <div class="mcp-cap-group">
+          <h4 class="mcp-cap-title">Prompts</h4>
+          <div id="mcpPromptsList" class="mcp-cap-list"><div class="empty">No prompts discovered.</div></div>
+        </div>
+        <pre id="mcpCapResult" class="mcp-cap-result hidden"></pre>
+      </div>
+    </div>
+  </div>
+</section>

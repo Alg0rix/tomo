@@ -6431,3 +6431,13 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   .dashboard-aside { padding: 26px 16px 36px; }
   .chat-home-recent-row .ts { display: none; }
 }
+
+/* MCP (System → MCP): env/header key-value editor + capability panels */
+.mcp-kv-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.mcp-kv-row .input { flex: 1; min-width: 0; }
+.mcp-cap-group { margin-bottom: 18px; }
+.mcp-cap-group:last-of-type { margin-bottom: 0; }
+.mcp-cap-title { font-size: 12.5px; font-weight: 650; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.mcp-cap-list { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.mcp-cap-row .title { white-space: normal; }
+.mcp-cap-result { margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }

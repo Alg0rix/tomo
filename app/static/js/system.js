@@ -16,7 +16,7 @@
 
   function fromHash() {
     var h = (location.hash || '#general').replace('#', '');
-    show(h in { general: 1, models: 1, memory: 1, tools: 1, modules: 1, shared_channel: 1, users: 1 } ? h : 'general');
+    show(h in { general: 1, models: 1, memory: 1, tools: 1, mcp: 1, modules: 1, shared_channel: 1, users: 1 } ? h : 'general');
   }
 
   nav.querySelectorAll('a').forEach(function (a) {

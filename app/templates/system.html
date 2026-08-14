@@ -7,6 +7,7 @@
     {% include 'partials/settings/models.html' %}
     {% include 'partials/settings/memory.html' %}
     {% include 'partials/settings/tools.html' %}
+    {% include 'partials/settings/mcp.html' %}
     {% include 'partials/settings/modules.html' %}
     {% include 'partials/settings/shared_channel.html' %}
     {% include 'partials/settings/users.html' %}
@@ -15,5 +16,6 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', path='js/modules.js') }}"></script>
+<script src="{{ url_for('static', path='js/mcp.js') }}"></script>
 <script src="{{ url_for('static', path='js/system.js') }}?v=modules1"></script>
 {% endblock %}
