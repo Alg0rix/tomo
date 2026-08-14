@@ -604,3 +604,70 @@ async def test_early_close_persists_seen_event_and_clears_busy(tmp_path, monkeyp
     assert "tool_call" in types
     # aclose cascade cleared busy without the trailing busy-false state.
     assert store.get_agent("main")["busy"] is False
+
+
+async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leaking_secrets(
+    tmp_path, monkeypatch
+) -> None:
+    """A namespaced ``mcp__`` tool call flows through the same SSE/persist path.
+
+    ``execute_async`` is exercised for real (no ``asyncio.to_thread`` built-in
+    path for this call); only the manager's live-session call is mocked, so
+    the configured server secret never has to touch a real transport.
+    """
+    from app.runtime.mcp import mcp_manager
+    from app.runtime.permissions.modes import set_session_mode
+
+    store.rebind(tmp_path / "chat_mcp.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    set_session_mode(sid, "off")  # bypass HITL — permission routing is covered elsewhere
+
+    store.create_mcp_server(
+        {
+            "id": "gh",
+            "name": "GitHub",
+            "transport": "streamable_http",
+            "url": "https://mcp.example/mcp",
+            "headers": {"Authorization": "Bearer sekrit-do-not-leak"},
+        }
+    )
+
+    async def fake_call_tool(runtime_id, arguments):
+        assert runtime_id == "mcp__gh__create_issue"
+        assert arguments == {"title": "Bug report"}
+        return "Created issue #42"
+
+    monkeypatch.setattr(mcp_manager, "call_tool", fake_call_tool)
+
+    mcp_call = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="call_mcp",
+                name="mcp__gh__create_issue",
+                arguments={"title": "Bug report"},
+            )
+        ],
+    )
+    _patch_llm(monkeypatch, tool_then_text(mcp_call, "Filed it."))
+
+    events = await _collect(sid, "file a bug titled Bug report")
+
+    assert [n for n in _names(events) if n in ("tool", "tool_result")] == [
+        "tool",
+        "tool_result",
+    ]
+    tool_ev = _data(events, "tool")[0]
+    assert tool_ev["tool"] == "mcp__gh__create_issue"
+    result_ev = _data(events, "tool_result")[0]
+    assert result_ev["result"] == "Created issue #42"
+    assert result_ev["error"] is False
+
+    history = store.get_session_history(sid)
+    call = next(h for h in history if h["type"] == "tool_call")
+    assert call["function"] == "mcp__gh__create_issue"
+    out = next(h for h in history if h["type"] == "tool_output")
+    assert out["content"] == "Created issue #42"
+
+    raw = json.dumps([dict(h) for h in history]) + json.dumps(events)
+    assert "sekrit-do-not-leak" not in raw

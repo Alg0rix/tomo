@@ -1,12 +1,17 @@
 """MCP connection manager: lifecycle, discovery, reconnect, and calls.
 
-Uses an injected ``session_factory`` (fake session/stack) so no test ever
-starts a subprocess or opens a network listener.
+Most tests use an injected ``session_factory`` (fake session/stack) so no
+subprocess or network listener starts. A few at the bottom exercise the real
+SDK transports against a repo-local fixture script — still fully local: a
+stdio pipe to a script, and Streamable HTTP over an in-process ASGI
+transport, never a public endpoint.
 """
 
 from __future__ import annotations
 
+import sys
 from contextlib import AsyncExitStack
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -256,3 +261,111 @@ async def test_close_all_closes_every_session_once(manager) -> None:
     await manager.close_all()
 
     assert manager.connected_server_ids() == set()
+
+
+# --- real-transport coverage (SDK-backed fixture, no injected session_factory) ---
+# Exercises app.runtime.mcp.manager's actual stdio_client/streamable_http_client
+# wiring end to end. Still fully local: stdio spawns a repo-local script over
+# a pipe, and Streamable HTTP runs over an in-process ASGI transport — no
+# subprocess-external network, no public endpoint.
+
+_FIXTURE_PATH = Path(__file__).resolve().parents[3] / "fakes" / "mcp_server.py"
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_real_discovery_and_call(manager) -> None:
+    store.create_mcp_server(
+        {
+            "id": "fixture",
+            "name": "fixture",
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [str(_FIXTURE_PATH)],
+        }
+    )
+
+    result = await manager.connect_and_discover("fixture")
+    assert result["status"] == "connected"
+
+    items = store.list_mcp_items("fixture")
+    kinds = {i["kind"]: i for i in items}
+    assert kinds["tool"]["name"] == "echo"
+    assert kinds["resource"]["uri"] == "test://greeting"
+    assert kinds["prompt"]["name"] == "review"
+
+    out = await manager.call_tool("mcp__fixture__echo", {"text": "hi"})
+    assert "echo: hi" in out
+
+    resource = await manager.read_resource("fixture", "test://greeting")
+    assert resource["contents"][0]["text"] == "hello from fixture"
+
+    prompt = await manager.get_prompt("fixture", "review", {"topic": "the PR"})
+    assert "the PR" in prompt["messages"][0]["text"]
+
+    await manager.close_server("fixture")
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_transport_with_injected_asgi_client(manager) -> None:
+    import httpx
+
+    sys.path.insert(0, str(_FIXTURE_PATH.parent))
+    import mcp_server as fixture_module
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    seen_headers: dict[str, list[str]] = {}
+
+    # DNS-rebind protection checks the Host header against an allowlist that's
+    # only meaningful for a real bound port; the injected ASGI transport
+    # never listens on the network, so it's safe to disable here.
+    fixture_module.mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+    app = fixture_module.mcp.streamable_http_app()
+
+    class _CapturingASGITransport(httpx.ASGITransport):
+        async def handle_async_request(self, request):
+            seen_headers["authorization"] = request.headers.get("authorization")
+            return await super().handle_async_request(request)
+
+    async def factory(server):
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        stack = AsyncExitStack()
+        http_client = await stack.enter_async_context(
+            httpx.AsyncClient(
+                transport=_CapturingASGITransport(app=app),
+                base_url="http://localhost",
+                headers=dict(server.get("headers") or {}),
+            )
+        )
+        read, write, _get_sid = await stack.enter_async_context(
+            streamable_http_client("http://localhost/mcp", http_client=http_client)
+        )
+        session = await stack.enter_async_context(ClientSession(read, write))
+        init_result = await session.initialize()
+        return stack, session, init_result
+
+    manager.session_factory = factory
+    store.create_mcp_server(
+        {
+            "id": "http_fixture",
+            "name": "http_fixture",
+            "transport": "streamable_http",
+            "url": "http://localhost/mcp",
+            "headers": {"Authorization": "Bearer test-token"},
+        }
+    )
+
+    # Normally uvicorn drives the ASGI lifespan (which starts the session
+    # manager's task group) — bypassing it via ASGITransport means we must
+    # enter that context ourselves.
+    async with fixture_module.mcp.session_manager.run():
+        result = await manager.connect_and_discover("http_fixture")
+        assert result["status"] == "connected"
+        assert seen_headers.get("authorization") == "Bearer test-token"
+
+        out = await manager.call_tool("mcp__http_fixture__echo", {"text": "over http"})
+        assert "echo: over http" in out
+        await manager.close_server("http_fixture")
