@@ -98,7 +98,7 @@ async def test_parallel_readonly_tools_in_one_round(monkeypatch) -> None:
         calls.append(args.get("path") or name)
         return f"content:{args.get('path')}"
 
-    monkeypatch.setattr("app.runtime.agent.loop.execute", _exec)
+    monkeypatch.setattr("app.runtime.tools.registry.execute", _exec)
     # Bypass permission gate evaluate → always allow.
     from app.runtime.permissions.gate import Decision
 

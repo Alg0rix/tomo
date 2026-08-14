@@ -79,7 +79,7 @@ from app.runtime.permissions.modes import get_effective_mode
 from app.runtime.permissions.smart import command_from_args, smart_approve
 from app.runtime.tools import sandbox
 from app.runtime.tools.delegate import parse_delegated_id
-from app.runtime.tools.registry import execute, get_openai_tools
+from app.runtime.tools.registry import execute_async, get_openai_tools
 
 _logger = logging.getLogger(__name__)
 
@@ -435,7 +435,7 @@ async def _execute_authorized(call: ToolCall, decision: Decision) -> str:
     args = call.arguments if isinstance(call.arguments, dict) else {}
     grant_tok = set_outside_grant(decision.grant)
     try:
-        return await asyncio.to_thread(execute, call.name, args)
+        return await execute_async(call.name, args)
     except Exception as exc:
         return f"Error: {exc}"
     finally:
@@ -668,7 +668,14 @@ async def run_turn(
             elif agent_id:
                 from app.services import store
 
-                tool_schemas = store.get_agent_openai_tools(agent_id)
+                from app.runtime.mcp import mcp_manager
+
+                connected = await mcp_manager.ensure_for_servers(
+                    store.list_mcp_server_ids_for_agent(agent_id)
+                )
+                tool_schemas = store.get_agent_openai_tools(
+                    agent_id, connected_server_ids=connected
+                )
             else:
                 tool_schemas = get_openai_tools()
             limit = (
@@ -1234,7 +1241,7 @@ async def _stream_delegate_bundle(
         reason = "delegate"
     reason = reason.strip()
 
-    delegate_result = await asyncio.to_thread(execute, call.name, call.arguments)
+    delegate_result = await execute_async(call.name, call.arguments)
     target = parse_delegated_id(str(delegate_result))
     delegate_error = tool_result_is_error(delegate_result)
     sub_result = ""

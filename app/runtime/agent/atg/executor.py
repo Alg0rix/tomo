@@ -210,7 +210,7 @@ async def _execute_one(
     to be turned into ``tool``/``tool_result`` events by the caller.
     """
     from app.runtime.agent.atg.graph import MAX_NODE_ATTEMPTS
-    from app.runtime.tools.registry import execute as _execute_tool
+    from app.runtime.tools.registry import execute_async as _execute_tool
 
     # Mark running before execute
     try:
@@ -238,7 +238,7 @@ async def _execute_one(
                 "atg_node": node.id,
             }
             continue
-        result = await asyncio.to_thread(_execute_tool, tool, args)
+        result = await _execute_tool(tool, args)
         has_error = _is_error_result(result)
         ts_end = time.time()
         node.tool = tool

@@ -65,7 +65,7 @@ def _describe(findings: list[Finding]) -> str:
 
 
 def _allowlist_keys(findings: list[Finding]) -> list[str]:
-    return [f.key for f in findings if f.kind in {"escape", "dangerous"}]
+    return [f.key for f in findings if f.kind in {"escape", "dangerous", "external"}]
 
 
 def evaluate(
@@ -141,7 +141,7 @@ def evaluate(
         )
 
     description = _describe(findings)
-    has_permanent = any(f.kind in {"dangerous", "escape"} for f in findings)
+    has_permanent = any(f.kind in {"dangerous", "escape", "external"} for f in findings)
     return Decision(
         allowed=False,
         needs_hitl=True,

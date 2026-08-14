@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-FindingKind = Literal["hardline", "user_deny", "escape", "dangerous"]
+FindingKind = Literal["hardline", "user_deny", "escape", "dangerous", "external"]
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class Assessment:
         return tuple(out)
 
     def allowlist_keys(self) -> list[str]:
-        return [f.key for f in self.findings if f.kind in {"escape", "dangerous"}]
+        return [f.key for f in self.findings if f.kind in {"escape", "dangerous", "external"}]
 
 
 __all__ = ["Finding", "FindingKind", "Assessment"]

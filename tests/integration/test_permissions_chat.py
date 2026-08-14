@@ -47,3 +47,29 @@ async def test_gated_bash_escape_approval() -> None:
     assert any(e.get("kind") == "approval_required" for e in events)
     result = next(e for e in events if e.get("kind") == "tool_result")
     assert str(result.get("result", "")).startswith("BLOCKED")
+
+
+@pytest.mark.asyncio
+async def test_gated_mcp_tool_requires_approval_then_allows() -> None:
+    """Every ``mcp__`` call is an external finding — gated even with no escape/dangerous match."""
+    set_session_mode("sess_mcp", "manual")
+    sandbox.bind_agent("main")
+    call = ToolCall(
+        id="c1",
+        name="mcp__github__create_issue",
+        arguments={"title": "x"},
+    )
+    events: list[dict] = []
+
+    async def _consume() -> None:
+        async for ev in _run_one_gated_tool(call, session_id="sess_mcp"):
+            events.append(ev)
+            if ev.get("kind") == "approval_required":
+                hitl.resolve_approval(ev["id"], "once")
+
+    await _consume()
+    assert any(e.get("kind") == "approval_required" for e in events)
+    result = next(e for e in events if e.get("kind") == "tool_result")
+    # Approved, then dispatched — no live MCP server configured, so the
+    # manager itself returns a bounded error string (not a permission block).
+    assert not str(result.get("result", "")).startswith("BLOCKED")

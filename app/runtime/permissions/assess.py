@@ -86,6 +86,17 @@ def assess(
             if dang is not None:
                 findings.append(dang)
 
+    # Every MCP call is untrusted third-party code — flag it regardless of
+    # what its own (untrusted) annotations claim about safety.
+    if tool.startswith("mcp__"):
+        findings.append(
+            Finding(
+                kind="external",
+                key=f"mcp:{tool}",
+                description=f"external MCP tool {tool}",
+            )
+        )
+
     return Assessment(findings=findings)
 
 

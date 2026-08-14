@@ -437,7 +437,7 @@ async def test_user_message_none_does_not_duplicate_history_user(tmp_path) -> No
 async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
     """A result starting with ``Error`` but not ``Error:`` is not an error."""
     monkeypatch.setattr(
-        "app.runtime.agent.loop.execute",
+        "app.runtime.tools.registry.execute",
         lambda name, args: "Errorless computation succeeded",
     )
     llm = ScriptedLLM(tool_then_text(bash_call("echo 2"), _BASH_FINAL))
@@ -476,7 +476,7 @@ async def test_successful_delegate_runs_subagent_and_parent_continues(
     the delegate tool result; the parent loop *continues* to a final answer."""
     store.rebind(tmp_path / "delegate_sub.db")
     monkeypatch.setattr(
-        "app.runtime.agent.loop.execute",
+        "app.runtime.tools.registry.execute",
         lambda name, args: "Delegated to ops",
     )
     # Parent: call delegate, then give a final answer.
@@ -518,7 +518,7 @@ async def test_delegate_streams_subagent_events_before_tool_result(
             return "up 1 day"
         return f"Error: unexpected tool {name}"
 
-    monkeypatch.setattr("app.runtime.agent.loop.execute", _exec)
+    monkeypatch.setattr("app.runtime.tools.registry.execute", _exec)
 
     parent_llm = ScriptedLLM([_delegate_call(), text_reply("Parent wrap-up.")])
     # Ops: one bash call then a final answer.
@@ -562,7 +562,7 @@ async def test_delegate_streams_subagent_events_before_tool_result(
 async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
     """A rejected delegate is a normal tool error; loop keeps iterating."""
     monkeypatch.setattr(
-        "app.runtime.agent.loop.execute",
+        "app.runtime.tools.registry.execute",
         lambda name, args: "Error: 'ghost' is not a member of this session",
     )
     llm = ScriptedLLM(
