@@ -230,6 +230,9 @@
     const attachInput = wrap.querySelector('.attachment-input');
     const attachPreview = wrap.querySelector('.attachment-preview');
     const composerEl = wrap.querySelector('.composer');
+    const moreWrap = wrap.querySelector('.composer-mobile-more');
+    const moreBtn = moreWrap && moreWrap.querySelector('.composer-mobile-more-btn');
+    const morePanel = moreWrap && moreWrap.querySelector('.composer-mobile-more-panel');
     const modeBtn = wrap.querySelector('.composer-mode') || document.getElementById('composerModeBtn');
     const reasoningEl = wrap.querySelector('.composer-reasoning');
     const reasoningTrigger = reasoningEl && reasoningEl.querySelector('.composer-reasoning-trigger');
@@ -264,6 +267,49 @@
     var reasoningState = null;
 
     function currentSessionId() { return wrap.dataset.sessionId || ''; }
+
+    function closeMoreMenu() {
+      if (!moreWrap || !moreBtn || !morePanel) return;
+      moreBtn.setAttribute('aria-expanded', 'false');
+      morePanel.setAttribute('aria-hidden', 'true');
+      moreWrap.classList.remove('is-open');
+    }
+
+    function openMoreMenu() {
+      if (!moreWrap || !moreBtn || !morePanel) return;
+      moreBtn.setAttribute('aria-expanded', 'true');
+      morePanel.setAttribute('aria-hidden', 'false');
+      moreWrap.classList.add('is-open');
+    }
+
+    function toggleMoreMenu() {
+      if (!moreBtn || !morePanel) return;
+      if (moreBtn.getAttribute('aria-expanded') === 'true') closeMoreMenu();
+      else openMoreMenu();
+    }
+
+    function onMoreDocumentPointerDown(event) {
+      if (moreWrap && !moreWrap.contains(event.target)) closeMoreMenu();
+    }
+
+    function onMoreEscape(event) {
+      if (event.key === 'Escape') closeMoreMenu();
+    }
+
+    if (moreBtn && morePanel && moreWrap) {
+      moreBtn.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMoreMenu();
+      });
+      morePanel.addEventListener('click', function (event) {
+        var action = event.target.closest('button');
+        if (!action || action === moreBtn) return;
+        window.setTimeout(closeMoreMenu, 0);
+      });
+      document.addEventListener('pointerdown', onMoreDocumentPointerDown);
+      document.addEventListener('keydown', onMoreEscape);
+    }
 
     function closeReasoningMenus() {
       if (reasoningPopover) reasoningPopover.classList.add('hidden');
@@ -1116,6 +1162,7 @@
      */
     async function stopTurn() {
       if (!sending && !es) return;
+      closeMoreMenu();
       // Drop queued follow-ups — stop means stop.
       while (messageQueue.length) {
         var dropped = messageQueue.shift();
@@ -1420,6 +1467,7 @@
         return;
       }
       hidePopups();
+      closeMoreMenu();
       input.value = '';
       resize();
       uploadedAttachments = [];
@@ -1721,6 +1769,9 @@
         syncGeneratingUi();
         document.removeEventListener('click', onReasoningDocumentClick);
         document.removeEventListener('keydown', onReasoningEscape);
+        document.removeEventListener('pointerdown', onMoreDocumentPointerDown);
+        document.removeEventListener('keydown', onMoreEscape);
+        closeMoreMenu();
         delete wrap.dataset.liveStream;
       },
       send: send,
