@@ -27,6 +27,7 @@ from app.models.mixins import schedules as schedules_store
 from app.models.mixins import sessions as sessions_store
 from app.models.mixins import skills as skills_store
 from app.models.mixins import llm_profiles as llm_profiles_store
+from app.models.mixins import mcp as mcp_store
 from app.models.mixins import settings as settings_store
 from app.models.mixins import tools as tools_store
 from app.models.mixins import users as users_store
@@ -66,6 +67,9 @@ class Store:
         migrate(self._conn)
         seed_if_empty(self._conn)
         users_store.ensure_bootstrap_admin(self._conn, ADMIN_PASSWORD)
+        # A persisted "connected" status is never trustworthy after a restart
+        # (live SDK sessions are process-local and do not survive it).
+        mcp_store.reset_runtime_statuses(self._conn)
         try:
             from modules.registry import sync_module_rows
 
@@ -589,6 +593,74 @@ class Store:
             )
             llm_profiles_store.set_default_model_id(self._conn, "default")
             return prof
+
+    # -- MCP servers/items (SQLite) ---------------------------------------
+    def list_mcp_servers(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return mcp_store.list_servers(self._conn)
+
+    def get_mcp_server(
+        self, server_id: str, *, include_secrets: bool = False
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.get_server(self._conn, server_id, include_secrets=include_secrets)
+
+    def create_mcp_server(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return mcp_store.create_server(self._conn, data)
+
+    def update_mcp_server(self, server_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.update_server(self._conn, server_id, data)
+
+    def delete_mcp_server(self, server_id: str) -> bool:
+        with self._lock:
+            return mcp_store.delete_server(self._conn, server_id)
+
+    def list_mcp_items(
+        self, server_id: str, *, kind: str | None = None, enabled_only: bool = False
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            return mcp_store.list_items(self._conn, server_id, kind=kind, enabled_only=enabled_only)
+
+    def replace_mcp_items(self, server_id: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self._lock:
+            return mcp_store.replace_items(self._conn, server_id, items)
+
+    def set_mcp_item_enabled(self, item_id: str, enabled: bool) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.set_item_enabled(self._conn, item_id, enabled)
+
+    def get_mcp_item(self, item_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.get_item(self._conn, item_id)
+
+    def set_mcp_status(
+        self,
+        server_id: str,
+        status: str,
+        message: str = "",
+        *,
+        connected_at: float | None = None,
+        discovered_at: float | None = None,
+        server_info: dict[str, Any] | None = None,
+        capabilities: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.set_status(
+                self._conn,
+                server_id,
+                status,
+                message,
+                connected_at=connected_at,
+                discovered_at=discovered_at,
+                server_info=server_info,
+                capabilities=capabilities,
+            )
+
+    def reset_mcp_runtime_statuses(self) -> None:
+        with self._lock:
+            mcp_store.reset_runtime_statuses(self._conn)
 
     def is_setup_complete(self) -> bool:
         return bool(self.get_settings().get("setup_complete", True))
