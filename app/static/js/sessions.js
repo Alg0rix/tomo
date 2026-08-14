@@ -542,7 +542,36 @@
     if (active) {
       active.classList.add('is-active');
       active.setAttribute('aria-current', 'location');
+      var railTop = rail.scrollTop;
+      var railBottom = railTop + rail.clientHeight;
+      var railRect = rail.getBoundingClientRect();
+      var activeRect = active.getBoundingClientRect();
+      var itemTop = activeRect.top - railRect.top + railTop;
+      var itemBottom = itemTop + activeRect.height;
+      var edgePadding = 18;
+      if (itemTop < railTop + edgePadding || itemBottom > railBottom - edgePadding) {
+        rail.scrollTop = Math.max(
+          0,
+          itemTop - Math.max(0, (rail.clientHeight - active.offsetHeight) / 2)
+        );
+      }
     }
+  }
+
+  function syncQueryRailLayout() {
+    var rail = queryRail();
+    if (!rail) return;
+    if (rail.hidden) {
+      rail.style.justifyContent = '';
+      return;
+    }
+
+    // Centering is useful for a short rail, but it can place the first items
+    // above the scrollport once the list becomes taller than the rail.
+    // Measure from a top-aligned state so the overflow case is deterministic.
+    rail.style.justifyContent = 'flex-start';
+    var isOverflowing = rail.scrollHeight > rail.clientHeight + 1;
+    rail.style.justifyContent = isOverflowing ? 'flex-start' : 'center';
   }
 
   function scheduleActiveQuery() {
@@ -637,6 +666,7 @@
     rail.innerHTML = '';
     rail.hidden = !records.length;
     records.forEach(function (record) { rail.appendChild(createQueryRailItem(record)); });
+    syncQueryRailLayout();
   }
 
   function appendLiveQuery(detail) {
@@ -650,6 +680,9 @@
       prompt: String(detail.text || ''),
       context: '',
     }));
+    syncQueryRailLayout();
+    var scroll = chatWrap.querySelector('.chat-scroll');
+    if (scroll && queryTracking.scroll !== scroll) bindQueryTracking(scroll);
     scheduleActiveQuery();
   }
 
@@ -661,6 +694,7 @@
     });
     if (item) item.remove();
     if (!rail.querySelector('.chat-query-item')) rail.hidden = true;
+    syncQueryRailLayout();
     scheduleActiveQuery();
   }
 
@@ -1562,6 +1596,7 @@
     var detail = ev.detail || {};
     removeLiveQuery(detail.queryId || '');
   });
+  window.addEventListener('resize', syncQueryRailLayout);
   chatWrap.addEventListener('tomo:turn-end', function () {
     var sid = chatWrap.dataset.sessionId;
     if (!sid) return;
