@@ -9,6 +9,7 @@ from app.runtime.mcp.discovery import (
     normalize_tool,
     paginate_mcp_list,
 )
+from app.runtime.mcp.manager import McpConnectionManager, mcp_manager
 from app.runtime.mcp.names import is_mcp_runtime_id, runtime_tool_id, split_runtime_tool_id
 from app.runtime.mcp.results import (
     render_prompt_result,
@@ -28,4 +29,6 @@ __all__ = [
     "render_tool_result",
     "render_resource_result",
     "render_prompt_result",
+    "McpConnectionManager",
+    "mcp_manager",
 ]

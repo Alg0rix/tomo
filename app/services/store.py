@@ -635,6 +635,10 @@ class Store:
         with self._lock:
             return mcp_store.get_item(self._conn, item_id)
 
+    def get_mcp_item_by_runtime_id(self, runtime_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return mcp_store.get_item_by_runtime_id(self._conn, runtime_id)
+
     def set_mcp_status(
         self,
         server_id: str,
