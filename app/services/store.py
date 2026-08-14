@@ -1233,7 +1233,7 @@ class Store:
 
     # -- agent-derived platform views ------------------------------------
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
-        """Registry tools with per-agent enablement from ``agent_tools``."""
+        """Registry + MCP tools with per-agent enablement from ``agent_tools``."""
         from app.runtime.artifacts.fs import ARTIFACT_TOOLS
 
         catalog = self.list_tools()
@@ -1247,6 +1247,9 @@ class Store:
             if t["id"] in ARTIFACT_TOOLS:
                 row["locked"] = True
                 row["enabled"] = arts_on
+            out.append(row)
+        for row in self._mcp_rows_for_agent(agent_id):
+            row.pop("schema", None)
             out.append(row)
         return out
 
@@ -1267,10 +1270,81 @@ class Store:
         else:
             for tid in ARTIFACT_TOOLS:
                 locked[tid] = False
-        known = [t["id"] for t in self.list_tools()]
+        known = [t["id"] for t in self.list_tools()] + [
+            r["id"] for r in self.list_mcp_tool_catalog()
+        ]
         with self._lock:
             tools_store.set_for_agent(self._conn, agent_id, locked, known)
-            return tools_store.list_for_agent(self._conn, agent_id, self.list_tools())
+        return self.get_agent_tools(agent_id)
+
+    # -- MCP tool catalog merge --------------------------------------------
+    def list_mcp_tool_catalog(
+        self, *, connected_server_ids: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Global MCP ``tool``-kind items as catalog rows (mirrors ``list_tools()``).
+
+        ``enabled`` folds in both the item's own toggle and its server's
+        enablement; when ``connected_server_ids`` is given, a tool whose
+        server isn't currently live is also treated as not enabled (Global
+        Constraint: advertise MCP tools only once the pre-turn reconnect
+        confirms the server is live) — but the row still appears (cached
+        discovery stays visible for repair in the UI).
+        """
+        with self._lock:
+            servers = {s["id"]: s for s in mcp_store.list_servers(self._conn)}
+            rows: list[dict[str, Any]] = []
+            for server_id, server in servers.items():
+                items = mcp_store.list_items(self._conn, server_id, kind="tool")
+                for item in items:
+                    eff_enabled = bool(item["enabled"] and server["enabled"])
+                    if connected_server_ids is not None and server_id not in connected_server_ids:
+                        eff_enabled = False
+                    rows.append(
+                        {
+                            "id": item["runtime_id"],
+                            "name": item["title"] or item["name"],
+                            "description": item["description"],
+                            "backend": f"mcp:{server_id}",
+                            "server_id": server_id,
+                            "mcp_name": item["name"],
+                            "enabled": eff_enabled,
+                            "locked": not bool(item["enabled"] and server["enabled"]),
+                            "schema": item["schema"],
+                        }
+                    )
+        return rows
+
+    def _mcp_rows_for_agent(
+        self, agent_id: str, *, connected_server_ids: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """MCP catalog merged with per-agent enablement.
+
+        Rows the catalog marks ineligible (globally disabled, or — when
+        ``connected_server_ids`` is passed — not currently connected) stay
+        off unconditionally: ``tools_store.list_for_agent`` defaults an id
+        with no per-agent row to *enabled*, which would otherwise resurrect
+        a globally-off or disconnected tool.
+        """
+        mcp_catalog = self.list_mcp_tool_catalog(connected_server_ids=connected_server_ids)
+        off_ids = {r["id"] for r in mcp_catalog if not r["enabled"]}
+        with self._lock:
+            rows = tools_store.list_for_agent(self._conn, agent_id, mcp_catalog)
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            r = dict(row)
+            if r["id"] in off_ids:
+                r["enabled"] = False
+            out.append(r)
+        return out
+
+    def list_mcp_server_ids_for_agent(self, agent_id: str) -> set[str]:
+        """Server ids backing at least one MCP tool enabled for ``agent_id``.
+
+        Feeds the pre-turn reconnect step — only servers an agent actually
+        wants tools from are worth connecting before a turn.
+        """
+        rows = self._mcp_rows_for_agent(agent_id)
+        return {r["server_id"] for r in rows if r.get("enabled") and r.get("server_id")}
 
     def get_enabled_tool_ids(self, agent_id: str) -> set[str]:
         """Tool names advertised to the LLM for ``agent_id``."""
@@ -1297,9 +1371,15 @@ class Store:
         enabled = {t["id"]: bool(t.get("enabled")) for t in rows}
         self.set_agent_tools(agent_id, enabled)
 
-    def get_agent_openai_tools(self, agent_id: str) -> list[dict[str, Any]]:
-        """OpenAI schemas filtered to tools enabled for ``agent_id``."""
-        return get_openai_tools(self.get_enabled_tool_ids(agent_id))
+    def get_agent_openai_tools(
+        self, agent_id: str, *, connected_server_ids: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """OpenAI schemas: built-ins enabled for ``agent_id`` + live, enabled MCP tools."""
+        schemas = get_openai_tools(self.get_enabled_tool_ids(agent_id))
+        for row in self._mcp_rows_for_agent(agent_id, connected_server_ids=connected_server_ids):
+            if row.get("enabled") and row.get("schema"):
+                schemas.append(row["schema"])
+        return schemas
 
     def get_agent_skills(self, agent_id: str) -> list[dict[str, Any]]:
         with self._lock:

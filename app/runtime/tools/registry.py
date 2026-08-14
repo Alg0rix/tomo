@@ -13,6 +13,7 @@ and missing backends produce ``"Error: ..."`` strings rather than raising.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -225,10 +226,28 @@ def reset_registry() -> None:
     _default_registry = None
 
 
+def is_mcp_tool_name(name: str) -> bool:
+    """True for a namespaced ``mcp__<server>__<tool>`` runtime id."""
+    from app.runtime.mcp.names import is_mcp_runtime_id
+
+    return is_mcp_runtime_id(name)
+
+
+async def execute_async(name: str, arguments: dict[str, Any]) -> str:
+    """Dispatch async: MCP calls await the live session; built-ins run in a worker thread."""
+    if is_mcp_tool_name(name):
+        from app.runtime.mcp import mcp_manager
+
+        return await mcp_manager.call_tool(name, arguments)
+    return await asyncio.to_thread(execute, name, arguments)
+
+
 __all__ = [
     "ToolRegistry",
     "get_registry",
     "get_openai_tools",
     "execute",
+    "execute_async",
+    "is_mcp_tool_name",
     "reset_registry",
 ]
