@@ -20,6 +20,7 @@ dependencies = [
     "pdf-inspector>=0.2.0",
     "apscheduler>=3.10.4,<4",
     "firecrawl-anydoc>=0.1.8",
+    "mcp>=1.27,<2",
 ]
 
 [build-system]
