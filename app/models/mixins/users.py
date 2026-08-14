@@ -176,6 +176,11 @@ def delete_user(conn: sqlite3.Connection, user_id: str) -> bool:
     return True
 
 
+# Bootstrap runs once in prod; tests rebind empty DBs hundreds of times.
+# Same password → same usable hash. scrypt is ~60ms here, so cache it.
+_bootstrap_hash_cache: dict[str, str] = {}
+
+
 def ensure_bootstrap_admin(conn: sqlite3.Connection, password: str) -> None:
     """Insert the default ``admin`` account when the users table is empty."""
     if count_users(conn) > 0:
@@ -183,7 +188,10 @@ def ensure_bootstrap_admin(conn: sqlite3.Connection, password: str) -> None:
     now = _now()
     # Dev bootstrap may use a short seed password; API create/update still enforce MIN.
     pw = password if password else "tomo"
-    pw_hash = hash_password(pw, allow_short=True)
+    pw_hash = _bootstrap_hash_cache.get(pw)
+    if pw_hash is None:
+        pw_hash = hash_password(pw, allow_short=True)
+        _bootstrap_hash_cache[pw] = pw_hash
     conn.execute(
         "INSERT INTO users (id, username, password_hash, display_name, role, enabled, "
         "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",

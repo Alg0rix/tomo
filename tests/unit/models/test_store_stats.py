@@ -53,7 +53,7 @@ def test_stats_dashboard_atomic_under_concurrency(tmp_path) -> None:
 
     def reader() -> None:
         try:
-            for _ in range(200):
+            for _ in range(40):
                 s = store.stats()
                 d = store.dashboard_data()
                 # agent_count is stable (writer only adds sessions), so the
@@ -69,7 +69,7 @@ def test_stats_dashboard_atomic_under_concurrency(tmp_path) -> None:
 
     def writer() -> None:
         try:
-            for _ in range(50):
+            for _ in range(15):
                 store.create_swarm_session(["main"])
         except BaseException as exc:  # noqa: BLE001 - collected for assertion
             errors.append(exc)

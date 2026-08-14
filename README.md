@@ -196,8 +196,11 @@ per-agent "on".
 ### Tests
 
 ```bash
-uv run pytest
-uv run ruff check app cli tests   # same rules as CI lint
+uv run pytest                         # parallel (pytest-xdist -n auto)
+uv run pytest -m "not integration"    # fast local loop
+uv run pytest --lf                    # last failures only
+uv run pytest -n0                     # serial (pdb / debugging)
+uv run ruff check app cli tests       # same rules as CI lint
 ```
 
 CI workflows:

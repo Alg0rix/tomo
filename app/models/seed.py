@@ -363,6 +363,10 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
     try:
         if _count(conn, "agents") == 0:
             _seed_agents(conn)
+        else:
+            # Agents already present (rebind / copied template) — still drop
+            # missing SYSTEM.md files. Cheap and idempotent.
+            _seed_agent_homes()
         if _count(conn, "settings") == 0:
             _seed_settings(conn)
         if _count(conn, "knowledge_entries") == 0:

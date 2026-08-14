@@ -7,6 +7,7 @@ returning rows as :class:`sqlite3.Row` so columns are accessible by name.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -27,4 +28,9 @@ def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Tests rebuild/rebind SQLite constantly; skip fsync. Never set in prod.
+    if os.environ.get("TOMO_TEST_FAST_SQLITE"):
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA temp_store = MEMORY")
     return conn

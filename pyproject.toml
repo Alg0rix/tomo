@@ -43,12 +43,18 @@ package = true
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16.1",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = ["-n", "auto", "--dist=loadfile"]
+markers = [
+    "integration: tests that drive the full app/store stack",
+    "slow: unusually slow tests",
+]
 
 # Baseline flake8-equivalent rules so CI stays green; expand selectively later.
 [tool.ruff]

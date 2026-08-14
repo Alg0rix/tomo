@@ -598,7 +598,8 @@ class OpenAICompatClient:
             base_url=self._base_url,
             api_key=resolved_key,
             timeout=self._timeout,
-            max_retries=2,
+            # Mock transport is deterministic; SDK retries just burn ~1s each.
+            max_retries=0 if transport is not None else 2,
             http_client=http_client,
         )
 
