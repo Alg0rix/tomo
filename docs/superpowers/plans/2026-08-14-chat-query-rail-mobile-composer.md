@@ -90,7 +90,7 @@ Do not put the rail inside `.chat-scroll`; it must remain an overlay sibling so 
 
 - [ ] **Step 2: Group secondary composer controls without duplicating them**
 
-Keep the textarea, attach button, permission mode, reasoning block, primary submit slot, and current IDs unchanged. Move the existing `.composer-actions` and `.composer-meta` into this wrapper inside `.composer-toolbar-right`, before `.composer-submit`:
+Keep the textarea, attach button, permission mode, reasoning block, primary submit slot, and current IDs unchanged. Place the wrapper after the reasoning block inside `.composer-toolbar-left`; its desktop `display: contents` styling will keep the existing left-side action flow while exposing both existing secondary groups to the desktop row:
 
 ```html
 <div class="composer-mobile-more">
