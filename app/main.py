@@ -76,6 +76,12 @@ async def _lifespan(_app: FastAPI):
     finally:
         await stop_scheduler()
         await stop_telegram_supervisor()
+        try:
+            from app.runtime.mcp import mcp_manager
+
+            await mcp_manager.close_all()
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:

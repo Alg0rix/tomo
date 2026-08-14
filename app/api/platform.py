@@ -16,6 +16,11 @@ from app.schemas import (
     KnowledgeEntryUpdate,
     LLMProfileCreate,
     LLMProfileUpdate,
+    McpItemEnabled,
+    McpPromptGet,
+    McpResourceRead,
+    McpServerCreate,
+    McpServerUpdate,
     ScheduleCreate,
     ScheduleUpdate,
     UserCreate,
@@ -715,6 +720,145 @@ async def set_default_llm_profile(profile_id: str, _: AuthDep):
         raise HTTPException(status_code=404, detail="Profile not found")
     store.set_default_llm_profile(profile_id)
     return {"success": True, "default_id": profile_id}
+
+
+# -- MCP servers -----------------------------------------------------------
+
+
+def _mcp_server_or_404(server_id: str) -> dict:
+    server = store.get_mcp_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return server
+
+
+@router.get("/mcp-servers")
+async def list_mcp_servers(_: AuthDep):
+    return {"servers": store.list_mcp_servers()}
+
+
+@router.post("/mcp-servers")
+async def create_mcp_server(body: McpServerCreate, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    try:
+        server = store.create_mcp_server(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if server["enabled"]:
+        server = await mcp_manager.connect_and_discover(server["id"])
+    return server
+
+
+@router.get("/mcp-servers/{server_id}")
+async def get_mcp_server(server_id: str, _: AuthDep):
+    server = _mcp_server_or_404(server_id)
+    return {**server, "items": store.list_mcp_items(server_id)}
+
+
+@router.put("/mcp-servers/{server_id}")
+async def update_mcp_server(server_id: str, body: McpServerUpdate, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    _mcp_server_or_404(server_id)
+    try:
+        server = store.update_mcp_server(server_id, body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    if server["enabled"]:
+        server = await mcp_manager.connect_and_discover(server_id)
+    else:
+        await mcp_manager.close_server(server_id)
+        server = store.set_mcp_status(server_id, "disabled", "server is disabled")
+    return server
+
+
+@router.delete("/mcp-servers/{server_id}")
+async def delete_mcp_server(server_id: str, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    _mcp_server_or_404(server_id)
+    await mcp_manager.close_server(server_id)
+    store.delete_mcp_server(server_id)
+    return {"success": True}
+
+
+@router.post("/mcp-servers/{server_id}/refresh")
+async def refresh_mcp_server(server_id: str, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    server = _mcp_server_or_404(server_id)
+    if not server["enabled"]:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    # Force a fresh connect + full re-discovery rather than reusing any live session.
+    await mcp_manager.close_server(server_id)
+    return await mcp_manager.connect_and_discover(server_id)
+
+
+@router.put("/mcp-servers/{server_id}/items/{item_id}")
+async def set_mcp_item_enabled(server_id: str, item_id: str, body: McpItemEnabled, _: AuthDep):
+    server = _mcp_server_or_404(server_id)
+    item = store.get_mcp_item(item_id)
+    if not item or item["server_id"] != server_id:
+        raise HTTPException(status_code=404, detail="MCP item not found")
+    if not server["enabled"]:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    updated = store.set_mcp_item_enabled(item_id, body.enabled)
+    return updated
+
+
+@router.get("/mcp-servers/{server_id}/resources")
+async def list_mcp_resources(server_id: str, _: AuthDep):
+    _mcp_server_or_404(server_id)
+    return {
+        "resources": store.list_mcp_items(server_id, kind="resource")
+        + store.list_mcp_items(server_id, kind="resource_template"),
+    }
+
+
+def _find_enabled_item(server_id: str, *, kind: str, match: str, by: str) -> dict:
+    for item in store.list_mcp_items(server_id, kind=kind):
+        if item.get(by) == match:
+            if not item["enabled"]:
+                raise HTTPException(status_code=409, detail=f"MCP {kind} is disabled")
+            return item
+    raise HTTPException(status_code=404, detail=f"MCP {kind} not found")
+
+
+@router.post("/mcp-servers/{server_id}/resources/read")
+async def read_mcp_resource(server_id: str, body: McpResourceRead, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    server = _mcp_server_or_404(server_id)
+    if not server["enabled"]:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    _find_enabled_item(server_id, kind="resource", match=body.uri, by="uri")
+    try:
+        return await mcp_manager.read_resource(server_id, body.uri)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.get("/mcp-servers/{server_id}/prompts")
+async def list_mcp_prompts(server_id: str, _: AuthDep):
+    _mcp_server_or_404(server_id)
+    return {"prompts": store.list_mcp_items(server_id, kind="prompt")}
+
+
+@router.post("/mcp-servers/{server_id}/prompts/get")
+async def get_mcp_prompt(server_id: str, body: McpPromptGet, _: AuthDep):
+    from app.runtime.mcp import mcp_manager
+
+    server = _mcp_server_or_404(server_id)
+    if not server["enabled"]:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    _find_enabled_item(server_id, kind="prompt", match=body.name, by="name")
+    try:
+        return await mcp_manager.get_prompt(server_id, body.name, body.arguments)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/users")

@@ -1,5 +1,12 @@
 """Pydantic request/response schemas."""
 
+from .mcp import (
+    McpItemEnabled,
+    McpPromptGet,
+    McpResourceRead,
+    McpServerCreate,
+    McpServerUpdate,
+)
 from .models import (
     Agent,
     AgentCreate,
@@ -42,6 +49,11 @@ __all__ = [
     "KnowledgeEntryUpdate",
     "LLMProfileCreate",
     "LLMProfileUpdate",
+    "McpItemEnabled",
+    "McpPromptGet",
+    "McpResourceRead",
+    "McpServerCreate",
+    "McpServerUpdate",
     "ReasoningEffortUpdate",
     "ScheduleCreate",
     "ScheduleUpdate",
