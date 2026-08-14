@@ -91,7 +91,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q --durations=20
 
       - name: Build wheel
         if: matrix.python-version == '3.12'
