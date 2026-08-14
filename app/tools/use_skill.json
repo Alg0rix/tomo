@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "use_skill",
-      "description": "Load a skill's instructions by id. Optional file loads a package support doc (references/, templates/, scripts/, assets/) relative to the skill root — prefer this over read_file for absolute skill paths outside the workplace.",
+      "description": "Load a skill's instructions by id. Long bodies and support files are paginated with offset/limit; optional file loads a package support doc relative to the skill root.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -18,6 +18,14 @@
           "file": {
             "type": "string",
             "description": "Optional relative path inside the skill package, e.g. references/structure.md or SKILL.md."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Zero-based character offset for the next page (default 0)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum body characters per page (default 12000, max 100000)."
           }
         },
         "required": ["skill_id"]

@@ -4,11 +4,96 @@ from __future__ import annotations
 
 from typing import Any
 
+_DEFAULT_LIST_LIMIT = 24
+_MAX_LIST_LIMIT = 100
+_DESCRIPTION_LIMIT = 120
+_PAGE_CHAR_LIMIT = 3600
+_DEFAULT_BODY_LIMIT = 12_000
+_MAX_BODY_LIMIT = 100_000
+
+
+def _compact_description(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= _DESCRIPTION_LIMIT:
+        return text
+    return text[: _DESCRIPTION_LIMIT - 1].rstrip() + "…"
+
+
+def _skill_line(skill: dict[str, Any]) -> str:
+    skill_id = str(skill.get("id") or "").strip()
+    name = str(skill.get("name") or "").strip()
+    source = str(skill.get("source") or "catalog").strip() or "catalog"
+    label = skill_id
+    if name and name.casefold() != skill_id.casefold():
+        label += f": {name}"
+    description = _compact_description(skill.get("description"))
+    suffix = f" — {description}" if description else ""
+    return f"{label} [{source}]{suffix}"
+
+
+def _paginate_text(text: str, *, offset: int, limit: int) -> tuple[str, bool]:
+    total = len(text)
+    if total == 0:
+        return "", False
+    if offset >= total:
+        return (
+            f"Error: offset {offset} is past end of content ({total} chars). "
+            f"Use offset=0..{max(0, total - 1)}."
+        ), True
+    end = min(offset + limit, total)
+    page = text[offset:end]
+    if end < total:
+        page += (
+            f"\n\n… more content after char {end} ({total - end} char(s) left). "
+            f"Continue with offset={end}."
+        )
+    return page, False
+
+
+def _body_page_args(arguments: dict[str, Any]) -> tuple[int, int] | str:
+    try:
+        offset = int(arguments.get("offset", 0))
+    except (TypeError, ValueError):
+        return "Error: 'offset' must be a non-negative integer"
+    if offset < 0:
+        return "Error: 'offset' must be a non-negative integer"
+    try:
+        limit = int(arguments.get("limit", _DEFAULT_BODY_LIMIT))
+    except (TypeError, ValueError):
+        return "Error: 'limit' must be an integer"
+    if limit < 1:
+        return "Error: 'limit' must be at least 1"
+    return offset, min(limit, _MAX_BODY_LIMIT)
+
 
 def list_skills_run(arguments: dict[str, Any]) -> str:
-    """List skills from the store; always returns a string."""
-    if arguments is not None and not isinstance(arguments, dict):
+    """List a compact, paginated skill catalog; always returns a string."""
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
         return "Error: list_skills expects a dict of arguments"
+
+    query_value = arguments.get("query", "")
+    if query_value is None:
+        query_value = ""
+    if not isinstance(query_value, str):
+        return "Error: 'query' must be a string"
+    query = query_value.strip()
+
+    try:
+        offset = int(arguments.get("offset", 0))
+    except (TypeError, ValueError):
+        return "Error: 'offset' must be a non-negative integer"
+    if offset < 0:
+        return "Error: 'offset' must be a non-negative integer"
+
+    try:
+        limit = int(arguments.get("limit", _DEFAULT_LIST_LIMIT))
+    except (TypeError, ValueError):
+        return "Error: 'limit' must be an integer"
+    if limit < 1:
+        return "Error: 'limit' must be at least 1"
+    limit = min(limit, _MAX_LIST_LIMIT)
 
     from app.services import store
 
@@ -16,18 +101,48 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
         store.sync_skills()
     except Exception:
         pass
-    skills = store.list_skills()
+    skills = [s for s in store.list_skills() if s.get("enabled", True)]
+    if query:
+        needle = query.casefold()
+        skills = [
+            s
+            for s in skills
+            if needle
+            in " ".join(
+                str(s.get(field) or "")
+                for field in ("id", "name", "description")
+            ).casefold()
+        ]
     if not skills:
-        return "No skills registered"
-    lines = []
-    for s in skills:
-        if not s.get("enabled", True):
-            continue
-        src = s.get("source") or "catalog"
-        lines.append(
-            f"{s.get('id')}: {s.get('name')} [{src}] — {s.get('description', '')}"
+        return f"No skills matched query: {query!r}" if query else "No skills registered"
+
+    total = len(skills)
+    if offset >= total:
+        return (
+            f"No skills at offset {offset}; {total} matching skill(s) available. "
+            f"Use offset=0..{total - 1}."
         )
-    return "\n".join(lines) if lines else "No skills registered"
+
+    page: list[str] = []
+    start = offset
+    used_chars = len(f"Skills {start + 1}-{start + 1} of {total}")
+    for skill in skills[offset : offset + limit]:
+        line = _skill_line(skill)
+        # Keep the catalog page below the normal tool-result budget so this
+        # structured response is never cut mid-entry by the agent loop.
+        if page and used_chars + len(line) + 1 > _PAGE_CHAR_LIMIT:
+            break
+        page.append(line)
+        used_chars += len(line) + 1
+
+    end = start + len(page)
+    lines = [f"Skills {start + 1}-{end} of {total}", *page]
+    if end < total:
+        hint = f"More skills available. Continue with offset={end} (limit={limit})"
+        if query:
+            hint += f" for query={query!r}"
+        lines.extend(["", hint + "."])
+    return "\n".join(lines)
 
 
 def use_skill_run(arguments: dict[str, Any]) -> str:
@@ -38,6 +153,10 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     if not isinstance(skill_id, str) or not skill_id.strip():
         return "Error: 'skill_id' argument must be a non-empty string"
     skill_id = skill_id.strip()
+    page_args = _body_page_args(arguments)
+    if isinstance(page_args, str):
+        return page_args
+    offset, limit = page_args
     file_path = (
         arguments.get("file")
         or arguments.get("path")
@@ -77,6 +196,9 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
         except Exception as exc:
             return f"Error: failed to read skill file: {exc}"
         name = (skill or {}).get("name") or (discovered.name if discovered else skill_id)
+        content, invalid_offset = _paginate_text(content, offset=offset, limit=limit)
+        if invalid_offset:
+            return content
         return (
             f"Skill file: {name} ({sid}) → {file_path}\n\n"
             f"{content}"
@@ -110,10 +232,11 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
         if len(support) > 25:
             parts.append(f"  … +{len(support) - 25} more")
     parts.append("")
-    if body:
-        parts.append(body)
-    else:
-        parts.append(((skill or {}).get("description") or "").strip() or "(no body)")
+    body_text = body or ((skill or {}).get("description") or "").strip() or "(no body)"
+    body_page, invalid_offset = _paginate_text(body_text, offset=offset, limit=limit)
+    if invalid_offset:
+        return body_page
+    parts.append(body_page)
     return "\n".join(parts)
 
 

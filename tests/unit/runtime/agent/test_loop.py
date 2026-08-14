@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.runtime.agent.loop import run_turn
+from app.runtime.agent.loop import _truncate_result, run_turn
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import store
@@ -26,6 +26,23 @@ from tests.fakes.llm import ScriptedLLM, bash_call, recall_call, text_reply, too
 _DEFAULT_REPLY = "Ready to help."
 _BASH_FINAL = "The command finished."
 _RECALL_FINAL = "I found the relevant knowledge base entry."
+
+
+def test_tool_result_caps_are_tool_appropriate() -> None:
+    catalog = "skill-1: useful skill\n" * 300
+    assert _truncate_result(catalog, tool_name="list_skills") == catalog
+
+    paginated = "header\n" + ("content\n" * 4000) + "Continue with offset=42."
+    shortened = _truncate_result(paginated, tool_name="read_file")
+    assert len(shortened) < len(paginated)
+    assert "Continue with offset=42." in shortened
+    assert "Continue with Continue" not in shortened
+    assert "truncated" not in shortened
+
+    unbounded = "output\n" * 1000
+    clipped = _truncate_result(unbounded, tool_name="bash")
+    assert len(clipped) < len(unbounded)
+    assert "[truncated," in clipped
 
 
 def _bash_tools() -> list[dict[str, Any]]:

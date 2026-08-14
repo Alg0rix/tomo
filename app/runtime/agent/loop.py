@@ -52,6 +52,7 @@ import collections
 import itertools
 import json
 import logging
+import re
 from typing import Any, AsyncIterator
 
 from app.runtime.agent.compress import maybe_compress_messages
@@ -87,6 +88,19 @@ _logger = logging.getLogger(__name__)
 _LOOP_WINDOW = 10
 _LOOP_THRESHOLD = 5
 _MAX_UI_RESULT_CHARS = 64_000
+
+# These tools already expose pagination/continuation contracts. Give their
+# complete pages room to reach the UI/model, while keeping the default cap for
+# unbounded command or delegated output.
+_PAGINATED_RESULT_LIMITS = {
+    "list_skills": 12_000,
+    "read_file": 16_000,
+    "web_fetch": 16_000,
+    "use_skill": 16_000,
+}
+_CONTINUATION_RE = re.compile(
+    r"Continue with offset=\d+(?:\s+\(limit=\d+\))?\.?", re.IGNORECASE
+)
 
 # Read-only tools safe to run in parallel within one round (after gating).
 _READ_ONLY_TOOLS = frozenset(
@@ -494,9 +508,19 @@ async def _run_one_gated_tool(
 def _truncate_result(result: Any, *, tool_name: str | None = None) -> str:
     """Truncate oversized tool results to bound the context window."""
     raw = result if isinstance(result, str) else str(result or "")
-    limit = _MAX_UI_RESULT_CHARS if tool_name == "render_ui" else MAX_TOOL_RESULT_CHARS
+    if tool_name == "render_ui":
+        limit = _MAX_UI_RESULT_CHARS
+    else:
+        limit = _PAGINATED_RESULT_LIMITS.get(tool_name, MAX_TOOL_RESULT_CHARS)
     if len(raw) <= limit:
         return raw
+
+    continuation = _CONTINUATION_RE.findall(raw)
+    if continuation:
+        hint = continuation[-1]
+        suffix = f"\n\n… page shortened for context. {hint}"
+        body_limit = max(0, limit - len(suffix))
+        return raw[:body_limit].rstrip() + suffix
     return raw[:limit] + f"\n…[truncated, {len(raw)} chars]"
 
 
