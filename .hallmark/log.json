@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-08-15",
+    "macrostructure": "Map / Diagram",
+    "theme": "Darkroom",
+    "enrichment": "none",
+    "brief": "Settings as machine wiring map + inspector bay",
+    "scope": "settings",
+    "nav": "none",
+    "footer": "none"
+  },
+  {
     "date": "2026-08-04",
     "macrostructure": "Workbench",
     "theme": "Darkroom",

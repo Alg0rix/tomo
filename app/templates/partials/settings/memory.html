@@ -1,46 +1,53 @@
-{% from 'partials/page_head.html' import section_head %}
-
-<section id="sec-memory" class="sys-section" style="display:none">
-  {{ section_head('Memory', 'Knowledge base entries. Agents retrieve these via the recall tool. Upload PDF, DOCX, or text files, or add entries manually.') }}
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>Knowledge entries</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn ghost sm" type="button" id="uploadKnowledgeBtn">Upload file</button>
-        <input type="file" id="kbFileInput" accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" hidden>
-        <button class="btn primary sm" type="button" id="addKnowledgeBtn">+ Add entry</button>
-      </div>
+<section id="sec-memory" class="sys-section machine-station" style="display:none">
+  <div class="machine-toolbar">
+    <div class="kb-search-row machine-search">
+      <input class="input" id="kbSearch" type="search" placeholder="Search knowledge…" autocomplete="off" spellcheck="false" aria-label="Search knowledge base">
+      <span class="kb-search-meta faint mono" id="kbSearchMeta" hidden></span>
     </div>
-    <div class="card-body" style="padding:12px 18px 4px">
-      <div class="kb-search-row">
-        <input class="input" id="kbSearch" type="search" placeholder="Search knowledge base…" autocomplete="off" spellcheck="false" aria-label="Search knowledge base">
-        <span class="kb-search-meta faint mono" id="kbSearchMeta" hidden></span>
-      </div>
-    </div>
-    <div class="card-body" id="knowledgeList" style="padding:8px 18px">
-      <div class="empty">Loading…</div>
+    <div class="machine-toolbar-actions">
+      <button class="btn ghost sm" type="button" id="uploadKnowledgeBtn">Upload file</button>
+      <input type="file" id="kbFileInput" accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" hidden>
+      <button class="btn primary sm" type="button" id="addKnowledgeBtn">New entry</button>
     </div>
   </div>
+  <p class="machine-note">Click an entry to inspect it. Upload drops a file straight into the catalog.</p>
+  <div class="machine-ledger" id="knowledgeList">
+    <div class="empty">Loading…</div>
+  </div>
 
-  <div class="card hidden" id="knowledgeFormCard" style="margin-bottom:16px">
-    <div class="card-head"><h3 id="knowledgeFormTitle">Add entry</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <form id="knowledgeForm" autocomplete="off" onsubmit="return false;">
-        <input type="hidden" id="kbFormMode" value="add">
-        <input type="hidden" id="kbId" value="">
-        <div class="config-row"><div class="lbl">Title</div>
-          <input class="input" id="kbTitle" required placeholder="Q3 vendor deadline" style="max-width:420px">
-        </div>
-        <div class="config-row"><div class="lbl">Body</div>
-          <textarea class="input" id="kbBody" rows="5" placeholder="The fact or note to store…" style="max-width:520px;width:100%;min-height:100px"></textarea>
-        </div>
-        <div class="config-row"><div class="lbl">Tags</div>
-          <input class="input" id="kbTags" placeholder="vendors, deadline (comma-separated)" style="max-width:420px">
-        </div>
-        <div style="margin-top:16px;display:flex;gap:10px">
-          <button class="btn ghost" type="button" id="kbCancel">Cancel</button>
-          <button class="btn primary sm" type="button" id="kbSave">Save entry</button>
-        </div>
-      </form>
+  <div class="machine-dock hidden" id="knowledgeFormCard" role="dialog" aria-modal="true" aria-labelledby="knowledgeFormTitle">
+    <div class="machine-sheet-head">
+      <h3 id="knowledgeFormTitle">New entry</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
     </div>
+    <form id="knowledgeForm" autocomplete="off" onsubmit="return false;">
+      <input type="hidden" id="kbFormMode" value="add">
+      <input type="hidden" id="kbId" value="">
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Title</div></div>
+        <div class="machine-field-control machine-field-control-wide">
+          <input class="input" id="kbTitle" required placeholder="Q3 vendor deadline">
+        </div>
+      </div>
+      <div class="machine-field machine-field-stack">
+        <div class="machine-field-copy"><div class="machine-field-name">Body</div></div>
+        <div class="machine-field-control machine-field-control-wide">
+          <textarea class="input" id="kbBody" rows="5" placeholder="The fact or note to store…"></textarea>
+        </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy">
+          <div class="machine-field-name">Tags</div>
+          <p class="machine-field-hint">Comma-separated.</p>
+        </div>
+        <div class="machine-field-control machine-field-control-wide">
+          <input class="input" id="kbTags" placeholder="vendors, deadline">
+        </div>
+      </div>
+      <div class="machine-sheet-foot">
+        <button class="btn ghost" type="button" id="kbCancel">Cancel</button>
+        <button class="btn primary sm" type="button" id="kbSave">Save entry</button>
+      </div>
+    </form>
   </div>
 </section>

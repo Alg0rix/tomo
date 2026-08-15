@@ -1,7 +1,8 @@
-{% from 'partials/page_head.html' import section_head %}
-
-<section id="sec-modules" class="sys-section" style="display:none">
-  {{ section_head('Modules', 'Optional surfaces. <a href="/modules">View module gallery →</a>') }}
+<section id="sec-modules" class="sys-section machine-station" style="display:none">
+  <div class="machine-toolbar">
+    <p class="machine-toolbar-label">Optional surfaces</p>
+    <a class="btn ghost sm" href="/modules">Module gallery</a>
+  </div>
   <div class="tile-grid">
     {% for m in modules %}
     {% with module=m %}{% include 'partials/module_tile.html' %}{% endwith %}

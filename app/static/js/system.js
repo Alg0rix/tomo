@@ -5,27 +5,100 @@
   var nav = document.getElementById('systemNav');
   if (!nav) return;
 
-  function show(section) {
+  var bayKicker = document.getElementById('machineBayKicker');
+  var bayTitle = document.getElementById('machineBayTitle');
+  var bayLede = document.getElementById('machineBayLede');
+  var bay = document.getElementById('machineBay');
+  var userPicked = false;
+  var docks = document.querySelectorAll('.machine-dock');
+  var dockBack = document.getElementById('machineDockBack');
+
+  function closeDocks() {
+    docks.forEach(function (d) { d.classList.add('hidden'); });
+    document.querySelectorAll('.machine-ledger .row.is-selected').forEach(function (r) {
+      r.classList.remove('is-selected');
+    });
+  }
+
+  function syncDockBack() {
+    var open = false;
+    docks.forEach(function (d) {
+      if (!d.classList.contains('hidden')) open = true;
+    });
+    if (dockBack) {
+      dockBack.hidden = !open;
+      dockBack.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+    document.documentElement.classList.toggle('is-machine-dock-open', open);
+    if (!open) {
+      document.querySelectorAll('.machine-ledger .row.is-selected').forEach(function (r) {
+        r.classList.remove('is-selected');
+      });
+    }
+  }
+
+  docks.forEach(function (d) {
+    new MutationObserver(syncDockBack).observe(d, { attributes: true, attributeFilter: ['class'] });
+  });
+  if (dockBack) dockBack.addEventListener('click', closeDocks);
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var any = false;
+    docks.forEach(function (d) { if (!d.classList.contains('hidden')) any = true; });
+    if (!any) return;
+    e.preventDefault();
+    closeDocks();
+  });
+  document.querySelectorAll('[data-dock-close]').forEach(function (btn) {
+    btn.addEventListener('click', closeDocks);
+  });
+  syncDockBack();
+
+  function markSelected(list, id) {
+    if (!list) return;
+    list.querySelectorAll('[data-id]').forEach(function (row) {
+      row.classList.toggle('is-selected', !!id && row.dataset.id === id);
+    });
+  }
+
+  function show(section, opts) {
+    opts = opts || {};
+    closeDocks();
     document.querySelectorAll('.sys-section').forEach(function (s) { s.style.display = 'none'; });
     var el = document.getElementById('sec-' + section);
     if (el) el.style.display = 'block';
-    nav.querySelectorAll('a').forEach(function (a) {
-      a.classList.toggle('active', a.dataset.section === section);
+    var active = null;
+    nav.querySelectorAll('a[data-section]').forEach(function (a) {
+      var on = a.dataset.section === section;
+      a.classList.toggle('is-active', on);
+      a.classList.toggle('active', on);
+      if (on) active = a;
     });
+    if (active) {
+      if (bayKicker) bayKicker.textContent = active.dataset.kicker || '';
+      if (bayTitle) bayTitle.textContent = active.dataset.title || '';
+      if (bayLede) bayLede.textContent = active.dataset.lede || '';
+    }
+    if (opts.scroll && bay && window.matchMedia('(max-width: 768px)').matches) {
+      bay.scrollIntoView({ block: 'start' });
+    }
   }
 
-  function fromHash() {
+  function fromHash(opts) {
     var h = (location.hash || '#general').replace('#', '');
-    show(h in { general: 1, models: 1, memory: 1, tools: 1, mcp: 1, modules: 1, shared_channel: 1, users: 1 } ? h : 'general');
+    show(h in { general: 1, models: 1, memory: 1, tools: 1, mcp: 1, modules: 1, shared_channel: 1, users: 1 } ? h : 'general', opts);
   }
 
-  nav.querySelectorAll('a').forEach(function (a) {
+  nav.querySelectorAll('a[data-section]').forEach(function (a) {
     a.addEventListener('click', function (e) {
       e.preventDefault();
+      userPicked = true;
       location.hash = a.dataset.section;
     });
   });
-  window.addEventListener('hashchange', fromHash);
+  window.addEventListener('hashchange', function () {
+    fromHash({ scroll: userPicked });
+  });
   fromHash();
 
   var saveBtn = document.getElementById('saveGeneral');
@@ -125,14 +198,24 @@
     var def = p.id === defaultId ? '' : ' <button class="btn ghost sm" type="button" data-act="default">Set default</button>';
     var efforts = Array.isArray(p.reasoning_efforts) ? p.reasoning_efforts.length : 0;
     var effortLabel = efforts ? (efforts + ' effort' + (efforts === 1 ? '' : 's')) : 'no custom effort';
-    return '<div class="row" data-id="' + esc(p.id) + '"><div class="meta"><div class="title">' + esc(p.name) + ' <span class="faint mono">' + esc(p.id) + '</span></div><div class="desc">' + esc(p.model || '—') + ' · ' + esc(p.base_url || 'default host') + ' · ' + esc(effortLabel) + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + b + ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button>' + def + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+    return '<div class="row" data-id="' + esc(p.id) + '"><div class="meta"><div class="title">' + esc(p.name) + ' <span class="faint mono">' + esc(p.id) + '</span></div><div class="desc">' + esc(p.model || '—') + ' · ' + esc(p.base_url || 'default host') + ' · ' + esc(effortLabel) + '</div></div><div class="machine-row-actions">' + b + def + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
   function render(profiles, dId) {
     defaultId = dId || '';
     if (!listEl) return;
-    if (!profiles.length) { listEl.innerHTML = '<div class="empty">No profiles yet — add one to enable chat.</div>'; return; }
-    listEl.innerHTML = profiles.map(rowHtml).join('');
+    if (!profiles.length) { listEl.innerHTML = '<div class="empty">No profiles yet — add one to enable chat.</div>'; }
+    else { listEl.innerHTML = profiles.map(rowHtml).join(''); }
+    var val = document.getElementById('map-models-val');
+    var node = nav.querySelector('a[data-section="models"]');
+    var def = profiles.filter(function (p) { return p.id === defaultId; })[0];
+    if (val) {
+      val.textContent = def ? (def.model || def.name || 'Default') : (profiles.length ? (profiles.length + ' profiles') : 'No default');
+    }
+    if (node) {
+      var ready = def && def.enabled && def.api_key_set;
+      node.setAttribute('data-state', ready ? 'ok' : (profiles.length ? 'warn' : 'off'));
+    }
   }
 
   async function loadProfiles() {
@@ -144,13 +227,16 @@
 
   function openForm(mode, p) {
     fMode.value = mode;
-    document.getElementById('profileFormTitle').textContent = mode === 'add' ? 'Add profile' : 'Edit profile';
+    document.getElementById('profileFormTitle').textContent = mode === 'add' ? 'New profile' : 'Inspect profile';
     if (mode === 'add') {
       fId.value = ''; fName.value = ''; fBase.value = ''; fKey.value = ''; fModel.value = ''; fReasoning.value = ''; fEnabled.checked = true;
+      markSelected(listEl, '');
     } else {
       fId.value = p.id; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fReasoning.value = (p.reasoning_efforts || []).join('\n'); fEnabled.checked = !!p.enabled;
+      markSelected(listEl, p.id);
     }
     formCard.classList.remove('hidden');
+    if (fName) fName.focus();
   }
 
   var addBtn = document.getElementById('addProfileBtn');
@@ -160,16 +246,21 @@
 
   if (listEl) {
     listEl.addEventListener('click', async function (e) {
-      var btn = e.target.closest('button[data-act]'); if (!btn) return;
-      var row = btn.closest('[data-id]'); var pid = row ? row.dataset.id : ''; var act = btn.dataset.act;
-      if (act === 'edit') {
-        try { var p = await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid)); if (p) openForm('edit', p); } catch (er) { Tomo.toast('Could not load profile', 'err'); }
-      } else if (act === 'default') {
-        try { await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid) + '/default', { method: 'POST' }); Tomo.toast('Default set', 'ok'); loadProfiles(); } catch (er) { Tomo.toast((er && er.message) || 'Could not set default', 'err'); }
-      } else if (act === 'delete') {
-        if (!confirm('Delete profile "' + pid + '"?')) return;
-        try { await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid), { method: 'DELETE' }); Tomo.toast('Profile deleted', 'ok'); loadProfiles(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+      var btn = e.target.closest('button[data-act]');
+      var row = e.target.closest('[data-id]');
+      var pid = row ? row.dataset.id : '';
+      if (btn) {
+        var act = btn.dataset.act;
+        if (act === 'default') {
+          try { await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid) + '/default', { method: 'POST' }); Tomo.toast('Default set', 'ok'); loadProfiles(); } catch (er) { Tomo.toast((er && er.message) || 'Could not set default', 'err'); }
+        } else if (act === 'delete') {
+          if (!confirm('Delete profile "' + pid + '"?')) return;
+          try { await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid), { method: 'DELETE' }); Tomo.toast('Profile deleted', 'ok'); closeDocks(); loadProfiles(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        }
+        return;
       }
+      if (!pid) return;
+      try { var p = await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pid)); if (p) openForm('edit', p); } catch (er) { Tomo.toast('Could not load profile', 'err'); }
     });
   }
 
@@ -215,7 +306,7 @@
     var tags = (e.tags || []).map(function (t) { return '<span class="badge muted sm">' + esc(t) + '</span>'; }).join(' ');
     var preview = (e.body || '').slice(0, 120);
     if ((e.body || '').length > 120) preview += '…';
-    return '<div class="row" data-id="' + esc(e.id) + '"><div class="meta"><div class="title">' + esc(e.title) + ' <span class="faint mono">' + esc(e.id) + '</span></div><div class="desc">' + esc(preview) + (tags ? ' · ' + tags : '') + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" type="button" data-act="edit">Edit</button> <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+    return '<div class="row" data-id="' + esc(e.id) + '"><div class="meta"><div class="title">' + esc(e.title) + ' <span class="faint mono">' + esc(e.id) + '</span></div><div class="desc">' + esc(preview) + (tags ? ' · ' + tags : '') + '</div></div><div class="machine-row-actions"><button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
   function renderKnowledge(entries, opts) {
@@ -235,9 +326,15 @@
       kbList.innerHTML = q
         ? '<div class="empty">No entries match “' + esc(q) + '”.</div>'
         : '<div class="empty">No knowledge entries yet.</div>';
-      return;
+    } else {
+      kbList.innerHTML = entries.map(kbRowHtml).join('');
     }
-    kbList.innerHTML = entries.map(kbRowHtml).join('');
+    if (!q) {
+      var val = document.getElementById('map-memory-val');
+      var node = nav.querySelector('a[data-section="memory"]');
+      if (val) val.textContent = entries.length ? (entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies')) : 'Empty';
+      if (node) node.setAttribute('data-state', entries.length ? 'ok' : 'off');
+    }
   }
 
   async function loadKnowledge(query) {
@@ -271,13 +368,16 @@
 
   function openKbForm(mode, e) {
     kbMode.value = mode;
-    document.getElementById('knowledgeFormTitle').textContent = mode === 'add' ? 'Add entry' : 'Edit entry';
+    document.getElementById('knowledgeFormTitle').textContent = mode === 'add' ? 'New entry' : 'Inspect entry';
     if (mode === 'add') {
       kbId.value = ''; kbTitle.value = ''; kbBody.value = ''; kbTags.value = '';
+      markSelected(kbList, '');
     } else {
       kbId.value = e.id; kbTitle.value = e.title || ''; kbBody.value = e.body || ''; kbTags.value = (e.tags || []).join(', ');
+      markSelected(kbList, e.id);
     }
     kbFormCard.classList.remove('hidden');
+    if (kbTitle) kbTitle.focus();
   }
 
   var addKb = document.getElementById('addKnowledgeBtn');
@@ -333,14 +433,16 @@
 
   if (kbList) {
     kbList.addEventListener('click', async function (e) {
-      var btn = e.target.closest('button[data-act]'); if (!btn) return;
-      var row = btn.closest('[data-id]'); var eid = row ? row.dataset.id : ''; var act = btn.dataset.act;
-      if (act === 'edit') {
-        try { var ent = await Tomo.api('/api/knowledge/' + encodeURIComponent(eid)); if (ent) openKbForm('edit', ent); } catch (er) { Tomo.toast('Could not load entry', 'err'); }
-      } else if (act === 'delete') {
+      var btn = e.target.closest('button[data-act]');
+      var row = e.target.closest('[data-id]');
+      var eid = row ? row.dataset.id : '';
+      if (btn && btn.dataset.act === 'delete') {
         if (!confirm('Delete knowledge entry "' + eid + '"?')) return;
-        try { await Tomo.api('/api/knowledge/' + encodeURIComponent(eid), { method: 'DELETE' }); Tomo.toast('Entry deleted', 'ok'); loadKnowledge(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        try { await Tomo.api('/api/knowledge/' + encodeURIComponent(eid), { method: 'DELETE' }); Tomo.toast('Entry deleted', 'ok'); closeDocks(); loadKnowledge(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        return;
       }
+      if (btn || !eid) return;
+      try { var ent = await Tomo.api('/api/knowledge/' + encodeURIComponent(eid)); if (ent) openKbForm('edit', ent); } catch (er) { Tomo.toast('Could not load entry', 'err'); }
     });
   }
 
@@ -378,13 +480,19 @@
 
   function userRowHtml(u) {
     var badge = u.enabled ? '<span class="badge ok sm">enabled</span>' : '<span class="badge muted sm">disabled</span>';
-    return '<div class="row" data-id="' + esc(u.id) + '"><div class="meta"><div class="title">' + esc(u.display_name || u.username) + ' <span class="faint mono">' + esc(u.username) + '</span></div><div class="desc mono" style="font-size:11px">' + esc(u.id) + '</div></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + badge + ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button> <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
+    return '<div class="row" data-id="' + esc(u.id) + '"><div class="meta"><div class="title">' + esc(u.display_name || u.username) + ' <span class="faint mono">' + esc(u.username) + '</span></div><div class="desc mono" style="font-size:11px">' + esc(u.id) + '</div></div><div class="machine-row-actions">' + badge + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
   function renderUsers(users) {
     if (!userList) return;
-    if (!users.length) { userList.innerHTML = '<div class="empty">No accounts yet.</div>'; return; }
-    userList.innerHTML = users.map(userRowHtml).join('');
+    if (!users.length) { userList.innerHTML = '<div class="empty">No accounts yet.</div>'; }
+    else { userList.innerHTML = users.map(userRowHtml).join(''); }
+    var val = document.getElementById('map-users-val');
+    var node = nav.querySelector('a[data-section="users"]');
+    var n = users.length;
+    var on = users.filter(function (u) { return u.enabled; }).length;
+    if (val) val.textContent = n ? (n + ' account' + (n === 1 ? '' : 's')) : 'None';
+    if (node) node.setAttribute('data-state', on ? 'ok' : 'warn');
   }
 
   async function loadUsers() {
@@ -399,17 +507,21 @@
 
   function openUserForm(mode, u) {
     uMode.value = mode;
-    document.getElementById('userFormTitle').textContent = mode === 'add' ? 'Add account' : 'Edit account';
+    document.getElementById('userFormTitle').textContent = mode === 'add' ? 'New account' : 'Inspect account';
     if (mode === 'add') {
       uId.value = ''; uUsername.value = ''; uDisplay.value = ''; uPass.value = '';
       uUsername.disabled = false; uEnabled.checked = true;
       if (uEnabledRow) uEnabledRow.style.display = 'none';
+      markSelected(userList, '');
     } else {
       uId.value = u.id; uUsername.value = u.username || ''; uDisplay.value = u.display_name || '';
       uPass.value = ''; uUsername.disabled = true; uEnabled.checked = !!u.enabled;
       if (uEnabledRow) uEnabledRow.style.display = '';
+      markSelected(userList, u.id);
     }
     userFormCard.classList.remove('hidden');
+    var focusEl = mode === 'add' ? uUsername : uDisplay;
+    if (focusEl) focusEl.focus();
   }
 
   var addUser = document.getElementById('addUserBtn');
@@ -419,14 +531,16 @@
 
   if (userList) {
     userList.addEventListener('click', async function (e) {
-      var btn = e.target.closest('button[data-act]'); if (!btn) return;
-      var row = btn.closest('[data-id]'); var uid = row ? row.dataset.id : ''; var act = btn.dataset.act;
-      if (act === 'edit') {
-        try { var u = await Tomo.api('/api/users/' + encodeURIComponent(uid)); if (u) openUserForm('edit', u); } catch (er) { Tomo.toast('Could not load account', 'err'); }
-      } else if (act === 'delete') {
+      var btn = e.target.closest('button[data-act]');
+      var row = e.target.closest('[data-id]');
+      var uid = row ? row.dataset.id : '';
+      if (btn && btn.dataset.act === 'delete') {
         if (!confirm('Delete account "' + uid + '"?')) return;
-        try { await Tomo.api('/api/users/' + encodeURIComponent(uid), { method: 'DELETE' }); Tomo.toast('Account deleted', 'ok'); loadUsers(); loadApiKeys(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        try { await Tomo.api('/api/users/' + encodeURIComponent(uid), { method: 'DELETE' }); Tomo.toast('Account deleted', 'ok'); closeDocks(); loadUsers(); loadApiKeys(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+        return;
       }
+      if (btn || !uid) return;
+      try { var u = await Tomo.api('/api/users/' + encodeURIComponent(uid)); if (u) openUserForm('edit', u); } catch (er) { Tomo.toast('Could not load account', 'err'); }
     });
   }
 

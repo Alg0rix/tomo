@@ -1,38 +1,55 @@
-{% from 'partials/page_head.html' import section_head %}
 {% from 'partials/toggle.html' import toggle %}
 
-<section id="sec-general" class="sys-section">
-  {{ section_head('General', 'Platform defaults and runtime behavior.') }}
-  <div class="card">
-    <div class="card-body" style="padding:16px 18px">
-      <div class="config-row"><div class="lbl">Version</div><div class="mono">0.1.8</div></div>
-      <div class="config-row"><div class="lbl">Runtime</div><div><span class="badge ok">live</span> coordinator · settings-backed LLM</div></div>
-      <div class="config-row"><div class="lbl">Max tool iterations</div>
-        <input class="input" type="number" id="setMaxIter" value="{{ settings.max_tool_iterations }}" style="max-width:100px">
+<section id="sec-general" class="sys-section machine-station">
+  <div class="machine-sheet">
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Version</div>
       </div>
-      <div class="config-row"><div class="lbl">Learning loop</div>
-        <div class="config-control">
-          {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
+      <div class="machine-field-control mono">0.1.8</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Runtime</div>
+      </div>
+      <div class="machine-field-control">coordinator · settings-backed LLM</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Max tool iterations</div>
+        <p class="machine-field-hint">How many tool calls a turn may make before Tomo must answer.</p>
+      </div>
+      <div class="machine-field-control">
+        <input class="input machine-input-narrow" type="number" id="setMaxIter" value="{{ settings.max_tool_iterations }}">
+      </div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Learning loop</div>
+        <p class="machine-field-hint">After a turn, review what worked and grow skills when this is on.</p>
+      </div>
+      <div class="machine-field-control">
+        {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
+      </div>
+    </div>
+    {% set amode = (settings.approvals_mode or 'smart')|string|lower %}
+    {% if amode in ('auto', 'yolo') %}{% set amode = 'off' %}{% endif %}
+    {% if amode not in ('manual', 'smart', 'off') %}{% set amode = 'smart' %}{% endif %}
+    <div class="machine-field machine-field-stack">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Default permission</div>
+        <p class="machine-field-hint">Only affects newly created sessions. Manual asks · Smart assesses · Auto skips prompts (slash /auto).</p>
+      </div>
+      <div class="machine-field-control">
+        <div class="seg-control" id="setApprovalsMode" role="radiogroup" aria-label="Default permission">
+          <button type="button" class="seg-btn{% if amode == 'manual' %} is-active{% endif %}" data-mode="manual" role="radio" aria-checked="{{ 'true' if amode == 'manual' else 'false' }}">Manual</button>
+          <button type="button" class="seg-btn{% if amode == 'smart' %} is-active{% endif %}" data-mode="smart" role="radio" aria-checked="{{ 'true' if amode == 'smart' else 'false' }}">Smart</button>
+          <button type="button" class="seg-btn{% if amode == 'off' %} is-active{% endif %}" data-mode="off" role="radio" aria-checked="{{ 'true' if amode == 'off' else 'false' }}">Auto</button>
         </div>
       </div>
-      {% set amode = (settings.approvals_mode or 'smart')|string|lower %}
-      {% if amode in ('auto', 'yolo') %}{% set amode = 'off' %}{% endif %}
-      {% if amode not in ('manual', 'smart', 'off') %}{% set amode = 'smart' %}{% endif %}
-      <div class="config-row">
-        <div class="lbl">
-          Default permission
-          <div class="config-hint" style="text-transform:none;letter-spacing:0;font-weight:400;margin-top:4px">Only affects newly-created sessions</div>
-        </div>
-        <div class="config-control" style="padding-top:4px">
-          <div class="seg-control" id="setApprovalsMode" role="radiogroup" aria-label="Default permission">
-            <button type="button" class="seg-btn{% if amode == 'manual' %} is-active{% endif %}" data-mode="manual" role="radio" aria-checked="{{ 'true' if amode == 'manual' else 'false' }}">Manual</button>
-            <button type="button" class="seg-btn{% if amode == 'smart' %} is-active{% endif %}" data-mode="smart" role="radio" aria-checked="{{ 'true' if amode == 'smart' else 'false' }}">Smart</button>
-            <button type="button" class="seg-btn{% if amode == 'off' %} is-active{% endif %}" data-mode="off" role="radio" aria-checked="{{ 'true' if amode == 'off' else 'false' }}">Auto</button>
-          </div>
-          <p class="config-hint">Manual asks · Smart assesses · Auto skips prompts (slash /auto)</p>
-        </div>
-      </div>
-      <div style="margin-top:16px"><button class="btn primary sm" type="button" id="saveGeneral">Save changes</button></div>
+    </div>
+    <div class="machine-sheet-foot">
+      <button class="btn primary sm" type="button" id="saveGeneral">Save posture</button>
     </div>
   </div>
 </section>

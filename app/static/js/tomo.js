@@ -98,6 +98,29 @@
       backdrop.dataset.tomoBound = '1';
       backdrop.addEventListener('click', function () { setRailOpen(false); });
     }
+
+    var more = document.getElementById('railMore');
+    var moreBtn = document.getElementById('railMoreBtn');
+    var moreMenu = document.getElementById('railMoreMenu');
+    if (more && moreBtn && moreMenu && !moreBtn.dataset.tomoBound) {
+      moreBtn.dataset.tomoBound = '1';
+      function setMoreOpen(open) {
+        more.classList.toggle('is-open', !!open);
+        moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) moreMenu.removeAttribute('hidden');
+        else moreMenu.setAttribute('hidden', '');
+      }
+      moreBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setMoreOpen(moreMenu.hasAttribute('hidden'));
+      });
+      document.addEventListener('click', function (e) {
+        if (!more.contains(e.target)) setMoreOpen(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') setMoreOpen(false);
+      });
+    }
   }
   Tomo.setRailCollapsed = setRailCollapsed;
   if (document.readyState === 'loading') {

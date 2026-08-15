@@ -1,98 +1,114 @@
-{% from 'partials/page_head.html' import section_head %}
-
-<section id="sec-users" class="sys-section" style="display:none">
-  {{ section_head('Accounts', 'Login accounts and API keys for programmatic access. Every account is a full admin.') }}
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>Users</h3>
-      <button class="btn primary sm" type="button" id="addUserBtn">+ Add account</button>
-    </div>
-    <div class="card-body" id="userList" style="padding:8px 18px">
-      {% if users %}
-        {% for u in users %}
-        <div class="row" data-id="{{ u.id }}">
-          <div class="meta">
-            <div class="title">{{ u.display_name or u.username }} <span class="faint mono">{{ u.username }}</span></div>
-            <div class="desc mono" style="font-size:11px">{{ u.id }} · {{ ts(u.created_at) }}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            {% if u.enabled %}<span class="badge ok sm">enabled</span>{% else %}<span class="badge muted sm">disabled</span>{% endif %}
-            <button class="btn ghost sm" type="button" data-act="edit">Edit</button>
-            <button class="btn ghost sm" type="button" data-act="delete">Delete</button>
-          </div>
+<section id="sec-users" class="sys-section machine-station" style="display:none">
+  <div class="machine-toolbar">
+    <p class="machine-toolbar-label">Users</p>
+    <button class="btn primary sm" type="button" id="addUserBtn">New account</button>
+  </div>
+  <p class="machine-note">Click an account to inspect it. Keys are minted on the bench and shown once.</p>
+  <div class="machine-ledger" id="userList">
+    {% if users %}
+      {% for u in users %}
+      <div class="row" data-id="{{ u.id }}">
+        <div class="meta">
+          <div class="title">{{ u.display_name or u.username }} <span class="faint mono">{{ u.username }}</span></div>
+          <div class="desc mono" style="font-size:11px">{{ u.id }} · {{ ts(u.created_at) }}</div>
         </div>
-        {% endfor %}
-      {% else %}
-        <div class="empty">No accounts yet.</div>
-      {% endif %}
-    </div>
+        <div class="machine-row-actions">
+          {% if u.enabled %}<span class="badge ok sm">enabled</span>{% else %}<span class="badge muted sm">disabled</span>{% endif %}
+          <button class="btn ghost sm" type="button" data-act="delete">Delete</button>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">No accounts yet.</div>
+    {% endif %}
   </div>
 
-  <div class="card hidden" id="userFormCard" style="margin-bottom:16px">
-    <div class="card-head"><h3 id="userFormTitle">Add account</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <form id="userForm" autocomplete="off" onsubmit="return false;">
-        <input type="hidden" id="userFormMode" value="add">
-        <input type="hidden" id="userId" value="">
-        <div class="config-row"><div class="lbl">Username</div>
-          <input class="input" id="userUsername" required placeholder="alice" style="max-width:220px" spellcheck="false" autocomplete="off">
+  <div class="machine-dock hidden" id="userFormCard" role="dialog" aria-modal="true" aria-labelledby="userFormTitle">
+    <div class="machine-sheet-head">
+      <h3 id="userFormTitle">New account</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
+    </div>
+    <form id="userForm" autocomplete="off" onsubmit="return false;">
+      <input type="hidden" id="userFormMode" value="add">
+      <input type="hidden" id="userId" value="">
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Username</div></div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" id="userUsername" required placeholder="alice" spellcheck="false" autocomplete="off">
         </div>
-        <div class="config-row"><div class="lbl">Display name</div>
-          <input class="input" id="userDisplayName" placeholder="Alice" style="max-width:220px">
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Display name</div></div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" id="userDisplayName" placeholder="Alice">
         </div>
-        <div class="config-row"><div class="lbl">Password</div>
-          <div style="flex:1;max-width:280px">
-            <input class="input" type="password" id="userPassword" placeholder="Min 4 characters" style="width:100%" autocomplete="new-password">
-            <p class="faint" id="userPassHint" style="margin:6px 0 0;font-size:12px">Required for new accounts. Leave blank on edit to keep.</p>
-          </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy">
+          <div class="machine-field-name">Password</div>
+          <p class="machine-field-hint" id="userPassHint">Required for new accounts. Leave blank on edit to keep.</p>
         </div>
-        <div class="config-row" id="userEnabledRow" style="display:none"><div class="lbl">Enabled</div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" type="password" id="userPassword" placeholder="Min 4 characters" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="machine-field" id="userEnabledRow" style="display:none">
+        <div class="machine-field-copy"><div class="machine-field-name">Enabled</div></div>
+        <div class="machine-field-control">
           <label class="toggle"><input type="checkbox" id="userEnabled" checked><span class="track"></span></label>
         </div>
-        <div style="margin-top:16px;display:flex;gap:10px">
-          <button class="btn ghost" type="button" id="userCancel">Cancel</button>
-          <button class="btn primary sm" type="button" id="userSave">Save account</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>API keys</h3>
-      <button class="btn primary sm" type="button" id="addApiKeyBtn">+ Create key</button>
-    </div>
-    <div class="card-body" style="padding:12px 18px 8px">
-      <p class="faint" style="font-size:12.5px;margin-bottom:10px">Use <span class="mono">Authorization: Bearer tomo_…</span> or <span class="mono">X-API-Key</span> on <span class="mono">/api/*</span>. The full token is shown once.</p>
-      <div id="apiKeyList"><div class="empty">Loading…</div></div>
-    </div>
-  </div>
-
-  <div class="card hidden" id="apiKeyFormCard" style="margin-bottom:16px">
-    <div class="card-head"><h3>Create API key</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <form id="apiKeyForm" autocomplete="off" onsubmit="return false;">
-        <div class="config-row"><div class="lbl">Account</div>
-          <select class="input" id="apiKeyUserId" style="max-width:240px"></select>
-        </div>
-        <div class="config-row"><div class="lbl">Label</div>
-          <input class="input" id="apiKeyName" placeholder="CI / script" style="max-width:240px">
-        </div>
-        <div style="margin-top:16px;display:flex;gap:10px">
-          <button class="btn ghost" type="button" id="apiKeyCancel">Cancel</button>
-          <button class="btn primary sm" type="button" id="apiKeySave">Create key</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card hidden" id="apiKeyRevealCard" style="margin-bottom:16px;border-color:var(--border-accent)">
-    <div class="card-head"><h3>Copy your API key</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <p class="faint" style="font-size:12.5px;margin-bottom:10px">This token won’t be shown again. Store it somewhere safe.</p>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <code class="mono" id="apiKeyRevealToken" style="flex:1;min-width:0;word-break:break-all;padding:10px 12px;background:var(--surface-2);border-radius:var(--r-sm);font-size:12px"></code>
-        <button class="btn ghost sm" type="button" id="apiKeyCopyBtn">Copy</button>
-        <button class="btn primary sm" type="button" id="apiKeyRevealDone">Done</button>
       </div>
+      <div class="machine-sheet-foot">
+        <button class="btn ghost" type="button" id="userCancel">Cancel</button>
+        <button class="btn primary sm" type="button" id="userSave">Save account</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="machine-toolbar machine-toolbar-late">
+    <p class="machine-toolbar-label">API keys</p>
+    <button class="btn primary sm" type="button" id="addApiKeyBtn">New key</button>
+  </div>
+  <p class="machine-note">Use <span class="mono">Authorization: Bearer tomo_…</span> or <span class="mono">X-API-Key</span> on <span class="mono">/api/*</span>. The full token is shown once.</p>
+  <div class="machine-ledger" id="apiKeyList">
+    <div class="empty">Loading…</div>
+  </div>
+
+  <div class="machine-dock hidden" id="apiKeyFormCard" role="dialog" aria-modal="true" aria-labelledby="apiKeyFormTitle">
+    <div class="machine-sheet-head">
+      <h3 id="apiKeyFormTitle">New API key</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
+    </div>
+    <form id="apiKeyForm" autocomplete="off" onsubmit="return false;">
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Account</div></div>
+        <div class="machine-field-control">
+          <select class="input machine-input-mid" id="apiKeyUserId"></select>
+        </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Label</div></div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" id="apiKeyName" placeholder="CI / script">
+        </div>
+      </div>
+      <div class="machine-sheet-foot">
+        <button class="btn ghost" type="button" id="apiKeyCancel">Cancel</button>
+        <button class="btn primary sm" type="button" id="apiKeySave">Create key</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="machine-dock hidden machine-sheet-reveal" id="apiKeyRevealCard" role="dialog" aria-modal="true" aria-labelledby="apiKeyRevealTitle">
+    <div class="machine-sheet-head">
+      <h3 id="apiKeyRevealTitle">Copy your API key</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
+    </div>
+    <p class="machine-note">This token won’t be shown again. Store it somewhere safe.</p>
+    <div class="machine-reveal">
+      <code class="mono" id="apiKeyRevealToken"></code>
+      <button class="btn ghost sm" type="button" id="apiKeyCopyBtn">Copy</button>
+      <button class="btn primary sm" type="button" id="apiKeyRevealDone">Done</button>
     </div>
   </div>
 </section>

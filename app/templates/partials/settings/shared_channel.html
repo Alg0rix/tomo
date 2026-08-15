@@ -1,11 +1,8 @@
-{% from 'partials/page_head.html' import section_head %}
 {% from 'partials/toggle.html' import toggle %}
 
-<section id="sec-shared_channel" class="sys-section" style="display:none">
-  {{ section_head('Shared channels', 'WhatsApp / Telegram numbers shared across agents with routing rules.') }}
-
-  <div class="card" style="margin-bottom:14px" id="telegramSettingsCard">
-    <div class="card-head">
+<section id="sec-shared_channel" class="sys-section machine-station" style="display:none">
+  <div class="machine-sheet" id="telegramSettingsCard">
+    <div class="machine-sheet-head">
       <h3>Telegram bot</h3>
       {% set tg_set = settings.telegram_bot_token_set if settings.telegram_bot_token_set is defined else false %}
       {% set tg_on = settings.telegram_enabled %}
@@ -17,21 +14,31 @@
       <span class="badge muted">needs token</span>
       {% endif %}
     </div>
-    <div class="card-body card-body-pad">
-      <div class="config-row"><div class="lbl">Bot token</div>
-        <input class="input" type="password" id="setTgToken" value="{{ settings.telegram_bot_token or '' }}" placeholder="{% if tg_set %}•••• set — blank keeps existing{% else %}Paste bot token from @BotFather{% endif %}" style="width:100%;max-width:420px" autocomplete="new-password" spellcheck="false">
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Bot token</div>
+        <p class="machine-field-hint">Encrypted at rest. Inbound chats map to sessions under the coordinator.</p>
       </div>
-      <div class="config-row"><div class="lbl">Enable long-poll</div>
+      <div class="machine-field-control machine-field-control-wide">
+        <input class="input" type="password" id="setTgToken" value="{{ settings.telegram_bot_token or '' }}" placeholder="{% if tg_set %}•••• set — blank keeps existing{% else %}Paste bot token from @BotFather{% endif %}" autocomplete="new-password" spellcheck="false">
+      </div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Enable long-poll</div>
+      </div>
+      <div class="machine-field-control">
         {{ toggle(id='setTgEnabled', checked=settings.telegram_enabled) }}
       </div>
-      <p class="faint" style="margin:8px 0 0;font-size:12px">Token is encrypted at rest. Inbound chats map to sessions under the coordinator agent.</p>
-      <div style="margin-top:14px"><button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button></div>
+    </div>
+    <div class="machine-sheet-foot">
+      <button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button>
     </div>
   </div>
 
   {% for ch in shared_channels %}
-  <div class="card" style="margin-bottom:14px">
-    <div class="card-head">
+  <div class="machine-sheet">
+    <div class="machine-sheet-head">
       <h3>{{ ch.name }}</h3>
       {% if ch.status == 'connected' or ch.status == 'active' %}
       <span class="badge ok">{{ ch.status }}</span>
@@ -41,40 +48,43 @@
       <span class="badge muted">{{ ch.status }}</span>
       {% endif %}
     </div>
-    <div class="card-body card-body-pad">
-      <div class="config-row"><div class="lbl">Type</div><div>{{ ch.type }}</div></div>
-      {% if ch.inbox %}
-      <div class="setting-group-label">Unassigned senders</div>
-      {% for item in ch.inbox %}
-      <div class="row workplace-kind-row">
-        <div class="meta"><div class="title">{{ item.contact }}</div><div class="desc mono">{{ item.identifier }}</div></div>
-        <button class="btn ghost sm" type="button" disabled>Assign</button>
-      </div>
-      {% endfor %}
-      {% endif %}
-      {% if ch.routes %}
-      <div class="setting-group-label" style="margin-top:14px">Routes</div>
-      <table class="data-table">
-        <thead><tr><th>Contact</th><th>Identifier</th><th>Agent</th></tr></thead>
-        <tbody>
-          {% for r in ch.routes %}
-          <tr>
-            <td>{{ r.contact }}</td>
-            <td class="mono faint">{{ r.identifier }}</td>
-            <td><a href="/agents/{{ r.agent_id }}">{{ r.agent_name }}</a></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% endif %}
-      {% if ch.type == 'telegram' %}
-      <p class="faint" style="margin-top:12px;font-size:12px">Configure token above. Status updates after save.</p>
-      {% elif ch.status == 'planned' %}
-      <p class="faint" style="margin-top:12px;font-size:12px">🔜 Channel adapter not connected yet.</p>
-      {% elif ch.status == 'disconnected' %}
-      <button class="btn primary sm" type="button" disabled style="margin-top:12px">Connect QR</button>
-      {% endif %}
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Type</div></div>
+      <div class="machine-field-control">{{ ch.type }}</div>
     </div>
+    {% if ch.inbox %}
+    <p class="setting-group-label">Unassigned senders</p>
+    {% for item in ch.inbox %}
+    <div class="row workplace-kind-row">
+      <div class="meta"><div class="title">{{ item.contact }}</div><div class="desc mono">{{ item.identifier }}</div></div>
+      <button class="btn ghost sm" type="button" disabled>Assign</button>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if ch.routes %}
+    <p class="setting-group-label">Routes</p>
+    <table class="data-table">
+      <thead><tr><th>Contact</th><th>Identifier</th><th>Agent</th></tr></thead>
+      <tbody>
+        {% for r in ch.routes %}
+        <tr>
+          <td>{{ r.contact }}</td>
+          <td class="mono faint">{{ r.identifier }}</td>
+          <td><a href="/agents/{{ r.agent_id }}">{{ r.agent_name }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if ch.type == 'telegram' %}
+    <p class="machine-field-hint">Configure token above. Status updates after save.</p>
+    {% elif ch.status == 'planned' %}
+    <p class="machine-field-hint">Channel adapter not connected yet.</p>
+    {% elif ch.status == 'disconnected' %}
+    <div class="machine-sheet-foot">
+      <button class="btn primary sm" type="button" disabled>Connect QR</button>
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 </section>

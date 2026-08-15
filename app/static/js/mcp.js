@@ -75,7 +75,6 @@
       ' <span class="faint mono">' + esc(s.id) + '</span></div><div class="desc">' + esc(s.transport) + ' · ' +
       esc(target) + (s.status_message ? (' · ' + esc(s.status_message)) : '') + '</div></div>' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + badges +
-      ' <button class="btn ghost sm" type="button" data-act="edit">Edit</button>' +
       ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
@@ -183,7 +182,7 @@
 
   async function openForm(mode, s) {
     fMode.value = mode;
-    document.getElementById('mcpFormTitle').textContent = mode === 'add' ? 'Add MCP server' : 'Edit MCP server';
+    document.getElementById('mcpFormTitle').textContent = mode === 'add' ? 'New MCP server' : 'Inspect server';
     envRows.innerHTML = '';
     headerRows.innerHTML = '';
     capWrap.classList.add('hidden');
@@ -195,7 +194,9 @@
       fId.value = ''; fName.value = ''; fTransport.value = 'stdio';
       fCommand.value = ''; fArgs.value = ''; fUrl.value = ''; fEnabled.checked = true;
       syncTransportFields();
+      listEl.querySelectorAll('[data-id]').forEach(function (r) { r.classList.remove('is-selected'); });
       formCard.classList.remove('hidden');
+      if (fName) fName.focus();
       return;
     }
 
@@ -230,16 +231,9 @@
 
   listEl.addEventListener('click', async function (e) {
     var btn = e.target.closest('button[data-act]');
-    if (!btn) return;
-    var row = btn.closest('[data-id]');
+    var row = e.target.closest('[data-id]');
     var sid = row ? row.dataset.id : '';
-    var act = btn.dataset.act;
-    if (act === 'edit') {
-      try {
-        var s = await Tomo.api('/api/mcp-servers/' + encodeURIComponent(sid));
-        if (s) openForm('edit', s);
-      } catch (er) { Tomo.toast('Could not load server', 'err'); }
-    } else if (act === 'delete') {
+    if (btn && btn.dataset.act === 'delete') {
       if (!confirm('Delete MCP server "' + sid + '"? This removes its saved tools too.')) return;
       try {
         await Tomo.api('/api/mcp-servers/' + encodeURIComponent(sid), { method: 'DELETE' });
@@ -247,7 +241,18 @@
         formCard.classList.add('hidden');
         loadServers();
       } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
+      return;
     }
+    if (btn || !sid) return;
+    try {
+      var s = await Tomo.api('/api/mcp-servers/' + encodeURIComponent(sid));
+      if (s) {
+        listEl.querySelectorAll('[data-id]').forEach(function (r) {
+          r.classList.toggle('is-selected', r.dataset.id === sid);
+        });
+        openForm('edit', s);
+      }
+    } catch (er) { Tomo.toast('Could not load server', 'err'); }
   });
 
   function formBody() {

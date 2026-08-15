@@ -1,21 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="studio">
+<div class="machine">
+  <header class="machine-mast">
+    <p class="machine-kicker">Runtime</p>
+    <div class="machine-mast-row">
+      <h1 class="machine-title">How Tomo is wired</h1>
+      <p class="machine-live"><span class="machine-pip is-on" aria-hidden="true"></span> live</p>
+    </div>
+    <p class="machine-lead">Pick a station. The bay is the inspector.</p>
+  </header>
+
   {% include 'partials/settings/nav.html' %}
-  <div class="studio-main">
-    {% include 'partials/settings/general.html' %}
-    {% include 'partials/settings/models.html' %}
-    {% include 'partials/settings/memory.html' %}
-    {% include 'partials/settings/tools.html' %}
-    {% include 'partials/settings/mcp.html' %}
-    {% include 'partials/settings/modules.html' %}
-    {% include 'partials/settings/shared_channel.html' %}
-    {% include 'partials/settings/users.html' %}
-  </div>
+
+  <section class="machine-bay" id="machineBay" aria-live="polite">
+    <header class="machine-bay-head">
+      <p class="machine-station-kicker" id="machineBayKicker">Instinct</p>
+      <h2 class="machine-station-title" id="machineBayTitle">How tightly Tomo is held</h2>
+      <p class="machine-station-lede" id="machineBayLede">Permissions, learning, and how long a turn may run.</p>
+    </header>
+    <div class="machine-inspector">
+      {% include 'partials/settings/general.html' %}
+      {% include 'partials/settings/models.html' %}
+      {% include 'partials/settings/memory.html' %}
+      {% include 'partials/settings/tools.html' %}
+      {% include 'partials/settings/mcp.html' %}
+      {% include 'partials/settings/modules.html' %}
+      {% include 'partials/settings/shared_channel.html' %}
+      {% include 'partials/settings/users.html' %}
+    </div>
+  </section>
+  <button type="button" class="machine-dock-back" id="machineDockBack" hidden aria-label="Close inspector"></button>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', path='js/modules.js') }}"></script>
-<script src="{{ url_for('static', path='js/mcp.js') }}"></script>
-<script src="{{ url_for('static', path='js/system.js') }}?v=modules1"></script>
+<script src="{{ url_for('static', path='js/mcp.js') }}?v=machine-dock1"></script>
+<script src="{{ url_for('static', path='js/system.js') }}?v=machine-dock1"></script>
 {% endblock %}

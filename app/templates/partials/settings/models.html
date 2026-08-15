@@ -1,51 +1,70 @@
-{% from 'partials/page_head.html' import section_head %}
-
-<section id="sec-models" class="sys-section" style="display:none">
-  {{ section_head('Models', 'OpenAI-compatible LLM profiles. Add one or more, mark a default, assign per agent.') }}
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>LLM profiles</h3>
-      <button class="btn primary sm" type="button" id="addProfileBtn">+ Add profile</button>
-    </div>
-    <div class="card-body" id="profileList" style="padding:8px 18px">
-      <div class="empty">Loading…</div>
-    </div>
+<section id="sec-models" class="sys-section machine-station" style="display:none">
+  <div class="machine-toolbar">
+    <p class="machine-toolbar-label">LLM profiles</p>
+    <button class="btn primary sm" type="button" id="addProfileBtn">New profile</button>
+  </div>
+  <p class="machine-note">Click a unit to inspect it on the bench. The catalog stays put.</p>
+  <div class="machine-ledger" id="profileList">
+    <div class="empty">Loading…</div>
   </div>
 
-  <div class="card hidden" id="profileFormCard" style="margin-bottom:16px">
-    <div class="card-head"><h3 id="profileFormTitle">Add profile</h3></div>
-    <div class="card-body" style="padding:16px 18px">
-      <form id="profileForm" autocomplete="off" onsubmit="return false;">
-        <input type="hidden" id="profFormMode" value="add">
-        <input type="hidden" id="profId" value="">
-        <div class="config-row"><div class="lbl">Name</div>
-          <input class="input" id="profName" required placeholder="Default" style="max-width:220px">
+  <div class="machine-dock hidden" id="profileFormCard" role="dialog" aria-modal="true" aria-labelledby="profileFormTitle">
+    <div class="machine-sheet-head">
+      <h3 id="profileFormTitle">New profile</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
+    </div>
+    <form id="profileForm" autocomplete="off" onsubmit="return false;">
+      <input type="hidden" id="profFormMode" value="add">
+      <input type="hidden" id="profId" value="">
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Name</div></div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" id="profName" required placeholder="Default">
         </div>
-        <div class="config-row"><div class="lbl">Base URL</div>
-          <input class="input" type="url" id="profBaseUrl" placeholder="https://api.openai.com/v1" style="max-width:420px" spellcheck="false">
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Base URL</div></div>
+        <div class="machine-field-control machine-field-control-wide">
+          <input class="input" type="url" id="profBaseUrl" placeholder="https://api.openai.com/v1" spellcheck="false">
         </div>
-        <div class="config-row"><div class="lbl">API key</div>
-          <div style="flex:1;max-width:420px">
-            <input class="input" type="password" id="profApiKey" placeholder="Paste key — encrypted at rest" style="width:100%" autocomplete="new-password" spellcheck="false">
-            <p class="faint" id="profKeyStatus" style="margin:6px 0 0;font-size:12px">Leave blank on edit to keep the existing key.</p>
-          </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy">
+          <div class="machine-field-name">API key</div>
+          <p class="machine-field-hint" id="profKeyStatus">Leave blank on edit to keep the existing key.</p>
         </div>
-        <div class="config-row"><div class="lbl">Model</div>
-          <input class="input" id="profModel" placeholder="gpt-4o-mini" style="max-width:220px" spellcheck="false">
+        <div class="machine-field-control machine-field-control-wide">
+          <input class="input" type="password" id="profApiKey" placeholder="Paste key — encrypted at rest" autocomplete="new-password" spellcheck="false">
         </div>
-        <div class="config-row"><div class="lbl">Reasoning efforts</div>
-          <div style="flex:1;max-width:420px">
-            <textarea class="input" id="profReasoningEfforts" rows="5" placeholder="low\nmedium\nhigh\nprovider-max" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:12px" spellcheck="false"></textarea>
-            <p class="faint" style="margin:6px 0 0;font-size:12px">One provider value per line. The last value is the default/highest effort.</p>
-          </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Model</div></div>
+        <div class="machine-field-control">
+          <input class="input machine-input-mid" id="profModel" placeholder="gpt-4o-mini" spellcheck="false">
         </div>
-        <div class="config-row"><div class="lbl">Enabled</div>
+      </div>
+      <div class="machine-field machine-field-stack">
+        <div class="machine-field-copy">
+          <div class="machine-field-name">Reasoning efforts</div>
+          <p class="machine-field-hint">One provider value per line. The last value is the default / highest effort.</p>
+        </div>
+        <div class="machine-field-control machine-field-control-wide">
+          <textarea class="input machine-mono" id="profReasoningEfforts" rows="5" placeholder="low
+medium
+high
+provider-max" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="machine-field">
+        <div class="machine-field-copy"><div class="machine-field-name">Enabled</div></div>
+        <div class="machine-field-control">
           <label class="toggle"><input type="checkbox" id="profEnabled" checked><span class="track"></span></label>
         </div>
-        <div style="margin-top:16px;display:flex;gap:10px">
-          <button class="btn ghost" type="button" id="profCancel">Cancel</button>
-          <button class="btn primary sm" type="button" id="profSave">Save profile</button>
-        </div>
-      </form>
-    </div>
+      </div>
+      <div class="machine-sheet-foot">
+        <button class="btn ghost" type="button" id="profCancel">Cancel</button>
+        <button class="btn primary sm" type="button" id="profSave">Save profile</button>
+      </div>
+    </form>
   </div>
 </section>

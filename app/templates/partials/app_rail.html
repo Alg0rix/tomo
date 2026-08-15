@@ -65,12 +65,14 @@
         </span>
         <span class="app-rail-label">Agents</span>
       </a>
+      {% if page != 'sessions' %}
       <a class="app-rail-item {{ 'active' if page in ('workplaces','workplace') }}" href="/workplaces" title="Workplaces">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>
         </span>
         <span class="app-rail-label">Workplaces</span>
       </a>
+      {% endif %}
       <a class="app-rail-item {{ 'active' if page in ('skills','skill') }}" href="/skills" title="Skills">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.2 4.5L19 9l-3.5 3.4L16.4 18 12 15.6 7.6 18l.9-5.6L5 9l4.8-1.5L12 3z"/></svg>
@@ -84,12 +86,14 @@
         <span class="app-rail-label">Companion</span>
       </a>
       {% for item in module_nav|default([]) %}
+      {% if page != 'sessions' or item.id != 'token_monitor' %}
       <a class="app-rail-item {{ 'active' if page == item.page }}" href="{{ item.path }}" title="{{ item.label }}">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
         </span>
         <span class="app-rail-label">{{ item.label }}</span>
       </a>
+      {% endif %}
       {% endfor %}
       {% if eval_ui_enabled %}
       <a class="app-rail-item {{ 'active' if page == 'evaluate' }}" href="/evaluate" title="Evaluate">
@@ -99,6 +103,22 @@
         <span class="app-rail-label">Evaluate</span>
       </a>
       {% endif %}
+      {% if page == 'sessions' %}
+      <div class="app-rail-more" id="railMore">
+        <button type="button" class="app-rail-item" id="railMoreBtn" title="More"
+                aria-label="More" aria-haspopup="true" aria-expanded="false" aria-controls="railMoreMenu">
+          <span class="app-rail-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/>
+            </svg>
+          </span>
+          <span class="app-rail-label sr-only">More</span>
+        </button>
+        <div class="app-rail-more-menu" id="railMoreMenu" role="menu" hidden>
+          {% include 'partials/app_rail_overflow.html' %}
+        </div>
+      </div>
+      {% else %}
       <a class="app-rail-item {{ 'active' if page == 'scheduler' }}" href="/scheduler" title="Scheduler">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5L15 15"/></svg>
@@ -111,6 +131,7 @@
         </span>
         <span class="app-rail-label">System</span>
       </a>
+      {% endif %}
     </nav>
   </div>
 
