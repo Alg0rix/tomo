@@ -285,6 +285,50 @@ async def test_empty_choices_includes_embedded_provider_error() -> None:
     assert "empty choices" in str(ei.value)
 
 
+async def test_complete_unwraps_gateway_data_wrapper() -> None:
+    """Cline/gateway wraps the completion under ``data``; do not stream-retry."""
+    calls = {"stream": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body.get("stream"):
+            calls["stream"] += 1
+            return httpx.Response(
+                200,
+                content=b'data: {"choices":[]}\n\ndata: [DONE]\n\n',
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "id": "gen_1",
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "hello from wrapper",
+                            },
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 5},
+                    "success": True,
+                }
+            },
+        )
+
+    resp = await _client(httpx.MockTransport(handler)).complete(
+        [{"role": "user", "content": "hi"}]
+    )
+    assert resp.content == "hello from wrapper"
+    assert resp.prompt_tokens == 11
+    assert resp.completion_tokens == 5
+    assert calls["stream"] == 0
+
+
 async def test_empty_choices_retries_via_stream() -> None:
     """Non-stream empty choices[] recovers through the streaming path."""
     calls = {"n": 0}

@@ -266,6 +266,12 @@ async def _generate(
             "dashboard prompts LLM raw=%r parsed=%r", raw[:200], parsed
         )
         return parsed
+    except TimeoutError:
+        logger.warning(
+            "dashboard prompts generation timed out after %.0fs — using fallback",
+            _LLM_TIMEOUT_S,
+        )
+        return None
     except Exception as exc:
         logger.warning(
             "dashboard prompts generation failed: %s", exc, exc_info=True

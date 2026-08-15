@@ -357,7 +357,9 @@ async def test_get_dashboard_prompts_duplicate_output_falls_back():
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch):
+async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch, caplog):
+    import logging
+
     import app.runtime.dashboard_prompts as dp
 
     monkeypatch.setattr(dp, "_LLM_TIMEOUT_S", 0.01)
@@ -367,5 +369,8 @@ async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch):
             await asyncio.sleep(0.2)
             return LLMResponse(content=_VALID_RAW, tool_calls=[])
 
-    result = await get_dashboard_prompts("web", llm=_Slow())
+    with caplog.at_level(logging.WARNING, logger="app.runtime.dashboard_prompts"):
+        result = await get_dashboard_prompts("web", llm=_Slow())
     assert result["source"] == "fallback"
+    assert any("timed out" in r.message for r in caplog.records)
+    assert not any(r.exc_info for r in caplog.records)

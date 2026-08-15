@@ -239,25 +239,68 @@ def _extract_provider_detail(exc: BaseException) -> str:
     return " — ".join(c for c in chunks if c)
 
 
+def _resp_as_dict(resp: Any) -> dict[str, Any]:
+    dump = getattr(resp, "model_dump", None)
+    if callable(dump):
+        try:
+            raw = dump()
+            if isinstance(raw, dict):
+                return raw
+        except Exception:
+            pass
+    extra = getattr(resp, "model_extra", None)
+    if isinstance(extra, dict):
+        return extra
+    return {}
+
+
+def _first_choice_and_usage(resp: Any) -> tuple[Any | None, Any]:
+    """Return ``(first_choice, usage)`` from a completion or a ``data`` wrapper.
+
+    Some gateways (Cline, etc.) nest a valid chat.completion under ``data``
+    and leave top-level ``choices`` null. Do not stream-retry in that case.
+    """
+    choices = getattr(resp, "choices", None)
+    if choices:
+        return choices[0], getattr(resp, "usage", None)
+    dump = _resp_as_dict(resp)
+    data = dump.get("data")
+    if isinstance(data, dict):
+        inner = data.get("choices") or []
+        if inner:
+            return inner[0], data.get("usage")
+    return None, dump.get("usage")
+
+
+def _choice_parts(choice: Any) -> tuple[Any, str | None, Any, str]:
+    """``(message, content, tool_calls, finish_reason)`` from object or dict."""
+    if isinstance(choice, dict):
+        finish = str(choice.get("finish_reason") or "")
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            message = None
+        if message is None:
+            return None, None, None, finish
+        return message, message.get("content"), message.get("tool_calls"), finish
+    finish = getattr(choice, "finish_reason", None) or ""
+    message = getattr(choice, "message", None)
+    if message is None:
+        return None, None, None, finish
+    return (
+        message,
+        getattr(message, "content", None),
+        getattr(message, "tool_calls", None),
+        finish,
+    )
+
+
 def _completion_error_detail(resp: Any) -> str:
     """Extract a provider error embedded in an otherwise-OK chat completion.
 
     Proxies (OpenRouter, LiteLLM, custom routers) often return HTTP 200 with
     ``choices: []`` / ``null`` plus an ``error`` object instead of raising.
     """
-    data: dict[str, Any] | None = None
-    dump = getattr(resp, "model_dump", None)
-    if callable(dump):
-        try:
-            raw = dump()
-            if isinstance(raw, dict):
-                data = raw
-        except Exception:
-            data = None
-    if data is None:
-        extra = getattr(resp, "model_extra", None)
-        if isinstance(extra, dict):
-            data = extra
+    data = _resp_as_dict(resp)
     if not data:
         return ""
 
@@ -660,7 +703,7 @@ class OpenAICompatClient:
             )
             raise LLMRequestError(format_llm_error(exc)) from exc
 
-        first = resp.choices[0] if resp.choices else None
+        first, usage = _first_choice_and_usage(resp)
         if first is None:
             empty_msg = _empty_choices_message(resp)
             _logger.warning(
@@ -675,12 +718,9 @@ class OpenAICompatClient:
             except LLMRequestError as stream_exc:
                 raise LLMRequestError(empty_msg) from stream_exc
 
-        finish = getattr(first, "finish_reason", None) or ""
-        message = getattr(first, "message", None)
+        message, content, tool_calls, finish = _choice_parts(first)
         if message is None:
             raise LLMRequestError("LLM request failed: response had no message")
-        content = getattr(message, "content", None)
-        tool_calls = getattr(message, "tool_calls", None)
 
         if finish in {"length", "max_tokens"} and not tool_calls:
             # Partial text may still be useful — return it, but log.
@@ -690,7 +730,7 @@ class OpenAICompatClient:
                 len(content or ""),
             )
 
-        prompt_tok, completion_tok = parse_usage(getattr(resp, "usage", None))
+        prompt_tok, completion_tok = parse_usage(usage)
         return LLMResponse(
             content=content,
             tool_calls=_parse_tool_calls(tool_calls or []),
