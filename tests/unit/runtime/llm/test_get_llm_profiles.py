@@ -124,3 +124,20 @@ def test_get_llm_raises_needs_reauth_message(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("app.runtime.llm.codex_oauth.refresh_tokens", fake_refresh)
     with pytest.raises(LLMConfigError, match="ChatGPT sign-in expired"):
         get_llm()
+
+
+def test_get_llm_threads_reasoning_effort_into_codex_client(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-1",
+            refresh_token="rt-1", expires_at=99999999999.0,
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+    store.update_llm_profile(created["id"], {"reasoning_efforts": ["low", "high"]})
+    client = get_llm()
+    assert client._reasoning_effort == "high"

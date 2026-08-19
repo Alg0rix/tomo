@@ -212,6 +212,7 @@ class CodexResponsesClient:
         access_token: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         timeout: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -222,6 +223,7 @@ class CodexResponsesClient:
             )
         self._base_url = (base_url or DEFAULT_CODEX_BASE_URL).rstrip("/")
         self._model = model or "gpt-5-codex"
+        self._reasoning_effort = (reasoning_effort or "").strip() or None
         self._timeout = (
             float(timeout) if timeout is not None else default_llm_timeout_seconds()
         )
@@ -249,6 +251,10 @@ class CodexResponsesClient:
         responses_tools = _responses_tools(tools)
         if responses_tools:
             payload["tools"] = responses_tools
+        if self._reasoning_effort:
+            # The Codex backend rejects "minimal" (400) — clamp to "low".
+            effort = "low" if self._reasoning_effort == "minimal" else self._reasoning_effort
+            payload["reasoning"] = {"effort": effort, "summary": "auto"}
         return payload
 
     async def complete(

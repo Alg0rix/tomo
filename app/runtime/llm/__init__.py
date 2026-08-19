@@ -40,16 +40,17 @@ def get_llm(
         raise LLMConfigError(
             "ChatGPT sign-in expired — reconnect in System → Models"
         )
+    effective_effort = effective_reasoning_effort(profile, reasoning_effort)
     if profile.get("auth_mode") == "subscription":
         return CodexResponsesClient(
             base_url=profile.get("base_url") or "",
             access_token=profile.get("access_token") or "",
             model=profile.get("model") or "gpt-5-codex",
+            reasoning_effort=effective_effort,
             timeout=default_llm_timeout_seconds(),
         )
     base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
-    effective_effort = effective_reasoning_effort(profile, reasoning_effort)
     # OpenAICompatClient raises LLMConfigError when the API key is empty.
     return OpenAICompatClient(
         base_url=base_url,

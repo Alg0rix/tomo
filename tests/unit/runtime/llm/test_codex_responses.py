@@ -25,8 +25,8 @@ _TOKEN = "at-test"
 _MODEL = "gpt-5-codex"
 
 
-def _client(transport: httpx.MockTransport) -> CodexResponsesClient:
-    return CodexResponsesClient(base_url=_BASE, access_token=_TOKEN, model=_MODEL, transport=transport)
+def _client(transport: httpx.MockTransport, **kw) -> CodexResponsesClient:
+    return CodexResponsesClient(base_url=_BASE, access_token=_TOKEN, model=_MODEL, transport=transport, **kw)
 
 
 def test_missing_token_raises_config_error() -> None:
@@ -178,3 +178,60 @@ async def test_stream_complete_yields_deltas_then_done() -> None:
     assert final.content == "hello"
     assert final.prompt_tokens == 3
     assert final.completion_tokens == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_sends_reasoning_effort() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"id": "resp_1", "status": "completed", "output": [
+                {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "hi"}]},
+            ]},
+        )
+
+    client = _client(httpx.MockTransport(handler), reasoning_effort="high")
+    await client.complete([{"role": "user", "content": "hi"}])
+    assert captured["body"]["reasoning"] == {"effort": "high", "summary": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_complete_clamps_minimal_effort_to_low() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"id": "resp_1", "status": "completed", "output": [
+                {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "hi"}]},
+            ]},
+        )
+
+    client = _client(httpx.MockTransport(handler), reasoning_effort="minimal")
+    await client.complete([{"role": "user", "content": "hi"}])
+    assert captured["body"]["reasoning"] == {"effort": "low", "summary": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_complete_omits_reasoning_when_not_configured() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"id": "resp_1", "status": "completed", "output": [
+                {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "hi"}]},
+            ]},
+        )
+
+    client = _client(httpx.MockTransport(handler))
+    await client.complete([{"role": "user", "content": "hi"}])
+    assert "reasoning" not in captured["body"]
