@@ -609,6 +609,49 @@ async def test_delegate_streams_subagent_events_before_tool_result(
 
 
 
+async def test_subagent_reasoning_surfaces_as_tagged_thinking_event(
+    monkeypatch, tmp_path
+) -> None:
+    """A subagent's provider-native reasoning (e.g. Codex) must reach the
+    parent's event stream as a `thinking` event tagged with the subagent's
+    agent_id/delegate_call_id — same path the swarm detail panel and
+    session-history replay already render generically."""
+    store.rebind(tmp_path / "delegate_reasoning.db")
+
+    def _exec(name: str, args: dict) -> str:
+        if name == "delegate":
+            return "Delegated to ops"
+        if name == "bash":
+            return "up 1 day"
+        return f"Error: unexpected tool {name}"
+
+    monkeypatch.setattr("app.runtime.tools.registry.execute", _exec)
+
+    parent_llm = ScriptedLLM([_delegate_call(), text_reply("Parent wrap-up.")])
+    ops_llm = ScriptedLLM([
+        bash_call("uptime"),
+        LLMResponse(content="ops done", tool_calls=[], reasoning="Checking uptime output."),
+    ])
+
+    def _llm_for(agent_id: str | None = None):
+        return ops_llm if agent_id == "ops" else parent_llm
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm_for)
+
+    events = await _collect(
+        "ask ops",
+        llm=parent_llm,
+        tools=_delegate_tools() + _bash_tools(),
+        agent_id="main",
+    )
+    sub_thinking = next(
+        e for e in events if e["kind"] == "thinking" and e.get("agent_id") == "ops"
+    )
+    assert sub_thinking["content"] == "Checking uptime output."
+    assert sub_thinking.get("delegate_call_id") == "call_delegate"
+    assert sub_thinking.get("subagent") is True
+
+
 async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
     """A rejected delegate is a normal tool error; loop keeps iterating."""
     monkeypatch.setattr(
