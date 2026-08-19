@@ -1,11 +1,23 @@
 <section id="sec-models" class="sys-section machine-station" style="display:none">
   <div class="machine-toolbar">
     <p class="machine-toolbar-label">LLM profiles</p>
+    <button class="btn ghost sm" type="button" id="codexLoginBtn">Sign in with ChatGPT</button>
     <button class="btn primary sm" type="button" id="addProfileBtn">New profile</button>
   </div>
   <p class="machine-note">Click a unit to inspect it on the bench. The catalog stays put.</p>
   <div class="machine-ledger" id="profileList">
     <div class="empty">Loading…</div>
+  </div>
+
+  <div class="machine-dock hidden" id="codexLoginCard" role="dialog" aria-modal="true" aria-labelledby="codexLoginTitle">
+    <div class="machine-sheet-head">
+      <h3 id="codexLoginTitle">Sign in with ChatGPT</h3>
+      <button class="btn ghost sm" type="button" data-dock-close>Close</button>
+    </div>
+    <p class="machine-note">Open the link below, enter the code, then come back here — this waits for you.</p>
+    <p class="machine-field-hint">Code: <strong id="codexLoginCode" class="mono"></strong></p>
+    <p class="machine-field-hint"><a id="codexLoginLink" href="#" target="_blank" rel="noopener">Open sign-in page</a></p>
+    <p class="machine-field-hint" id="codexLoginStatus">Waiting for sign-in…</p>
   </div>
 
   <div class="machine-dock hidden" id="profileFormCard" role="dialog" aria-modal="true" aria-labelledby="profileFormTitle">

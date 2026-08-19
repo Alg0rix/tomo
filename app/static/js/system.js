@@ -285,6 +285,69 @@
 
   loadProfiles();
 
+  // ---- ChatGPT/Codex subscription login ----
+  var codexBtn = document.getElementById('codexLoginBtn');
+  var codexCard = document.getElementById('codexLoginCard');
+  var codexCode = document.getElementById('codexLoginCode');
+  var codexLink = document.getElementById('codexLoginLink');
+  var codexStatus = document.getElementById('codexLoginStatus');
+  var codexPollTimer = null;
+
+  function stopCodexPoll() {
+    if (codexPollTimer) { clearInterval(codexPollTimer); codexPollTimer = null; }
+  }
+
+  function closeCodexCard() {
+    stopCodexPoll();
+    if (codexCard) codexCard.classList.add('hidden');
+  }
+
+  async function pollCodexLogin(deviceAuthId, userCode) {
+    try {
+      var d = await Tomo.api('/api/llm-profiles/codex-login/poll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
+      });
+      if (d && d.status === 'ok') {
+        stopCodexPoll();
+        if (codexStatus) codexStatus.textContent = 'Signed in as ' + (d.profile.name || 'ChatGPT (Codex)') + '.';
+        Tomo.toast('Signed in with ChatGPT', 'ok');
+        loadProfiles();
+        setTimeout(closeCodexCard, 1200);
+      }
+      // status === 'pending' -> keep polling silently.
+    } catch (er) {
+      stopCodexPoll();
+      if (codexStatus) codexStatus.textContent = (er && er.message) || 'Sign-in failed.';
+      Tomo.toast((er && er.message) || 'ChatGPT sign-in failed', 'err');
+    }
+  }
+
+  if (codexBtn) {
+    codexBtn.addEventListener('click', async function () {
+      if (codexCard) codexCard.classList.remove('hidden');
+      if (codexCode) codexCode.textContent = '…';
+      if (codexStatus) codexStatus.textContent = 'Requesting a sign-in code…';
+      try {
+        var start = await Tomo.api('/api/llm-profiles/codex-login/start', { method: 'POST' });
+        if (!start) return;
+        if (codexCode) codexCode.textContent = start.user_code;
+        if (codexLink) codexLink.href = start.verification_url;
+        if (codexStatus) codexStatus.textContent = 'Waiting for sign-in…';
+        stopCodexPoll();
+        codexPollTimer = setInterval(function () {
+          pollCodexLogin(start.device_auth_id, start.user_code);
+        }, Math.max(3, start.interval || 5) * 1000);
+      } catch (er) {
+        if (codexStatus) codexStatus.textContent = (er && er.message) || 'Could not start sign-in.';
+        Tomo.toast((er && er.message) || 'Could not start ChatGPT sign-in', 'err');
+      }
+    });
+  }
+
+  var codexCloseBtns = codexCard ? codexCard.querySelectorAll('[data-dock-close]') : [];
+  codexCloseBtns.forEach(function (btn) { btn.addEventListener('click', closeCodexCard); });
+
   // ---- Knowledge entries (System → Memory) ----
   var kbList = document.getElementById('knowledgeList');
   var kbFormCard = document.getElementById('knowledgeFormCard');
