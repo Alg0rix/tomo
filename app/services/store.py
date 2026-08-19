@@ -599,6 +599,12 @@ class Store:
                 refresh_token=refresh_token, expires_at=expires_at,
             )
 
+    def get_llm_profile_access_token(self, profile_id: str) -> str:
+        """Decrypted access_token for a subscription profile (server-side use only)."""
+        with self._lock:
+            prof = llm_profiles_store.get_profile(self._conn, profile_id)
+            return (prof.get("access_token") or "") if prof else ""
+
     def setup_default_profile(
         self, *, base_url: str, api_key: str, model: str, name: str = "Default"
     ) -> dict[str, Any]:

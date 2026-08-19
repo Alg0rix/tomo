@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
 from app.core.deps import AuthDep, session_user_id
-from app.runtime.llm import codex_oauth
+from app.runtime.llm import codex_models, codex_oauth
 from app.schemas import (
     CodexLoginPoll,
     KnowledgeEntryCreate,
@@ -691,6 +691,12 @@ async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
         return store.create_llm_profile(body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-profiles/codex-models")
+async def get_codex_models(_: AuthDep, profile_id: str | None = None):
+    access_token = store.get_llm_profile_access_token(profile_id) if profile_id else ""
+    return {"models": codex_models.list_codex_models(access_token or None)}
 
 
 @router.get("/llm-profiles/{profile_id}")

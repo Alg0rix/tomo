@@ -275,3 +275,43 @@ def test_codex_login_poll_terminal_failure_returns_400(tmp_path, monkeypatch) ->
         assert res.status_code == 400
     finally:
         _cleanup()
+
+
+def test_codex_models_without_profile_id_returns_curated_defaults(tmp_path) -> None:
+    client = _client(tmp_path)
+    try:
+        from app.runtime.llm.codex_models import DEFAULT_CODEX_MODELS
+
+        res = client.get("/api/llm-profiles/codex-models")
+        assert res.status_code == 200
+        assert res.json()["models"] == DEFAULT_CODEX_MODELS
+    finally:
+        _cleanup()
+
+
+def test_codex_models_with_profile_id_uses_stored_token(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        from app.models.mixins import llm_profiles as llm_profiles_store
+
+        with store._lock:
+            created = llm_profiles_store.create_subscription_profile(
+                store._conn, provider="openai-codex", access_token="at-1",
+                refresh_token="rt-1", expires_at=99999999999.0,
+                name="ChatGPT (Codex)", model="gpt-5-codex",
+                base_url="https://chatgpt.com/backend-api/codex",
+            )
+
+        captured = {}
+
+        def fake_list(access_token, **kw):
+            captured["access_token"] = access_token
+            return ["gpt-5.6-sol"]
+
+        monkeypatch.setattr("app.api.platform.codex_models.list_codex_models", fake_list)
+        res = client.get(f"/api/llm-profiles/codex-models?profile_id={created['id']}")
+        assert res.status_code == 200
+        assert res.json()["models"] == ["gpt-5.6-sol"]
+        assert captured["access_token"] == "at-1"
+    finally:
+        _cleanup()
