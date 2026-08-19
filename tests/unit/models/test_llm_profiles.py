@@ -12,6 +12,8 @@ Covers the Slice A §2.2 invariants:
 
 from __future__ import annotations
 
+import time
+
 from app.services import store
 
 
@@ -209,3 +211,169 @@ def test_session_reasoning_effort_rejects_unknown_value(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="reasoning effort"):
         store.set_session_reasoning_effort(sid, "unsupported")
+
+
+def test_create_subscription_profile_encrypts_tokens(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        prof = llm_profiles_store.create_subscription_profile(
+            store._conn,
+            provider="openai-codex",
+            access_token="at-secret-123",
+            refresh_token="rt-secret-456",
+            expires_at=9999999999.0,
+            name="ChatGPT (Codex)",
+            model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+    assert prof["auth_mode"] == "subscription"
+    assert prof["subscription_provider"] == "openai-codex"
+    assert prof["access_token_set"] is True
+    assert prof["refresh_token_set"] is True
+    assert "access_token" not in prof
+    assert "refresh_token" not in prof
+    raw = store._conn.execute(
+        "SELECT access_token, refresh_token FROM llm_profiles WHERE id=?", (prof["id"],)
+    ).fetchone()
+    assert raw["access_token"].startswith("enc:v1:")
+    assert "at-secret-123" not in raw["access_token"]
+    assert raw["refresh_token"].startswith("enc:v1:")
+
+
+def test_find_subscription_profile_returns_decrypted(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-1",
+            refresh_token="rt-1", expires_at=123.0, name="ChatGPT (Codex)",
+            model="gpt-5-codex", base_url="https://chatgpt.com/backend-api/codex",
+        )
+        found = llm_profiles_store.find_subscription_profile(store._conn, "openai-codex")
+    assert found is not None
+    assert found["id"] == created["id"]
+    assert found["access_token"] == "at-1"
+    assert found["refresh_token"] == "rt-1"
+    assert found["token_expires_at"] == 123.0
+
+
+def test_save_subscription_tokens_reencrypts(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-old",
+            refresh_token="rt-old", expires_at=1.0, name="ChatGPT (Codex)",
+            model="gpt-5-codex", base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.save_subscription_tokens(
+            store._conn, created["id"],
+            access_token="at-new", refresh_token="rt-new", expires_at=2.0,
+        )
+        refreshed = llm_profiles_store.get_profile(store._conn, created["id"])
+    assert refreshed["access_token"] == "at-new"
+    assert refreshed["refresh_token"] == "rt-new"
+    assert refreshed["token_expires_at"] == 2.0
+
+
+def test_resolve_profile_includes_subscription_fields(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-x",
+            refresh_token="rt-x", expires_at=42.0, name="ChatGPT (Codex)",
+            model="gpt-5-codex", base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+    resolved = store.resolve_llm_profile(None)
+    assert resolved["auth_mode"] == "subscription"
+    assert resolved["access_token"] == "at-x"
+    assert resolved["token_expires_at"] == 42.0
+
+
+def test_resolve_profile_refreshes_expiring_subscription_token(tmp_path, monkeypatch) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-stale",
+            refresh_token="rt-1", expires_at=1.0,  # already expired
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+
+    def fake_refresh(refresh_token, **kw):
+        assert refresh_token == "rt-1"
+        return {"access_token": "at-fresh", "refresh_token": "rt-2", "expires_at": 99999999999.0}
+
+    monkeypatch.setattr(
+        "app.runtime.llm.codex_oauth.refresh_tokens", fake_refresh
+    )
+    resolved = store.resolve_llm_profile(None)
+    assert resolved["access_token"] == "at-fresh"
+    assert resolved["needs_reauth"] is False
+    raw = store._conn.execute(
+        "SELECT access_token FROM llm_profiles WHERE id=?", (created["id"],)
+    ).fetchone()
+    assert "at-fresh" not in raw["access_token"]  # persisted encrypted, not plaintext
+    assert raw["access_token"].startswith("enc:v1:")
+
+
+def test_resolve_profile_skips_refresh_when_token_fresh(tmp_path, monkeypatch) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-fresh",
+            refresh_token="rt-1", expires_at=time.time() + 3600,
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+
+    def fail_refresh(*a, **kw):
+        raise AssertionError("refresh should not be called for a fresh token")
+
+    monkeypatch.setattr("app.runtime.llm.codex_oauth.refresh_tokens", fail_refresh)
+    resolved = store.resolve_llm_profile(None)
+    assert resolved["access_token"] == "at-fresh"
+    assert resolved["needs_reauth"] is False
+
+
+def test_resolve_profile_flags_needs_reauth_on_terminal_refresh_failure(tmp_path, monkeypatch) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+    from app.runtime.llm.codex_oauth import CodexAuthError
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-stale",
+            refresh_token="rt-1", expires_at=1.0,
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+
+    def fake_refresh(refresh_token, **kw):
+        raise CodexAuthError("expired", code="invalid_grant", relogin_required=True)
+
+    monkeypatch.setattr("app.runtime.llm.codex_oauth.refresh_tokens", fake_refresh)
+    resolved = store.resolve_llm_profile(None)
+    assert resolved["needs_reauth"] is True
+
+
+def test_resolve_profile_api_key_profile_has_needs_reauth_false(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile({"id": "p", "name": "P", "api_key": "sk-p", "model": "m"})
+    store.set_default_llm_profile("p")
+    resolved = store.resolve_llm_profile(None)
+    assert resolved["needs_reauth"] is False

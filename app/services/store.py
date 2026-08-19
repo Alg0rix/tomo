@@ -575,6 +575,30 @@ class Store:
         with self._lock:
             return llm_profiles_store.resolve_profile(self._conn, agent_id)
 
+    def find_subscription_llm_profile(self, provider: str) -> dict[str, Any] | None:
+        with self._lock:
+            return llm_profiles_store.find_subscription_profile(self._conn, provider)
+
+    def create_subscription_llm_profile(
+        self, *, provider: str, access_token: str, refresh_token: str,
+        expires_at: float, name: str, model: str, base_url: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            return llm_profiles_store.create_subscription_profile(
+                self._conn, provider=provider, access_token=access_token,
+                refresh_token=refresh_token, expires_at=expires_at,
+                name=name, model=model, base_url=base_url,
+            )
+
+    def save_subscription_llm_tokens(
+        self, profile_id: str, *, access_token: str, refresh_token: str, expires_at: float
+    ) -> None:
+        with self._lock:
+            llm_profiles_store.save_subscription_tokens(
+                self._conn, profile_id, access_token=access_token,
+                refresh_token=refresh_token, expires_at=expires_at,
+            )
+
     def setup_default_profile(
         self, *, base_url: str, api_key: str, model: str, name: str = "Default"
     ) -> dict[str, Any]:

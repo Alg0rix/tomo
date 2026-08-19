@@ -78,24 +78,35 @@ def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
         "api_key": row["api_key"],  # ciphertext at rest
         "model": row["model"],
         "reasoning_efforts": _reasoning_efforts_from_row(row),
+        "auth_mode": row["auth_mode"],
+        "subscription_provider": row["subscription_provider"],
+        "access_token": row["access_token"],  # ciphertext at rest
+        "refresh_token": row["refresh_token"],  # ciphertext at rest
+        "token_expires_at": row["token_expires_at"],
         "enabled": bool(row["enabled"]),
         "created_at": row["created_at"],
     }
 
 
 def public_profile(row: dict[str, Any]) -> dict[str, Any]:
-    """Mask the api_key and add ``api_key_set`` — safe for HTTP/HTML."""
+    """Mask secrets and add ``*_set`` — safe for HTTP/HTML."""
     out = dict(row)
     raw_key = decrypt_secret(str(out.get("api_key") or ""))
     out["api_key_set"] = bool(raw_key)
     out["api_key"] = mask_api_key(raw_key)
+    out["access_token_set"] = bool(decrypt_secret(str(out.get("access_token") or "")))
+    out["refresh_token_set"] = bool(decrypt_secret(str(out.get("refresh_token") or "")))
+    out.pop("access_token", None)
+    out.pop("refresh_token", None)
     return out
 
 
 def _decrypt_profile(row: sqlite3.Row) -> dict[str, Any]:
-    """Return a profile with the **decrypted** api_key (runtime use only)."""
+    """Return a profile with **decrypted** secrets (runtime use only)."""
     prof = _row_to_profile(row)
     prof["api_key"] = decrypt_secret(str(prof["api_key"] or ""))
+    prof["access_token"] = decrypt_secret(str(prof["access_token"] or ""))
+    prof["refresh_token"] = decrypt_secret(str(prof["refresh_token"] or ""))
     return prof
 
 
@@ -130,8 +141,10 @@ def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
     reasoning_efforts = normalize_reasoning_efforts(data.get("reasoning_efforts"))
     conn.execute(
         "INSERT INTO llm_profiles "
-        "(id, name, base_url, api_key, model, reasoning_efforts_json, enabled, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
+        "(id, name, base_url, api_key, model, reasoning_efforts_json, "
+        "auth_mode, subscription_provider, access_token, refresh_token, "
+        "token_expires_at, enabled, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             pid,
             name,
@@ -139,6 +152,11 @@ def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
             encrypt_secret(data.get("api_key")),
             data.get("model") or "",
             json.dumps(reasoning_efforts),
+            "api_key",
+            "",
+            "",
+            "",
+            0.0,
             1 if data.get("enabled", True) else 0,
             _now(),
         ),
@@ -176,6 +194,72 @@ def update_profile(
         conn.execute(f"UPDATE llm_profiles SET {', '.join(sets)} WHERE id=?", params)
         conn.commit()
     return get_public_profile(conn, profile_id)
+
+
+def find_subscription_profile(
+    conn: sqlite3.Connection, provider: str
+) -> dict[str, Any] | None:
+    """First (oldest) subscription profile for *provider*, decrypted."""
+    row = conn.execute(
+        "SELECT * FROM llm_profiles WHERE auth_mode='subscription' "
+        "AND subscription_provider=? ORDER BY created_at ASC LIMIT 1",
+        (provider,),
+    ).fetchone()
+    return _decrypt_profile(row) if row else None
+
+
+def create_subscription_profile(
+    conn: sqlite3.Connection,
+    *,
+    provider: str,
+    access_token: str,
+    refresh_token: str,
+    expires_at: float,
+    name: str,
+    model: str,
+    base_url: str,
+) -> dict[str, Any]:
+    """Create a new subscription-backed profile (ChatGPT/Codex login)."""
+    from app.models.ids import unique_id
+
+    pid = unique_id(conn, "llm_profiles", name=name, prefix="", explicit=None)
+    conn.execute(
+        "INSERT INTO llm_profiles "
+        "(id, name, base_url, api_key, model, reasoning_efforts_json, "
+        "auth_mode, subscription_provider, access_token, refresh_token, "
+        "token_expires_at, enabled, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            pid, name, base_url, "", model, "[]",
+            "subscription", provider,
+            encrypt_secret(access_token), encrypt_secret(refresh_token),
+            float(expires_at), 1, _now(),
+        ),
+    )
+    conn.commit()
+    return get_public_profile(conn, pid)
+
+
+def save_subscription_tokens(
+    conn: sqlite3.Connection,
+    profile_id: str,
+    *,
+    access_token: str,
+    refresh_token: str,
+    expires_at: float,
+) -> None:
+    """Overwrite the token pair on a subscription profile after login/refresh."""
+    conn.execute(
+        "UPDATE llm_profiles SET access_token=?, refresh_token=?, token_expires_at=? "
+        "WHERE id=?",
+        (
+            encrypt_secret(access_token),
+            encrypt_secret(refresh_token),
+            float(expires_at),
+            profile_id,
+        ),
+    )
+    conn.commit()
 
 
 def delete_profile(conn: sqlite3.Connection, profile_id: str) -> bool:
@@ -218,13 +302,55 @@ def effective_reasoning_effort(
     return efforts[-1] if efforts else None
 
 
+_SUBSCRIPTION_REFRESH_SKEW_SECONDS = 60
+
+
+def _maybe_refresh_subscription(conn: sqlite3.Connection, prof: dict[str, Any]) -> dict[str, Any]:
+    """Proactively refresh an expiring subscription token before returning it.
+
+    On an unrecoverable refresh failure, sets ``needs_reauth=True`` on the
+    returned dict instead of raising — callers (``get_llm``) turn that into
+    a clear config error rather than a confusing wire-level 401.
+    """
+    prof = dict(prof)
+    prof["needs_reauth"] = False
+    if prof.get("auth_mode") != "subscription":
+        return prof
+    expires_at = float(prof.get("token_expires_at") or 0)
+    if expires_at <= 0 or expires_at - _now() > _SUBSCRIPTION_REFRESH_SKEW_SECONDS:
+        return prof
+    from app.runtime.llm import codex_oauth
+
+    try:
+        refreshed = codex_oauth.refresh_tokens(prof.get("refresh_token") or "")
+    except codex_oauth.CodexAuthError as exc:
+        if exc.relogin_required:
+            prof["needs_reauth"] = True
+            return prof
+        # Transient failure (e.g. rate limit) — keep serving the stale token;
+        # the next resolve retries.
+        return prof
+    save_subscription_tokens(
+        conn,
+        prof["id"],
+        access_token=refreshed["access_token"],
+        refresh_token=refreshed["refresh_token"],
+        expires_at=refreshed["expires_at"],
+    )
+    prof["access_token"] = refreshed["access_token"]
+    prof["refresh_token"] = refreshed["refresh_token"]
+    prof["token_expires_at"] = refreshed["expires_at"]
+    return prof
+
+
 def resolve_profile(
     conn: sqlite3.Connection, agent_id: str | None = None
 ) -> dict[str, Any] | None:
     """Resolve the runtime LLM profile (decrypted) for an agent or default.
 
     Order: agent's ``model_id`` (if set + enabled) → ``default_model_id``
-    (if enabled) → first enabled profile → ``None``.
+    (if enabled) → first enabled profile → ``None``. For a ``subscription``
+    profile, proactively refreshes an expiring access token first.
     """
     if agent_id:
         arow = conn.execute(
@@ -234,16 +360,18 @@ def resolve_profile(
         if mid:
             prof = get_profile(conn, mid)
             if prof and prof["enabled"]:
-                return prof
+                return _maybe_refresh_subscription(conn, prof)
     default_id = get_default_model_id(conn)
     if default_id:
         prof = get_profile(conn, default_id)
         if prof and prof["enabled"]:
-            return prof
+            return _maybe_refresh_subscription(conn, prof)
     row = conn.execute(
         "SELECT * FROM llm_profiles WHERE enabled=1 ORDER BY created_at ASC LIMIT 1"
     ).fetchone()
-    return _decrypt_profile(row) if row else None
+    if not row:
+        return None
+    return _maybe_refresh_subscription(conn, _decrypt_profile(row))
 
 
 __all__ = [
@@ -259,4 +387,7 @@ __all__ = [
     "public_profile",
     "normalize_reasoning_efforts",
     "effective_reasoning_effort",
+    "find_subscription_profile",
+    "create_subscription_profile",
+    "save_subscription_tokens",
 ]

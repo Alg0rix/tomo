@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     api_key                TEXT NOT NULL DEFAULT '',
     model                  TEXT NOT NULL DEFAULT '',
     reasoning_efforts_json TEXT NOT NULL DEFAULT '[]',
+    auth_mode              TEXT NOT NULL DEFAULT 'api_key',
+    subscription_provider  TEXT NOT NULL DEFAULT '',
+    access_token           TEXT NOT NULL DEFAULT '',
+    refresh_token          TEXT NOT NULL DEFAULT '',
+    token_expires_at       REAL NOT NULL DEFAULT 0,
     enabled                INTEGER NOT NULL DEFAULT 1,
     created_at             REAL NOT NULL DEFAULT 0
 );
@@ -535,6 +540,16 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE llm_profiles "
             "ADD COLUMN reasoning_efforts_json TEXT NOT NULL DEFAULT '[]'"
         )
+    _profile_alters = {
+        "auth_mode": "ALTER TABLE llm_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'api_key'",
+        "subscription_provider": "ALTER TABLE llm_profiles ADD COLUMN subscription_provider TEXT NOT NULL DEFAULT ''",
+        "access_token": "ALTER TABLE llm_profiles ADD COLUMN access_token TEXT NOT NULL DEFAULT ''",
+        "refresh_token": "ALTER TABLE llm_profiles ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''",
+        "token_expires_at": "ALTER TABLE llm_profiles ADD COLUMN token_expires_at REAL NOT NULL DEFAULT 0",
+    }
+    for _col, _sql in _profile_alters.items():
+        if _col not in profile_cols:
+            conn.execute(_sql)
     # Connector tunnel columns (idempotent ALTER for pre-connector DBs).
     wp_cols = {r[1] for r in conn.execute("PRAGMA table_info(workplaces)")}
     _wp_alters = {
