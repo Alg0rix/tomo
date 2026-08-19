@@ -85,3 +85,42 @@ def test_two_agents_two_profiles_use_different_endpoints(tmp_path) -> None:
     store.update_agent("ops", {"model_id": "ops_prof"})
     assert get_llm(agent_id="main").endpoint == "https://d/v1/chat/completions"
     assert get_llm(agent_id="ops").endpoint == "https://ops/v1/chat/completions"
+
+
+def test_get_llm_returns_codex_client_for_subscription_profile(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+    from app.runtime.llm.codex_responses import CodexResponsesClient
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-1",
+            refresh_token="rt-1", expires_at=99999999999.0,
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+    client = get_llm()
+    assert isinstance(client, CodexResponsesClient)
+
+
+def test_get_llm_raises_needs_reauth_message(tmp_path, monkeypatch) -> None:
+    _rebind(tmp_path)
+    from app.models.mixins import llm_profiles as llm_profiles_store
+    from app.runtime.llm.codex_oauth import CodexAuthError
+
+    with store._lock:
+        created = llm_profiles_store.create_subscription_profile(
+            store._conn, provider="openai-codex", access_token="at-stale",
+            refresh_token="rt-1", expires_at=1.0,
+            name="ChatGPT (Codex)", model="gpt-5-codex",
+            base_url="https://chatgpt.com/backend-api/codex",
+        )
+        llm_profiles_store.set_default_model_id(store._conn, created["id"])
+
+    def fake_refresh(*a, **kw):
+        raise CodexAuthError("expired", code="invalid_grant", relogin_required=True)
+
+    monkeypatch.setattr("app.runtime.llm.codex_oauth.refresh_tokens", fake_refresh)
+    with pytest.raises(LLMConfigError, match="ChatGPT sign-in expired"):
+        get_llm()

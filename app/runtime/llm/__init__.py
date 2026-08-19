@@ -9,6 +9,7 @@ path — tests inject :class:`MockLLMClient` into ``run_turn``.
 from __future__ import annotations
 
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
+from app.runtime.llm.codex_responses import CodexResponsesClient
 from app.runtime.llm.mock import MockLLMClient
 from app.runtime.llm.openai_compat import (
     LLMConfigError,
@@ -35,6 +36,17 @@ def get_llm(
     profile = store.resolve_llm_profile(agent_id)
     if not profile:
         raise LLMConfigError("Configure a model profile in System → Models")
+    if profile.get("needs_reauth"):
+        raise LLMConfigError(
+            "ChatGPT sign-in expired — reconnect in System → Models"
+        )
+    if profile.get("auth_mode") == "subscription":
+        return CodexResponsesClient(
+            base_url=profile.get("base_url") or "",
+            access_token=profile.get("access_token") or "",
+            model=profile.get("model") or "gpt-5-codex",
+            timeout=default_llm_timeout_seconds(),
+        )
     base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
     effective_effort = effective_reasoning_effort(profile, reasoning_effort)
@@ -54,6 +66,7 @@ __all__ = [
     "ToolCall",
     "MockLLMClient",
     "OpenAICompatClient",
+    "CodexResponsesClient",
     "LLMConfigError",
     "LLMRequestError",
     "format_llm_error",
