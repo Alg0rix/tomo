@@ -198,3 +198,80 @@ def test_agent_generate_via_api(tmp_path, monkeypatch) -> None:
         assert "Responsibilities" in body["system_prompt"]
     finally:
         _cleanup()
+
+
+def test_codex_login_start_returns_device_code(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        def fake_start(**kw):
+            return {
+                "user_code": "ABCD-1234", "device_auth_id": "dev-1",
+                "verification_url": "https://auth.openai.com/codex/device", "interval": 5,
+            }
+        monkeypatch.setattr("app.api.platform.codex_oauth.start_device_login", fake_start)
+        res = client.post("/api/llm-profiles/codex-login/start")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["user_code"] == "ABCD-1234"
+        assert body["device_auth_id"] == "dev-1"
+    finally:
+        _cleanup()
+
+
+def test_codex_login_poll_pending(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        monkeypatch.setattr("app.api.platform.codex_oauth.poll_device_login", lambda *a, **kw: None)
+        res = client.post(
+            "/api/llm-profiles/codex-login/poll",
+            json={"device_auth_id": "dev-1", "user_code": "ABCD-1234"},
+        )
+        assert res.status_code == 200
+        assert res.json() == {"status": "pending"}
+    finally:
+        _cleanup()
+
+
+def test_codex_login_poll_success_creates_profile(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        def fake_poll(device_auth_id, user_code, **kw):
+            return {"access_token": "at-1", "refresh_token": "rt-1", "expires_at": 99999999999.0}
+        monkeypatch.setattr("app.api.platform.codex_oauth.poll_device_login", fake_poll)
+        res = client.post(
+            "/api/llm-profiles/codex-login/poll",
+            json={"device_auth_id": "dev-1", "user_code": "ABCD-1234"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["profile"]["auth_mode"] == "subscription"
+        assert body["profile"]["access_token_set"] is True
+        assert "access_token" not in body["profile"]
+        assert "at-1" not in res.text
+
+        # Second login updates the same profile rather than creating a duplicate.
+        res2 = client.post(
+            "/api/llm-profiles/codex-login/poll",
+            json={"device_auth_id": "dev-2", "user_code": "EFGH-5678"},
+        )
+        assert res2.json()["profile"]["id"] == body["profile"]["id"]
+    finally:
+        _cleanup()
+
+
+def test_codex_login_poll_terminal_failure_returns_400(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path)
+    try:
+        from app.runtime.llm.codex_oauth import CodexAuthError
+
+        def fake_poll(*a, **kw):
+            raise CodexAuthError("boom", code="device_code_poll_error")
+        monkeypatch.setattr("app.api.platform.codex_oauth.poll_device_login", fake_poll)
+        res = client.post(
+            "/api/llm-profiles/codex-login/poll",
+            json={"device_auth_id": "dev-1", "user_code": "ABCD-1234"},
+        )
+        assert res.status_code == 400
+    finally:
+        _cleanup()

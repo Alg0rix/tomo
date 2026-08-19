@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
 from app.core.deps import AuthDep, session_user_id
+from app.runtime.llm import codex_oauth
 from app.schemas import (
+    CodexLoginPoll,
     KnowledgeEntryCreate,
     KnowledgeEntryUpdate,
     LLMProfileCreate,
@@ -720,6 +722,47 @@ async def set_default_llm_profile(profile_id: str, _: AuthDep):
         raise HTTPException(status_code=404, detail="Profile not found")
     store.set_default_llm_profile(profile_id)
     return {"success": True, "default_id": profile_id}
+
+
+@router.post("/llm-profiles/codex-login/start")
+async def codex_login_start(_: AuthDep):
+    try:
+        return codex_oauth.start_device_login()
+    except codex_oauth.CodexAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/llm-profiles/codex-login/poll")
+async def codex_login_poll(body: CodexLoginPoll, _: AuthDep):
+    try:
+        tokens = codex_oauth.poll_device_login(body.device_auth_id, body.user_code)
+    except codex_oauth.CodexAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if tokens is None:
+        return {"status": "pending"}
+
+    existing = store.find_subscription_llm_profile("openai-codex")
+    if existing:
+        store.save_subscription_llm_tokens(
+            existing["id"],
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            expires_at=tokens["expires_at"],
+        )
+        profile = store.get_llm_profile(existing["id"])
+    else:
+        profile = store.create_subscription_llm_profile(
+            provider="openai-codex",
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            expires_at=tokens["expires_at"],
+            name="ChatGPT (Codex)",
+            model="gpt-5-codex",
+            base_url=codex_oauth.DEFAULT_CODEX_BASE_URL,
+        )
+        if not store.get_default_llm_profile_id():
+            store.set_default_llm_profile(profile["id"])
+    return {"status": "ok", "profile": profile}
 
 
 # -- MCP servers -----------------------------------------------------------

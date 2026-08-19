@@ -161,6 +161,13 @@ class LLMProfileUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class CodexLoginPoll(BaseModel):
+    """Poll body for the Codex device-code login flow."""
+
+    device_auth_id: str = Field(min_length=1, max_length=200)
+    user_code: str = Field(min_length=1, max_length=64)
+
+
 class ReasoningEffortUpdate(BaseModel):
     """Select or clear the provider-specific effort for one chat session."""
 
