@@ -226,6 +226,7 @@
   }
 
   function openForm(mode, p) {
+    resetModelSelect();
     fMode.value = mode;
     document.getElementById('profileFormTitle').textContent = mode === 'add' ? 'New profile' : 'Inspect profile';
     if (mode === 'add') {
@@ -284,6 +285,48 @@
   }
 
   loadProfiles();
+
+  // ---- Model select / custom fetch ----
+  var modelSelect = document.getElementById('profModelSelect');
+  var fetchModelsBtn = document.getElementById('profFetchModelsBtn');
+
+  function resetModelSelect() {
+    if (!modelSelect) return;
+    modelSelect.innerHTML = '<option value="">Custom (type below)</option>';
+  }
+
+  if (modelSelect) {
+    modelSelect.addEventListener('change', function () {
+      if (modelSelect.value) { fModel.value = modelSelect.value; }
+      else { fModel.focus(); }
+    });
+  }
+
+  if (fetchModelsBtn) {
+    fetchModelsBtn.addEventListener('click', async function () {
+      var url = '/api/llm-profiles/codex-models';
+      if (fId.value) url += '?profile_id=' + encodeURIComponent(fId.value);
+      fetchModelsBtn.disabled = true;
+      fetchModelsBtn.textContent = 'Fetching…';
+      try {
+        var d = await Tomo.api(url);
+        resetModelSelect();
+        var models = (d && d.models) || [];
+        models.forEach(function (m) {
+          var opt = document.createElement('option');
+          opt.value = m; opt.textContent = m;
+          if (m === fModel.value) opt.selected = true;
+          modelSelect.appendChild(opt);
+        });
+        Tomo.toast(models.length ? (models.length + ' models loaded') : 'No models found', models.length ? 'ok' : 'err');
+      } catch (er) {
+        Tomo.toast((er && er.message) || 'Could not fetch models', 'err');
+      } finally {
+        fetchModelsBtn.disabled = false;
+        fetchModelsBtn.textContent = 'Fetch models';
+      }
+    });
+  }
 
   // ---- ChatGPT/Codex subscription login ----
   var codexBtn = document.getElementById('codexLoginBtn');

@@ -49,9 +49,16 @@
           <input class="input" type="password" id="profApiKey" placeholder="Paste key — encrypted at rest" autocomplete="new-password" spellcheck="false">
         </div>
       </div>
-      <div class="machine-field">
-        <div class="machine-field-copy"><div class="machine-field-name">Model</div></div>
-        <div class="machine-field-control">
+      <div class="machine-field machine-field-stack">
+        <div class="machine-field-copy">
+          <div class="machine-field-name">Model</div>
+          <p class="machine-field-hint">Pick from the fetched list, or choose "Custom" and type one below.</p>
+        </div>
+        <div class="machine-field-control machine-field-control-wide">
+          <select class="input machine-input-mid" id="profModelSelect">
+            <option value="">Custom (type below)</option>
+          </select>
+          <button class="btn ghost sm" type="button" id="profFetchModelsBtn">Fetch models</button>
           <input class="input machine-input-mid" id="profModel" placeholder="gpt-4o-mini" spellcheck="false">
         </div>
       </div>
