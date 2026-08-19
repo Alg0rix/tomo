@@ -821,7 +821,12 @@ async def run_turn(
 
             _record_response_usage(metrics, messages, resp)
 
-            if resp.has_tool_calls and resp.content:
+            if resp.reasoning:
+                # Provider-native reasoning summary (e.g. Codex/Responses
+                # API reasoning.summary) — takes precedence over the
+                # pre-tool-call-commentary heuristic below when present.
+                yield {"kind": "thinking", "content": resp.reasoning}
+            elif resp.has_tool_calls and resp.content:
                 yield {"kind": "thinking", "content": resp.content}
 
             if not resp.has_tool_calls:

@@ -168,6 +168,34 @@ def _tool_call_from_item(item: Any) -> ToolCall | None:
     return ToolCall(id=call_id, name=name, arguments=_parse_arguments(arguments_raw))
 
 
+def _extract_reasoning_text(item: Any) -> str:
+    """Human-readable reasoning summary from a Responses ``reasoning`` item.
+
+    Requesting ``reasoning.summary: "auto"`` makes the backend emit this
+    alongside (not instead of) the opaque ``encrypted_content`` blob we
+    don't replay (see the design spec's "Out of scope"). This is the part
+    worth surfacing to the user as a "thinking" bubble.
+    """
+    summary = getattr(item, "summary", None)
+    if not isinstance(summary, list):
+        return ""
+    chunks: list[str] = []
+    for part in summary:
+        text = getattr(part, "text", None)
+        if isinstance(text, str) and text:
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def _reasoning_text_from_items(items: list[Any]) -> str | None:
+    chunks = [
+        t for t in (_extract_reasoning_text(item) for item in items
+                    if getattr(item, "type", None) == "reasoning")
+        if t
+    ]
+    return "\n\n".join(chunks) if chunks else None
+
+
 def _normalize_response(resp: Any) -> LLMResponse:
     output = getattr(resp, "output", None) or []
     content_parts: list[str] = []
@@ -193,7 +221,8 @@ def _normalize_response(resp: Any) -> LLMResponse:
 
     prompt_tok, completion_tok = parse_usage(getattr(resp, "usage", None))
     return LLMResponse(
-        content=text, tool_calls=tool_calls, prompt_tokens=prompt_tok, completion_tokens=completion_tok
+        content=text, tool_calls=tool_calls, prompt_tokens=prompt_tok, completion_tokens=completion_tok,
+        reasoning=_reasoning_text_from_items(output),
     )
 
 
@@ -279,9 +308,10 @@ class CodexResponsesClient:
 
         Never reads ``response.completed.response.output`` for content —
         only ``response.output_text.delta`` (text) and
-        ``response.output_item.done`` (tool calls, and a message-text
-        fallback when no deltas were streamed) are used to assemble the
-        result, plus ``response.completed.response.usage`` for token counts.
+        ``response.output_item.done`` (tool calls, reasoning summaries, and
+        a message-text fallback when no deltas were streamed) are used to
+        assemble the result, plus ``response.completed.response.usage`` for
+        token counts.
         """
         payload = dict(self._payload(messages, tools))
         payload["stream"] = True
@@ -345,6 +375,7 @@ class CodexResponsesClient:
             "response": LLMResponse(
                 content=text, tool_calls=tool_calls,
                 prompt_tokens=prompt_tok, completion_tokens=completion_tok,
+                reasoning=_reasoning_text_from_items(output_items),
             ),
         }
 

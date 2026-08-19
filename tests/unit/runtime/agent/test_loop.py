@@ -348,6 +348,26 @@ async def test_thinking_emitted_when_content_accompanies_tool_calls() -> None:
     assert _final(events)["content"] == "Done: 4"
 
 
+async def test_thinking_emitted_from_provider_reasoning_without_tool_calls() -> None:
+    """A provider-native reasoning summary (e.g. Codex) surfaces as `thinking`
+    even on a plain final answer with no tool calls — distinct from the
+    pre-tool-call-commentary heuristic above."""
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                content="The answer is 4.",
+                tool_calls=[],
+                reasoning="2 + 2 = 4, a basic addition.",
+            ),
+        ]
+    )
+    events = await _collect("what is 2+2", llm=llm, tools=[])
+    assert _kinds(events, drop_delta=True) == ["thinking", "final"]
+    thinking = next(e for e in events if e["kind"] == "thinking")
+    assert thinking == {"kind": "thinking", "content": "2 + 2 = 4, a basic addition."}
+    assert _final(events)["content"] == "The answer is 4."
+
+
 async def test_llm_exception_surfaces_as_error_event() -> None:
     events = await _collect("boom", llm=_BoomMock(), tools=_bash_tools())
     assert [e["kind"] for e in events] == ["error"]

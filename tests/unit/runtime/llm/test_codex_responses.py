@@ -235,3 +235,72 @@ async def test_complete_omits_reasoning_when_not_configured() -> None:
     client = _client(httpx.MockTransport(handler))
     await client.complete([{"role": "user", "content": "hi"}])
     assert "reasoning" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_complete_extracts_reasoning_summary() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_1",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "reasoning", "id": "rs_1", "encrypted_content": "opaque-blob",
+                        "summary": [{"type": "summary_text", "text": "Thinking about the ask."}],
+                    },
+                    {
+                        "type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Here's the answer."}],
+                    },
+                ],
+            },
+        )
+
+    client = _client(httpx.MockTransport(handler))
+    resp = await client.complete([{"role": "user", "content": "hi"}])
+    assert resp.content == "Here's the answer."
+    assert resp.reasoning == "Thinking about the ask."
+
+
+@pytest.mark.asyncio
+async def test_complete_reasoning_is_none_when_absent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"id": "resp_1", "status": "completed", "output": [
+                {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "hi"}]},
+            ]},
+        )
+
+    client = _client(httpx.MockTransport(handler))
+    resp = await client.complete([{"role": "user", "content": "hi"}])
+    assert resp.reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_stream_complete_extracts_reasoning_summary() -> None:
+    events = [
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "reasoning", "id": "rs_1", "encrypted_content": "opaque-blob",
+                "summary": [{"type": "summary_text", "text": "Working it out."}],
+            },
+        },
+        {"type": "response.output_text.delta", "delta": "answer"},
+        {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+
+    client = _client(httpx.MockTransport(handler))
+    final = None
+    async for ev in client.stream_complete([{"role": "user", "content": "hi"}]):
+        if ev["type"] == "done":
+            final = ev["response"]
+    assert final.content == "answer"
+    assert final.reasoning == "Working it out."

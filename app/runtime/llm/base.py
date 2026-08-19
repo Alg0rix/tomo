@@ -34,12 +34,18 @@ class LLMResponse:
 
     ``prompt_tokens`` / ``completion_tokens`` come from the provider ``usage``
     object when available (0 when the backend omitted them).
+
+    ``reasoning`` is a human-readable reasoning summary when the backend
+    exposes one (e.g. Codex/Responses-API ``reasoning.summary``); ``None``
+    for backends that don't surface reasoning text (chat/completions has no
+    such field). The agent loop shows it as a "thinking" bubble.
     """
 
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning: str | None = None
 
     @property
     def has_tool_calls(self) -> bool:
