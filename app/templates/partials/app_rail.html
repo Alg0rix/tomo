@@ -3,7 +3,7 @@
   <div class="app-rail-top">
     <div class="app-rail-brand-row">
       <a class="app-rail-brand" href="/" title="{{ brand }}">
-        <span class="mark">友</span>
+        <span class="mark" aria-hidden="true"><img src="{{ url_for('static', path='mark.png') }}" alt=""></span>
         <span class="app-rail-brand-text">{{ brand }}</span>
       </a>
       <button type="button" class="icon-btn app-rail-collapse" id="railCollapseBtn"

@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark light">
   <title>{{ brand }} · Login</title>
   <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', path='favicon-32.png') }}" type="image/png" sizes="32x32">
   <link rel="icon" href="{{ url_for('static', path='favicon.ico') }}" sizes="any">
   <link rel="apple-touch-icon" href="{{ url_for('static', path='apple-touch-icon.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,7 +20,7 @@
 
   <header class="login-nav">
     <a class="login-wordmark" href="/login">
-      <span class="mark">友</span>
+      <span class="mark" aria-hidden="true"><img src="{{ url_for('static', path='mark.png') }}" alt=""></span>
       <span>{{ brand }}</span>
     </a>
     <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle theme" title="Toggle theme">

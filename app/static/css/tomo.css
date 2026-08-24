@@ -169,11 +169,12 @@ html.is-rail-collapsed .app-rail {
   font-size: 16px;
   color: var(--text);
 }
+.mark img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
 .app-rail-brand .mark {
-  width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 9px; overflow: hidden;
   flex-shrink: 0;
-  background: linear-gradient(155deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink); font-size: 15px; font-weight: 800;
   box-shadow: 0 0 18px -4px var(--accent-glow);
 }
 .app-rail-brand-text {
@@ -354,9 +355,8 @@ html.is-rail-collapsed .app-rail-collapse {
 /* Legacy brand mark reuse (login etc.) */
 .brand { display: flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 700; letter-spacing: -0.02em; font-size: 17px; }
 .brand .mark {
-  width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
-  background: linear-gradient(155deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink); font-size: 15px; font-weight: 800; box-shadow: 0 0 18px -4px var(--accent-glow);
+  width: 28px; height: 28px; border-radius: 9px; overflow: hidden;
+  box-shadow: 0 0 18px -4px var(--accent-glow);
 }
 .brand .sub { font-family: var(--font-mono); font-weight: 400; font-size: 11px; color: var(--text-faint); letter-spacing: 0; }
 
@@ -4525,12 +4525,8 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  display: grid;
-  place-items: center;
+  overflow: hidden;
   flex-shrink: 0;
-  font-size: 14px;
-  background: linear-gradient(155deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink);
 }
 .login-letter {
   position: relative;

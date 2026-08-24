@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="app/static/mark.png" width="160" height="160" alt="Tomo">
+</p>
+
 # Tomo (友達)
 
 **Tomodachi** — a general-purpose agent swarm that learns, coordinates, and acts on your behalf.
