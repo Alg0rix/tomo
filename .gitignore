@@ -39,3 +39,6 @@ logs/
 # Built connector binary
 connector/tomo-connector
 .worktrees/
+
+# Wrangler local cache (includes wrangler-account.json)
+.wrangler/
