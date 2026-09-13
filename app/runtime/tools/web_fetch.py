@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import threading
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -14,6 +15,11 @@ from app.runtime.html_md import HtmlToMarkdown
 from app.runtime.tools.file_util import parse_positive_int
 
 _TIMEOUT = 15.0
+_DNS_TIMEOUT = 5.0
+# Hard wall clock for the whole fetch. httpx timeouts do not cover
+# socket.getaddrinfo, and a slow trickle can reset per-chunk read timeouts.
+# Parallel web_fetch cards otherwise sit on RUNNING until the worker returns.
+_OVERALL_TIMEOUT = 20.0
 _MAX_CHARS = 100_000
 _MAX_PAGE_CHARS = 400_000
 _MAX_REDIRECTS = 5
@@ -29,6 +35,30 @@ _LOOKS_LIKE_HTML = re.compile(
 )
 
 
+def _getaddrinfo(host: str):
+    """Resolve *host* or raise ``socket.gaierror``; never block past ``_DNS_TIMEOUT``."""
+    box: list[tuple[str, object]] = []
+
+    def work() -> None:
+        try:
+            box.append(("ok", socket.getaddrinfo(host, None)))
+        except Exception as exc:  # noqa: BLE001 — surfaced as gaierror below
+            box.append(("err", exc))
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(_DNS_TIMEOUT)
+    if not box:
+        raise socket.gaierror(f"DNS lookup timed out after {_DNS_TIMEOUT:g}s")
+    kind, payload = box[0]
+    if kind == "err":
+        exc = payload
+        if isinstance(exc, socket.gaierror):
+            raise exc
+        raise socket.gaierror(str(exc)) from exc
+    return payload
+
+
 def _is_blocked_host(hostname: str) -> str | None:
     """Return an error string if ``hostname`` resolves to a private/loopback IP."""
     host = (hostname or "").strip().lower()
@@ -37,7 +67,7 @@ def _is_blocked_host(hostname: str) -> str | None:
     if host in {"localhost", "metadata.google.internal"}:
         return "Error: private/loopback hosts are blocked"
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = _getaddrinfo(host)
     except socket.gaierror as exc:
         return f"Error: could not resolve host: {exc}"
     for info in infos:
@@ -147,27 +177,8 @@ def _paginate(text: str, *, offset: int, limit: int) -> str:
     return page
 
 
-def run(arguments: dict[str, Any]) -> str:
-    """Fetch ``url`` and return paginated text/Markdown; always returns a string."""
-    if not isinstance(arguments, dict):
-        return "Error: web_fetch expects a dict of arguments"
-    url = arguments.get("url")
-    if not isinstance(url, str) or not url.strip():
-        return "Error: 'url' argument must be a non-empty string"
-    url = url.strip()
-
-    offset = parse_positive_int(
-        arguments.get("offset", 0), 0, name="offset", minimum=0
-    )
-    if isinstance(offset, str):
-        return offset
-    limit = parse_positive_int(
-        arguments.get("limit", _MAX_CHARS), _MAX_CHARS, name="limit", minimum=1
-    )
-    if isinstance(limit, str):
-        return limit
-    limit = min(int(limit), _MAX_PAGE_CHARS)
-
+def _run_fetch(url: str, offset: int, limit: int) -> str:
+    """SSRF-check, GET, convert, paginate. May block on DNS or a slow body."""
     blocked = _check_url(url)
     if blocked:
         return blocked
@@ -216,6 +227,46 @@ def run(arguments: dict[str, Any]) -> str:
             return f"Error: HTML→Markdown conversion failed: {exc}"
 
     return _paginate(text, offset=int(offset), limit=limit)
+
+
+def run(arguments: dict[str, Any]) -> str:
+    """Fetch ``url`` and return paginated text/Markdown; always returns a string."""
+    if not isinstance(arguments, dict):
+        return "Error: web_fetch expects a dict of arguments"
+    url = arguments.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return "Error: 'url' argument must be a non-empty string"
+    url = url.strip()
+
+    offset = parse_positive_int(
+        arguments.get("offset", 0), 0, name="offset", minimum=0
+    )
+    if isinstance(offset, str):
+        return offset
+    limit = parse_positive_int(
+        arguments.get("limit", _MAX_CHARS), _MAX_CHARS, name="limit", minimum=1
+    )
+    if isinstance(limit, str):
+        return limit
+    limit = min(int(limit), _MAX_PAGE_CHARS)
+
+    box: list[str] = []
+    caught: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            box.append(_run_fetch(url, int(offset), limit))
+        except Exception as exc:  # noqa: BLE001 — tool must always return a string
+            caught.append(exc)
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(_OVERALL_TIMEOUT)
+    if box:
+        return box[0]
+    if caught:
+        return f"Error: could not fetch URL: {caught[0]}"
+    return f"Error: request timed out after {_OVERALL_TIMEOUT:g}s"
 
 
 __all__ = ["run"]

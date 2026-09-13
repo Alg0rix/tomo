@@ -277,6 +277,26 @@ def test_web_fetch_invalid_offset_is_error(monkeypatch) -> None:
     assert result.startswith("Error")
 
 
+def test_web_fetch_dns_timeout_unsticks_hung_lookup(monkeypatch) -> None:
+    """A stuck getaddrinfo must not leave the tool card on RUNNING forever."""
+    import time
+
+    monkeypatch.setattr(web_fetch, "_DNS_TIMEOUT", 0.05)
+    monkeypatch.setattr(web_fetch, "_OVERALL_TIMEOUT", 2.0)
+
+    def hang(*_a, **_k):
+        time.sleep(2)
+        return []
+
+    monkeypatch.setattr(web_fetch.socket, "getaddrinfo", hang)
+    t0 = time.monotonic()
+    result = execute("web_fetch", {"url": "https://example.com/page"})
+    elapsed = time.monotonic() - t0
+    assert result.startswith("Error")
+    assert "timed out" in result.lower()
+    assert elapsed < 1.0
+
+
 def test_html_to_markdown_direct() -> None:
     md = web_fetch._html_to_markdown(
         "<html><body><h2>Title</h2><ul><li>One</li><li>Two</li></ul></body></html>"
