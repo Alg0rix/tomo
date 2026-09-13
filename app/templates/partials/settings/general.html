@@ -6,7 +6,17 @@
       <div class="machine-field-copy">
         <div class="machine-field-name">Version</div>
       </div>
-      <div class="machine-field-control mono">0.1.8</div>
+      <div class="machine-field-control mono" id="tomoVersion">{{ app_version }}</div>
+    </div>
+    <div class="machine-field" id="selfUpdateField" hidden>
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Update</div>
+        <p class="machine-field-hint">Script install. Pulls git, syncs deps, restarts the user service.</p>
+      </div>
+      <div class="machine-field-control">
+        <button class="btn primary sm" type="button" id="selfUpdateBtn">Update</button>
+        <p class="machine-field-hint" id="selfUpdateStatus"></p>
+      </div>
     </div>
     <div class="machine-field">
       <div class="machine-field-copy">

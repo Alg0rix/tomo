@@ -792,4 +792,116 @@
 
   loadUsers();
   loadApiKeys();
+
+  // ---- Self-update (script install only) ----
+  var updateField = document.getElementById('selfUpdateField');
+  var updateBtn = document.getElementById('selfUpdateBtn');
+  var updateStatus = document.getElementById('selfUpdateStatus');
+  var versionEl = document.getElementById('tomoVersion');
+
+  function setUpdateStatus(text) {
+    if (updateStatus) updateStatus.textContent = text || '';
+  }
+
+  function paintUpdate(data) {
+    if (!data) return;
+    if (versionEl && data.version) {
+      versionEl.textContent = data.head ? (data.version + ' · ' + data.head) : data.version;
+    }
+    if (!updateField || !data.can_update) return;
+    updateField.hidden = false;
+    if (data.commits_behind == null) return;
+    if (data.commits_behind > 0) {
+      var n = data.commits_behind;
+      setUpdateStatus(n + ' commit' + (n === 1 ? '' : 's') + ' behind' + (data.remote_head ? ' (' + data.remote_head + ')' : ''));
+      if (updateBtn) updateBtn.textContent = 'Update';
+    } else {
+      setUpdateStatus('Up to date');
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  async function waitForRestart(prevHead) {
+    var started = Date.now();
+    var sawDown = false;
+    while (Date.now() - started < 180000) {
+      await sleep(1000);
+      try {
+        var res = await fetch('/api/update', {
+          headers: { 'Accept': 'application/json' },
+          credentials: 'same-origin',
+          signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined,
+        });
+        if (res.status === 401) {
+          window.location.reload();
+          return;
+        }
+        if (!res.ok) throw new Error('down');
+        var data = await res.json();
+        if (sawDown) {
+          window.location.reload();
+          return;
+        }
+        if (prevHead && data.head && data.head !== prevHead) {
+          window.location.reload();
+          return;
+        }
+        if (Date.now() - started > 15000 && !sawDown) {
+          // No restart observed — the update may have failed before pulling.
+          // Ask the server for the real behind-count instead of guessing.
+          try {
+            var check = await Tomo.api('/api/update/check', { method: 'POST' });
+            paintUpdate(check);
+            if (check && check.commits_behind > 0) {
+              setUpdateStatus('Update did not finish — still ' + check.commits_behind + ' commit' + (check.commits_behind === 1 ? '' : 's') + ' behind. See journal or self-update.log.');
+              Tomo.toast('Update did not finish — check the service log', 'err');
+            } else {
+              setUpdateStatus('Already up to date');
+              Tomo.toast('Already up to date', 'ok');
+            }
+          } catch (checkErr) {
+            setUpdateStatus('Could not confirm update status — see the service log');
+            Tomo.toast('Could not confirm update status', 'err');
+          }
+          if (updateBtn) updateBtn.disabled = false;
+          return;
+        }
+      } catch (e) {
+        sawDown = true;
+        setUpdateStatus('Restarting…');
+      }
+    }
+    if (updateBtn) updateBtn.disabled = false;
+    setUpdateStatus('Timed out waiting for restart');
+    Tomo.toast('Update started, but the service did not come back', 'err');
+  }
+
+  if (updateField) {
+    Tomo.api('/api/update').then(function (data) {
+      paintUpdate(data);
+      if (!data || !data.can_update) return;
+      return Tomo.api('/api/update/check', { method: 'POST' }).then(paintUpdate).catch(function () {});
+    }).catch(function () {});
+  }
+  if (updateBtn) {
+    updateBtn.addEventListener('click', async function () {
+      if (!window.confirm('Update Tomo from git and restart the service? Open chats will drop.')) return;
+      updateBtn.disabled = true;
+      setUpdateStatus('Updating…');
+      try {
+        var before = await Tomo.api('/api/update');
+        var started = await Tomo.api('/api/update', { method: 'POST' });
+        if (!started) return;
+        Tomo.toast('Update started', 'info');
+        await waitForRestart(before && before.head);
+      } catch (e) {
+        updateBtn.disabled = false;
+        setUpdateStatus('');
+        Tomo.toast((e && e.message) || 'Could not update', 'err');
+      }
+    });
+  }
 })();

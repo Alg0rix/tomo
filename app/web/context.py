@@ -8,6 +8,7 @@ from fastapi import Request
 
 from app.core.config import BRAND
 from app.core.deps import session_user_id, session_username
+from app.core.self_update import package_version
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ def page_ctx(request: Request, page: str, **extra):
     return {
         "page": page,
         "brand": BRAND,
+        "app_version": package_version(),
         "current_user_id": session_user_id(request),
         "current_username": session_username(request),
         "module_nav": module_nav,

@@ -18,6 +18,14 @@ class GitSyncResult:
     used_hard_reset: bool
 
 
+@dataclass
+class GitPeekResult:
+    head: str
+    remote_head: str
+    commits_behind: int
+    branch: str
+
+
 def _run(
     git_cmd: list[str],
     cwd: Path,
@@ -31,6 +39,59 @@ def _run(
         check=check,
         capture_output=True,
         text=True,
+    )
+
+
+def local_head(cwd: Path, git_cmd: list[str] | None = None) -> str:
+    cwd = Path(cwd)
+    git_cmd = list(git_cmd or ["git"])
+    proc = _run(git_cmd, cwd, ["rev-parse", "--short", "HEAD"])
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def peek_origin(
+    cwd: Path,
+    branch: str = "main",
+    *,
+    git_cmd: list[str] | None = None,
+) -> GitPeekResult:
+    """Fetch origin and count commits behind ``origin/<branch>`` without moving HEAD."""
+    cwd = Path(cwd)
+    git_cmd = list(git_cmd or ["git"])
+
+    fetch = _run(git_cmd, cwd, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        err = (fetch.stderr or fetch.stdout or "").strip()
+        first = err.splitlines()[0] if err else "git fetch failed"
+        if "Could not resolve host" in err or "unable to access" in err:
+            raise RuntimeError(f"Network error — cannot reach remote: {first}")
+        if "Authentication failed" in err or "could not read Username" in err:
+            raise RuntimeError(f"Authentication failed: {first}")
+        raise RuntimeError(first)
+
+    head = _run(git_cmd, cwd, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
+    remote = _run(
+        git_cmd, cwd, ["rev-parse", "--short", f"origin/{branch}"]
+    )
+    if remote.returncode != 0:
+        raise RuntimeError(
+            (remote.stderr or remote.stdout or "").strip()
+            or f"origin/{branch} not found after fetch"
+        )
+    count = _run(
+        git_cmd,
+        cwd,
+        ["rev-list", f"HEAD..origin/{branch}", "--count"],
+        check=True,
+    )
+    commits = int(count.stdout.strip() or "0")
+    return GitPeekResult(
+        head=head,
+        remote_head=remote.stdout.strip(),
+        commits_behind=commits,
+        branch=branch,
     )
 
 

@@ -5223,6 +5223,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   padding-top: 1px;
 }
 .machine-field-stack .machine-field-control { align-items: flex-start; }
+.machine-field-control .machine-field-hint { text-align: right; }
 .machine-field-control-wide { width: 100%; align-items: stretch; }
 .machine-input-narrow { max-width: 96px; }
 .machine-input-mid { max-width: 240px; width: 100%; }

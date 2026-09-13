@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cli.git_sync import GitSyncResult
-from cli.update_cmd import cmd_update
+from cli.update_cmd import _find_uv, cmd_update
 
 
 def test_update_missing_install(tmp_path: Path) -> None:
@@ -32,3 +32,16 @@ def test_update_runs_sync_and_restart(tmp_path: Path) -> None:
     sync.assert_called_once()
     uv.assert_called_once()
     sc.assert_called()
+
+
+def test_find_uv_falls_back_to_local_bin(tmp_path: Path) -> None:
+    uv_bin = tmp_path / ".local" / "bin" / "uv"
+    uv_bin.parent.mkdir(parents=True)
+    uv_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    with patch("cli.update_cmd.shutil.which", return_value=None):
+        assert _find_uv(tmp_path) == str(uv_bin)
+
+
+def test_find_uv_missing(tmp_path: Path) -> None:
+    with patch("cli.update_cmd.shutil.which", return_value=None):
+        assert _find_uv(tmp_path) is None

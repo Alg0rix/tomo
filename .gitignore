@@ -42,3 +42,6 @@ connector/tomo-connector
 
 # Wrangler local cache (includes wrangler-account.json)
 .wrangler/
+
+# Landing page (separate repo, not shipped with the app)
+landing/

@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from cli.git_sync import sync_to_origin
+from cli.git_sync import local_head, peek_origin, sync_to_origin
 
 # Isolate from runner global git config; allow local (file) remotes on CI.
 _GIT_ENV = {
@@ -57,6 +57,25 @@ def _init_repo_with_remote(tmp_path: Path) -> tuple[Path, Path]:
     _git(local, "commit", "-m", "v1")
     _git(local, "push", "-u", "origin", "main")
     return local, remote
+
+
+def test_peek_origin_counts_without_moving_head(tmp_path: Path) -> None:
+    local, remote = _init_repo_with_remote(tmp_path)
+    before = local_head(local, git_cmd=_GIT_BASE)
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", str(remote), str(other))
+    (other / "README").write_text("v2\n", encoding="utf-8")
+    _git(other, "add", "README")
+    _git(other, "commit", "-m", "v2")
+    _git(other, "push", "origin", "HEAD:main")
+
+    peek = peek_origin(local, "main", git_cmd=_GIT_BASE)
+    assert peek.commits_behind >= 1
+    assert peek.head == before
+    assert (local / "README").read_text(encoding="utf-8") == "v1\n"
+
+    current = peek_origin(local, "main", git_cmd=_GIT_BASE)
+    assert current.commits_behind >= 1
 
 
 def test_sync_already_up_to_date(tmp_path: Path) -> None:

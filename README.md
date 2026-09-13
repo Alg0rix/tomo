@@ -51,6 +51,7 @@ The unit sets `TOMO_HOME` and `TOMO_WORK` explicitly. UI: [http://127.0.0.1:8787
 
 ```bash
 tomo update                 # fetch + ff-only (or hard reset) + uv sync + restart
+                            # also: System → Instinct → Update (script install, not Docker)
 tomo service status|start|stop|restart
 tomo uninstall              # remove service + code; keep data
 tomo uninstall --purge -y   # also delete ~/.tomo and ~/tomo

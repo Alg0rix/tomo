@@ -12,10 +12,19 @@ from cli.paths import install_dir, read_tracked_branch
 from cli.service import systemctl_user
 
 
-def _uv_sync(cwd: Path) -> int:
+def _find_uv(home: Path | None = None) -> str | None:
     uv = shutil.which("uv")
+    if uv:
+        return uv
+    # systemd-spawned shells often lack ~/.local/bin on PATH (install.sh puts uv there)
+    candidate = (Path(home) if home else Path.home()) / ".local" / "bin" / "uv"
+    return str(candidate) if candidate.is_file() else None
+
+
+def _uv_sync(cwd: Path, home: Path | None = None) -> int:
+    uv = _find_uv(home)
     if not uv:
-        print("✗ uv not found on PATH", file=sys.stderr)
+        print("✗ uv not found on PATH or ~/.local/bin", file=sys.stderr)
         return 1
     proc = subprocess.run([uv, "sync"], cwd=cwd)
     return int(proc.returncode)
@@ -35,7 +44,7 @@ def cmd_update(*, assume_yes: bool = False, home: Path | None = None) -> int:
         print(f"✗ Update failed: {exc}", file=sys.stderr)
         return 1
 
-    uv_code = _uv_sync(app)
+    uv_code = _uv_sync(app, home)
     if uv_code != 0:
         print("✗ uv sync failed", file=sys.stderr)
         return uv_code
