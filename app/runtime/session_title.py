@@ -2,7 +2,7 @@
 
 The store sets a provisional title from the first user message. After the
 first assistant ``final``, :func:`generate_session_title` asks the configured
-LLM for a short name. Failures return ``None`` so callers keep the provisional
+agent's LLM for a short name. Failures return ``None`` so callers keep the provisional
 title and never fail the chat turn.
 """
 
@@ -90,14 +90,15 @@ async def generate_session_title(
     assistant_text: str,
     *,
     llm: LLMClient | None = None,
+    agent_id: str | None = None,
 ) -> str | None:
-    """Ask the LLM for a short title; return sanitized text or ``None``."""
+    """Ask the agent's LLM for a short title; return sanitized text or ``None``."""
     try:
         client = llm
         if client is None:
             from app.runtime.llm import get_llm
 
-            client = get_llm()
+            client = get_llm(agent_id=agent_id)
         user_snip = " ".join((user_text or "").split())[:_SNIPPET_MAX]
         asst_snip = " ".join((assistant_text or "").split())[:_SNIPPET_MAX]
         logger.info(

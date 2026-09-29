@@ -62,6 +62,23 @@ async def test_generate_uses_llm_and_sanitizes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_resolves_agent_model(monkeypatch) -> None:
+    resolved: list[str | None] = []
+
+    class _L:
+        async def complete(self, messages, tools=None):
+            return LLMResponse(content="Service Config Check", tool_calls=[])
+
+    def _get_llm(agent_id=None):
+        resolved.append(agent_id)
+        return _L()
+
+    monkeypatch.setattr("app.runtime.llm.get_llm", _get_llm)
+    assert await generate_session_title("check config", "done", agent_id="main") == "Service Config Check"
+    assert resolved == ["main"]
+
+
+@pytest.mark.asyncio
 async def test_generate_returns_none_on_failure() -> None:
     class _Boom:
         async def complete(self, messages, tools=None):

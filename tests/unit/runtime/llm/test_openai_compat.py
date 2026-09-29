@@ -398,6 +398,30 @@ async def test_empty_choices_retries_via_stream() -> None:
     assert calls["n"] == 2
 
 
+async def test_session_title_recovers_when_provider_always_returns_sse() -> None:
+    from app.runtime.session_title import generate_session_title
+
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=_completion_json_to_sse(_completion_body(content="Service Config Check")),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    title = await generate_session_title(
+        "Check the service config", "The service listens on port 8791",
+        llm=_client(httpx.MockTransport(handler)),
+    )
+
+    assert title == "Service Config Check"
+    assert len(requests) == 2
+    assert not requests[0].get("stream")
+    assert requests[1]["stream"] is True
+
+
 async def test_complete_with_tools_uses_stream() -> None:
     """Tool-bearing complete() must hit stream=true (avoids empty choices[])."""
 

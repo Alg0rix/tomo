@@ -115,9 +115,10 @@ async def test_llm_upgrades_session_title_after_first_final(tmp_path, monkeypatc
     store.rebind(tmp_path / "chat_title_llm.db")
     sid = store.create_swarm_session(["main"], user_id="web")
 
-    async def _fake_title(user_text: str, assistant_text: str, *, llm=None) -> str:
+    async def _fake_title(user_text: str, assistant_text: str, *, llm=None, agent_id=None) -> str:
         assert "hello there" in user_text
         assert assistant_text
+        assert agent_id == "main"
         return "Greeting Chat"
 
     monkeypatch.setattr("app.channels.web.generate_session_title", _fake_title)
@@ -136,7 +137,7 @@ async def test_llm_title_failure_keeps_provisional(tmp_path, monkeypatch) -> Non
     store.rebind(tmp_path / "chat_title_fail.db")
     sid = store.create_swarm_session(["main"], user_id="web")
 
-    async def _none_title(user_text: str, assistant_text: str, *, llm=None):
+    async def _none_title(user_text: str, assistant_text: str, *, llm=None, agent_id=None):
         return None
 
     monkeypatch.setattr("app.channels.web.generate_session_title", _none_title)

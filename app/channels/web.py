@@ -359,7 +359,9 @@ async def _maybe_upgrade_title(
         session_id,
         (session or {}).get("title"),
     )
-    llm_title = await generate_session_title(pair[0], pair[1])
+    llm_title = await generate_session_title(
+        pair[0], pair[1], agent_id=session.get("coordinator_id")
+    )
     if not llm_title:
         logger.warning(
             "session title unchanged session_id=%s kept=%r",

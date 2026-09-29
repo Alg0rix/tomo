@@ -732,7 +732,7 @@ class OpenAICompatClient:
                 "retrying via stream response=%s",
                 self._model,
                 self._base_url,
-                getattr(resp, "model_dump", lambda: vars(resp))(),
+                _resp_as_dict(resp),
             )
             try:
                 return await self._complete_via_stream(messages, tools)
