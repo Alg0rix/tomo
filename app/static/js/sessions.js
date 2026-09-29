@@ -38,53 +38,30 @@
   var loginUserId = chatWrap.dataset.userId || 'web';
 
   var teamRun = null;
+  var teamRefreshTimer = null;
   function renderTeamProgress(run) {
-    if (!teamProgress) return;
+    if (!teamProgress || !window.TomoLoom) return;
     teamRun = run || null;
-    const tasks = run && run.tasks ? run.tasks : [];
-    if (!tasks.length) { teamProgress.hidden = true; teamProgress.innerHTML = ''; return; }
-    teamProgress.hidden = false;
-    teamProgress.innerHTML = '<div class="team-progress-head">Team progress <span>' + esc(run.status || 'running') + '</span></div>' +
-      tasks.map(function (task) {
-        const label = task.agent_name || agentName(task.agent_id) || 'Agent';
-        return '<div class="team-progress-task"><span class="team-progress-state ' + esc(task.status || 'queued') + '"></span>' +
-          '<div><strong>' + esc(label) + '</strong><span>' + esc(task.brief || '') + '</span></div>' +
-          '<small>' + esc(task.status || 'queued') + '</small></div>';
-      }).join('');
+    TomoLoom.render(teamProgress, teamRun);
   }
 
   async function refreshTeamProgress(sessionId) {
-    if (!teamProgress || !sessionId) return;
+    if (!teamProgress || !sessionId || !window.TomoLoom) return;
     try {
       const data = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/swarm');
       if (chatWrap.dataset.sessionId !== sessionId) return;
-      const run = data.runs && data.runs[0];
-      if (run) {
-        run.tasks = (run.tasks || []).map(function (task) {
-          var owner = (data.agents || []).find(function (a) { return a.id === task.agent_id; });
-          task.agent_name = owner ? owner.name : agentName(task.agent_id);
-          return task;
-        });
-      }
-      renderTeamProgress(run);
+      renderTeamProgress(TomoLoom.fromApi(data));
     } catch (_) {}
   }
 
   chatWrap.addEventListener('tomo:team-event', function (event) {
     const d = event.detail || {};
-    if (!d.run_id) return;
-    if (!teamRun || teamRun.id !== d.run_id) teamRun = { id: d.run_id, status: 'running', tasks: [] };
-    if (d.kind === 'task_created') {
-      if (!teamRun.tasks.some(function (t) { return t.id === d.task_id; })) {
-        teamRun.tasks.push({ id: d.task_id, agent_id: d.agent_id, agent_name: d.agent_name,
-                             brief: d.brief, status: 'queued' });
-      }
-    } else if (d.kind === 'task_started' || d.kind === 'task_done' || d.kind === 'task_blocked') {
-      var task = teamRun.tasks.find(function (t) { return t.id === d.task_id; });
-      if (task) task.status = d.kind === 'task_started' ? 'running' :
-        (d.kind === 'task_blocked' ? 'blocked' : d.status);
-    } else if (d.kind === 'run_done') teamRun.status = d.status || 'done';
-    renderTeamProgress(teamRun);
+    if (!d.run_id || !window.TomoLoom) return;
+    renderTeamProgress(TomoLoom.apply(teamRun, d));
+    // Findings live only in the durable board; pull it in after bursts.
+    clearTimeout(teamRefreshTimer);
+    const sid = chatWrap.dataset.sessionId;
+    teamRefreshTimer = setTimeout(function () { refreshTeamProgress(sid); }, 900);
   });
 
   function currentUserId() {
