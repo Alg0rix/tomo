@@ -710,3 +710,6 @@
 @media (max-width: 720px) { .chat-wrap .loom-head { padding-right: 14px; } }
 .loom-wait { fill: var(--text-faint); font: 10.5px var(--font-mono); }
 @media (max-width: 720px) { .loom-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+/* Floating composer: pad the thread by its measured height (see chat_worknotes.js). */
+.sessions-chat .chat-wrap .chat-scroll,
+.chat-wrap.sessions-chat .chat-scroll { padding-bottom: calc(var(--composer-h, 200px) + 20px); }

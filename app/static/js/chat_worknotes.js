@@ -341,7 +341,25 @@
     }
   });
 
+  // The composer floats over the thread. Reserve exactly its height below the
+  // last message so plan strips / tall drafts never cover the latest turn.
+  function reserveComposer() {
+    if (!window.ResizeObserver) return;
+    document.querySelectorAll('.chat-wrap').forEach(function (wrap) {
+      var comp = wrap.querySelector('.composer.composer-float');
+      var scroll = wrap.querySelector('.chat-scroll');
+      if (!comp || !scroll || comp._reserved) return;
+      comp._reserved = true;
+      new ResizeObserver(function () {
+        var nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+        wrap.style.setProperty('--composer-h', Math.ceil(comp.getBoundingClientRect().height) + 'px');
+        if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+      }).observe(comp);
+    });
+  }
+
   function start() {
+    reserveComposer();
     observer.observe(document.body, {
       childList: true,
       subtree: true,
