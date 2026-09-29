@@ -24,8 +24,12 @@ def run(arguments: dict[str, Any]) -> str:
         try:
             paths.entity_key(key)
             if action == "add":
+                from datetime import datetime
+
+                # Link the fact to today's timeline page unless a source is given.
+                source = str(arguments.get("source") or "").strip() or datetime.now().astimezone().date().isoformat()
                 result = write.add_entity(current_user_id(), key, str(arguments.get("content") or ""),
-                                          source=str(arguments.get("source") or ""))
+                                          source=source)
                 return "Saved entity fact." if result["added"] else "Near-duplicate already present."
             if action == "list":
                 path = paths.entity_path(current_user_id(), key)
