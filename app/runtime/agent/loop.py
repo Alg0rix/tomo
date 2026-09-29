@@ -855,6 +855,9 @@ async def run_turn(
                 metrics.ended_kind = "final"
                 metrics.log_summary()
                 final_content = resp.content or ""
+                from app.runtime.memory.vault.write import record_turn
+
+                record_turn(session_id, agent_id, user_message, final_content)
                 yield {
                     "kind": "final",
                     "content": final_content,
@@ -1199,6 +1202,9 @@ async def run_turn(
                     )
                 metrics.ended_kind = "final"
                 metrics.log_summary()
+                from app.runtime.memory.vault.write import record_turn
+
+                record_turn(session_id, agent_id, user_message, content)
                 yield {
                     "kind": "final",
                     "content": content,

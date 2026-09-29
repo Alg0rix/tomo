@@ -985,7 +985,19 @@ async def get_settings(_: AuthDep):
 
 @router.put("/settings")
 async def update_settings(body: dict, _: AuthDep):
-    return store.update_settings(body)
+    if "memory_consolidation_cron" in body:
+        from apscheduler.triggers.cron import CronTrigger
+
+        try:
+            CronTrigger.from_crontab(str(body["memory_consolidation_cron"]))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, f"Invalid consolidation cron: {exc}")
+    result = store.update_settings(body)
+    if {"memory_consolidation_enabled", "memory_consolidation_cron"} & body.keys():
+        from app.scheduler.engine import _register_builtins
+
+        _register_builtins()
+    return result
 
 
 def _is_loopback_client(request: Request) -> bool:

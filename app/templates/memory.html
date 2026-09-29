@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=herbarium2">
+{% endblock %}
+{% block content %}
+<section class="herbarium" id="herbarium" aria-labelledby="herbariumTitle">
+  <header class="herbarium-head">
+    <div class="herbarium-title-block">
+      <p class="herbarium-kicker"><span class="herbarium-sigil" aria-hidden="true">✳</span> TOMO ARCHIVE <span class="herbarium-divider">/</span> VOLUME 01</p>
+      <div class="herbarium-title-row"><h1 id="herbariumTitle">Herbarium<span>.</span></h1><span class="herbarium-head-rule" aria-hidden="true"></span><span class="herbarium-plate">PLATE<br>001—006</span></div>
+      <p class="herbarium-intro">A living atlas of what Tomo knows about you.</p>
+    </div>
+    <div class="herbarium-head-stat"><span class="herbarium-stat-label">IN THE COLLECTION</span><strong id="memoryCount">00</strong><span class="herbarium-stat-caption">PRESSED SPECIMENS</span></div>
+  </header>
+
+  <div class="herbarium-stage" id="memoryStage">
+    <aside class="herbarium-ledger" aria-label="Specimen index">
+      <div class="herbarium-ledger-head"><span>SPECIMEN INDEX</span><span aria-hidden="true">№</span></div>
+      <div class="herbarium-ledger-list" id="memoryIndex"></div>
+      <div class="herbarium-ledger-foot"><span class="herbarium-ledger-mark" aria-hidden="true">✳</span><p>Each mark holds a fact.<br>Each thread records a connection.</p><small>SELECT A SPECIMEN TO UNFOLD ITS LABEL</small></div>
+    </aside>
+    <div class="herbarium-chart" id="memoryChart">
+      <div class="herbarium-chart-top"><span>MEMORY UNIVERSE <i>·</i> DRAG TO ROTATE <i>·</i> SCROLL TO ZOOM</span><button type="button" id="memoryCameraReset" class="herbarium-camera-reset">RESET VIEW</button></div>
+      <svg id="memoryGraph" viewBox="0 0 1000 660" role="img" aria-label="Orbital graph of memory entities"></svg>
+      <div class="herbarium-detail" id="memoryDetail" hidden></div>
+      <div class="herbarium-empty" id="memoryEmpty" hidden><span aria-hidden="true">✳</span><strong>A quiet beginning</strong><p>Your first saved memory will appear here as a specimen.</p></div>
+      <div class="herbarium-chart-bottom"><span>✳  ENTITY STARS</span><span>◌  TYPE PLANETS</span><span id="memoryGraphMeta">00 CONSTELLATIONS</span></div>
+    </div>
+  </div>
+
+  <footer class="herbarium-timeline" aria-label="Memory timeline">
+    <div class="herbarium-timeline-label"><span>FIELD NOTES <b>／</b> CHRONOLOGY</span><time id="memoryDate">NO RECORDS YET</time></div>
+    <div class="herbarium-bullets" id="memoryBullets" aria-live="polite"></div>
+    <div class="herbarium-scrub"><span>FIRST ENTRY</span><input id="memoryScrubber" type="range" min="0" max="0" value="0" aria-label="Memory timeline day"><span>MOST RECENT</span></div>
+  </footer>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=herbarium2"></script>{% endblock %}

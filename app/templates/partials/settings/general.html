@@ -42,6 +42,18 @@
         {{ toggle(id='setLearning', checked=settings.learning_enabled) }}
       </div>
     </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Markdown memory vault</div><p class="machine-field-hint">Record day notes and retrieve linked facts for this account.</p></div>
+      <div class="machine-field-control">{{ toggle(id='setMemoryVault', checked=settings.memory_vault_enabled) }}</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Nightly memory consolidation</div><p class="machine-field-hint">Turn past day notes into durable entity facts.</p></div>
+      <div class="machine-field-control">{{ toggle(id='setMemoryConsolidation', checked=settings.memory_consolidation_enabled) }}</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Consolidation cron</div><p class="machine-field-hint">Minute hour day month weekday, in Tomo's timezone.</p></div>
+      <div class="machine-field-control"><input class="input machine-input-narrow" id="setMemoryCron" value="{{ settings.memory_consolidation_cron }}" aria-label="Consolidation cron"></div>
+    </div>
     {% set amode = (settings.approvals_mode or 'smart')|string|lower %}
     {% if amode in ('auto', 'yolo') %}{% set amode = 'off' %}{% endif %}
     {% if amode not in ('manual', 'smart', 'off') %}{% set amode = 'smart' %}{% endif %}

@@ -365,3 +365,7 @@ async def login_page(request: Request):
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+@router.get('/memory', response_class=HTMLResponse)
+async def memory_page(request: Request, _: AuthDep):
+    return templates.TemplateResponse(request, 'memory.html', page_ctx(request, 'memory'))

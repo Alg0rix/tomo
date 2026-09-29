@@ -329,6 +329,23 @@ def _register_builtins() -> None:
         )
     except Exception:
         logger.debug("builtin claim_sweep register failed", exc_info=True)
+    try:
+        from app.services import store
+        from app.runtime.memory.vault.consolidate import run_nightly
+
+        settings = store.get_settings()
+        cron = str(settings.get("memory_consolidation_cron") or "0 3 * * *")
+        fields = cron.split()
+        if len(fields) != 5:
+            raise ValueError("memory_consolidation_cron must have five fields")
+        job_id = f"{BUILTIN_PREFIX}memory_consolidate"
+        if settings.get("memory_consolidation_enabled", False):
+            aps.add_job(run_nightly, CronTrigger.from_crontab(cron, timezone=_tz()),
+                        id=job_id, replace_existing=True, misfire_grace_time=3600)
+        elif aps.get_job(job_id):
+            aps.remove_job(job_id)
+    except Exception:
+        logger.exception("builtin memory consolidation register failed")
 
 
 async def _builtin_claim_sweep() -> None:

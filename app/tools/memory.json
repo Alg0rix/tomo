@@ -18,7 +18,7 @@
           },
           "target": {
             "type": "string",
-            "enum": ["memory", "user", "project", "all"],
+            "enum": ["memory", "user", "project", "entity", "all"],
             "description": "memory (agent notes) | user (shared profile) | project (workplace PROJECT.md) | all (list only)"
           },
           "content": {
@@ -40,7 +40,9 @@
           "workplace_id": {
             "type": "string",
             "description": "Workplace id for project target (defaults from agent workplace)."
-          }
+          },
+          "entity": {"type": "string", "description": "For entity target: type/slug, such as project/tomo."},
+          "source": {"type": "string", "description": "Optional timeline source, such as 2026-09-29#session_id."}
         },
         "required": ["action"]
       }

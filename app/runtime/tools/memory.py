@@ -16,6 +16,24 @@ def run(arguments: dict[str, Any]) -> str:
     agent_id = str(arguments.get("agent_id") or current_agent_id() or "").strip() or None
     workplace_id = str(arguments.get("workplace_id") or "").strip() or None
 
+    if target == "entity":
+        from app.runtime.memory.vault import paths, write
+        from app.runtime.tools.user_ctx import current_user_id
+
+        key = str(arguments.get("entity") or "").strip()
+        try:
+            paths.entity_key(key)
+            if action == "add":
+                result = write.add_entity(current_user_id(), key, str(arguments.get("content") or ""),
+                                          source=str(arguments.get("source") or ""))
+                return "Saved entity fact." if result["added"] else "Near-duplicate already present."
+            if action == "list":
+                path = paths.entity_path(current_user_id(), key)
+                return path.read_text(encoding="utf-8") if path.is_file() else "Entity is empty."
+        except ValueError as exc:
+            return f"Error: {exc}"
+        return "Error: entity target supports action=add|list only"
+
     if target == "project":
         from app.runtime.memory import project as project_mem
 

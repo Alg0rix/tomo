@@ -295,6 +295,7 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 | Layer | What it stores | Example |
 |-------|----------------|---------|
 | **Curated memory** | `USER.md` + per-agent `MEMORY.md` (file-backed, always in prompt) | Prefs, timezone, env quirks |
+| **Markdown vault** | Per-user day logs and linked entity facts under `$TOMO_HOME/memory/vault/` | Inspectable project, person, tool, and topic notes |
 | **Conversation memory** | Recent turns + rolled session summaries; `session_search` (FTS5) | "Last week we discussed the Q3 budget" |
 | **Knowledge base** | Longer documents via `remember` / `recall` (FTS5; embeddings optional) | Company policies, API docs |
 | **Artifacts** | Per-session files under `$TOMO_HOME/sessions/<id>/artifacts/` (`save_artifact` / `list_artifacts` / `fetch_artifact`) | Reports, exports, images for this chat |
@@ -304,6 +305,8 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 | **Agent state** | Optional structured KV (`agent_state`) | Machine-readable keys when useful |
 
 Curated memory is the hot path: short durable notes written with the `memory` tool to Markdown under `$TOMO_HOME`. A frozen snapshot is injected at session start; mid-session writes update the files but refresh the prompt on the **next** session. Episodic search is **FTS5-first** (no vector DB required). Embeddings, when an API key is configured, are an optional boost for KB recall — not required for memory to work. Matching KB/skills/state may also be injected at turn start (Reuse).
+
+The optional Markdown vault runs alongside the existing SQLite memory lanes. Enable it in System → General to append end-of-turn notes to a per-user timeline and retrieve linked entity facts. The `memory` tool accepts `target=entity` and `entity=type/slug` for durable facts. The [Memory page](/memory) shows a rotatable 3D memory universe and day notes; drag to rotate and scroll to zoom. An optional nightly consolidation job extracts durable facts from prior days; its cron schedule is configurable in the same settings section. Markdown files are authoritative; SQLite vault tables can be rebuilt from them.
 
 ### The learning loop
 

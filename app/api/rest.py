@@ -882,3 +882,71 @@ async def get_shared_artifact_download(token: str):
     if not share:
         raise HTTPException(status_code=404, detail="Share not found")
     return _serve_artifact_file(share["session_id"], share["filename"], download=True)
+
+# Markdown vault API — every query is bound to the authenticated account.
+@router.get('/memory/graph')
+async def memory_graph_api(request: Request, _: AuthDep, until: str | None = None):
+    from datetime import date
+    from app.runtime.memory.vault import index
+    from app.runtime.memory.vault.paths import TYPES
+    uid = session_user_id(request)
+    if until:
+        try:
+            until = date.fromisoformat(until).isoformat()
+        except ValueError:
+            raise HTTPException(400, 'Invalid date')
+    def query(conn):
+        index.rebuild(conn, uid)
+        rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
+        entities = [dict(r) for r in rows if not until or not r['updated'] or r['updated'] <= until]
+        keys = {r['path'] for r in entities}
+        edges = [dict(r) for r in conn.execute('SELECT l.* FROM vault_links l JOIN vault_docs d ON d.path=l.src WHERE d.user_id=?', (uid,)).fetchall() if r['src'] in keys and r['dst_resolved'] in keys]
+        backlinks = {r['dst_resolved']: 0 for r in edges}
+        for edge in edges:
+            backlinks[edge['dst_resolved']] += 1
+        nodes = [{'id': r['path'], 'type': r['type'], 'slug': r['slug'], 'title': r['title'], 'facts': len([x for x in r['body'].splitlines() if x.startswith('§')]), 'backlinks': backlinks.get(r['path'], 0), 'updated': r['updated']} for r in entities]
+        days = [r['slug'] for r in conn.execute('SELECT slug FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug', (uid,)).fetchall()]
+        return {'nodes': nodes, 'edges': edges, 'days': days, 'types': sorted(TYPES) if entities else []}
+    return store.with_db(query)
+
+
+@router.get('/memory/entity/{entity_type}/{slug}')
+async def memory_entity_api(request: Request, entity_type: str, slug: str, _: AuthDep):
+    from app.runtime.memory.vault import doc, paths
+    uid = session_user_id(request)
+    try:
+        path = paths.entity_path(uid, f'{entity_type}/{slug}')
+    except ValueError:
+        raise HTTPException(404, 'Entity not found')
+    if not path.is_file():
+        raise HTTPException(404, 'Entity not found')
+    raw = path.read_text(encoding='utf-8')
+    page = doc.parse(raw)
+    return {'entity': f'{entity_type}/{slug}', 'raw': raw, 'title': next((s[2:] for s in page.body.splitlines() if s.startswith('# ')), slug), 'facts': page.entries, 'meta': page.meta}
+
+
+@router.post('/memory/entity/{entity_type}/{slug}/forget')
+async def memory_forget_api(request: Request, entity_type: str, slug: str, body: dict, _: AuthDep):
+    from app.runtime.memory.vault.write import forget_fact
+    if type(body.get('number')) is not int:
+        raise HTTPException(400, 'Fact number required')
+    try:
+        changed = forget_fact(session_user_id(request), f'{entity_type}/{slug}', body['number'])
+    except ValueError:
+        raise HTTPException(404, 'Entity not found')
+    if not changed:
+        raise HTTPException(404, 'Fact not found')
+    return {'ok': True}
+
+
+@router.get('/memory/timeline')
+async def memory_timeline_api(request: Request, _: AuthDep, date: str):
+    from app.runtime.memory.vault import doc, paths
+    try:
+        path = paths.timeline_path(session_user_id(request), date)
+    except ValueError:
+        raise HTTPException(400, 'Invalid date')
+    if not path.is_file():
+        return {'date': date, 'blocks': [], 'raw': ''}
+    raw = path.read_text(encoding='utf-8')
+    return {'date': date, 'blocks': [line[2:] for line in doc.parse(raw).body.splitlines() if line.startswith('- ')], 'raw': raw}
