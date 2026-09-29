@@ -47,11 +47,13 @@ def related(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limi
 def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int = 1100, home_root: Path | None = None) -> str:
     hits = search(conn, user_id, query, limit=3, home_root=home_root)
     neighbors = related(conn, user_id, [h['path'] for h in hits], limit=2)
+    words = [w.casefold().strip('?!.,') for w in query.split() if len(w) > 1]
     lines = []
     for row in [*hits, *neighbors]:
         facts = [e for e in doc.parse(row['body']).entries if not e.startswith('~~')]
-        if facts:
-            lines.append(f'- [[{row["type"]}/{row["slug"]}]]: {facts[0][:220]}')
+        matching = [f for f in facts if any(w and w in f.casefold() for w in words)]
+        for fact in (matching or facts)[:2]:
+            lines.append(f'- [[{row["type"]}/{row["slug"]}]]: {fact[:220]}')
     if hits:
         days = conn.execute('SELECT body FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug DESC LIMIT 3', (user_id,)).fetchall()
         for day in days:

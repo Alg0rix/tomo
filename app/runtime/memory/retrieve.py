@@ -162,12 +162,13 @@ def retrieve_for_turn(
     parts: list[str] = []
 
     try:
-        if store.get_settings().get("memory_vault_enabled", False):
-            from app.runtime.memory.vault.read import snippet as vault_snippet
+        # Entity pages can be written by the memory tool even when turn
+        # recording is off, so always read them back.
+        from app.runtime.memory.vault.read import snippet as vault_snippet
 
-            vault_text = store.with_db(lambda conn: vault_snippet(conn, uid, query))
-            if vault_text:
-                parts.append(vault_text)
+        vault_text = store.with_db(lambda conn: vault_snippet(conn, uid, query))
+        if vault_text:
+            parts.append(vault_text)
     except Exception as exc:
         _logger.debug("vault retrieve failed: %s", exc)
 

@@ -8,6 +8,34 @@ from app.runtime.memory import curated
 from app.runtime.tools.sandbox import current_agent_id
 
 
+def _is_self_slug(slug: str, user_id: str) -> bool:
+    s = slug.casefold().replace("_", "-")
+    uid = (user_id or "").casefold().replace("_", "-")
+    return s in {"me", "user", "self", "the-user", "myself", uid} or s.startswith("usr-")
+
+
+def _vault_index(user_id: str, *, max_pages: int = 40) -> str:
+    """Compact list of entity pages with their live facts."""
+    from app.runtime.memory.vault import doc, paths
+
+    root = paths.vault_root(user_id) / "entities"
+    files = sorted(root.glob("*/*.md")) if root.is_dir() else []
+    if not files:
+        return "[entity] vault is empty"
+    lines = [f"[entity] {len(files)} pages"]
+    for path in files[:max_pages]:
+        try:
+            page = doc.parse(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        facts = [e.split(" (src:")[0].strip() for e in page.entries if not e.startswith("~~")]
+        preview = "; ".join(f[:160] for f in facts[:3]) or "(no facts)"
+        lines.append(f"  [[{path.parent.name}/{path.stem}]] {preview}")
+    if len(files) > max_pages:
+        lines.append(f"  … +{len(files) - max_pages} more")
+    return "\n".join(lines)
+
+
 def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
@@ -21,8 +49,14 @@ def run(arguments: dict[str, Any]) -> str:
         from app.runtime.tools.user_ctx import current_user_id
 
         key = str(arguments.get("entity") or "").strip()
+        if action == "list" and not key:
+            return _vault_index(current_user_id())
         try:
-            paths.entity_key(key)
+            typ, slug = paths.entity_key(key)
+            if action == "add" and _is_self_slug(slug, current_user_id()):
+                return ("Error: don't make a page for the user. Put the fact on the page of the "
+                        "thing it is about, e.g. entity=person/max-verstappen with "
+                        "\"The user's favorite F1 driver.\" User preferences about how you work go to target=user.")
             if action == "add":
                 from datetime import datetime
 
@@ -83,7 +117,11 @@ def run(arguments: dict[str, Any]) -> str:
                 for i, e in enumerate(result.get("entries") or [], 1):
                     preview = e.replace("\n", " ")[:120]
                     lines.append(f"  {i}. {preview}")
-            return "\n".join(lines) if lines else "(empty)"
+            from app.runtime.tools.user_ctx import current_user_id
+
+            index_text = _vault_index(current_user_id())
+            lines.append(index_text)
+            return "\n".join(lines)
         result = curated.list_entries(target, agent_id=agent_id)
         if not result.get("ok"):
             return f"Error: {result.get('error')}"
