@@ -1402,7 +1402,8 @@ class Store:
         self, agent_id: str, *, connected_server_ids: set[str] | None = None
     ) -> list[dict[str, Any]]:
         """OpenAI schemas: built-ins enabled for ``agent_id`` + live, enabled MCP tools."""
-        schemas = get_openai_tools(self.get_enabled_tool_ids(agent_id))
+        # swarm_board is granted per worker task by the swarm runtime only.
+        schemas = get_openai_tools(self.get_enabled_tool_ids(agent_id) - {"swarm_board"})
         for row in self._mcp_rows_for_agent(agent_id, connected_server_ids=connected_server_ids):
             if row.get("enabled") and row.get("schema"):
                 schemas.append(row["schema"])

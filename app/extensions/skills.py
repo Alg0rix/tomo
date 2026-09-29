@@ -39,6 +39,16 @@ _MAX_SKILL_CHARS = 48_000
 _ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 
 
+# Bundled skills the runtime reads itself (e.g. the swarm planner). Agents never
+# see or load them: a solo turn that "follows" swarm guidance can only stall,
+# because workers exist only inside an opted-in swarm run.
+RUNTIME_ONLY_SKILLS = frozenset({"swarm"})
+
+
+def is_runtime_only_skill(skill_id: str | None, source: str | None = "internal") -> bool:
+    return (source or "internal") == "internal" and (skill_id or "") in RUNTIME_ONLY_SKILLS
+
+
 @dataclass(frozen=True)
 class DiscoveredSkill:
     """One skill package on disk."""

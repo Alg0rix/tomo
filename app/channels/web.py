@@ -36,6 +36,29 @@ logger = logging.getLogger(__name__)
 _fmt_sse = fmt_sse
 
 
+
+_BARE_SWARM = frozenset({
+    "swarm", "/swarm", "pakai swarm", "pake swarm", "use swarm", "swarm aja",
+    "swarm dong", "pakai team", "pake team", "use a team", "use team", "gunakan swarm",
+})
+
+
+def _is_bare_swarm_optin(message: str | None) -> bool:
+    return " ".join((message or "").casefold().strip(" .!?").split()) in _BARE_SWARM
+
+
+def _previous_user_request(session_id: str) -> str:
+    """Most recent earlier user message that is itself a task."""
+    for entry in reversed(store.get_session_history(session_id) or []):
+        if entry.get("type") != "user":
+            continue
+        text = str(entry.get("content") or "").strip()
+        if text.startswith("/swarm "):
+            text = text[7:].strip()
+        if text and not _is_bare_swarm_optin(text):
+            return text
+    return ""
+
 def _session_agents(session: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
     """Agents available for routing (delegate / @mention).
 
@@ -500,6 +523,12 @@ async def stream_turn_sse(
         member_ids, member_agents = _session_agents(session)
         use_swarm = execution_mode == "swarm" or (message or "").strip().startswith("/swarm ")
         swarm_request = (message or "").strip()[7:].strip() if (message or "").strip().startswith("/swarm ") else message
+        # A bare "swarm" / "pakai swarm" names no task: it asks for a team on the
+        # previous request. Without this the solo agent tries to swarm itself.
+        if _is_bare_swarm_optin(message):
+            previous = _previous_user_request(session_id)
+            if previous:
+                use_swarm, swarm_request = True, previous
         solo_request: str | None = None
         approved_plan: dict[str, Any] | None = None
         from app.models.mixins import swarm as swarm_store

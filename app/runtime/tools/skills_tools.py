@@ -101,7 +101,10 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
         store.sync_skills()
     except Exception:
         pass
-    skills = [s for s in store.list_skills() if s.get("enabled", True)]
+    from app.extensions.skills import is_runtime_only_skill
+
+    skills = [s for s in store.list_skills() if s.get("enabled", True)
+              and not is_runtime_only_skill(s.get("id"), s.get("source"))]
     if query:
         needle = query.casefold()
         skills = [
@@ -185,6 +188,14 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     sid = slugify_skill_id(skill_id)
     skill = store.get_skill(sid) or store.get_skill(skill_id)
     discovered = find_discovered_skill(sid)
+    from app.extensions.skills import is_runtime_only_skill
+
+    if is_runtime_only_skill(sid, (skill or {}).get("source") or getattr(discovered, "source", None)):
+        return (
+            f"Error: '{sid}' is used by Tomo's runtime, not by agents. You cannot start "
+            "or join a swarm from a normal turn. Do the task yourself; the user can "
+            "start a team with /swarm <task> or the Team button."
+        )
 
     if file_path:
         try:

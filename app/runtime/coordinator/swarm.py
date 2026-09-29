@@ -488,7 +488,11 @@ async def run_swarm_turn(
             # Even explicit opt-in need not spawn anyone for a trivial request.
             coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)
                                  if s.get("function", {}).get("name") not in {"delegate", "create_agent"}]
-            async for ev in run_turn(None, history=history, agent_id=coordinator_id,
+            # History ends with the user's message; if that was only an opt-in
+            # ("swarm"), answer the real request instead.
+            last_user = next((e for e in reversed(history or []) if e.get("type") == "user"), None)
+            prompt = None if last_user and str(last_user.get("content") or "").strip() == request.strip() else request
+            async for ev in run_turn(prompt, history=history, agent_id=coordinator_id,
                                      session_id=session_id, origin=origin,
                                      tools=coordinator_tools):
                 if ev.get("kind") == "final":

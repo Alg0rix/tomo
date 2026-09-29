@@ -44,8 +44,11 @@ def _catalog_rows(agent_id: str) -> tuple[list[dict[str, Any]], set[str]]:
     """Return (ordered enabled skills, assigned ids). Assigned skills first."""
     from app.services import store
 
+    from app.extensions.skills import is_runtime_only_skill
+
     rows = store.get_agent_skills(agent_id)
-    enabled = [s for s in rows if s.get("enabled", True)]
+    enabled = [s for s in rows if s.get("enabled", True)
+               and not is_runtime_only_skill(s.get("id"), s.get("source"))]
     assigned_ids = {s["id"] for s in enabled if s.get("assigned")}
     assigned = [s for s in enabled if s["id"] in assigned_ids]
     others = [s for s in enabled if s["id"] not in assigned_ids]
