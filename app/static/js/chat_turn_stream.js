@@ -21,9 +21,23 @@
     var asstBody = null;
     var pendingEl = null;
     var raw = '';
+    var replayRaw = '';
     var idleTimer = null;
     var reconnectTimer = null;
     var reconnectAttempts = 0;
+
+    function on(type, listener) {
+      es.addEventListener(type, function (event) {
+        if (!closed) listener(event);
+      });
+    }
+
+    // Called when the chat is replaced by another session. Closing the SSE
+    // alone does not cancel watchdogs or already queued browser callbacks.
+    function dispose() {
+      closed = true;
+      clearWatchdogs();
+    }
 
     // Idle only: no wall-clock hard cap. Long subagent turns can run far past
     // 12 minutes; heartbeats reset the idle timer. Stale streams reconnect.
@@ -85,6 +99,16 @@
       skipResults = resultSeen;
       skipThinking = thinkingSeen;
       skipUi = uiSeen;
+      // Partial assistant text is not in durable history yet. Restore the
+      // replayed tail before the first new token arrives after reconnect.
+      if (replayRaw && !/^\s*\[Swarm\]/.test(replayRaw)) {
+        ensureAssistantBubble();
+        asstEl.classList.add('streaming');
+        raw = replayRaw;
+        ctx.setMarkdown(asstBody, raw);
+        ctx.atBottom();
+      }
+      replayRaw = '';
     }
 
     /** True while resume is still replaying buffered history (skip mode). */
@@ -105,7 +129,7 @@
       console.warn('[tomo] stream reconnect', reason, 'attempt', reconnectAttempts, 'in', delay + 'ms');
       clearWatchdogs();
       closed = true;
-      ctx.closeStream();
+      ctx.closeTransport();
       // Keep busy UI; do not finishTurn — background agent is still running.
       ctx.setSending(true);
       ctx.wrap.dataset.liveStream = '1';
@@ -809,7 +833,7 @@
 
     // ── Wire SSE listeners ──────────────────────────────────────────
 
-    es.addEventListener('state', function (e) {
+    on('state', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (isLive) {
@@ -827,7 +851,7 @@
       }
     });
 
-    es.addEventListener('turn.start', function (e) {
+    on('turn.start', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       turnActive = true;
@@ -843,7 +867,7 @@
     });
 
     if (isLive) {
-      es.addEventListener('session', function (e) {
+      on('session', function (e) {
         bumpActivity();
         var d = JSON.parse(e.data || '{}');
         if (!d.title) return;
@@ -853,12 +877,12 @@
       });
     }
 
-    es.addEventListener('caught_up', function () {
+    on('caught_up', function () {
       bumpActivity();
       markCaughtUp();
     });
 
-    es.addEventListener('delegate', function (e) {
+    on('delegate', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -886,7 +910,7 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('subagent_start', function (e) {
+    on('subagent_start', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -906,11 +930,14 @@
       buf.agentId = aid;
       if (!buf.row) buf.row = swarmRowFor(key) || swarmRowFor(aid);
       if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
-      if (buf.row) buf.row.classList.add('active');
+      if (buf.row && (liveCaughtUp ||
+          !buf.row.classList.contains('done') && !buf.row.classList.contains('error'))) {
+        buf.row.classList.add('active');
+      }
       ctx.atBottom();
     });
 
-    es.addEventListener('subagent_done', function (e) {
+    on('subagent_done', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -918,13 +945,13 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('status', function (e) {
+    on('status', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isSubagentEvent(d)) ctx.setStatus('amber', d.message || ctx.busyStatusLabel());
     });
 
-    es.addEventListener('thinking_delta', function (e) {
+    on('thinking_delta', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (isSubagentEvent(d)) return;
@@ -939,7 +966,7 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('thinking', function (e) {
+    on('thinking', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -949,6 +976,7 @@
         bumpSwarmProgress(ik);
         return;
       }
+      if (inReplaySkip()) replayRaw = '';
       adoptAgent(d.agent_id, d.agent);
       clearPending();
       var content = d.content || '';
@@ -975,7 +1003,7 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('tool', function (e) {
+    on('tool', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -986,6 +1014,7 @@
         bumpSwarmProgress(ik);
         return;
       }
+      if (inReplaySkip()) replayRaw = '';
       if (!isLive) {
         toolSeen++;
         if (toolSeen <= skipTools) {
@@ -1012,7 +1041,7 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('tool_result', function (e) {
+    on('tool_result', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -1030,7 +1059,7 @@
       applyToolResult(d);
     });
 
-    es.addEventListener('ui', function (e) {
+    on('ui', function (e) {
       bumpActivity();
       var d = null;
       try { d = JSON.parse(e.data || '{}'); } catch (err) {
@@ -1053,7 +1082,7 @@
       ctx.atBottom();
     });
 
-    es.addEventListener('todos', function (e) {
+    on('todos', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       // Resume snapshot (source=resume) restores the dock without pinning mid-turn.
@@ -1072,7 +1101,7 @@
       }
     });
 
-    es.addEventListener('delta', function (e) {
+    on('delta', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
@@ -1083,8 +1112,9 @@
         return;
       }
       if (inReplaySkip()) {
-        // Replay of past deltas would duplicate history text. After
-        // ``caught_up``, new live tokens stream normally below.
+        // Keep only the unfinished text segment; completed segments are
+        // already in history and their done/tool event clears this buffer.
+        replayRaw += d.content || '';
         return;
       }
       adoptAgent(d.agent_id, d.agent);
@@ -1105,9 +1135,10 @@
 
     // Mid-turn steer: seal the current assistant segment so the next
     // deltas open a fresh bubble; turn continues (not turn.end).
-    es.addEventListener('user', function (e) {
+    on('user', function (e) {
       bumpActivity();
       sawDone = false;
+      if (inReplaySkip()) replayRaw = '';
       sealAssistantBubble();
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
       try {
@@ -1118,7 +1149,7 @@
       } catch (_) {}
     });
 
-    es.addEventListener('done', function (e) {
+    on('done', function (e) {
       bumpActivity();
       sawDone = true;
       if (isLive) {
@@ -1132,6 +1163,7 @@
         bumpSwarmProgress(dik);
         return;
       }
+      if (inReplaySkip()) replayRaw = '';
       adoptAgent(d.agent_id, d.agent);
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
       var content = (d.content != null ? String(d.content) : '').trim();
@@ -1169,7 +1201,7 @@
       ctx.setStatus('amber', ctx.busyStatusLabel());
     });
 
-    es.addEventListener('turn.end', function (e) {
+    on('turn.end', function (e) {
       try {
         var raw = e && e.data ? JSON.parse(e.data) : null;
         if (raw && raw.approval && typeof ctx.onApproval === 'function') {
@@ -1179,7 +1211,7 @@
       endTurn();
     });
 
-    es.addEventListener('error', function (e) {
+    on('error', function (e) {
       if (closed) return;
       if (e && e.data) {
         var msg = 'Agent error';
@@ -1237,7 +1269,7 @@
       }
     });
 
-    es.addEventListener('stream_closed', function () {
+    on('stream_closed', function () {
       if (closed) return;
       // POST body ended without turn.end (proxy idle kill, tab sleep, etc.).
       if (turnActive || sawTurnEvent || sawDone) {
@@ -1249,7 +1281,7 @@
       endTurn();
     });
 
-    es.addEventListener('heartbeat', function () {
+    on('heartbeat', function () {
       if (sawDone) return;
       // Idle listen (no active turn) only emits heartbeats + busy:false state.
       // Active-turn listen always injects turn.start first, so sawTurnEvent is set.
@@ -1263,7 +1295,7 @@
       bumpActivity();
     });
 
-    es.addEventListener('auth_expired', function () { window.location.href = '/login'; });
+    on('auth_expired', function () { window.location.href = '/login'; });
 
     // ── Resume-specific init and fallback ───────────────────────────
 
@@ -1280,7 +1312,7 @@
       armIdle(IDLE_MS);
     }
 
-    return { end: endTurn };
+    return { end: endTurn, dispose: dispose };
   }
 
   window.TomoTurnStream = { attach: attach };

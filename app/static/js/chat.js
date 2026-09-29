@@ -978,7 +978,8 @@
     // Session chat may be a client-side draft (pendingAgents, no sessionId yet).
     if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
 
-    let sending = false, es = null;
+    let sending = false, es = null, streamAttachment = null;
+    let destroyed = false;
     /** @type {{text: string, el: Element|null, attachmentIds: string[]}[]} */
     let messageQueue = [];
     const MAX_QUEUE = 20;
@@ -1319,8 +1320,13 @@
       }
     }
 
-    function closeStream() {
+    function closeTransport() {
       if (es) { es.close(); es = null; }
+    }
+
+    function closeStream() {
+      if (streamAttachment) { streamAttachment.dispose(); streamAttachment = null; }
+      closeTransport();
       // Do not clear sending here — finishTurn owns the queue drain.
     }
 
@@ -1346,7 +1352,11 @@
 
     function rehydratePendingHitl(turnEl) {
       if (!window.TomoHitl || !TomoHitl.rehydrate) return Promise.resolve(false);
-      return TomoHitl.rehydrate(currentSessionId(), hitlHost(turnEl), scroll).then(function (needs) {
+      var sessionId = currentSessionId();
+      return TomoHitl.rehydrate(sessionId, hitlHost(turnEl), scroll, function () {
+        return !destroyed && currentSessionId() === sessionId;
+      }).then(function (needs) {
+        if (destroyed || currentSessionId() !== sessionId) return false;
         // Keep busy chrome when open HITL cards or an in-flight turn remain.
         if (needs) setStatus('amber', busyStatusLabel());
         return needs;
@@ -1354,7 +1364,7 @@
     }
 
     function finishTurn() {
-      if (es) { es.close(); es = null; }
+      closeStream();
       sending = false;
       syncGeneratingUi();
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
@@ -1410,7 +1420,7 @@
           Tomo.toast((e && e.message) || 'Could not stop', 'err');
         }
       }
-      if (es) { es.close(); es = null; }
+      closeStream();
       sending = false;
       delete wrap.dataset.liveStream;
       wrap.dispatchEvent(new CustomEvent('tomo:turn-end', { bubbles: true }));
@@ -1542,10 +1552,7 @@
         refreshSendBtn();
         return false;
       }
-      if (es) {
-        try { es.close(); } catch (_) {}
-        es = null;
-      }
+      closeStream();
       var turn = hitlHost(turnEl);
       rehydratePendingHitl(turn);
       sending = true;
@@ -1560,7 +1567,7 @@
         syncGeneratingUi();
         return false;
       }
-      TomoTurnStream.attach(es, turnStreamCtx('resume', turn, {}));
+      streamAttachment = TomoTurnStream.attach(es, turnStreamCtx('resume', turn, {}));
       return true;
     }
 
@@ -1583,6 +1590,7 @@
         onApproval: paintApprovalMode,
         refreshSendBtn: refreshSendBtn,
         closeStream: closeStream,
+        closeTransport: closeTransport,
         finishTurn: finishTurn,
         reconnectStream: reconnectStream,
         scheduleQueueDrain: scheduleQueueDrain,
@@ -1627,7 +1635,7 @@
         finishTurn();
         return;
       }
-      TomoTurnStream.attach(es, turnStreamCtx('live', turn, {
+      streamAttachment = TomoTurnStream.attach(es, turnStreamCtx('live', turn, {
         text: text || '',
         attachIds: attachIds,
       }));
@@ -1854,6 +1862,7 @@
     }
     resize();
     syncGeneratingUi();
+    setStatus('ok', 'online');
 
     function flashActBtn(btn) {
       if (!btn) return;
@@ -1939,7 +1948,7 @@
       clearBtn.addEventListener('click', async function () {
         if (!confirm('Clear this conversation?')) return;
         messageQueue = [];
-        if (es) { es.close(); es = null; }
+        closeStream();
         sending = false;
         syncGeneratingUi();
         if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(wrap);
@@ -1990,8 +1999,9 @@
 
     return {
       destroy: function () {
+        destroyed = true;
         messageQueue = [];
-        if (es) { es.close(); es = null; }
+        closeStream();
         sending = false;
         syncGeneratingUi();
         document.removeEventListener('click', onReasoningDocumentClick);

@@ -295,7 +295,7 @@
   }
 
   /** Fetch open HITL for a session and render into host. Resolves true if work remains. */
-  function rehydrate(sessionId, host, scrollEl) {
+  function rehydrate(sessionId, host, scrollEl, isCurrent) {
     if (!sessionId) return Promise.resolve(false);
     return fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/pending", {
       credentials: "same-origin",
@@ -305,7 +305,7 @@
         return res.json();
       })
       .then(function (data) {
-        if (!data) return false;
+        if (!data || (isCurrent && !isCurrent())) return false;
         var any = false;
         (data.approvals || []).forEach(function (d) {
           if (showCard("approval", d, host, scrollEl)) any = true;

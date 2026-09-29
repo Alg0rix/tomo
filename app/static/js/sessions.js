@@ -24,6 +24,7 @@
   let workplaces = [];
   let activeId = null;
   let chatHandle = null;
+  var selectionSeq = 0;
   var pollTimer = null;
   var monitorEs = null;
   var lastHistLen = -1;
@@ -435,6 +436,7 @@
   }
 
   function openSearchView() {
+    ++selectionSeq;
     searchMode = true;
     if (emptyEl) emptyEl.style.display = 'none';
     chatWrap.style.display = 'none';
@@ -1333,6 +1335,7 @@
   async function selectSession(sessionId, opts) {
     const s = sessions.find(function (x) { return x.id === sessionId; });
     if (!s) return;
+    var selection = ++selectionSeq;
     closeSearchView();
     activeId = sessionId;
     setUrl(sessionId);
@@ -1369,6 +1372,7 @@
 
     try {
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
+      if (selection !== selectionSeq) return;
       renderHistory(hist.entries || []);
       chatHandle = TomoChat.init(chatWrap);
       // init may re-touch markdown; stick again after layout settles
@@ -1401,6 +1405,7 @@
           startHistoryPoll(sessionId);
         };
         var afterProbe = function (needs) {
+          if (selection !== selectionSeq) return;
           if (needs || maybeMidTurn) tryResume();
         };
         if (chatHandle.rehydratePending) {
@@ -1412,7 +1417,7 @@
 
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
-      Tomo.toast('Could not load session', 'err');
+      if (selection === selectionSeq) Tomo.toast('Could not load session', 'err');
     }
   }
 
@@ -1470,6 +1475,7 @@
   }
 
   function openDraft(agentIds, opts) {
+    ++selectionSeq;
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
     // Default: no workplace folder → agent Tomo work dir. Only when opts.workplaceId set.
