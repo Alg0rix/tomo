@@ -26,12 +26,14 @@
 
   function initContextUsage(wrap) {
     if (!wrap || wrap.dataset.ctxInit === "1") return;
+    if (wrap._tomoContextUsageDestroy) wrap._tomoContextUsageDestroy();
     var trigger = wrap.querySelector(".ctx-usage-trigger");
     if (!trigger) return;
     wrap.dataset.ctxInit = "1";
 
     var popover = null;
     var open = false;
+    var disposed = false;
 
     function closePopover() {
       open = false;
@@ -117,11 +119,11 @@
       var url = contextUrl(wrap);
       if (!url) return;
       Tomo.api(url).then(function (data) {
-        if (data) render(data);
+        if (!disposed && contextUrl(wrap) === url && data) render(data);
       }).catch(function () {});
     }
 
-    trigger.addEventListener("click", function (e) {
+    function onTriggerClick(e) {
       e.stopPropagation();
       ensurePopover();
       if (open) {
@@ -132,25 +134,48 @@
       trigger.setAttribute("aria-expanded", "true");
       popover.classList.remove("hidden");
       refresh();
-    });
+    }
 
-    document.addEventListener("click", function (e) {
+    function onDocumentClick(e) {
       if (!open || !popover) return;
       if (popover.contains(e.target) || trigger.contains(e.target)) return;
       closePopover();
-    });
+    }
 
-    document.addEventListener("keydown", function (e) {
+    function onDocumentKeydown(e) {
       if (e.key === "Escape") closePopover();
-    });
+    }
 
+    function onChatCleared() {
+      refresh();
+    }
+
+    trigger.addEventListener("click", onTriggerClick);
+    document.addEventListener("click", onDocumentClick);
+    document.addEventListener("keydown", onDocumentKeydown);
     wrap.addEventListener("tomo:turn-end", refresh);
-    wrap.addEventListener("tomo:chat-cleared", function () {
-      render({ percent: 0, used: 0, limit: 128000, sections: [] });
-    });
+    wrap.addEventListener("tomo:chat-cleared", onChatCleared);
+
+    wrap._tomoContextUsageDestroy = function () {
+      disposed = true;
+      trigger.removeEventListener("click", onTriggerClick);
+      document.removeEventListener("click", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeydown);
+      wrap.removeEventListener("tomo:turn-end", refresh);
+      wrap.removeEventListener("tomo:chat-cleared", onChatCleared);
+      if (popover) popover.remove();
+      popover = null;
+      delete wrap._tomoContextUsageDestroy;
+      delete wrap.dataset.ctxInit;
+    };
 
     refresh();
   }
 
-  window.TomoContextUsage = { init: initContextUsage };
+  window.TomoContextUsage = {
+    init: initContextUsage,
+    destroy: function (wrap) {
+      if (wrap && wrap._tomoContextUsageDestroy) wrap._tomoContextUsageDestroy();
+    },
+  };
 })();

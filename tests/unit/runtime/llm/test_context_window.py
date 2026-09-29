@@ -14,6 +14,7 @@ from app.runtime.llm.openai_compat import (
 )
 from app.runtime.llm.context_window import (
     _DEFAULT,
+    _catalog_context,
     _lookup_known,
     clear_context_window_cache,
     resolve_context_window,
@@ -252,6 +253,20 @@ def test_known_match_claude() -> None:
     assert _lookup_known("claude-3-5-sonnet") == 200_000
 
 
+def test_known_matches_proxy_alias_for_deepseek_v4() -> None:
+    assert _lookup_known("cline-pass/deepseek-v4-flash") == 1_000_000
+
+
+def test_catalog_prefers_original_provider_and_rejects_ambiguous_unknown() -> None:
+    catalog = {
+        "deepseek": {"deepseek-v4-flash": 1_000_000},
+        "proxy": {"deepseek-v4-flash": 128_000, "custom-model": 32_000},
+        "other": {"custom-model": 64_000},
+    }
+    assert _catalog_context(catalog, "cline-pass/deepseek-v4-flash") == 1_000_000
+    assert _catalog_context(catalog, "custom-model") is None
+
+
 # ── resolve_context_window_sync ───────────────────────────────────
 
 
@@ -284,6 +299,15 @@ def test_sync_returns_default_when_no_profile(monkeypatch) -> None:
 
     monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: None)
     assert resolve_context_window_sync("main") == _DEFAULT
+
+
+def test_sync_codex_uses_route_limit(monkeypatch) -> None:
+    from app.services import store
+
+    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
+        "auth_mode": "subscription", "model": "gpt-5.6-sol",
+    })
+    assert resolve_context_window_sync("main") == 272_000
 
 
 # ── resolve_context_window (async) caching ────────────────────────
@@ -340,6 +364,12 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
         return httpx.Response(404)
 
     clear_context_window_cache()
+    import app.runtime.llm.context_window as context_mod
+
+    async def no_catalog(_model_id):
+        return None
+
+    monkeypatch.setattr(context_mod, "_fetch_public_catalog_context", no_catalog)
     monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
         "model": "gpt-4o", "base_url": _BASE, "api_key": _KEY,
     })
@@ -356,3 +386,101 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
     assert result == 128_000
 
     clear_context_window_cache()
+
+async def test_codex_subscription_uses_its_own_catalog(monkeypatch) -> None:
+    """Codex's 272K route limit wins over the direct API's larger window."""
+    from app.services import store
+    import app.runtime.llm.context_window as context_mod
+
+    async def fake_codex(profile, model_id):
+        assert profile["auth_mode"] == "subscription"
+        assert model_id == "gpt-5.6-sol"
+        return 272_000
+
+    async def unexpected_public(_model_id):
+        raise AssertionError("Codex must not use the public API catalog")
+
+    clear_context_window_cache()
+    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
+        "auth_mode": "subscription", "model": "gpt-5.6-sol",
+        "base_url": "https://chatgpt.com/backend-api/codex", "access_token": "token",
+    })
+    monkeypatch.setattr(context_mod, "_fetch_codex_context", fake_codex)
+    monkeypatch.setattr(context_mod, "_fetch_public_catalog_context", unexpected_public)
+    assert await resolve_context_window("main") == 272_000
+    clear_context_window_cache()
+
+
+async def test_codex_catalog_reads_account_scoped_context(monkeypatch) -> None:
+    import base64
+    import json
+    import app.runtime.llm.context_window as context_mod
+
+    claims = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-123"}}
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    token = f"header.{payload}.signature"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["ChatGPT-Account-Id"] == "acct-123"
+        assert request.url.params["client_version"] == "99.0.0"
+        return httpx.Response(200, json={"models": [
+            {"slug": "gpt-5.6-sol", "context_window": 272_000},
+        ]})
+
+    real_client = httpx.AsyncClient
+
+    def mock_client(**kwargs):
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(context_mod.httpx, "AsyncClient", mock_client)
+    result = await context_mod._fetch_codex_context({
+        "access_token": token,
+        "base_url": "https://chatgpt.com/backend-api/codex",
+    }, "gpt-5.6-sol")
+    assert result == 272_000
+
+
+async def test_unknown_model_uses_public_catalog(monkeypatch) -> None:
+    from app.services import store
+    import app.runtime.llm.context_window as context_mod
+
+    clear_context_window_cache()
+    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
+        "model": "custom-new-model", "base_url": _BASE, "api_key": _KEY,
+    })
+    monkeypatch.setattr(store, "list_models", lambda: [])
+    monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", lambda self: _return_none())
+
+    async def catalog(_model_id):
+        return 262_144
+
+    monkeypatch.setattr(context_mod, "_fetch_public_catalog_context", catalog)
+    assert await resolve_context_window("main") == 262_144
+    clear_context_window_cache()
+
+
+async def test_public_catalog_reads_exact_context_without_credentials(monkeypatch) -> None:
+    import app.runtime.llm.context_window as context_mod
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "models.dev"
+        assert "authorization" not in request.headers
+        return httpx.Response(200, json={
+            "deepseek": {"models": {"deepseek-v4-flash": {
+                "limit": {"context": 1_000_000, "output": 393_216},
+            }}},
+        })
+
+    real_client = httpx.AsyncClient
+
+    def mock_client(**kwargs):
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    clear_context_window_cache()
+    monkeypatch.setattr(context_mod.httpx, "AsyncClient", mock_client)
+    assert await context_mod._fetch_public_catalog_context("cline-pass/deepseek-v4-flash") == 1_000_000
+    clear_context_window_cache()
+
+
+async def _return_none():
+    return None

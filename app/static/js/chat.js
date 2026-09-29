@@ -2002,6 +2002,9 @@
         destroyed = true;
         messageQueue = [];
         closeStream();
+        if (window.TomoContextUsage && TomoContextUsage.destroy) {
+          TomoContextUsage.destroy(wrap);
+        }
         sending = false;
         syncGeneratingUi();
         document.removeEventListener('click', onReasoningDocumentClick);
