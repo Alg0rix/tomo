@@ -90,6 +90,10 @@ async def _plan(
         + ("Decide whether the user explicitly asked for a team (decision=run), "
          "the task would benefit from a team but needs approval (decision=propose), "
          "or a single agent should answer (decision=solo). Return empty tasks for solo. "
+         "Determine explicit user intent in any language using the Consent section of the skill. "
+         "For run, return only the decision and consent_quote; worker planning happens later. "
+         "Missing worker assignments, audit scope questions, or unavailable specialists "
+         "must not turn an explicit team request into solo. "
          "For propose, require at least two genuinely useful independent tasks. "
          if advisory else "You coordinate a user-requested agent swarm. ")
         + "Return one JSON object only. For decision=run, consent_quote must be an exact "
@@ -156,8 +160,12 @@ async def advise_swarm(request: str, *, session_id: str, coordinator_id: str,
     quote = str(plan.get("consent_quote") or "").strip()
     if decision == "run" and (not quote or quote.casefold() not in request.casefold()):
         decision = "propose"
+    if decision == "run":
+        # Routing consent is independent of worker-plan validity. Planning is
+        # done inside run_swarm_turn, where invalid assignments are rejected.
+        return "run", {}, ""
     proposed = plan.get("tasks")
-    if not isinstance(proposed, list) or len(proposed) < (1 if decision == "run" else 2):
+    if not isinstance(proposed, list) or len(proposed) < 2:
         return None
     names = {a.get("name") for a in plan.get("agents", []) if isinstance(a, dict)}
     known = {a["id"] for a in store.list_agents() if a.get("enabled")}

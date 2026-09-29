@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import pytest
 
 from app.models.mixins import swarm as swarm_store
 from app.models.schema import migrate
@@ -12,6 +13,67 @@ from app.runtime.llm.base import LLMResponse
 from app.runtime.tools import swarm_board
 from app.services.chat import run_session_turn
 from app.services.store import store
+
+
+@pytest.mark.parametrize("attachment_ids", [None, ["attachment_a"]])
+async def test_explicit_swarm_request_routes_before_solo(tmp_path, monkeypatch, attachment_ids) -> None:
+    store.rebind(tmp_path / "explicit_swarm_route.db")
+    session_id = store.create_swarm_session(["main"], user_id="web")
+    request = "coba lu bikin swarm buat audit cadesia.com"
+    calls = []
+
+    async def unexpected_solo(*args, **kwargs):
+        pytest.fail("explicit swarm request must not enter a solo turn")
+        yield
+
+    async def fake_plan(*args, **kwargs):
+        return {"decision": "run", "consent_quote": "bikin swarm", "tasks": []}
+
+    async def fake_swarm(request_text, **kwargs):
+        calls.append(request_text)
+        yield {"kind": "final", "content": "Audit complete"}
+
+    monkeypatch.setattr("app.channels.web._agent_run_turn", unexpected_solo)
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr("app.channels.web.run_swarm_turn", fake_swarm)
+    monkeypatch.setattr("app.services.chat.attachment_meta_for_ids", lambda ids: [])
+    async for _ in run_session_turn(
+        session_id, request, "web", start_seq=0, attachment_ids=attachment_ids,
+    ):
+        pass
+    assert calls == [request]
+    users = [entry for entry in store.get_session_history(session_id) if entry["type"] == "user"]
+    assert users[-1]["execution_mode"] == "swarm"
+
+
+@pytest.mark.parametrize("tasks", [None, [], [{"agent_id": "missing", "brief": "Audit"}]])
+async def test_explicit_consent_routes_even_without_valid_worker_plan(tmp_path, monkeypatch, tasks) -> None:
+    store.rebind(tmp_path / "intent.db")
+    session_id = store.create_swarm_session(["main"], user_id="web")
+
+    async def fake_plan(*args, **kwargs):
+        return {"decision": "run", "consent_quote": "bikin swarm", "tasks": tasks}
+
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    advice = await swarm.advise_swarm(
+        "coba lu bikin swarm buat audit cadesia.com",
+        session_id=session_id, coordinator_id="main",
+    )
+    assert advice == ("run", {}, "")
+    assert store.with_db(lambda conn: swarm_store.list_runs(conn, session_id)) == []
+
+
+async def test_ungrounded_consent_does_not_route(tmp_path, monkeypatch) -> None:
+    store.rebind(tmp_path / "ungrounded_intent.db")
+    session_id = store.create_swarm_session(["main"], user_id="web")
+
+    async def fake_plan(*args, **kwargs):
+        return {"decision": "run", "consent_quote": "use a swarm", "tasks": []}
+
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    assert await swarm.advise_swarm(
+        "audit cadesia.com", session_id=session_id, coordinator_id="main",
+    ) is None
 
 
 async def test_dynamic_workers_run_concurrently_then_synthesize(tmp_path, monkeypatch) -> None:

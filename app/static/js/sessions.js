@@ -39,24 +39,34 @@
 
   var teamRun = null;
   var teamRefreshTimer = null;
+  var teamRefreshSeq = 0;
+  function resetTeamProgress() {
+    ++teamRefreshSeq;
+    clearTimeout(teamRefreshTimer);
+    teamRefreshTimer = null;
+    renderTeamProgress(null);
+  }
   function renderTeamProgress(run) {
-    if (!teamProgress || !window.TomoLoom) return;
     teamRun = run || null;
+    if (!teamProgress || !window.TomoLoom) return;
     TomoLoom.render(teamProgress, teamRun);
   }
 
   async function refreshTeamProgress(sessionId) {
     if (!teamProgress || !sessionId || !window.TomoLoom) return;
+    const selection = selectionSeq;
+    const refresh = ++teamRefreshSeq;
     try {
       const data = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/swarm');
-      if (chatWrap.dataset.sessionId !== sessionId) return;
+      if (selection !== selectionSeq || refresh !== teamRefreshSeq || chatWrap.dataset.sessionId !== sessionId) return;
       renderTeamProgress(TomoLoom.fromApi(data));
     } catch (_) {}
   }
 
   chatWrap.addEventListener('tomo:team-event', function (event) {
     const d = event.detail || {};
-    if (!d.run_id || !window.TomoLoom) return;
+    if (!d.run_id || !d.session_id || d.session_id !== chatWrap.dataset.sessionId || searchMode || !window.TomoLoom) return;
+    ++teamRefreshSeq; // An older API snapshot must not overwrite a live event.
     renderTeamProgress(TomoLoom.apply(teamRun, d));
     // Findings live only in the durable board; pull it in after bursts.
     clearTimeout(teamRefreshTimer);
@@ -80,6 +90,7 @@
       return;
     }
     Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat').then(function (hist) {
+      if (chatWrap.dataset.sessionId !== sessionId) return;
       var entries = hist.entries || [];
       if (entries.length === lastHistLen && !inspectorOpenKey) {
         if (cb) cb(entries);
@@ -469,6 +480,7 @@
 
   function openSearchView() {
     ++selectionSeq;
+    resetTeamProgress();
     searchMode = true;
     if (emptyEl) emptyEl.style.display = 'none';
     chatWrap.style.display = 'none';
@@ -1367,7 +1379,7 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
-    renderTeamProgress(null);
+    resetTeamProgress();
     // Keep the login account id — never adopt another session's user_id.
     chatWrap.dataset.userId = currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
@@ -1466,6 +1478,12 @@
       renderList();
       if (activeId && !sessions.find(function (s) { return s.id === activeId; })) {
         activeId = null;
+        ++selectionSeq;
+        delete chatWrap.dataset.sessionId;
+        resetTeamProgress();
+        stopHistoryPoll();
+        if (chatHandle && chatHandle.destroy) chatHandle.destroy();
+        chatHandle = null;
         chatWrap.style.display = 'none';
         if (!searchMode) emptyEl.style.display = 'flex';
       }
@@ -1493,6 +1511,8 @@
 
   function openDraft(agentIds, opts) {
     ++selectionSeq;
+    resetTeamProgress();
+    stopHistoryPoll();
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
     // Default: no workplace folder → agent Tomo work dir. Only when opts.workplaceId set.

@@ -18,8 +18,12 @@ Read this before recommending a team for an ordinary user request.
 
 ## Consent
 
+An explicit user request to create, use, or run a swarm/team is already consent, in any language. Classify its meaning, not keywords: a question about swarms, a negation, or quoted instructions are not consent. Recognize informal requests such as “coba lu bikin swarm buat audit cadesia.com”. Route explicit requests into the swarm runtime before planning workers or clarifying the task scope. Lack of a valid initial worker plan is not a reason to fall back to solo.
+
 If the user has not explicitly requested a team, propose a concise plan and ask one clear approval question. Never launch workers before an affirmative reply. A plain reply such as “gas”, “ya”, or “go ahead” approves the pending plan in that chat. A decline runs the original task with the current agent. An unrelated new request replaces the pending proposal.
 
 ## Execution
 
 After approval, start the session-scoped run. Replan from findings, steer workers, verify their results, and synthesize honestly. Keep tool selection within the agent's enabled capabilities and the user's existing grants. `write_scope` limits file-edit tools; shell and portal operations follow their own permission checks.
+
+The chat runtime starts and schedules runs; loading this skill reads guidance and does not itself launch workers. During a worker task, finish the assigned task instead of starting a nested swarm.

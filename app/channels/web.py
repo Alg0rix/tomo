@@ -664,6 +664,16 @@ async def stream_turn_sse(
             # ChatGPT-style: store clean user text + attachment chips metadata.
             # File contents are expanded only when building the LLM prompt.
             clean = (message or "").strip()
+            advice = None
+            if not use_swarm and not force_target and not solo_request and origin is None and not clean.startswith("/"):
+                advice = await advise_swarm(
+                    clean, session_id=session_id, coordinator_id=coordinator_id,
+                    history=store.get_session_history(session_id),
+                )
+                if advice and advice[0] == "run":
+                    use_swarm, swarm_request = True, clean
+                    # The runtime plans and validates workers after routing.
+                    approved_plan = None
             user_entry: dict = {"type": "user", "content": clean, "ts": now()}
             if use_swarm:
                 user_entry["execution_mode"] = "swarm"
@@ -693,28 +703,20 @@ async def stream_turn_sse(
                     }
                 )
 
-            if not use_swarm and not force_target and not solo_request and not attachment_ids and origin is None and not clean.startswith("/"):
-                advice = await advise_swarm(
-                    clean, session_id=session_id, coordinator_id=coordinator_id,
-                    history=_history_before_last_user(store.get_session_history(session_id)),
+            if advice and advice[0] == "propose":
+                _, plan, summary = advice
+                store.with_db(lambda conn: swarm_store.set_proposal(
+                    conn, session_id, clean, plan, summary,
+                ))
+                chunks, entries, seq = map_loop_event(
+                    {"kind": "final", "content": summary}, coordinator_id,
+                    _agent_label(coordinator_id), seq, turn_id,
                 )
-                if advice:
-                    decision, plan, summary = advice
-                    if decision == "run":
-                        use_swarm, swarm_request, approved_plan = True, clean, plan
-                    else:
-                        store.with_db(lambda conn: swarm_store.set_proposal(
-                            conn, session_id, clean, plan, summary,
-                        ))
-                        chunks, entries, seq = map_loop_event(
-                            {"kind": "final", "content": summary}, coordinator_id,
-                            _agent_label(coordinator_id), seq, turn_id,
-                        )
-                        for entry in entries:
-                            store.append_session_history(session_id, entry)
-                        for chunk in chunks:
-                            yield chunk
-                        return
+                for entry in entries:
+                    store.append_session_history(session_id, entry)
+                for chunk in chunks:
+                    yield chunk
+                return
 
             if force_target:
                 logger.info(

@@ -3,6 +3,7 @@
   "use strict";
 
   function attach(es, ctx) {
+    var streamSessionId = ctx.currentSessionId ? ctx.currentSessionId() : '';
     var mode = ctx.mode;
     var isLive = mode === 'live';
     var closed = false;
@@ -911,8 +912,9 @@
     on('swarm.event', function (e) {
       bumpActivity();
       try {
+        if (ctx.currentSessionId && ctx.currentSessionId() !== streamSessionId) return;
         ctx.wrap.dispatchEvent(new CustomEvent('tomo:team-event', {
-          detail: JSON.parse(e.data || '{}'), bubbles: true,
+          detail: Object.assign({}, JSON.parse(e.data || '{}'), { session_id: streamSessionId }), bubbles: true,
         }));
       } catch (_) {}
     });

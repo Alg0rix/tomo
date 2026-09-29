@@ -39,9 +39,9 @@ _MAX_SKILL_CHARS = 48_000
 _ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 
 
-# Bundled skills the runtime reads itself (e.g. the swarm planner). Agents never
-# see or load them: a solo turn that "follows" swarm guidance can only stall,
-# because workers exist only inside an opted-in swarm run.
+# Bundled skills the runtime reads itself (e.g. the swarm planner). Hide these
+# from agent catalogs to avoid advertising orchestration as an agent action.
+# Explicit use_skill reads are allowed as guidance; loading never starts work.
 RUNTIME_ONLY_SKILLS = frozenset({"swarm"})
 
 
