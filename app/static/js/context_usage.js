@@ -58,8 +58,9 @@
         '</div>' +
         '<div class="ctx-pop-bar" aria-hidden="true"></div>' +
         '<ul class="ctx-pop-legend"></ul>';
-      // Mount on .composer (not .composer-shell / footer) so overflow never clips.
+      // Mount on the visible composer card so the popover sits over the ring.
       var host =
+        trigger.closest(".composer-shell") ||
         trigger.closest(".composer") ||
         wrap.querySelector(".composer") ||
         wrap;

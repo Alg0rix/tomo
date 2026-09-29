@@ -713,3 +713,5 @@
 /* Floating composer: pad the thread by its measured height (see chat_worknotes.js). */
 .sessions-chat .chat-wrap .chat-scroll,
 .chat-wrap.sessions-chat .chat-scroll { padding-bottom: calc(var(--composer-h, 200px) + 20px); }
+/* Context usage: open above the ring, right-aligned to the composer card. */
+.chat-wrap .composer-shell > .ctx-usage-popover { left: auto; right: 10px; bottom: calc(100% + 8px); }
