@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from . import doc, index, paths
+from . import doc, index
 
 
 def search(conn: sqlite3.Connection, user_id: str, query: str, *, limit: int = 5, home_root: Path | None = None) -> list[dict]:
