@@ -28,7 +28,7 @@ def _vault_index(user_id: str, *, max_pages: int = 40) -> str:
             page = doc.parse(path.read_text(encoding="utf-8"))
         except OSError:
             continue
-        facts = [e.split(" (src:")[0].strip() for e in page.entries if not e.startswith("~~")]
+        facts = [doc.fact_data(e)["text"] for e in page.entries if not e.startswith("~~")]
         preview = "; ".join(f[:160] for f in facts[:3]) or "(no facts)"
         lines.append(f"  [[{path.parent.name}/{path.stem}]] {preview}")
     if len(files) > max_pages:
@@ -63,7 +63,8 @@ def run(arguments: dict[str, Any]) -> str:
                 # Link the fact to today's timeline page unless a source is given.
                 source = str(arguments.get("source") or "").strip() or datetime.now().astimezone().date().isoformat()
                 result = write.add_entity(current_user_id(), key, str(arguments.get("content") or ""),
-                                          source=source)
+                                          source=source, aliases=arguments.get('aliases'),
+                                          supersedes=str(arguments.get('supersedes') or ''))
                 return "Saved entity fact." if result["added"] else "Near-duplicate already present."
             if action == "list":
                 path = paths.entity_path(current_user_id(), key)

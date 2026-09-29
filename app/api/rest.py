@@ -958,25 +958,45 @@ async def memory_forget_api(request: Request, entity_type: str, slug: str, body:
     return {'ok': True}
 
 
+@router.post('/memory/entity/{entity_type}/{slug}/edit')
+async def memory_edit_api(request: Request, entity_type: str, slug: str, body: dict, _: AuthDep):
+    return _correct_memory(request, entity_type, slug, body, move=False)
+
+
+@router.post('/memory/entity/{entity_type}/{slug}/move')
+async def memory_move_api(request: Request, entity_type: str, slug: str, body: dict, _: AuthDep):
+    return _correct_memory(request, entity_type, slug, body, move=True)
+
+
+def _correct_memory(request: Request, entity_type: str, slug: str, body: dict, *, move: bool):
+    from app.runtime.memory.vault.write import correct_fact
+
+    if type(body.get('number')) is not int:
+        raise HTTPException(400, 'Fact number required')
+    field = 'destination' if move else 'text'
+    if not isinstance(body.get(field), str) or not body[field].strip():
+        raise HTTPException(400, f'{field} required')
+    if 'expected' in body and not isinstance(body['expected'], str):
+        raise HTTPException(400, 'Invalid expected fact')
+    try:
+        changed = correct_fact(session_user_id(request), f'{entity_type}/{slug}', body['number'],
+                               expected=body.get('expected'), **{field: body[field]})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not changed:
+        raise HTTPException(409, 'Fact changed or no longer exists; refresh and retry')
+    return {'ok': True}
+
+
 @router.get('/memory/overview')
 async def memory_overview_api(request: Request, _: AuthDep, days: int = Query(30, ge=1, le=365)):
     """Everything the memory page needs in one call: entities with their
     facts, links between them, and recent timeline days."""
-    import re
     from app.runtime.memory.vault import doc, index
     uid = session_user_id(request)
-    src_re = re.compile(r'\s*\(src: \[\[([^\]]+)\]\]\)\s*$')
 
     def fact_rows(body):
-        out = []
-        for i, entry in enumerate(doc.parse(body).entries):
-            gone = entry.startswith('~~')
-            text = entry
-            if gone:
-                text = re.sub(r'^~~(.*?)~~.*$', r'\1', entry, flags=re.S)
-            m = src_re.search(text)
-            out.append({'n': i, 'text': src_re.sub('', text).strip(), 'source': m.group(1) if m else '', 'superseded': gone})
-        return out
+        return [dict(n=i, **doc.fact_data(entry)) for i, entry in enumerate(doc.parse(body).entries)]
 
     def query(conn):
         index.rebuild(conn, uid)

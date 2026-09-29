@@ -43,8 +43,17 @@
       </div>
     </div>
     <div class="machine-field">
-      <div class="machine-field-copy"><div class="machine-field-name">Markdown memory vault</div><p class="machine-field-hint">Record day notes and retrieve linked facts for this account.</p></div>
+      <div class="machine-field-copy"><div class="machine-field-name">Markdown memory vault</div><p class="machine-field-hint">Extract up to three durable facts after each turn and record day notes.</p></div>
       <div class="machine-field-control">{{ toggle(id='setMemoryVault', checked=settings.memory_vault_enabled) }}</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Fact extraction model</div><p class="machine-field-hint">Pick a small model for background extraction. Auto prefers mini, nano, flash or haiku, then your default model.</p></div>
+      <div class="machine-field-control"><select class="input" id="setMemoryExtractionProfile" aria-label="Fact extraction model">
+        <option value="">Auto</option>
+        {% for profile in llm_profiles if profile.enabled %}
+        <option value="{{ profile.id }}" {% if settings.memory_extraction_profile_id == profile.id %}selected{% endif %}>{{ profile.name }} · {{ profile.model }}</option>
+        {% endfor %}
+      </select></div>
     </div>
     <div class="machine-field">
       <div class="machine-field-copy"><div class="machine-field-name">Nightly memory consolidation</div><p class="machine-field-hint">Turn past day notes into durable entity facts.</p></div>

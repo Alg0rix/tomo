@@ -27,7 +27,10 @@ def _facts(raw: str) -> list[dict]:
         fact = item.get('fact')
         if not isinstance(fact, str) or not fact.strip():
             raise ValueError('invalid fact')
-        result.append({'entity': item['entity'], 'fact': fact.strip(), 'supersedes': str(item.get('supersedes') or '').strip()})
+        aliases = item.get('aliases', [])
+        if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
+            raise ValueError('invalid aliases')
+        result.append({'entity': item['entity'], 'fact': fact.strip(), 'supersedes': str(item.get('supersedes') or '').strip(), 'aliases': aliases})
     return result
 
 
@@ -40,9 +43,12 @@ async def consolidate_day(user_id: str, day: str, client, *, home_root: Path | N
         if page.meta.get('consolidated') == 'true':
             return 0
         source_body = page.body
+    from .extract import entity_context
+
+    snapshot = entity_context(user_id, home_root=home_root)
     response = await asyncio.wait_for(client.complete([
-        {'role': 'system', 'content': 'Extract durable facts from this day log. Return ONLY a JSON array of {"entity":"type/slug","fact":"concise declarative fact","supersedes":"optional existing fact text"}. Entity types: person, project, tool, place, org, topic. Return [] if nothing durable.'},
-        {'role': 'user', 'content': page.body[:18000]},
+        {'role': 'system', 'content': 'Extract durable facts from this day log. Return ONLY a JSON array of {"entity":"type/slug","fact":"concise declarative fact","supersedes":"exact existing fact text or empty","aliases":["names","abbreviations","search terms"]}. Entity types: person, project, tool, place, org, topic. Current facts may be newer than this historical log: never replace newer knowledge with past values. Return [] if nothing durable.'},
+        {'role': 'user', 'content': json.dumps({'day': day, 'log': page.body[:18000], 'existing': snapshot}, ensure_ascii=False)[:30000]},
     ]), timeout=180)
     facts = _facts(response.content or '[]')
     with write._lock(user_id):
@@ -51,15 +57,13 @@ async def consolidate_day(user_id: str, day: str, client, *, home_root: Path | N
             return 0
         if page.body != source_body:
             raise RuntimeError('timeline changed during consolidation; retry next run')
+        current = entity_context(user_id, home_root=home_root)
         for item in facts:
-            if item['supersedes']:
-                entity_file = paths.entity_path(user_id, item['entity'], home_root=home_root)
-                if entity_file.is_file():
-                    old = doc.parse(entity_file.read_text(encoding='utf-8')).entries
-                    matches = [i for i, entry in enumerate(old) if item['supersedes'].casefold() in entry.casefold() and not entry.startswith('~~')]
-                    if len(matches) == 1:
-                        write.forget_fact(user_id, item['entity'], matches[0], home_root=home_root, conn=conn)
-            write.add_entity(user_id, item['entity'], item['fact'], source=f'{day}#consolidated', home_root=home_root, conn=conn)
+            if current.get(item['entity'], []) != snapshot.get(item['entity'], []):
+                continue
+            write.add_entity(user_id, item['entity'], item['fact'], source=f'{day}#consolidated',
+                             origin='consolidation', aliases=item['aliases'], supersedes=item['supersedes'],
+                             home_root=home_root, conn=conn)
         page.meta['consolidated'] = 'true'
         write.atomic_write(path, doc.serialize(page))
         if conn is None:

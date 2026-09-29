@@ -404,9 +404,10 @@
       return '<li class="mem-fact' + (f.superseded ? ' is-gone' : '') + '" style="--mem-c:' + typeColor(e.type) + '" data-n="' + f.n + '">' +
         '<div class="mem-fact-text">' + richText(f.text) + '</div>' +
         '<div class="mem-fact-foot">' +
+          '<span class="mem-origin">' + esc(({ agent: 'Saved by agent', consolidation: 'Consolidated', user: 'Edited by you', extraction: 'Auto-extracted' })[f.origin] || 'Saved by agent') + '</span>' +
           (f.source ? '<span>from ' + richText('[[' + f.source + ']]') + '</span>' : '<span>no source</span>') +
           '<span class="spacer"></span>' +
-          (f.superseded ? '<span>forgotten</span>' : '<button type="button" class="forget" data-forget="' + f.n + '">Forget</button>') +
+          (f.superseded ? '<span>forgotten</span>' : '<button type="button" class="forget" data-edit="' + f.n + '">Edit</button><button type="button" class="forget" data-move="' + f.n + '">Move</button><button type="button" class="forget" data-forget="' + f.n + '">Forget</button>') +
         '</div></li>';
     };
     var outs = state.out[e.key] || [];
@@ -442,6 +443,47 @@
         .then(function (d) { raw.querySelector('pre').textContent = d.raw || ''; })
         .catch(function () { raw.querySelector('pre').textContent = 'Could not load the file.'; });
     }, { once: false });
+  }
+
+  function correctFact(li, n, move) {
+    var e = state.byKey[state.focus];
+    var fact = e.facts.find(function (f) { return f.n === n; });
+    if (!fact || li.classList.contains('is-confirm')) return;
+    li.classList.add('is-confirm');
+    var editor = document.createElement('form');
+    editor.className = 'mem-correction';
+    editor.innerHTML = move
+      ? '<label>Destination page<select class="input" name="destination">' +
+        Object.values(state.byKey).filter(function (page) { return page.key !== e.key; }).map(function (page) {
+          return '<option value="' + esc(page.key) + '">' + esc(page.title + ' (' + page.key + ')') + '</option>';
+        }).join('') + '<option value="__new">New page…</option></select></label>' +
+        '<label data-new-page hidden>New page key<input class="input" name="newPage" placeholder="project/my-project"></label>'
+      : '<label>Fact<textarea class="input" name="text" rows="3" required></textarea></label>';
+    editor.innerHTML += '<div class="mem-correction-actions"><span role="status"></span><button type="button" class="btn ghost sm" data-cancel>Cancel</button><button type="submit" class="btn primary sm">' + (move ? 'Move fact' : 'Save fact') + '</button></div>';
+    li.appendChild(editor);
+    if (!move) editor.elements.text.value = fact.text;
+    else editor.elements.destination.addEventListener('change', function () {
+      editor.querySelector('[data-new-page]').hidden = editor.elements.destination.value !== '__new';
+    });
+    editor.querySelector('[data-cancel]').addEventListener('click', function () { renderReader(); });
+    editor.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var body = { number: n, expected: fact.text };
+      if (move) body.destination = editor.elements.destination.value === '__new' ? editor.elements.newPage.value.trim() : editor.elements.destination.value;
+      else body.text = editor.elements.text.value.trim();
+      var submit = editor.querySelector('[type="submit"]');
+      submit.disabled = true;
+      fetch('/api/memory/entity/' + encodeURIComponent(e.type) + '/' + encodeURIComponent(e.slug) + (move ? '/move' : '/edit'), {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }).then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.detail || 'Could not save'); });
+        return load(true);
+      }).then(function () { if (move) focus(body.destination); }).catch(function (err) {
+        editor.querySelector('[role="status"]').textContent = err.message;
+        submit.disabled = false;
+      });
+    });
+    editor.querySelector('textarea,select').focus();
   }
 
   function askForget(li, n) {
@@ -525,6 +567,9 @@
       }
       return;
     }
+    if (ev.target.closest('form')) return;
+    var edit = ev.target.closest('[data-edit], [data-move]');
+    if (edit) { correctFact(edit.closest('.mem-fact'), Number(edit.dataset.edit || edit.dataset.move), edit.hasAttribute('data-move')); return; }
     var fg = ev.target.closest('[data-forget]');
     if (fg) askForget(fg.closest('.mem-fact'), Number(fg.dataset.forget));
   });

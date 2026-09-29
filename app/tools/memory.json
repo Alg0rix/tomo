@@ -59,6 +59,17 @@
           "source": {
             "type": "string",
             "description": "Optional source day/session for the fact; defaults to today's date."
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names, abbreviations and related search terms for the entity page."
+          },
+          "supersedes": {
+            "type": "string",
+            "description": "Exact old entity fact text to replace when an attribute changes."
           }
         },
         "required": [

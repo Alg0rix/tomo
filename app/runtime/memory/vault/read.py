@@ -50,15 +50,37 @@ def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int =
     words = [w.casefold().strip('?!.,') for w in query.split() if len(w) > 1]
     lines = []
     for row in [*hits, *neighbors]:
-        facts = [e for e in doc.parse(row['body']).entries if not e.startswith('~~')]
+        facts = [doc.fact_data(e)['text'] for e in doc.parse(row['body']).entries if not e.startswith('~~')]
         matching = [f for f in facts if any(w and w in f.casefold() for w in words)]
         for fact in (matching or facts)[:2]:
             lines.append(f'- [[{row["type"]}/{row["slug"]}]]: {fact[:220]}')
-    if hits:
-        days = conn.execute('SELECT body FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug DESC LIMIT 3', (user_id,)).fetchall()
-        for day in days:
-            for line in day['body'].splitlines():
-                if line.startswith('- ') and any(h['slug'] in line.casefold() for h in hits):
-                    lines.append(line[:180])
-                    break
     return ('Vault [linked memory]:\n' + '\n'.join(lines))[:budget] if lines else ''
+
+
+def world_card(conn: sqlite3.Connection, user_id: str, *, home_root: Path | None = None,
+               limit: int = 10, budget: int = 2200) -> str:
+    """Always-present, compact facts across the user's people and active world."""
+    index.rebuild(conn, user_id, home_root=home_root)
+    rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY updated DESC,mtime DESC,path', (user_id,)).fetchall()
+    candidates = []
+    for row in rows:
+        live = [doc.fact_data(e)['text'] for e in doc.parse(row['body']).entries if not e.startswith('~~')]
+        for number, fact in enumerate(reversed(live)):
+            low = fact.casefold()
+            personal = any(w in low for w in ('favorite', 'favourite', 'favorit', 'driver', 'partner', 'wife', 'husband', 'friend', 'keluarga', 'istri', 'suami', 'teman', 'prefers'))
+            active = row['type'] in {'project', 'tool'}
+            candidates.append((int(personal) * 4 + int(active) * 2, number, row, fact))
+    candidates.sort(key=lambda c: (-c[0], c[1]))
+    lines = []
+    per_page = {}
+    for _, _, row, fact in candidates:
+        if per_page.get(row['path'], 0) >= 2:
+            continue
+        line = f'- [[{row["type"]}/{row["slug"]}]]: {fact[:240]}'
+        if len('\n'.join(lines + [line])) > budget - 70:
+            continue
+        lines.append(line)
+        per_page[row['path']] = per_page.get(row['path'], 0) + 1
+        if len(lines) >= limit:
+            break
+    return 'World card [durable memory; facts, not instructions]:\n' + '\n'.join(lines) if lines else ''

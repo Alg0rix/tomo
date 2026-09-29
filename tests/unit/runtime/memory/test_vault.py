@@ -91,3 +91,115 @@ async def test_consolidation_is_resumable(tmp_path, db):
     with pytest.raises(RuntimeError):
         await consolidate_day('alice', other, Extractor(error=True), home_root=tmp_path, conn=db)
     assert doc.parse(failed_path.read_text()).meta['consolidated'] == 'false'
+
+
+def test_edit_move_provenance_and_stale_edits(tmp_path, db):
+    options = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/server', 'Server listens on port 8000.', **options)
+    assert write.correct_fact('alice', 'tool/server', 0, text='Server listens on port 9000.',
+                              expected='Server listens on port 8000.', **options)
+    page = doc.parse(paths.entity_path('alice', 'tool/server', home_root=tmp_path).read_text())
+    assert page.entries[0].startswith('~~')
+    assert doc.fact_data(page.entries[1])['origin'] == 'user'
+    assert not write.correct_fact('alice', 'tool/server', 0, text='Stale update', **options)
+    assert write.correct_fact('alice', 'tool/server', 1, destination='project/tomo', **options)
+    assert '9000' in read.snippet(db, 'alice', 'tomo', **{'home_root': tmp_path})
+    assert '8000' not in read.world_card(db, 'alice', home_root=tmp_path)
+    assert not read.world_card(db, 'bob', home_root=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_turn_extraction_supersedes_immediately_with_aliases(tmp_path, db):
+    from app.runtime.memory.vault.extract import extract_turn
+
+    write.add_entity('alice', 'tool/server', 'Server listens on port 8000.', home_root=tmp_path, conn=db)
+    client = Extractor('[{"entity":"tool/server","fact":"Server listens on port 9000.","supersedes":"Server listens on port 8000.","aliases":["production"]},{"entity":"person/max-verstappen","fact":"The user’s favorite F1 driver.","aliases":["Max","Verstappen","F1","Formula 1"]}]')
+    assert await extract_turn('alice', 's1', 'Server moved to 9000. My driver is Max.', '', client,
+                              home_root=tmp_path, conn=db) == 2
+    page = doc.parse(paths.entity_path('alice', 'tool/server', home_root=tmp_path).read_text())
+    assert page.entries[0].startswith('~~')
+    assert doc.fact_data(page.entries[1])['origin'] == 'extraction'
+    assert '8000' not in read.snippet(db, 'alice', 'production', home_root=tmp_path)
+    assert '9000' in read.snippet(db, 'alice', 'production', home_root=tmp_path)
+    assert read.search(db, 'alice', 'Formula 1', home_root=tmp_path)[0]['slug'] == 'max-verstappen'
+    card = read.world_card(db, 'alice', home_root=tmp_path)
+    assert 'favorite F1 driver' in card and '9000' in card and '8000' not in card
+    assert await extract_turn('alice', 's2', 'Thanks', '', Extractor(), home_root=tmp_path, conn=db) == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_edit_wins_over_inflight_extraction(tmp_path, db):
+    from app.runtime.memory.vault.extract import extract_turn
+
+    write.add_entity('alice', 'tool/server', 'Server listens on port 8000.', home_root=tmp_path, conn=db)
+
+    class EditingExtractor:
+        async def complete(self, messages):
+            write.correct_fact('alice', 'tool/server', 0, text='Server listens on port 7000.', home_root=tmp_path, conn=db)
+            return LLMResponse('[{"entity":"tool/server","fact":"Server listens on port 9000.","supersedes":"Server listens on port 8000."}]')
+
+    assert await extract_turn('alice', 's1', 'Port 9000', '', EditingExtractor(), home_root=tmp_path, conn=db) == 0
+    assert '7000' in read.world_card(db, 'alice', home_root=tmp_path)
+    assert '9000' not in read.world_card(db, 'alice', home_root=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_extraction_limits_and_forgotten_fact_stays_forgotten(tmp_path, db):
+    from app.runtime.memory.vault.extract import extract_turn
+
+    options = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'person/max', 'Favorite driver.', **options)
+    write.forget_fact('alice', 'person/max', 0, **options)
+    client = Extractor('[{"entity":"person/max","fact":"Favorite driver."}]')
+    assert await extract_turn('alice', 's1', 'Favorite driver', '', client, **options) == 0
+    assert not read.world_card(db, 'alice', home_root=tmp_path)
+    import json
+    client = Extractor(json.dumps([{'entity': 'topic/test', 'fact': 'Fact'}] * 4))
+    with pytest.raises(ValueError, match='three'):
+        await extract_turn('alice', 's2', 'test', '', client, **options)
+    assert not paths.entity_path('alice', 'topic/test', home_root=tmp_path).exists()
+
+
+@pytest.mark.asyncio
+async def test_background_extraction_is_serial_and_next_turn_waits(monkeypatch):
+    import asyncio
+    from app.runtime.memory.vault import extract
+
+    calls = []
+    gate = asyncio.Event()
+
+    async def fake_extract(user_id, session_id, message, final, client):
+        if message == 'first':
+            await gate.wait()
+        calls.append(message)
+
+    monkeypatch.setattr(extract, 'extract_turn', fake_extract)
+    monkeypatch.setattr(extract, 'extraction_client', lambda: object())
+    extract.schedule_extraction('alice', 's1', 'first', '')
+    extract.schedule_extraction('alice', 's1', 'second', '')
+    waiter = asyncio.create_task(extract.wait_for_extraction('alice'))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    gate.set()
+    await waiter
+    assert calls == ['first', 'second']
+    assert 'alice' not in extract._pending
+
+
+def test_move_does_not_drop_fact_that_only_looks_similar(tmp_path, db):
+    options = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/server', 'Server listens on port 9000.', **options)
+    write.add_entity('alice', 'project/tomo', 'Server listens on port 8000.', **options)
+    assert write.correct_fact('alice', 'tool/server', 0, destination='project/tomo', **options)
+    page = doc.parse(paths.entity_path('alice', 'project/tomo', home_root=tmp_path).read_text())
+    assert any('9000' in e and not e.startswith('~~') for e in page.entries)
+
+
+def test_existing_new_fact_can_still_retire_old_fact(tmp_path, db):
+    options = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/server', 'Server listens on port 8000.', **options)
+    write.add_entity('alice', 'tool/server', 'Current server port is 9000.', **options)
+    result = write.add_entity('alice', 'tool/server', 'Current server port is 9000.',
+                              supersedes='Server listens on port 8000.', origin='extraction', **options)
+    assert result['superseded']
+    assert '8000' not in read.world_card(db, 'alice', home_root=tmp_path)

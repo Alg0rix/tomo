@@ -752,6 +752,9 @@ async def run_turn(
                 if max_iterations is not None
                 else _max_tool_iterations()
             )
+            from app.runtime.memory.vault.extract import wait_for_extraction
+
+            await wait_for_extraction(turn_user_id)
             prompt = system_prompt
             if prompt is None:
                 prompt = build_system_prompt(agent_id, session_id=session_id)

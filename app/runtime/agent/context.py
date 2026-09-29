@@ -235,6 +235,23 @@ def build_system_prompt(
     except Exception:
         pass
 
+    try:
+        from app.runtime.memory.vault.read import world_card
+        from app.runtime.tools.user_ctx import current_user_id
+        from app.services import store
+
+        uid = current_user_id()
+        if session_id:
+            session = store.get_session(session_id)
+            if session:
+                uid = session.get('user_id') or uid
+        card = store.with_db(lambda conn: world_card(conn, uid, home_root=root))
+        if card:
+            parts.append(card)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug('world card unavailable', exc_info=True)
+
     # Time last so the stable prefix stays cache-friendly when the host supports it.
     return inject_current_time("\n\n".join(parts))
 

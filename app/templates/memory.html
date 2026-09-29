@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=atlas1">
+<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=atlas2">
 {% endblock %}
 {% block content %}
 <section class="mem" id="mem" aria-labelledby="memTitle">
@@ -30,7 +30,7 @@
   <section class="mem-days" aria-labelledby="memDaysTitle">
     <div class="mem-days-head">
       <h2 id="memDaysTitle">Timeline</h2>
-      <span class="mem-days-note">What happened, day by day. Nightly, durable facts get pulled into the pages above.</span>
+      <span class="mem-days-note">What happened, day by day. Durable facts go into the pages above after each turn.</span>
     </div>
     <div class="mem-days-strip" id="memDays"></div>
   </section>
@@ -41,4 +41,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=atlas1"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=atlas2"></script>{% endblock %}

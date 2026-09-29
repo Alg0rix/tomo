@@ -23,7 +23,7 @@ from app.runtime.llm.openai_compat import (
 
 
 def get_llm(
-    agent_id: str | None = None, reasoning_effort: str | None = None
+    agent_id: str | None = None, reasoning_effort: str | None = None, *, profile_id: str | None = None
 ) -> LLMClient:
     """Return an OpenAI-compatible client resolved from LLM profiles.
 
@@ -35,7 +35,18 @@ def get_llm(
     from app.services import store
     from app.models.mixins.llm_profiles import effective_reasoning_effort
 
-    profile = store.resolve_llm_profile(agent_id)
+    if profile_id:
+        from app.models.mixins.llm_profiles import get_profile, _maybe_refresh_subscription
+
+        def selected(conn):
+            value = get_profile(conn, profile_id)
+            return _maybe_refresh_subscription(conn, value) if value else None
+
+        profile = store.with_db(selected)
+        if not profile or not profile.get("enabled"):
+            raise LLMConfigError("Selected model profile is unavailable")
+    else:
+        profile = store.resolve_llm_profile(agent_id)
     if not profile:
         raise LLMConfigError("Configure a model profile in System → Models")
     if profile.get("needs_reauth"):

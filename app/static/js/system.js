@@ -127,6 +127,7 @@
             max_tool_iterations: parseInt(document.getElementById('setMaxIter').value, 10),
             learning_enabled: document.getElementById('setLearning').checked,
             memory_vault_enabled: document.getElementById('setMemoryVault').checked,
+            memory_extraction_profile_id: document.getElementById('setMemoryExtractionProfile').value,
             memory_consolidation_enabled: document.getElementById('setMemoryConsolidation').checked,
             memory_consolidation_cron: document.getElementById('setMemoryCron').value.trim(),
             approvals_mode: mode || 'smart',

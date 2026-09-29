@@ -93,6 +93,7 @@ def seed_settings() -> dict[str, Any]:
         "concurrency_limit": 4,
         "learning_enabled": True,
         "memory_vault_enabled": False,
+        "memory_extraction_profile_id": "",
         "memory_consolidation_enabled": False,
         "memory_consolidation_cron": "0 3 * * *",
         "learning_memory_nudge_turns": 5,

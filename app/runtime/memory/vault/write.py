@@ -35,27 +35,99 @@ def atomic_write(path: Path, content: str) -> None:
             os.unlink(name)
 
 
-def add_entity(user_id: str, key: str, fact: str, *, source: str = '', home_root: Path | None = None, conn=None) -> dict:
+def _aliases(slug: str, aliases: list[str] | None) -> list[str]:
+    candidates = [slug, slug.replace('-', ' ').replace('_', ' '), *re.split('[-_]', slug), *(aliases or [])]
+    clean = [re.sub(r'[\r\n,\[\]]', ' ', a).strip()[:80] for a in candidates if isinstance(a, str)]
+    return list(dict.fromkeys(a for a in clean if a))[:20]
+
+
+def _save(user_id: str, path: Path, page: doc.Document, home_root, conn) -> None:
+    page.meta['updated'] = datetime.now().astimezone().date().isoformat()
+    atomic_write(path, doc.serialize(page))
+    if conn is None:
+        store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
+    else:
+        index.reindex_file(conn, user_id, path, home_root=home_root)
+
+
+def _body(page: doc.Document, entries: list[str]) -> None:
+    heading = page.body.split('§', 1)[0].rstrip()
+    page.body = heading + '\n' + '\n'.join('§ ' + entry for entry in entries)
+
+
+def add_entity(user_id: str, key: str, fact: str, *, source: str = '', origin: str = 'agent',
+               aliases: list[str] | None = None, supersedes: str = '',
+               home_root: Path | None = None, conn=None) -> dict:
     typ, slug = paths.entity_key(key)
+    if aliases is not None and (not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases)):
+        raise ValueError('invalid aliases')
     fact = (fact or '').strip()
-    if not fact or '\n§' in fact:
-        raise ValueError('fact is empty or contains an entry delimiter')
+    if not fact or re.search(r'(?m)^§', fact) or fact.startswith('~~') or len(fact) > 2000:
+        raise ValueError('invalid fact')
+    if origin not in {'agent', 'consolidation', 'user', 'extraction'}:
+        raise ValueError('invalid fact origin')
+    if any(c in source for c in '\n\r[]'):
+        raise ValueError('invalid source')
     path = paths.entity_path(user_id, key, home_root=home_root)
     with _lock(user_id):
         page = doc.parse(path.read_text(encoding='utf-8')) if path.exists() else doc.Document(
-            {'type': typ, 'aliases': [slug], 'tags': [], 'updated': ''}, f'# {slug.replace("-", " ").title()}')
-        if curated.near_duplicate(page.entries, fact):
+            {'type': typ, 'aliases': [], 'tags': [], 'updated': ''}, f'# {slug.replace("-", " ").title()}')
+        entries = page.entries
+        matches = [i for i, e in enumerate(entries) if not e.startswith('~~') and
+                   supersedes and doc.fact_data(e)['text'] == supersedes]
+        if origin in {'extraction', 'consolidation'} and any(
+                e.startswith('~~') and doc.fact_data(e)['text'] == fact for e in entries):
             return {'added': False, 'path': str(path)}
+        # Supersession is exact and atomic, never fuzzy: port changes often look like duplicates.
+        live = [doc.fact_data(e)['text'] for i, e in enumerate(entries) if not e.startswith('~~') and i not in matches]
+        old_aliases = page.meta.get('aliases', [])
+        page.meta['aliases'] = _aliases(slug, [*(old_aliases if isinstance(old_aliases, list) else []), *(aliases or [])])
+        if supersedes and len(matches) != 1:
+            return {'added': False, 'path': str(path), 'conflict': True}
         stamp = datetime.now().astimezone().date().isoformat()
-        page.meta['updated'] = stamp
+        duplicate = (any(e.casefold() == fact.casefold() for e in live) if origin == 'user'
+                     else curated.near_duplicate(live, fact))
+        for i in matches:
+            entries[i] = f'~~{entries[i]}~~ superseded {stamp}'
+        if duplicate:
+            _body(page, entries)
+            _save(user_id, path, page, home_root, conn)
+            return {'added': False, 'superseded': bool(matches), 'path': str(path)}
         src = f' (src: [[{source}]])' if source else ''
-        page.body = page.body.rstrip() + f'\n§ {fact}{src}'
-        atomic_write(path, doc.serialize(page))
-        if conn is None:
-            store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
-        else:
-            index.reindex_file(conn, user_id, path, home_root=home_root)
+        entries.append(f'{fact} (origin: {origin}){src}')
+        _body(page, entries)
+        _save(user_id, path, page, home_root, conn)
         return {'added': True, 'path': str(path)}
+
+
+def correct_fact(user_id: str, key: str, number: int, *, text: str | None = None,
+                 destination: str | None = None, expected: str | None = None,
+                 home_root: Path | None = None, conn=None) -> bool:
+    """Keep the old entry as history; UI changes have user provenance."""
+    path = paths.entity_path(user_id, key, home_root=home_root)
+    if destination:
+        paths.entity_key(destination)
+    with _lock(user_id):
+        if not path.is_file():
+            return False
+        page = doc.parse(path.read_text(encoding='utf-8'))
+        if number < 0 or number >= len(page.entries):
+            return False
+        entry = page.entries[number]
+        data = doc.fact_data(entry)
+        if data['superseded'] or (expected is not None and data['text'] != expected):
+            return False
+        replacement = data['text'] if text is None else text.strip()
+        if (destination or key) == key:
+            if replacement == data['text']:
+                return True
+            result = add_entity(user_id, key, replacement, source=data['source'], origin='user',
+                                supersedes=data['text'], home_root=home_root, conn=conn)
+            return result['added'] or result.get('superseded', False)
+        # Validate/write destination before retiring the source.
+        add_entity(user_id, destination, replacement, source=data['source'], origin='user',
+                   home_root=home_root, conn=conn)
+        return forget_fact(user_id, key, number, home_root=home_root, conn=conn)
 
 
 def forget_fact(user_id: str, key: str, number: int, *, home_root: Path | None = None, conn=None) -> bool:
@@ -102,7 +174,7 @@ def append_timeline(user_id: str, session_id: str, agent_id: str, summary: str, 
 
 
 def record_turn(session_id: str | None, agent_id: str | None, user_message: str | None, final_content: str) -> None:
-    """Use the already available turn text; never make a model call."""
+    """Record timeline immediately and schedule automatic background extraction."""
     if not session_id or not (user_message or final_content):
         return
     try:
@@ -112,7 +184,11 @@ def record_turn(session_id: str | None, agent_id: str | None, user_message: str 
         if not session:
             return
         summary = f"Goal: {(user_message or '').strip()[:240]}\nOutcome: {final_content.strip()[:480]}"
-        append_timeline(session.get('user_id') or 'web', session_id, agent_id or 'main', summary)
+        uid = session.get('user_id') or 'web'
+        append_timeline(uid, session_id, agent_id or 'main', summary)
+        from .extract import schedule_extraction
+
+        schedule_extraction(uid, session_id, user_message or '', final_content)
     except Exception:
         import logging
 

@@ -46,3 +46,18 @@ def serialize(doc: Document) -> str:
 
 def links(text: str) -> list[str]:
     return list(dict.fromkeys(m.group(1).strip() for m in _LINK.finditer(text)))
+
+
+def fact_data(entry: str) -> dict:
+    """Decode optional provenance; old Markdown remains readable."""
+    gone = entry.startswith('~~')
+    text = re.sub(r'^~~(.*?)~~.*$', r'\1', entry, flags=re.S) if gone else entry
+    source = re.search(r'\s*\(src: \[\[([^\]]+)\]\]\)\s*$', text)
+    if source:
+        text = text[:source.start()]
+    origin = re.search(r'\s*\(origin: (agent|consolidation|user|extraction)\)\s*$', text)
+    if origin:
+        text = text[:origin.start()]
+    return {'text': text.strip(), 'source': source.group(1) if source else '',
+            'origin': origin.group(1) if origin else ('consolidation' if source and '#consolidated' in source.group(1) else 'agent'),
+            'superseded': gone}
