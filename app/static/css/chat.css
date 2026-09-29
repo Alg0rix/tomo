@@ -427,20 +427,23 @@
 
 /* Secondary actions (Files, Resources, Agents, Clear) live behind "⋯" at
  * every width; context + status stay visible. */
-.chat-wrap .composer-mobile-more { display: flex; align-items: center; gap: 4px; margin-left: auto; min-width: 0; }
+.chat-wrap .composer-mobile-more { display: flex; align-items: center; flex: none; order: 2; margin-left: 0; min-width: 0; }
 .chat-wrap .composer-mobile-more-btn { display: inline-flex !important; width: 32px; padding: 0; justify-content: center; order: 2; }
 .chat-wrap .composer-mobile-more-btn svg { width: 16px; height: 16px; }
-.chat-wrap .composer-mobile-more-panel { display: contents; }
-.chat-wrap .composer-mobile-more-panel .composer-actions {
+.chat-wrap .composer-mobile-more-panel {
   display: none;
   position: absolute; right: 8px; bottom: calc(100% + 6px); z-index: 30;
-  flex-direction: column; align-items: stretch; gap: 2px; min-width: 180px;
+  width: min(240px, calc(100vw - 32px)); max-height: min(60vh, 320px);
   padding: 6px; border-radius: 12px;
   background: var(--surface); border: 1px solid var(--border-strong);
   box-shadow: 0 16px 40px -16px rgba(0,0,0,.6);
+  opacity: 1; visibility: visible; pointer-events: auto; transform: none;
 }
-.chat-wrap .composer-mobile-more.is-open .composer-actions,
-.chat-wrap .composer-mobile-more-btn[aria-expanded="true"] + .composer-mobile-more-panel .composer-actions { display: flex; }
+.chat-wrap .composer-mobile-more.is-open .composer-mobile-more-panel,
+.chat-wrap .composer-mobile-more-btn[aria-expanded="true"] + .composer-mobile-more-panel { display: block; }
+.chat-wrap .composer-mobile-more-panel .composer-actions {
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 100%;
+}
 .chat-wrap .composer-actions .composer-ghost {
   display: block; width: 100%; text-align: left;
   padding: 8px 10px; border-radius: 8px; border: 0; background: none;
@@ -450,8 +453,9 @@
 .chat-wrap .composer-actions .chat-clear:hover { color: var(--danger); }
 .chat-wrap .composer-meta {
   display: inline-flex; align-items: center; gap: 2px; order: 1;
-  margin: 0; padding: 0; border: 0;
+  margin: 0 0 0 auto; padding: 0; border: 0;
 }
+.chat-wrap .composer-toolbar-right { order: 3; }
 .chat-wrap .ctx-usage-trigger {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px;
   border: 0; border-radius: 999px; background: none; color: var(--text-faint);
@@ -495,6 +499,29 @@
   .chat-wrap .subagent-inspector { flex-basis: 100%; width: 100%; }
   .chat-wrap .swarm-row { padding: 11px 12px; }
   .chat-wrap .swarm-row .task, .chat-wrap .sw-live { margin-left: 0; }
+  .chat-wrap .composer-footer {
+    display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px;
+    gap: 6px; padding: 6px 8px 8px;
+  }
+  .chat-wrap .composer-toolbar-left {
+    grid-column: 1 / -1; grid-row: 1; gap: 4px; width: 100%;
+  }
+  .chat-wrap .composer-reasoning { flex: 0 1 auto; min-width: 0; margin-left: auto; }
+  .chat-wrap .composer .composer-reasoning-trigger { max-width: 100%; min-width: 0; }
+  .chat-wrap .composer-meta { grid-column: 1; grid-row: 2; margin: 0; min-width: 0; }
+  .chat-wrap .composer-status { font-size: 12px; overflow: hidden; white-space: nowrap; }
+  .chat-wrap .composer-mobile-more { grid-column: 2; grid-row: 2; }
+  .chat-wrap .composer-toolbar-right { grid-column: 3; grid-row: 2; margin: 0; }
+  .chat-wrap .composer .attach-btn,
+  .chat-wrap .composer .composer-mobile-more-btn,
+  .chat-wrap .composer .composer-submit,
+  .chat-wrap .composer .composer-submit .send,
+  .chat-wrap .composer .composer-submit .stop { width: 40px; height: 40px; }
+  .chat-wrap .composer .composer-mode,
+  .chat-wrap .composer .chat-swarm-toggle,
+  .chat-wrap .composer .composer-reasoning-trigger,
+  .chat-wrap .composer .ctx-usage-trigger { min-height: 40px; }
+  .chat-wrap .composer-actions .composer-ghost { min-height: 40px; }
 }
 .chat-wrap .composer-shell { position: relative; overflow: visible; }
 
