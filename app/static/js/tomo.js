@@ -567,8 +567,16 @@
     if (args.query) return String(args.query);
     if (args.url) return String(args.url);
     var keys = Object.keys(args);
-    if (keys.length === 1) return String(args[keys[0]]);
+    if (keys.length === 1 && typeof args[keys[0]] !== 'object') return String(args[keys[0]]);
     if (!keys.length) return '';
+    // Several args: compact "k=v" pairs, primitives only, short values.
+    var pairs = keys.filter(function (k) {
+      var v = args[k];
+      return v != null && v !== '' && typeof v !== 'object';
+    }).map(function (k) {
+      return k + '=' + Tomo.truncate(String(args[k]).replace(/\s+/g, ' '), 40);
+    });
+    if (pairs.length) return pairs.join(' ');
     try { return JSON.stringify(args); } catch (_) { return ''; }
   };
   Tomo.toolResultPreview = function (text) {
@@ -577,6 +585,21 @@
     var lines = text.split('\n').length;
     if (lines > 1) return lines + ' lines';
     return Tomo.truncate(text.replace(/\s+/g, ' ').trim(), 48);
+  };
+
+  /**
+   * Turn a raw tool error into one readable line.
+   * "Error: [TAB_NOT_FOUND] Tab not found" -> {message: "Tab not found", code: "TAB_NOT_FOUND"}
+   */
+  Tomo.humanizeToolError = function (text) {
+    var line = String(text == null ? '' : text).split('\n').map(function (l) { return l.trim(); })
+      .filter(Boolean)[0] || 'Failed';
+    line = line.replace(/^(error|exception)\s*:\s*/i, '');
+    var code = '';
+    var m = line.match(/^\[([A-Z0-9_]{3,})\]\s*(.*)$/);
+    if (m) { code = m[1]; line = m[2] || m[1]; }
+    line = line.replace(/^tool '[^']+' failed:\s*/i, '');
+    return { message: Tomo.truncate(line, 140), code: code };
   };
 
   /**
@@ -612,13 +635,15 @@
     card.dataset.toolName = tool;
     var summary = presented.summary || '';
     card.innerHTML =
-      '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
+      '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '"' +
+        (summary ? ' title="' + Tomo.escapeHtml(tool + ' ' + summary) + '"' : '') + '>' +
         '<span class="tstatus" aria-hidden="true"></span>' +
         '<span class="tname">' + Tomo.escapeHtml(tool) + '</span>' +
-        '<span class="targs">' + Tomo.escapeHtml(summary) + '</span>' +
+        '<span class="targs">' + Tomo.escapeHtml(Tomo.truncate(summary, 160)) + '</span>' +
         '<span class="tchip"></span>' +
         '<span class="chevron" aria-hidden="true"></span>' +
       '</button>' +
+      '<div class="tool-err" hidden></div>' +
       '<div class="tool-body">' +
         (presented.detailHtml
           ? '<div class="tdetail"><span class="tool-sec-label">Input</span>' + presented.detailHtml + '</div>'
@@ -670,8 +695,12 @@
     dock.className = 'chat-todo-dock';
     dock.hidden = true;
     dock.setAttribute('aria-label', 'Session todo list');
+    // Lives inside the composer so the plan strip stays glued to the input,
+    // whatever height the textarea grows to.
     var composer = main.querySelector('.composer');
-    if (composer) main.insertBefore(dock, composer);
+    var shell = composer && composer.querySelector('.composer-shell');
+    if (shell) composer.insertBefore(dock, shell);
+    else if (composer) main.insertBefore(dock, composer);
     else main.appendChild(dock);
     return dock;
   };
@@ -731,7 +760,8 @@
     var panel = dock.querySelector(':scope > .todo-panel');
     if (!panel) {
       panel = document.createElement('div');
-      panel.className = 'todo-panel';
+      // Plan strip starts folded: one line with progress + current step.
+      panel.className = 'todo-panel collapsed';
       dock.appendChild(panel);
       panel.addEventListener('click', function (ev) {
         var btn = ev.target.closest('.todo-hd');
@@ -751,23 +781,33 @@
     var todos = panel._todos;
     var done = todos.filter(function (t) { return t && t.status === 'completed'; }).length;
     var collapsed = panel.classList.contains('collapsed');
+    var current = todos.filter(function (t) { return t && t.status === 'in_progress'; })[0] ||
+      todos.filter(function (t) { return t && (t.status || 'pending') === 'pending'; })[0] || null;
+    var next = null;
+    if (current) {
+      var ci = todos.indexOf(current);
+      next = todos.slice(ci + 1).filter(function (t) { return t && (t.status || 'pending') === 'pending'; })[0] || null;
+    }
+    var pips = todos.map(function (t) {
+      var st = (t && t.status) || 'pending';
+      return '<i class="pip ' + esc(st) + '"></i>';
+    }).join('');
+    var headline = current
+      ? '<b>' + esc(current.content || '') + '</b>' + (next ? ' <span class="todo-next">· then ' + esc(next.content || '') + '</span>' : '')
+      : '<b>All done</b>';
     var rows = todos.map(function (t) {
       var st = (t && t.status) || 'pending';
-      var content = (t && t.content) || '';
-      return (
-        '<div class="todo-row status-' + esc(st) + '">' +
-          '<span class="todo-glyph" aria-hidden="true">' + esc(Tomo.todoGlyph(st)) + '</span>' +
-          '<span class="todo-text">' + esc(content) + '</span>' +
-        '</div>'
-      );
+      return '<li class="todo-row status-' + esc(st) + '">' + esc((t && t.content) || '') + '</li>';
     }).join('');
+    panel.classList.toggle('is-complete', !current);
     panel.innerHTML =
-      '<button type="button" class="todo-hd" aria-expanded="' + (!collapsed) + '">' +
-        '<span class="todo-caret">' + (collapsed ? '▸' : '▾') + '</span> ' +
-        '<span class="todo-title">Todo</span> ' +
-        '<span class="todo-count">(' + done + '/' + todos.length + ')</span>' +
+      '<button type="button" class="todo-hd" aria-expanded="' + (!collapsed) + '" title="Plan">' +
+        '<span class="todo-count">' + done + '/' + todos.length + '</span>' +
+        '<span class="todo-pips" aria-hidden="true">' + pips + '</span>' +
+        '<span class="todo-cur">' + headline + '</span>' +
+        '<span class="todo-caret" aria-hidden="true"></span>' +
       '</button>' +
-      (collapsed ? '' : '<div class="todo-bd">' + rows + '</div>');
+      (collapsed ? '' : '<ol class="todo-bd">' + rows + '</ol>');
   };
 
   /**
@@ -819,13 +859,22 @@
     card.classList.toggle('ok', !isError);
     card.classList.add('has-output');
     if (card._chip) {
-      var hint = isError
-        ? (Tomo.truncate((resultText.split('\n')[0] || 'Error').trim(), 56) || 'Error')
-        : Tomo.toolResultPreview(resultText);
-      card._chip.textContent = hint;
+      var quiet = isError || card.dataset.toolName === 'todo';
+      card._chip.textContent = quiet ? '' : Tomo.toolResultPreview(resultText);
       card._chip.classList.toggle('err', !!isError);
     }
-    if (isError || card.classList.contains('is-edit')) {
+    var errEl = card.querySelector(':scope > .tool-err');
+    if (errEl) {
+      if (isError) {
+        var he = Tomo.humanizeToolError(resultText);
+        errEl.innerHTML = Tomo.escapeHtml(he.message) +
+          (he.code ? ' <span class="tool-err-code">' + Tomo.escapeHtml(he.code) + '</span>' : '');
+        errEl.hidden = false;
+      } else {
+        errEl.hidden = true;
+      }
+    }
+    if (card.classList.contains('is-edit')) {
       card.classList.add('expanded');
       if (card._head) card._head.setAttribute('aria-expanded', 'true');
     }
@@ -846,24 +895,151 @@
 
   /** Render one inspector timeline step. Returns the root element when useful. */
   Tomo.buildReasoningCard = function (content) {
-    var text = String(content || '');
-    var esc = Tomo.escapeHtml;
-    var previewLine = text.split('\n')[0].trim();
-    var wrap = document.createElement('div');
-    wrap.className = 'si-item si-think';
-    var think = document.createElement('details');
-    think.className = 'si-card';
-    think.innerHTML =
-      '<summary class="si-card-hd">' +
-        '<div class="si-hd-top"><span class="si-tag think">Reasoning</span></div>' +
-        (previewLine ? '<div class="si-hd-preview">' + esc(Tomo.truncate(previewLine, 140)) + '</div>' : '') +
-      '</summary>' +
-      '<div class="si-card-bd"><pre class="si-think-body"></pre></div>';
-    think.querySelector('pre').textContent = text;
-    wrap.innerHTML = '<span class="si-node" aria-hidden="true"></span>';
-    wrap.appendChild(think);
-    return wrap;
+    var text = String(content || '').trim();
+    var note = document.createElement('div');
+    // si-think stays: stream resume counts rendered reasoning by this class.
+    note.className = 'wn-note si-think';
+    var body = document.createElement('div');
+    body.className = 'wn-note-text prose chat-prose';
+    if (window.TomoChat && TomoChat.setMarkdown) TomoChat.setMarkdown(body, text);
+    else body.textContent = text;
+    note.appendChild(body);
+    // Long notes clamp to a few lines; click to read the rest.
+    if (text.length > 280 || text.split('\n').length > 4) {
+      note.classList.add('is-clamped');
+      note.addEventListener('click', function (ev) {
+        if (ev.target.closest('a, button, pre, code')) return;
+        note.classList.toggle('is-clamped');
+      });
+    }
+    return note;
   };
+
+  /** Refresh a reasoning note while its text is still streaming in. */
+  Tomo.updateReasoningCard = function (note, content) {
+    if (!note) return;
+    var body = note.querySelector('.wn-note-text') || note.querySelector('pre');
+    if (!body) return;
+    note.classList.add('is-streaming');
+    // Plain text while streaming; markdown re-render per delta is too costly.
+    body.textContent = String(content || '');
+  };
+
+  // ── Subagent lanes (delegate / swarm rows) ─────────────────────────
+  // One shared row shape for live, resume and history renders. The row shows
+  // who is working, on what, and the latest step — not a fake progress bar.
+
+  function firstSentence(text, n) {
+    // Skip markdown tables / rules so previews read as prose.
+    var lines = String(text || '').split('\n').map(function (l) { return l.trim(); }).filter(function (l) {
+      return l && l.charAt(0) !== '|' && !/^[-=*_]{3,}$/.test(l);
+    });
+    var t = (lines[0] || '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
+    var m = t.match(/^(.{12,}?[.!?])(\s|$)/);
+    return Tomo.truncate(m ? m[1] : t, n || 120);
+  }
+
+  Tomo.buildSwarmRow = function (o) {
+    o = o || {};
+    var esc = Tomo.escapeHtml;
+    var aid = o.aid || '';
+    var name = o.name || aid || 'Agent';
+    var row = document.createElement('div');
+    row.className = 'swarm-row active';
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.dataset.agentId = aid;
+    row.dataset.instanceKey = o.key || aid;
+    if (!o.historic) row.dataset.start = String(Date.now());
+    row._stats = { tools: 0, errors: 0, steps: 0 };
+    var color = Tomo.avatarColor ? Tomo.avatarColor(aid || name) : 'var(--accent)';
+    var lane = (o.total || 1) > 1 ? '<span class="sw-lane">' + (o.idx || 1) + '/' + o.total + '</span>' : '';
+    row.innerHTML =
+      '<div class="sw-head">' +
+        '<span class="sw-dot" style="background:' + color + '" aria-hidden="true"></span>' +
+        '<span class="name">' + esc(name) + '</span>' + lane +
+        '<span class="sw-state">' + (o.historic ? '' : 'starting') + '</span>' +
+        '<span class="sw-open" aria-hidden="true">Open</span>' +
+      '</div>' +
+      (o.task ? '<div class="task">' + esc(o.task) + '</div>' : '') +
+      '<div class="sw-live" aria-live="polite"></div>' +
+      // Kept for older callers that still poke its width; hidden by CSS.
+      '<div class="swarm-progress" hidden><div class="swarm-progress-bar"></div></div>';
+    row.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
+    });
+    return row;
+  };
+
+  function swarmStateText(row) {
+    var st = row._stats || { tools: 0, errors: 0 };
+    var parts = [];
+    if (st.tools) parts.push(st.tools + (st.tools === 1 ? ' tool' : ' tools'));
+    if (st.errors) parts.push(st.errors + (st.errors === 1 ? ' error' : ' errors'));
+    return parts.join(' · ');
+  }
+
+  Tomo.swarmRowEvent = function (row, kind, data) {
+    if (!row || !row.querySelector) return;
+    data = data || {};
+    var st = row._stats || (row._stats = { tools: 0, errors: 0, steps: 0 });
+    var live = row.querySelector('.sw-live');
+    var set = function (cls, html) {
+      if (!live) return;
+      live.className = 'sw-live ' + cls;
+      live.innerHTML = html;
+    };
+    var esc = Tomo.escapeHtml;
+    if (kind === 'thinking' && data.content) {
+      st.steps++;
+      set('is-note', esc(firstSentence(data.content, 140)));
+    } else if (kind === 'tool') {
+      st.tools++;
+      var sum = Tomo.formatToolSummary(data.tool || '', data.args || {});
+      set('is-tool', '<span class="mono">' + esc(data.tool || 'tool') + '</span> ' +
+        '<span class="sw-arg">' + esc(Tomo.truncate(sum, 90)) + '</span>');
+    } else if (kind === 'tool_result' && data.error) {
+      st.errors++;
+      var he = Tomo.humanizeToolError(typeof data.result === 'string' ? data.result : '');
+      set('is-err', esc(he.message));
+    } else if ((kind === 'subagent_final' || kind === 'final') && data.content) {
+      row._answer = (row._answer || '') + data.content;
+      set('is-answer', esc(firstSentence(row._answer, 180)));
+    } else if (kind === 'delta' && data.content) {
+      row._answer = (row._answer || '') + data.content;
+      set('is-answer', esc(firstSentence(row._answer, 180)));
+    }
+    if (row.classList.contains('active')) {
+      var state = row.querySelector('.sw-state');
+      if (state) state.dataset.counts = swarmStateText(row);
+    }
+  };
+
+  Tomo.swarmRowDone = function (row, status) {
+    if (!row || !row.classList) return;
+    var failed = status === 'error';
+    row.classList.remove('active');
+    row.classList.remove('done', 'error');
+    row.classList.add(failed ? 'error' : 'done');
+    var state = row.querySelector('.sw-state');
+    if (state) {
+      var counts = swarmStateText(row);
+      state.textContent = (failed ? 'failed' : 'done') + (counts ? ' · ' + counts : '');
+      delete state.dataset.counts;
+    }
+  };
+
+  // Elapsed clock for running lanes (one timer for the whole page).
+  setInterval(function () {
+    var rows = document.querySelectorAll('.swarm-row.active[data-start]');
+    for (var i = 0; i < rows.length; i++) {
+      var state = rows[i].querySelector('.sw-state');
+      if (!state) continue;
+      var secs = Math.max(0, Math.round((Date.now() - Number(rows[i].dataset.start)) / 1000));
+      var clock = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+      state.textContent = 'working · ' + clock + (state.dataset.counts ? ' · ' + state.dataset.counts : '');
+    }
+  }, 1000);
 
   Tomo.renderInspectorStep = function (body, kind, data) {
     var esc = Tomo.escapeHtml;
@@ -878,64 +1054,21 @@
     }
 
     if (kind === 'tool') {
-      var toolName = data.tool || 'tool';
-      var presented = Tomo.presentToolArgs(toolName, data.args || {});
-      var cmd = presented.summary || fmt(toolName, data.args || {});
-      var card = document.createElement('div');
-      card.className = 'si-item si-tool running' + (presented.autoExpand ? ' expanded' : '');
-      if (data.call_id) card.dataset.callId = data.call_id;
-      card.dataset.toolName = toolName;
-      card.innerHTML =
-        '<span class="si-node" aria-hidden="true"></span>' +
-        '<div class="si-card">' +
-          '<button type="button" class="si-card-hd">' +
-            '<div class="si-hd-top">' +
-              '<span class="si-tag tool">' + esc(toolName) + '</span>' +
-              '<span class="si-hd-meta"></span>' +
-            '</div>' +
-            (cmd ? '<div class="si-hd-preview mono">' + esc(Tomo.truncate(cmd, 140)) + '</div>' : '') +
-          '</button>' +
-          '<div class="si-card-bd">' +
-            (presented.detailHtml
-              ? '<div class="si-block"><span class="si-block-label">Changes</span><div class="si-tool-detail"></div></div>'
-              : '') +
-            '<div class="si-block"><span class="si-block-label">Output</span><pre class="si-tres"></pre></div>' +
-          '</div>' +
-        '</div>';
-      var detailEl = card.querySelector('.si-tool-detail');
-      if (detailEl && presented.detailHtml) detailEl.innerHTML = presented.detailHtml;
-      card._res = card.querySelector('.si-tres');
-      card._meta = card.querySelector('.si-hd-meta');
-      card.querySelector('.si-card-hd').addEventListener('click', function () {
-        card.classList.toggle('expanded');
+      var tcard = Tomo.buildToolCard({
+        tool: data.tool || 'tool',
+        args: data.args || {},
+        running: true,
+        call_id: data.call_id || '',
       });
-      root.appendChild(card);
-      return card;
+      root.appendChild(tcard);
+      return tcard;
     }
 
     if (kind === 'tool_result') {
       var last = Tomo.findToolCard(body, data) || Tomo.findToolCard(root, data);
-      if (!last || !last._res) {
-        if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
-        return null;
-      }
-      var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
-      last._res.textContent = resultText;
-      if (data.error) {
-        last._res.classList.add('err');
-        last.classList.add('is-error');
-      }
-      last.classList.add('has-output');
-      last.classList.remove('running');
-      last.classList.remove('loading');
-      if (last._meta) {
-        var hint = preview(resultText);
-        if (data.error) {
-          var errLine = resultText.split('\n')[0].trim();
-          hint = Tomo.truncate(errLine, 56) || 'Error';
-          last._meta.classList.add('err');
-        }
-        last._meta.textContent = hint;
+      if (last) {
+        var resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || '');
+        Tomo.finishToolCard(last, resultText, !!data.error);
       }
       if (Array.isArray(data.todos)) Tomo.upsertTodoPanel(root, data.todos);
       return last;
@@ -952,22 +1085,14 @@
     if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {
       var answerWrap = body.querySelector('.si-answer');
       if (!answerWrap) {
-        answerWrap = document.createElement('div');
-        answerWrap.className = 'si-item si-answer';
-        var answer = document.createElement('details');
-        answer.className = 'si-card';
-        answer.open = true;
-        answer.innerHTML =
-          '<summary class="si-card-hd">' +
-            '<div class="si-hd-top"><span class="si-tag answer">Answer</span></div>' +
-            '<div class="si-hd-preview">Subagent response</div>' +
-          '</summary>' +
-          '<div class="si-card-bd"><div class="si-answer-body prose chat-prose"></div></div>';
-        answerWrap.innerHTML = '<span class="si-node" aria-hidden="true"></span>';
-        answerWrap.appendChild(answer);
-        answerWrap._answerDetails = answer;
+        answerWrap = document.createElement('section');
+        answerWrap.className = 'si-answer';
+        answerWrap.innerHTML =
+          '<div class="si-answer-label">Answer</div>' +
+          '<div class="si-answer-body prose chat-prose"></div>';
         answerWrap._raw = '';
-        root.appendChild(answerWrap);
+        // Answer sits below the step list, not inside it.
+        (body || root).appendChild(answerWrap);
       }
       var bubble = answerWrap.querySelector('.si-answer-body');
       answerWrap._raw = (answerWrap._raw || '') + (data.content || '');
@@ -975,10 +1100,6 @@
         TomoChat.setMarkdown(bubble, answerWrap._raw);
       } else {
         bubble.textContent = answerWrap._raw;
-      }
-      var prev = answerWrap.querySelector('.si-hd-preview');
-      if (prev && answerWrap._raw.trim()) {
-        prev.textContent = Tomo.truncate(answerWrap._raw.replace(/\s+/g, ' ').trim(), 100);
       }
       return answerWrap;
     }

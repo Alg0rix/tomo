@@ -31,9 +31,8 @@
     if (!text || !sendBtn) return;
     sendBtn.dataset.busy = '1';
     syncSend();
-    // Full swarm by default (not coordinator-only) so delegate works immediately.
     const p = new URLSearchParams();
-    p.set('swarm', '1');
+    if (coordinatorId) p.set('agent', coordinatorId);
     p.set('q', text);
     // Always pass wp (may be empty = Tomo work dir / no folder).
     var wpSel = document.getElementById('homeWorkplace');
@@ -144,15 +143,15 @@
   function renderHomeRecent(sessions) {
     if (!recentHome) return;
     if (!sessions.length) {
-      recentHome.innerHTML = '<div class="dashboard-empty-state dashboard-empty-state-compact"><div><strong>No chats yet</strong><p>Start with the composer or open chat history.</p></div><a class="btn ghost sm" href="/sessions?swarm=1">Open chat ↗</a></div>';
+      recentHome.innerHTML = '<div class="dashboard-empty-state dashboard-empty-state-compact"><div><strong>No chats yet</strong><p>Start with the composer or open chat history.</p></div><a class="btn ghost sm" href="/sessions">Open chat ↗</a></div>';
       return;
     }
     recentHome.innerHTML = sessions.slice(0, 6).map(function (s) {
       var title = s.title || 'Conversation';
-      var kind = s.is_swarm ? 'Swarm' : (s.agent_id || 'Tomo');
+      var kind = s.agent_name || s.agent_id || 'Tomo';
       var marker = String(kind).slice(0, 1).toUpperCase();
       return '<a class="chat-home-recent-row" role="listitem" aria-label="Open ' + esc(title) + '" href="/sessions?s=' + encodeURIComponent(s.id) + '">' +
-        '<span class="chat-home-recent-mark' + (s.is_swarm ? ' swarm' : '') + '" aria-hidden="true">' + esc(marker) + '</span>' +
+        '<span class="chat-home-recent-mark" aria-hidden="true">' + esc(marker) + '</span>' +
         '<div class="meta"><div class="title">' + esc(title) + '</div>' +
         '<div class="desc"><span class="chat-home-recent-kind">' + esc(kind) + '</span><span>' + esc(String(s.message_count || 0)) + ' msgs</span></div></div>' +
         '<span class="chat-home-recent-arrow" aria-hidden="true">↗</span>' +

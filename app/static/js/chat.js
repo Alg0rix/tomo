@@ -303,7 +303,10 @@
       if (event.key === 'Escape') closeMoreMenu();
     }
 
-    if (moreBtn && morePanel && moreWrap) {
+    // initChat can run more than once for the same composer; bind once or the
+    // second handler immediately closes what the first one opened.
+    if (moreBtn && morePanel && moreWrap && !moreBtn.dataset.moreBound) {
+      moreBtn.dataset.moreBound = '1';
       moreBtn.addEventListener('click', function (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -1454,6 +1457,7 @@
       return {
         message: text || '',
         attachment_ids: attachmentIds || [],
+        execution_mode: wrap.dataset.nextExecutionMode === 'swarm' ? 'swarm' : 'solo',
       };
     }
 
@@ -1629,6 +1633,9 @@
 
       var attachIds = attachmentIds || [];
       es = postEventSource(streamUrl(text, attachIds), streamBody(text, attachIds));
+      delete wrap.dataset.nextExecutionMode;
+      var teamToggle = wrap.querySelector('.chat-swarm-toggle');
+      if (teamToggle) { teamToggle.setAttribute('aria-pressed', 'false'); teamToggle.classList.remove('active'); }
       if (!window.TomoTurnStream || !TomoTurnStream.attach) {
         console.error('[tomo] TomoTurnStream missing');
         closeStream();
@@ -1717,6 +1724,17 @@
         return;
       }
       await startTurn(value, { attachmentIds: attachIds, attachments: attachMeta });
+    }
+
+    var swarmToggle = wrap.querySelector('.chat-swarm-toggle');
+    if (swarmToggle) {
+      swarmToggle.addEventListener('click', function () {
+        var next = swarmToggle.getAttribute('aria-pressed') !== 'true';
+        swarmToggle.setAttribute('aria-pressed', next ? 'true' : 'false');
+        swarmToggle.classList.toggle('active', next);
+        if (next) wrap.dataset.nextExecutionMode = 'swarm';
+        else delete wrap.dataset.nextExecutionMode;
+      });
     }
 
     input.addEventListener('input', function () {

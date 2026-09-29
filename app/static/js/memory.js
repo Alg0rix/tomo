@@ -1,428 +1,566 @@
-(() => {
-  const SVG_NS = 'http://www.w3.org/2000/svg';
-  const svg = document.getElementById('memoryGraph');
-  const chart = document.getElementById('memoryChart');
-  const detail = document.getElementById('memoryDetail');
-  const indexList = document.getElementById('memoryIndex');
-  const slider = document.getElementById('memoryScrubber');
-  const dateLabel = document.getElementById('memoryDate');
-  const bullets = document.getElementById('memoryBullets');
-  let graph = {nodes: [], edges: [], days: [], types: []};
-  let points = new Map();
-  let selected = null;
-  let requestNumber = 0;
-  let yaw = -.38;
-  let pitch = -.32;
-  let zoom = 1;
-  let dragging = false;
-  let dragStart = null;
-  let ignoreClickUntil = 0;
-  let framePending = false;
+/* memory.js — Memory page.
+ *
+ * One call to /api/memory/overview, then three linked views:
+ *   list   — every remembered thing, grouped by type, filtered by search
+ *   map    — the focused thing in the middle, what it links to around it,
+ *            one more hop faintly behind; click to move the focus
+ *   reader — its facts in plain text, where each came from, what mentions
+ *            it, and a way to forget a fact that's wrong
+ * plus a day-by-day timeline underneath.
+ */
+(function () {
+  'use strict';
 
-  function updateViewBox() {
-    svg.setAttribute('viewBox', window.matchMedia('(max-width: 650px)').matches
-      ? '175 0 650 660' : '0 0 1000 660');
-  }
-  updateViewBox();
-  window.addEventListener('resize', updateViewBox);
+  var TYPES = ['person', 'project', 'tool', 'place', 'org', 'topic'];
+  var esc = function (s) { return window.Tomo && Tomo.escapeHtml ? Tomo.escapeHtml(s) : String(s == null ? '' : s); };
+  var root = document.getElementById('mem');
+  if (!root) return;
 
-  function svgEl(tag, attributes = {}, parent = svg) {
-    const element = document.createElementNS(SVG_NS, tag);
-    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
-    parent.append(element);
-    return element;
-  }
+  var els = {
+    stats: document.getElementById('memStats'),
+    query: document.getElementById('memQuery'),
+    list: document.getElementById('memList'),
+    map: document.getElementById('memMap'),
+    svg: document.getElementById('memGraph'),
+    hint: document.getElementById('memMapHint'),
+    reader: document.getElementById('memReader'),
+    days: document.getElementById('memDays'),
+    empty: document.getElementById('memEmpty'),
+    body: root.querySelector('.mem-body'),
+  };
 
-  function star(x, y, facts, radius, parent = svg) {
-    const spokes = Math.max(4, Math.min(12, facts || 4));
-    let path = '';
-    for (let i = 0; i < spokes * 2; i++) {
-      const angle = i * Math.PI / spokes - Math.PI / 2;
-      const length = i % 2 ? radius * .33 : radius;
-      path += `${i ? 'L' : 'M'}${(x + Math.cos(angle) * length).toFixed(1)},${(y + Math.sin(angle) * length).toFixed(1)}`;
-    }
-    svgEl('path', {d: path + 'Z', class: 'herbarium-star'}, parent);
-    svgEl('circle', {cx: x, cy: y, r: 2.1, class: 'herbarium-star-center'}, parent);
-  }
+  var state = {
+    byKey: {},        // key -> entity
+    adj: {},          // key -> Set of neighbour keys (either direction)
+    out: {},          // key -> [keys it links to]
+    inc: {},          // key -> [keys linking to it]
+    timeline: [],
+    focus: null,
+    q: '',
+    pos: {},          // key -> {x, y} currently drawn
+    anim: 0,
+  };
 
-  function rotate3D(point) {
-    const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    const x = point.x * cy + point.z * sy;
-    const z = -point.x * sy + point.z * cy;
-    const cp = Math.cos(pitch), sp = Math.sin(pitch);
-    return {x, y: point.y * cp - z * sp, z: point.y * sp + z * cp};
+  function typeColor(t) {
+    return 'var(--mem-type-' + (TYPES.indexOf(t) >= 0 ? t : 'topic') + ')';
   }
 
-  function project(point) {
-    const rotated = rotate3D(point);
-    const scale = 700 / (700 - rotated.z) * zoom;
-    return {x: 500 + rotated.x * scale, y: 330 + rotated.y * scale, z: rotated.z, scale};
-  }
-
-  function planet3D(index, count) {
-    const angle = index * 2 * Math.PI / count - Math.PI / 2;
-    return {x: Math.cos(angle) * 250, y: Math.sin(angle) * 210, z: Math.sin(angle) * 115, angle};
-  }
-
-  function planet(type, index, count) {
-    return project(planet3D(index, count));
-  }
-
-  function entityPoint(node) {
-    const typeIndex = graph.types.indexOf(node.type);
-    const center = planet3D(typeIndex, graph.types.length);
-    const siblings = graph.nodes.filter(item => item.type === node.type);
-    const place = siblings.findIndex(item => item.id === node.id);
-    const angle = center.angle + Math.PI + place * 2 * Math.PI / siblings.length;
-    return project({x: center.x + Math.cos(angle) * 64,
-      y: center.y + Math.sin(angle) * 50, z: center.z + Math.sin(angle) * 70});
-  }
-
-  function orbitPath(samples, pointAt) {
-    let path = '';
-    for (let i = 0; i <= samples; i++) {
-      const point = project(pointAt(i * 2 * Math.PI / samples));
-      path += `${i ? 'L' : 'M'}${point.x.toFixed(1)},${point.y.toFixed(1)}`;
-    }
-    return path + 'Z';
-  }
-
-  function depthOrbit(samples, pointAt, className) {
-    let behind = '', ahead = '';
-    for (let i = 0; i < samples; i++) {
-      const a = project(pointAt(i * 2 * Math.PI / samples));
-      const b = project(pointAt((i + 1) * 2 * Math.PI / samples));
-      const segment = `M${a.x.toFixed(1)},${a.y.toFixed(1)}L${b.x.toFixed(1)},${b.y.toFixed(1)}`;
-      if ((a.z + b.z) / 2 < 0) behind += segment;
-      else ahead += segment;
-    }
-    svgEl('path', {d: behind, class: `${className} is-back`});
-    svgEl('path', {d: ahead, class: `${className} is-front`});
-  }
-
-  function drawCosmos() {
-    const defs = svgEl('defs');
-    const planetLight = svgEl('radialGradient', {id: 'memory-planet-light', cx: '30%', cy: '24%', r: '75%'}, defs);
-    svgEl('stop', {offset: '0%', 'stop-color': '#7cf2c4', 'stop-opacity': '.78'}, planetLight);
-    svgEl('stop', {offset: '43%', 'stop-color': '#7cf2c4', 'stop-opacity': '.2'}, planetLight);
-    svgEl('stop', {offset: '100%', 'stop-color': '#7cf2c4', 'stop-opacity': '.03'}, planetLight);
-    const gravity = svgEl('radialGradient', {id: 'memory-gravity'}, defs);
-    svgEl('stop', {offset: '0%', 'stop-color': '#7cf2c4', 'stop-opacity': '.28'}, gravity);
-    svgEl('stop', {offset: '100%', 'stop-color': '#7cf2c4', 'stop-opacity': '0'}, gravity);
-    let seed = 163;
-    const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-    for (let i = 0; i < 145; i++) {
-      const x = 35 + random() * 930, y = 42 + random() * 560;
-      const radius = random() > .91 ? 1.35 : .3 + random() * .55;
-      svgEl('circle', {cx: x.toFixed(1), cy: y.toFixed(1), r: radius.toFixed(2), class: 'herbarium-distant-star', opacity: (.16 + random() * .62).toFixed(2)});
-    }
-    svgEl('circle', {cx: 500, cy: 330, r: 125, fill: 'url(#memory-gravity)'});
-  }
-
-  function drawGuides() {
-    depthOrbit(120, a => ({x: Math.cos(a) * 250, y: Math.sin(a) * 210, z: Math.sin(a) * 115}), 'herbarium-orbit');
-    depthOrbit(120, a => ({x: Math.cos(a) * 310, y: Math.sin(a) * 255, z: Math.sin(a) * 145}), 'herbarium-orbit herbarium-orbit-outer');
-    depthOrbit(120, a => ({x: Math.cos(a) * 174, y: Math.sin(a) * 145, z: Math.sin(a) * 80}), 'herbarium-orbit herbarium-orbit-inner');
-    depthOrbit(80, a => ({x: Math.cos(a) * 78, y: Math.sin(a) * 24, z: Math.sin(a) * 27}), 'herbarium-gravity-ring');
-    const center = project({x: 0, y: 0, z: 0});
-    svgEl('circle', {cx: center.x, cy: center.y, r: 45 * center.scale, class: 'herbarium-gravity-core'});
-    graph.types.forEach((type, i) => {
-      const base = planet3D(i, graph.types.length);
-      depthOrbit(48, a => ({x: base.x + Math.cos(a) * 64,
-        y: base.y + Math.sin(a) * 50, z: base.z + Math.sin(a) * 70}), 'herbarium-planet-orbit');
-    });
-  }
-
-  function drawEdges() {
-    graph.edges.forEach((edge, i) => {
-      const from = points.get(edge.src), to = points.get(edge.dst_resolved);
-      if (!from || !to) return;
-      const left = from.x <= to.x ? from : to;
-      const right = from.x <= to.x ? to : from;
-      const middleX = (left.x + right.x) / 2;
-      const middleY = (left.y + right.y) / 2 - Math.min(45, Math.abs(right.x - left.x) * .15);
-      const id = `memory-edge-${i}`;
-      svgEl('path', {
-        id, d: `M${left.x},${left.y} Q${middleX},${middleY} ${right.x},${right.y}`,
-        class: 'herbarium-edge', 'data-src': edge.src, 'data-dst': edge.dst_resolved
+  // ── Data ──────────────────────────────────────────────────────────
+  function load(keepFocus) {
+    return fetch('/api/memory/overview', { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (data) {
+        index(data);
+        var hasAny = Object.keys(state.byKey).length > 0;
+        els.empty.hidden = hasAny;
+        els.body.hidden = !hasAny;
+        if (!hasAny) { renderStats(); renderDays(); return; }
+        if (!keepFocus || !state.byKey[state.focus]) state.focus = pickDefaultFocus();
+        renderStats();
+        renderList();
+        renderDays();
+        focus(state.focus, { instant: true, noScroll: true });
+      })
+      .catch(function (err) {
+        els.stats.textContent = 'Could not load memory (' + err.message + ').';
       });
-      const label = svgEl('text', {class: 'herbarium-edge-label'});
-      const textPath = svgEl('textPath', {href: '#' + id, startOffset: '50%', 'text-anchor': 'middle'}, label);
-      textPath.textContent = edge.dst;
+  }
+
+  function index(data) {
+    state.byKey = {};
+    state.adj = {};
+    state.out = {};
+    state.inc = {};
+    (data.entities || []).forEach(function (e) {
+      state.byKey[e.key] = e;
+      state.adj[e.key] = new Set();
+      state.out[e.key] = [];
+      state.inc[e.key] = [];
     });
-  }
-
-  function markSelected(id) {
-    selected = id;
-    svg.querySelectorAll('.herbarium-node[data-id]').forEach(node => node.classList.toggle('is-selected', node.dataset.id === id));
-    indexList.querySelectorAll('[data-id]').forEach(node => node.classList.toggle('is-selected', node.dataset.id === id));
-  }
-
-  function highlightEdges(id, on) {
-    svg.querySelectorAll('.herbarium-edge').forEach(edge => {
-      edge.classList.toggle('is-active', on && (edge.dataset.src === id || edge.dataset.dst === id));
+    (data.links || []).forEach(function (l) {
+      if (!state.byKey[l.from] || !state.byKey[l.to]) return;
+      state.adj[l.from].add(l.to);
+      state.adj[l.to].add(l.from);
+      if (state.out[l.from].indexOf(l.to) < 0) state.out[l.from].push(l.to);
+      if (state.inc[l.to].indexOf(l.from) < 0) state.inc[l.to].push(l.from);
     });
+    state.timeline = data.timeline || [];
   }
 
-  function drawNodes() {
-    const bodies = graph.types.map((type, i) => ({kind: 'planet', type, index: i,
-      point: planet(type, i, graph.types.length)}));
-    graph.nodes.forEach((node, i) => bodies.push({kind: 'entity', node, index: i, point: points.get(node.id)}));
-    bodies.push({kind: 'center', point: project({x: 0, y: 0, z: 0})});
-    bodies.sort((a, b) => a.point.z - b.point.z);
-    bodies.forEach(body => {
-      const p = body.point;
-      const depthOpacity = Math.max(.54, Math.min(1, .77 + p.z / 750));
-      if (body.kind === 'planet') {
-        const base = planet3D(body.index, graph.types.length);
-        const group = svgEl('g', {opacity: depthOpacity.toFixed(2)});
-        svgEl('path', {d: orbitPath(48, a => ({x: base.x + Math.cos(a) * 28,
-          y: base.y + Math.sin(a) * 7, z: base.z + Math.sin(a) * 14})),
-          class: 'herbarium-planet-ring'}, group);
-        svgEl('circle', {cx: p.x, cy: p.y, r: (16 * p.scale).toFixed(1), class: 'herbarium-planet-disc'}, group);
-        star(p.x, p.y, 6, 4.5 * p.scale, group);
-        const label = svgEl('text', {x: p.x, y: p.y + 31 * p.scale,
-          class: 'herbarium-type-label'}, group);
-        label.textContent = body.type.toUpperCase();
-      } else if (body.kind === 'entity') {
-        const node = body.node;
-        const group = svgEl('g', {class: 'herbarium-node', tabindex: '0', role: 'button',
-          'aria-label': `${node.title}, ${node.facts} facts`, 'data-id': node.id,
-          opacity: depthOpacity.toFixed(2)});
-        svgEl('circle', {cx: p.x, cy: p.y, r: (27 * p.scale).toFixed(1),
-          class: 'herbarium-entity-halo'}, group);
-        star(p.x, p.y, node.facts, Math.min(27, 16 + node.backlinks * 4) * p.scale, group);
-        const label = svgEl('text', {x: p.x, y: p.y + 34 * p.scale,
-          class: 'herbarium-node-label'}, group);
-        label.textContent = node.title;
-        const number = svgEl('text', {x: p.x, y: p.y - 28 * p.scale,
-          class: 'herbarium-node-number'}, group);
-        number.textContent = String(body.index + 1).padStart(2, '0');
-        group.addEventListener('click', event => { if (Date.now() >= ignoreClickUntil) openNode(node); event.stopPropagation(); });
-        group.addEventListener('keydown', event => {
-          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openNode(node); }
-        });
-        group.addEventListener('mouseenter', () => highlightEdges(node.id, true));
-        group.addEventListener('mouseleave', () => highlightEdges(node.id, false));
-        group.addEventListener('focus', () => highlightEdges(node.id, true));
-        group.addEventListener('blur', () => highlightEdges(node.id, false));
+  function activeFacts(e) { return (e.facts || []).filter(function (f) { return !f.superseded; }); }
+
+  function pickDefaultFocus() {
+    var keys = Object.keys(state.byKey);
+    // Start where the most threads meet — the richest view on first load.
+    keys.sort(function (a, b) {
+      return state.adj[b].size - state.adj[a].size ||
+        activeFacts(state.byKey[b]).length - activeFacts(state.byKey[a]).length;
+    });
+    return keys[0];
+  }
+
+  // ── Text: [[links]] become buttons ────────────────────────────────
+  function resolveLink(target) {
+    target = String(target || '').trim().toLowerCase();
+    if (state.byKey[target]) return { kind: 'entity', key: target };
+    if (/^\d{4}-\d{2}-\d{2}/.test(target)) return { kind: 'day', date: target.slice(0, 10) };
+    var hit = Object.keys(state.byKey).filter(function (k) {
+      var e = state.byKey[k];
+      return e.slug === target || (e.aliases || []).indexOf(target) >= 0;
+    })[0];
+    return hit ? { kind: 'entity', key: hit } : null;
+  }
+
+  function richText(text) {
+    var out = '';
+    var re = /\[\[([^\]]+)\]\]/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(text))) {
+      out += esc(text.slice(last, m.index));
+      var link = resolveLink(m[1].split('#')[0]);
+      if (link && link.kind === 'entity') {
+        out += '<button type="button" class="mem-link" data-focus="' + esc(link.key) + '">' + esc(state.byKey[link.key].title) + '</button>';
+      } else if (link && link.kind === 'day') {
+        out += '<button type="button" class="mem-link is-day" data-day="' + esc(link.date) + '">' + esc(link.date) + '</button>';
       } else {
-        const group = svgEl('g', {class: 'herbarium-node', tabindex: '0',
-          'aria-label': 'You, the center of this 3D memory universe'});
-        star(p.x, p.y, 8, 28 * p.scale, group);
-        const label = svgEl('text', {x: p.x, y: p.y + 42 * p.scale,
-          class: 'herbarium-node-label'}, group);
-        label.textContent = 'YOU';
+        out += esc(m[1]);
       }
-    });
+      last = re.lastIndex;
+    }
+    return out + esc(text.slice(last));
   }
 
-  function drawIndex() {
-    indexList.replaceChildren();
-    if (!graph.nodes.length) {
-      const empty = document.createElement('p');
-      empty.className = 'herbarium-ledger-empty';
-      empty.textContent = 'No specimens collected yet.';
-      indexList.append(empty);
+  // ── Stats + list ──────────────────────────────────────────────────
+  function renderStats() {
+    var keys = Object.keys(state.byKey);
+    if (!keys.length) { els.stats.textContent = 'Nothing remembered yet.'; return; }
+    var facts = 0;
+    var latest = '';
+    keys.forEach(function (k) {
+      facts += activeFacts(state.byKey[k]).length;
+      if (state.byKey[k].updated > latest) latest = state.byKey[k].updated;
+    });
+    var links = keys.reduce(function (n, k) { return n + state.out[k].length; }, 0);
+    els.stats.textContent = keys.length + ' things · ' + facts + ' facts · ' + links + ' connections' +
+      (latest ? ' · last updated ' + latest : '');
+  }
+
+  function matches(e, q) {
+    if (!q) return true;
+    var hay = (e.title + ' ' + (e.aliases || []).join(' ') + ' ' + activeFacts(e).map(function (f) { return f.text; }).join(' ')).toLowerCase();
+    return q.split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; });
+  }
+
+  function highlight(title, q) {
+    if (!q) return esc(title);
+    var i = title.toLowerCase().indexOf(q.split(/\s+/)[0]);
+    if (i < 0) return esc(title);
+    var n = q.split(/\s+/)[0].length;
+    return esc(title.slice(0, i)) + '<mark>' + esc(title.slice(i, i + n)) + '</mark>' + esc(title.slice(i + n));
+  }
+
+  function renderList() {
+    var q = state.q;
+    var html = '';
+    var shown = 0;
+    TYPES.concat(Object.keys(state.byKey).map(function (k) { return state.byKey[k].type; })
+      .filter(function (t, i, a) { return TYPES.indexOf(t) < 0 && a.indexOf(t) === i; }))
+      .forEach(function (t) {
+        var items = Object.keys(state.byKey).filter(function (k) {
+          return state.byKey[k].type === t && matches(state.byKey[k], q);
+        }).sort(function (a, b) { return state.byKey[a].title.localeCompare(state.byKey[b].title); });
+        if (!items.length) return;
+        shown += items.length;
+        html += '<div class="mem-group"><div class="mem-group-head"><i style="background:' + typeColor(t) + '"></i>' +
+          esc(t) + '<span>' + items.length + '</span></div>' +
+          items.map(function (k) {
+            var e = state.byKey[k];
+            return '<button type="button" class="mem-item" data-focus="' + esc(k) + '"' +
+              (k === state.focus ? ' aria-current="true"' : '') + '><b>' + highlight(e.title, q) + '</b><small>' +
+              activeFacts(e).length + '</small></button>';
+          }).join('') + '</div>';
+      });
+    els.list.innerHTML = html || '<div class="mem-list-empty">No match for “' + esc(q) + '”.</div>';
+    return shown;
+  }
+
+  // ── Map ───────────────────────────────────────────────────────────
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function layout(focusKey, w, h) {
+    var cx = w / 2;
+    var cy = h / 2;
+    var r1 = Math.min(w, h) * 0.30;
+    var r2 = Math.min(w, h) * 0.46;
+    var pos = {};
+    var roles = {};
+    pos[focusKey] = { x: cx, y: cy };
+    roles[focusKey] = 'focus';
+    var near = Array.from(state.adj[focusKey] || []).sort(function (a, b) {
+      var ta = TYPES.indexOf(state.byKey[a].type);
+      var tb = TYPES.indexOf(state.byKey[b].type);
+      return ta - tb || a.localeCompare(b);
+    });
+    var angleOf = {};
+    near.forEach(function (k, i) {
+      var a = -Math.PI / 2 + (i / Math.max(1, near.length)) * Math.PI * 2;
+      angleOf[k] = a;
+      pos[k] = { x: cx + Math.cos(a) * r1, y: cy + Math.sin(a) * r1 };
+      roles[k] = 'near';
+    });
+    // Second hop: fan out behind the neighbour that leads to it.
+    var far = [];
+    near.forEach(function (k) {
+      Array.from(state.adj[k]).sort().forEach(function (k2) {
+        if (roles[k2] || far.some(function (f) { return f.key === k2; })) return;
+        far.push({ key: k2, via: k });
+      });
+    });
+    far = far.slice(0, 14);
+    var perParent = {};
+    far.forEach(function (f) { (perParent[f.via] = perParent[f.via] || []).push(f.key); });
+    Object.keys(perParent).forEach(function (via) {
+      var kids = perParent[via];
+      var spread = Math.min(0.9, 0.32 * kids.length);
+      kids.forEach(function (k2, i) {
+        var off = kids.length === 1 ? 0 : -spread / 2 + (i / (kids.length - 1)) * spread;
+        var a = angleOf[via] + off;
+        pos[k2] = { x: cx + Math.cos(a) * r2, y: cy + Math.sin(a) * r2 };
+        roles[k2] = 'far';
+      });
+    });
+    // Nothing linked yet: show unrelated things faintly so the map isn't empty.
+    if (!near.length) {
+      var rest = Object.keys(state.byKey).filter(function (k) { return k !== focusKey; }).slice(0, 10);
+      rest.forEach(function (k, i) {
+        var a = -Math.PI / 2 + (i / Math.max(1, rest.length)) * Math.PI * 2;
+        pos[k] = { x: cx + Math.cos(a) * r2, y: cy + Math.sin(a) * r2 };
+        roles[k] = 'far';
+      });
+    }
+    return { pos: pos, roles: roles, near: near.length, far: far.length };
+  }
+
+  function nodeRadius(k, role) {
+    var n = activeFacts(state.byKey[k]).length;
+    var base = role === 'focus' ? 14 : role === 'near' ? 8 : 5;
+    return base + Math.min(8, n * (role === 'focus' ? 1.2 : 0.8));
+  }
+
+  function ensureNode(k) {
+    var g = els.svg.querySelector('g.mem-node[data-key="' + CSS.escape(k) + '"]');
+    if (g) return g;
+    var e = state.byKey[k];
+    g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('class', 'mem-node');
+    g.setAttribute('data-key', k);
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('role', 'button');
+    g.setAttribute('aria-label', e.title + ', ' + e.type);
+    g.innerHTML =
+      '<circle class="ring"></circle><circle class="core"></circle>' +
+      '<text class="label" text-anchor="middle"></text><text class="sub" text-anchor="middle"></text>';
+    g.querySelector('.label').textContent = e.title;
+    g.querySelector('.sub').textContent = e.type;
+    g.addEventListener('click', function () { focus(k); });
+    g.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); focus(k); }
+    });
+    els.svg.appendChild(g);
+    return g;
+  }
+
+  function drawMap(opts) {
+    opts = opts || {};
+    var rect = els.map.getBoundingClientRect();
+    var w = Math.max(320, rect.width);
+    var h = Math.max(320, rect.height);
+    els.svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    var L = layout(state.focus, w, h);
+    var keys = Object.keys(L.pos);
+    var q = state.q;
+
+    // Remove nodes that left the view.
+    els.svg.querySelectorAll('g.mem-node').forEach(function (g) {
+      if (!L.pos[g.getAttribute('data-key')]) g.remove();
+    });
+    var orbits = els.svg.querySelector('g.orbits');
+    if (!orbits) {
+      orbits = document.createElementNS(SVGNS, 'g');
+      orbits.setAttribute('class', 'orbits');
+      els.svg.insertBefore(orbits, els.svg.firstChild);
+    }
+    var ocx = w / 2, ocy = h / 2, om = Math.min(w, h);
+    orbits.innerHTML =
+      '<circle class="mem-orbit" cx="' + ocx + '" cy="' + ocy + '" r="' + (om * 0.30).toFixed(1) + '"/>' +
+      '<circle class="mem-orbit is-far" cx="' + ocx + '" cy="' + ocy + '" r="' + (om * 0.46).toFixed(1) + '"/>';
+    var edgeLayer = els.svg.querySelector('g.edges');
+    if (!edgeLayer) {
+      edgeLayer = document.createElementNS(SVGNS, 'g');
+      edgeLayer.setAttribute('class', 'edges');
+      els.svg.insertBefore(edgeLayer, els.svg.firstChild);
+    }
+
+    var from = {};
+    keys.forEach(function (k) {
+      from[k] = state.pos[k] || (state.pos[state.focus] ? { x: state.pos[state.focus].x, y: state.pos[state.focus].y } : L.pos[k]);
+      var g = ensureNode(k);
+      var role = L.roles[k];
+      var r = nodeRadius(k, role);
+      var e = state.byKey[k];
+      g.setAttribute('class', 'mem-node is-' + role + (q && !matches(e, q) ? ' is-dim' : ''));
+      var core = g.querySelector('.core');
+      core.setAttribute('r', r);
+      core.setAttribute('fill', typeColor(e.type));
+      var ring = g.querySelector('.ring');
+      ring.setAttribute('r', r + 5);
+      ring.setAttribute('stroke', typeColor(e.type));
+      var label = g.querySelector('.label');
+      label.setAttribute('y', r + (role === 'focus' ? 20 : 17));
+      var sub = g.querySelector('.sub');
+      sub.setAttribute('y', r + (role === 'focus' ? 35 : 31));
+      sub.style.display = role === 'far' ? 'none' : '';
+    });
+
+    var edges = [];
+    keys.forEach(function (a) {
+      state.out[a].forEach(function (b) {
+        if (!L.pos[b]) return;
+        var far = L.roles[a] === 'far' || L.roles[b] === 'far';
+        edges.push({ a: a, b: b, far: far });
+      });
+    });
+
+    function frame(t) {
+      var cur = {};
+      keys.forEach(function (k) {
+        var p0 = from[k];
+        var p1 = L.pos[k];
+        cur[k] = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
+        var g = els.svg.querySelector('g.mem-node[data-key="' + CSS.escape(k) + '"]');
+        if (g) g.setAttribute('transform', 'translate(' + cur[k].x.toFixed(1) + ',' + cur[k].y.toFixed(1) + ')');
+      });
+      edgeLayer.innerHTML = edges.map(function (e) {
+        var p = cur[e.a];
+        var q2 = cur[e.b];
+        var mx = (p.x + q2.x) / 2;
+        var my = (p.y + q2.y) / 2;
+        // Gentle bow so overlapping edges stay distinguishable.
+        var dx = q2.x - p.x;
+        var dy = q2.y - p.y;
+        var bx = mx - dy * 0.08;
+        var by = my + dx * 0.08;
+        return '<path class="mem-edge' + (e.far ? ' is-far' : '') + '" d="M' + p.x.toFixed(1) + ',' + p.y.toFixed(1) +
+          ' Q' + bx.toFixed(1) + ',' + by.toFixed(1) + ' ' + q2.x.toFixed(1) + ',' + q2.y.toFixed(1) + '"/>';
+      }).join('');
+      state.pos = cur;
+    }
+
+    var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (opts.instant || reduce) { frame(1); }
+    else {
+      var start = performance.now();
+      var id = ++state.anim;
+      var dur = 520;
+      (function tick(now) {
+        if (id !== state.anim) return;
+        var t = Math.min(1, (now - start) / dur);
+        frame(1 - Math.pow(1 - t, 3));
+        if (t < 1) requestAnimationFrame(tick);
+      })(start);
+    }
+
+    var focusE = state.byKey[state.focus];
+    els.hint.textContent = L.near
+      ? focusE.title + ' connects to ' + L.near + (L.near === 1 ? ' thing' : ' things') + (L.far ? ' · faint: one more step away' : '')
+      : focusE.title + " isn't linked to anything yet";
+  }
+
+  // ── Reader ────────────────────────────────────────────────────────
+  function mentionsOf(e) {
+    var needles = ['[[' + e.key + ']]', '[[' + e.slug + ']]'].concat((e.aliases || []).map(function (a) { return '[[' + a + ']]'; }));
+    var out = [];
+    state.timeline.forEach(function (d) {
+      d.items.forEach(function (it) {
+        var low = it.toLowerCase();
+        if (needles.some(function (n) { return low.indexOf(n) >= 0; })) out.push({ date: d.date, text: it });
+      });
+    });
+    return out;
+  }
+
+  function chip(k) {
+    var e = state.byKey[k];
+    return '<button type="button" class="mem-chip" data-focus="' + esc(k) + '"><i style="background:' + typeColor(e.type) + '"></i>' + esc(e.title) + '</button>';
+  }
+
+  function renderReader() {
+    var e = state.byKey[state.focus];
+    if (!e) { els.reader.innerHTML = '<p class="mem-reader-empty">Pick something on the left.</p>'; return; }
+    var live = activeFacts(e);
+    var gone = (e.facts || []).filter(function (f) { return f.superseded; });
+    var factHtml = function (f) {
+      return '<li class="mem-fact' + (f.superseded ? ' is-gone' : '') + '" style="--mem-c:' + typeColor(e.type) + '" data-n="' + f.n + '">' +
+        '<div class="mem-fact-text">' + richText(f.text) + '</div>' +
+        '<div class="mem-fact-foot">' +
+          (f.source ? '<span>from ' + richText('[[' + f.source + ']]') + '</span>' : '<span>no source</span>') +
+          '<span class="spacer"></span>' +
+          (f.superseded ? '<span>forgotten</span>' : '<button type="button" class="forget" data-forget="' + f.n + '">Forget</button>') +
+        '</div></li>';
+    };
+    var outs = state.out[e.key] || [];
+    var ins = (state.inc[e.key] || []).filter(function (k) { return outs.indexOf(k) < 0; });
+    var mentions = mentionsOf(e);
+
+    els.reader.innerHTML =
+      '<span class="mem-r-type"><i style="background:' + typeColor(e.type) + '"></i>' + esc(e.type) + '</span>' +
+      '<h2>' + esc(e.title) + '</h2>' +
+      '<div class="mem-r-meta">' +
+        (e.updated ? 'Updated ' + esc(e.updated) + ' · ' : '') +
+        '<code>' + esc('entities/' + e.type + '/' + e.slug + '.md') + '</code>' +
+      '</div>' +
+      '<div class="mem-r-sec">What Tomo knows <span>' + live.length + '</span></div>' +
+      (live.length ? '<ul class="mem-facts">' + live.map(factHtml).join('') + '</ul>'
+        : '<p class="mem-reader-empty" style="padding:0">No facts left on this page.</p>') +
+      (outs.length ? '<div class="mem-r-sec">Links to</div><div class="mem-chips">' + outs.map(chip).join('') + '</div>' : '') +
+      (ins.length ? '<div class="mem-r-sec">Mentioned by</div><div class="mem-chips">' + ins.map(chip).join('') + '</div>' : '') +
+      (mentions.length ? '<div class="mem-r-sec">In the timeline</div><ul class="mem-mentions">' +
+        mentions.slice(0, 8).map(function (m) {
+          return '<li><time>' + esc(m.date) + '</time>' + richText(m.text) + '</li>';
+        }).join('') + '</ul>' : '') +
+      (gone.length ? '<details class="mem-raw"><summary>' + gone.length + ' forgotten ' + (gone.length === 1 ? 'fact' : 'facts') +
+        '</summary><ul class="mem-facts" style="margin-top:8px">' + gone.map(factHtml).join('') + '</ul></details>' : '') +
+      '<details class="mem-raw" data-raw><summary>Markdown source</summary><pre>Loading…</pre></details>';
+
+    var raw = els.reader.querySelector('[data-raw]');
+    raw.addEventListener('toggle', function () {
+      if (!raw.open || raw.dataset.loaded) return;
+      raw.dataset.loaded = '1';
+      fetch('/api/memory/entity/' + encodeURIComponent(e.type) + '/' + encodeURIComponent(e.slug), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { raw.querySelector('pre').textContent = d.raw || ''; })
+        .catch(function () { raw.querySelector('pre').textContent = 'Could not load the file.'; });
+    }, { once: false });
+  }
+
+  function askForget(li, n) {
+    var e = state.byKey[state.focus];
+    if (li.classList.contains('is-confirm')) return;
+    li.classList.add('is-confirm');
+    var foot = li.querySelector('.mem-fact-foot');
+    var prev = foot.innerHTML;
+    foot.innerHTML = '<span>Forget this fact? It stays in the file, struck through.</span><span class="spacer"></span>' +
+      '<button type="button" class="forget" style="opacity:1;color:var(--danger)" data-yes>Forget</button>' +
+      '<button type="button" class="forget" style="opacity:1" data-no>Keep</button>';
+    foot.querySelector('[data-no]').addEventListener('click', function () {
+      li.classList.remove('is-confirm');
+      foot.innerHTML = prev;
+    });
+    foot.querySelector('[data-yes]').addEventListener('click', function () {
+      fetch('/api/memory/entity/' + encodeURIComponent(e.type) + '/' + encodeURIComponent(e.slug) + '/forget', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: n }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return load(true);
+      }).catch(function (err) {
+        foot.innerHTML = '<span style="color:var(--danger)">Could not forget: ' + esc(err.message) + '</span>';
+      });
+    });
+    foot.querySelector('[data-no]').focus();
+  }
+
+  // ── Timeline ──────────────────────────────────────────────────────
+  function weekday(date) {
+    try { return new Date(date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' }); } catch (_) { return ''; }
+  }
+
+  function renderDays() {
+    if (!state.timeline.length) {
+      els.days.innerHTML = '<p class="mem-reader-empty" style="padding:0">No days recorded yet.</p>';
       return;
     }
-    graph.nodes.forEach((node, i) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'herbarium-ledger-item';
-      button.dataset.id = node.id;
-      button.innerHTML = `<span class="herbarium-index-num">${String(i + 1).padStart(2, '0')}</span><span class="herbarium-index-name"></span><span class="herbarium-index-mark">✳</span>`;
-      const name = button.querySelector('.herbarium-index-name');
-      name.textContent = node.title;
-      const type = document.createElement('small');
-      type.textContent = node.type.toUpperCase();
-      name.append(type);
-      button.addEventListener('click', () => openNode(node));
-      indexList.append(button);
+    els.days.innerHTML = state.timeline.map(function (d) {
+      return '<section class="mem-day" data-date="' + esc(d.date) + '"><time>' + esc(d.date) + '<small>' + esc(weekday(d.date)) + '</small></time>' +
+        '<ul>' + d.items.map(function (it) { return '<li>' + richText(it) + '</li>'; }).join('') + '</ul></section>';
+    }).join('');
+  }
+
+  function markDays() {
+    var e = state.byKey[state.focus];
+    var hits = e ? mentionsOf(e).map(function (m) { return m.date; }) : [];
+    els.days.querySelectorAll('.mem-day').forEach(function (d) {
+      d.classList.toggle('is-hit', hits.indexOf(d.dataset.date) >= 0);
     });
   }
 
-  function render(updateIndex = true) {
-    svg.replaceChildren();
-    detail.hidden = true;
-    selected = null;
-    points = new Map(graph.nodes.map(node => [node.id, entityPoint(node)]));
-    drawCosmos();
-    if (graph.nodes.length) drawGuides();
-    drawEdges();
-    drawNodes();
-    if (updateIndex) drawIndex();
-    else indexList.querySelectorAll('.is-selected').forEach(item => item.classList.remove('is-selected'));
-    document.getElementById('memoryEmpty').hidden = graph.nodes.length > 0;
-    document.getElementById('memoryCount').textContent = String(graph.nodes.length).padStart(2, '0');
-    document.getElementById('memoryGraphMeta').textContent = `${String(graph.edges.length).padStart(2, '0')} CONSTELLATIONS`;
-  }
-
-  function scheduleCameraRender() {
-    if (framePending) return;
-    framePending = true;
-    requestAnimationFrame(() => { framePending = false; render(false); });
-  }
-
-  svg.addEventListener('pointerdown', event => {
-    if (event.button !== 0) return;
-    dragging = true;
-    dragStart = {x: event.clientX, y: event.clientY, yaw, pitch, moved: false};
-    svg.classList.add('is-dragging');
-  });
-  document.addEventListener('pointermove', event => {
-    if (!dragging || !dragStart) return;
-    const dx = event.clientX - dragStart.x, dy = event.clientY - dragStart.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) dragStart.moved = true;
-    if (!dragStart.moved) return;
-    yaw = dragStart.yaw + dx * .007;
-    pitch = Math.max(-1.25, Math.min(1.25, dragStart.pitch + dy * .007));
-    scheduleCameraRender();
-  });
-  document.addEventListener('pointerup', () => {
-    if (!dragging) return;
-    dragging = false;
-    svg.classList.remove('is-dragging');
-    if (dragStart?.moved) ignoreClickUntil = Date.now() + 250;
-    dragStart = null;
-  });
-  svg.addEventListener('wheel', event => {
-    event.preventDefault();
-    zoom = Math.max(.7, Math.min(1.45, zoom * (event.deltaY > 0 ? .92 : 1.08)));
-    scheduleCameraRender();
-  }, {passive: false});
-  document.getElementById('memoryCameraReset').addEventListener('click', () => {
-    yaw = -.38; pitch = -.32; zoom = 1; render(false);
-  });
-
-  function appendFactText(container, text) {
-    let cursor = 0;
-    for (const match of text.matchAll(/\[\[(\d{4}-\d{2}-\d{2})(?:#[^\]]+)?\]\]/g)) {
-      container.append(document.createTextNode(text.slice(cursor, match.index)));
-      const link = document.createElement('a');
-      link.href = '#';
-      link.textContent = match[0];
-      link.addEventListener('click', event => {
-        event.preventDefault();
-        const at = graph.days.indexOf(match[1]);
-        if (at >= 0) { slider.value = String(at); slider.dispatchEvent(new Event('input')); }
-      });
-      container.append(link);
-      cursor = match.index + match[0].length;
-    }
-    container.append(document.createTextNode(text.slice(cursor)));
-  }
-
-  function positionDetail(point) {
-    const matrix = svg.getScreenCTM();
-    if (!matrix) return;
-    const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
-    const frame = chart.getBoundingClientRect();
-    const width = detail.offsetWidth, height = detail.offsetHeight;
-    const left = Math.min(frame.width - width - 12, Math.max(12, screen.x - frame.left - width / 2));
-    let top = screen.y - frame.top + 28;
-    if (top + height > frame.height - 34) top = screen.y - frame.top - height - 28;
-    detail.style.left = `${left}px`;
-    detail.style.top = `${Math.max(48, top)}px`;
-  }
-
-  async function openNode(node) {
-    const response = await fetch(`/api/memory/entity/${encodeURIComponent(node.type)}/${encodeURIComponent(node.slug)}`);
-    if (!response.ok) return;
-    const data = await response.json();
-    const point = points.get(node.id);
-    if (!point) return;
-    markSelected(node.id);
-    svg.querySelectorAll('.herbarium-fact-moon').forEach(moon => moon.remove());
-    data.facts.forEach((_, i) => {
-      const angle = i * 2 * Math.PI / data.facts.length - Math.PI / 2;
-      svgEl('circle', {cx: (point.x + Math.cos(angle) * 50).toFixed(1), cy: (point.y + Math.sin(angle) * 50).toFixed(1), r: 3, class: 'herbarium-fact-moon'});
+  // ── Focus / wiring ────────────────────────────────────────────────
+  function focus(key, opts) {
+    opts = opts || {};
+    if (!state.byKey[key]) return;
+    state.focus = key;
+    els.list.querySelectorAll('.mem-item').forEach(function (b) {
+      if (b.dataset.focus === key) {
+        b.setAttribute('aria-current', 'true');
+        if (!opts.noScroll) b.scrollIntoView({ block: 'nearest' });
+      } else b.removeAttribute('aria-current');
     });
-    detail.replaceChildren();
-    const close = document.createElement('button');
-    close.className = 'detail-close';
-    close.textContent = '× CLOSE';
-    close.addEventListener('click', () => { detail.hidden = true; markSelected(null); svg.querySelectorAll('.herbarium-fact-moon').forEach(moon => moon.remove()); });
-    detail.append(close);
-    const title = document.createElement('h2');
-    title.textContent = data.title;
-    detail.append(title);
-    const sub = document.createElement('p');
-    sub.className = 'detail-sub';
-    sub.textContent = `${node.type.toUpperCase()} / ${String(data.facts.length).padStart(2, '0')} FACTS`;
-    detail.append(sub);
-    data.facts.forEach((fact, i) => {
-      const row = document.createElement('p');
-      row.className = 'fact';
-      const superseded = fact.startsWith('~~');
-      if (superseded) row.classList.add('is-superseded');
-      appendFactText(row, superseded ? fact.replace(/^~~/, '').replace(/~~/, '') : fact);
-      if (!superseded) {
-        const forget = document.createElement('button');
-        forget.className = 'forget';
-        forget.textContent = 'FORGET';
-        forget.setAttribute('aria-label', `Forget fact ${i + 1}`);
-        forget.addEventListener('click', async () => {
-          if (!confirm('Forget this fact?')) return;
-          const result = await fetch(`/api/memory/entity/${encodeURIComponent(node.type)}/${encodeURIComponent(node.slug)}/forget`, {
-            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({number: i})
-          });
-          if (result.ok) { await loadGraph(graph.days[Number(slider.value)] || ''); await openNode(node); }
-        });
-        row.append(forget);
+    drawMap({ instant: opts.instant });
+    renderReader();
+    markDays();
+    if (history.replaceState) history.replaceState(null, '', '#' + encodeURIComponent(key));
+  }
+
+  root.addEventListener('click', function (ev) {
+    var f = ev.target.closest('[data-focus]');
+    if (f) { focus(f.dataset.focus); return; }
+    var d = ev.target.closest('[data-day]');
+    if (d) {
+      var day = els.days.querySelector('.mem-day[data-date="' + CSS.escape(d.dataset.day) + '"]');
+      if (day) {
+        day.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        day.classList.add('is-hit');
       }
-      detail.append(row);
-    });
-    const rawButton = document.createElement('button');
-    rawButton.textContent = 'OPEN RAW .MD ↗';
-    const raw = document.createElement('pre');
-    raw.className = 'raw';
-    raw.hidden = true;
-    raw.textContent = data.raw;
-    rawButton.addEventListener('click', () => { raw.hidden = !raw.hidden; positionDetail(point); });
-    detail.append(rawButton, raw);
-    detail.hidden = false;
-    positionDetail(point);
-  }
-
-  async function loadGraph(until = '') {
-    const ticket = ++requestNumber;
-    const url = '/api/memory/graph' + (until ? '?until=' + encodeURIComponent(until) : '');
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Could not load memory graph');
-    const data = await response.json();
-    if (ticket !== requestNumber) return;
-    graph = data;
-    slider.max = String(Math.max(0, graph.days.length - 1));
-    render();
-  }
-
-  async function showTimeline(day) {
-    dateLabel.textContent = day || 'NO RECORDS YET';
-    bullets.replaceChildren();
-    if (!day) return;
-    const response = await fetch('/api/memory/timeline?date=' + encodeURIComponent(day));
-    if (!response.ok) return;
-    const data = await response.json();
-    if (dateLabel.textContent !== day) return;
-    data.blocks.slice(-4).forEach(text => {
-      const note = document.createElement('p');
-      note.textContent = '§ ' + text;
-      bullets.append(note);
-    });
-  }
-
-  slider.addEventListener('input', async () => {
-    const current = Number(slider.value);
-    const day = graph.days[current] || '';
-    await Promise.all([loadGraph(day), showTimeline(day)]);
-    slider.value = String(current);
+      return;
+    }
+    var fg = ev.target.closest('[data-forget]');
+    if (fg) askForget(fg.closest('.mem-fact'), Number(fg.dataset.forget));
   });
 
-  loadGraph().then(() => {
-    const latest = graph.days.at(-1);
-    if (latest) { slider.value = String(graph.days.length - 1); slider.dispatchEvent(new Event('input')); }
-  }).catch(() => {
-    document.getElementById('memoryEmpty').hidden = false;
+  els.query.addEventListener('input', function () {
+    state.q = els.query.value.trim().toLowerCase();
+    renderList();
+    drawMap({ instant: true });
+  });
+  els.query.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') {
+      var first = els.list.querySelector('.mem-item');
+      if (first) focus(first.dataset.focus);
+    } else if (ev.key === 'Escape') {
+      els.query.value = '';
+      state.q = '';
+      renderList();
+      drawMap({ instant: true });
+      els.query.blur();
+    }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === '/' && document.activeElement !== els.query && !/input|textarea/i.test(document.activeElement.tagName)) {
+      ev.preventDefault();
+      els.query.focus();
+    }
+  });
+
+  var resizeT = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(function () { if (state.focus) drawMap({ instant: true }); }, 120);
+  });
+
+  var fromHash = decodeURIComponent((location.hash || '').slice(1));
+  load(false).then(function () {
+    if (fromHash && state.byKey[fromHash]) focus(fromHash, { instant: true });
   });
 })();

@@ -6914,3 +6914,14 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .mcp-cap-list { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
 .mcp-cap-row .title { white-space: normal; }
 .mcp-cap-result { margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }
+.chat-team-progress{margin:10px 18px;padding:12px 14px;border:1px solid var(--border,#343840);border-radius:12px;background:var(--surface-2,#17191e);max-height:230px;overflow:auto}
+.chat-team-progress[hidden]{display:none}
+.team-progress-head{display:flex;justify-content:space-between;font-weight:700;font-size:13px;margin-bottom:8px}
+.team-progress-head span{font-weight:400;opacity:.7}
+.team-progress-task{display:flex;align-items:flex-start;gap:9px;padding:7px 0;border-top:1px solid rgba(128,128,128,.15);font-size:12px}
+.team-progress-task>div{flex:1;min-width:0;display:flex;gap:6px;flex-wrap:wrap}
+.team-progress-task>div span{opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-progress-task small{opacity:.7}
+.team-progress-state{width:8px;height:8px;margin-top:4px;border-radius:50%;background:#888;flex:none}
+.team-progress-state.running{background:#e9a746}.team-progress-state.done{background:#54b785}.team-progress-state.failed,.team-progress-state.blocked{background:#d76565}
+.chat-swarm-toggle.active,.chat-swarm-toggle[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}

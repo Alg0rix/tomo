@@ -527,6 +527,7 @@
     function bufferEvent(key, kind, data) {
       var buf = getBuffer(key);
       buf.events.push({ kind: kind, data: data });
+      Tomo.swarmRowEvent(buf.row || swarmRowFor(key), kind, data);
       if (activeDetailAgent === key && detailPanel) renderEventInDetail(kind, data, key);
     }
 
@@ -543,25 +544,9 @@
 
     function addSwarmRow(key, aid, name, task, idx, total) {
       var card = swarmCard || createSwarmCard();
-      var row = document.createElement('div');
-      row.className = 'swarm-row';
-      row.dataset.agentId = aid;
-      row.dataset.instanceKey = key;
-      var color = ctx.agentColor(aid);
-      var letter = ctx.esc((name || aid || '?').slice(0, 1).toUpperCase());
-      var idxStr = String(idx).padStart(2, '0');
-      var totalStr = String(total).padStart(2, '0');
-      row.innerHTML =
-        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-        '<div class="swarm-meta">' +
-          '<div class="swarm-row-head">' +
-            '<span class="name">' + ctx.esc(name || aid) + '</span>' +
-            '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
-          '</div>' +
-          '<div class="task">' + ctx.esc(task || '') + '</div>' +
-          '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
-        '</div>' +
-        '<span class="si-open-hint" aria-hidden="true">inspect \u2192</span>';
+      var row = Tomo.buildSwarmRow({
+        key: key, aid: aid, name: name, task: task, idx: idx, total: total,
+      });
       row.addEventListener('click', function () { openDetailPanel(key); });
       card.appendChild(row);
       var buf = getBuffer(key);
@@ -591,10 +576,7 @@
       if (!buf) return;
       buf.status = status === 'error' ? 'error' : 'done';
       if (!buf.row) return;
-      buf.row.classList.remove('active');
-      buf.row.classList.add(buf.status);
-      var bar = buf.row.querySelector('.swarm-progress-bar');
-      if (bar) bar.style.width = '100%';
+      Tomo.swarmRowDone(buf.row, buf.status);
       if (activeDetailAgent === key && detailPanel) {
         var badge = detailPanel.querySelector('.si-status');
         if (badge) {
@@ -769,25 +751,9 @@
         ctx.turn.appendChild(card);
       }
       var instKey = key || aid;
-      row = document.createElement('div');
-      row.className = 'swarm-row active';
-      row.dataset.agentId = aid;
-      row.dataset.instanceKey = instKey;
-      var color = ctx.agentColor(aid);
-      var letter = ctx.esc((name || aid || '?').slice(0, 1).toUpperCase());
-      var idxStr = String(idx || 1).padStart(2, '0');
-      var totalStr = String(total || 1).padStart(2, '0');
-      row.innerHTML =
-        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-        '<div class="swarm-meta">' +
-          '<div class="swarm-row-head">' +
-            '<span class="name">' + ctx.esc(name || aid) + '</span>' +
-            '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
-          '</div>' +
-          '<div class="task">' + ctx.esc(task || '') + '</div>' +
-          '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:8%"></div></div>' +
-        '</div>' +
-        '<span class="si-open-hint" aria-hidden="true">inspect \u2192</span>';
+      row = Tomo.buildSwarmRow({
+        key: instKey, aid: aid, name: name, task: task, idx: idx || 1, total: total || 1,
+      });
       card.appendChild(row);
       ctx.atBottom();
       return row;
@@ -797,10 +763,7 @@
       if (!key) return;
       var row = swarmRowFor(key);
       if (!row) return;
-      row.classList.remove('active');
-      row.classList.add(status === 'error' ? 'error' : 'done');
-      var bar = row.querySelector('.swarm-progress-bar');
-      if (bar) bar.style.width = '100%';
+      Tomo.swarmRowDone(row, status);
     }
 
     function bumpSwarmProgress(key) {
@@ -945,10 +908,22 @@
       ctx.atBottom();
     });
 
+    on('swarm.event', function (e) {
+      bumpActivity();
+      try {
+        ctx.wrap.dispatchEvent(new CustomEvent('tomo:team-event', {
+          detail: JSON.parse(e.data || '{}'), bubbles: true,
+        }));
+      } catch (_) {}
+    });
+
     on('status', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (!isSubagentEvent(d)) ctx.setStatus('amber', d.message || ctx.busyStatusLabel());
+      if (!isSubagentEvent(d)) {
+        ctx.wrap.dispatchEvent(new CustomEvent('tomo:turn-status', { detail: d, bubbles: true }));
+      }
     });
 
     on('thinking_delta', function (e) {
@@ -960,8 +935,7 @@
       reasoningText += d.content || '';
       if (!streamedReasoning) streamedReasoning = appendReasoningCard(reasoningText);
       else {
-        var pre = streamedReasoning.querySelector('pre');
-        if (pre) pre.textContent = reasoningText;
+        Tomo.updateReasoningCard(streamedReasoning, reasoningText);
       }
       ctx.atBottom();
     });

@@ -3,7 +3,7 @@
   <div class="modal-card modal-wide">
     <div class="modal-head"><h3>New chat</h3></div>
     <div class="modal-body">
-      <p class="modal-lead">Starts with the live swarm. <strong>Folder</strong> defaults to each agent’s work dir under <code>~/tomo/&lt;agent&gt;</code> (config stays in <code>~/.tomo</code>). Pick a local workplace to root tools on a project path instead. Tunnel/SSH stay reachable via agents that own them.</p>
+      <p class="modal-lead">Starts as a normal chat. Select agents you want available for direct @mentions. Ask for a team in chat or turn on Team for one message. <strong>Folder</strong> defaults to each agent’s work dir under <code>~/tomo/&lt;agent&gt;</code>.</p>
       <label class="field" style="margin-bottom:12px;display:block">
         <span class="faint" style="display:block;margin-bottom:4px">Workplace / folder</span>
         <div class="folder-pick-row">
@@ -15,7 +15,7 @@
       </label>
       <div class="agent-pick-list" id="newChatAgents">
         {% for a in agents_list %}
-        {% with agent=a, pick_checked=true %}{% include 'partials/agent_pick.html' %}{% endwith %}
+        {% with agent=a, pick_checked=loop.first %}{% include 'partials/agent_pick.html' %}{% endwith %}
         {% endfor %}
       </div>
     </div>

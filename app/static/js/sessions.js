@@ -5,6 +5,7 @@
   const listEl = document.getElementById('sessionList');
   const emptyEl = document.getElementById('sessionEmpty');
   const chatWrap = document.getElementById('sessionChat');
+  const teamProgress = document.getElementById('chatTeamProgress');
   const searchView = document.getElementById('sessionSearchView');
   const searchInput = document.getElementById('sessionSearchInput');
   const searchResultsEl = document.getElementById('sessionSearchResults');
@@ -35,6 +36,56 @@
   var searchReq = 0;
   // Account id from the server-rendered page (login session).
   var loginUserId = chatWrap.dataset.userId || 'web';
+
+  var teamRun = null;
+  function renderTeamProgress(run) {
+    if (!teamProgress) return;
+    teamRun = run || null;
+    const tasks = run && run.tasks ? run.tasks : [];
+    if (!tasks.length) { teamProgress.hidden = true; teamProgress.innerHTML = ''; return; }
+    teamProgress.hidden = false;
+    teamProgress.innerHTML = '<div class="team-progress-head">Team progress <span>' + esc(run.status || 'running') + '</span></div>' +
+      tasks.map(function (task) {
+        const label = task.agent_name || agentName(task.agent_id) || 'Agent';
+        return '<div class="team-progress-task"><span class="team-progress-state ' + esc(task.status || 'queued') + '"></span>' +
+          '<div><strong>' + esc(label) + '</strong><span>' + esc(task.brief || '') + '</span></div>' +
+          '<small>' + esc(task.status || 'queued') + '</small></div>';
+      }).join('');
+  }
+
+  async function refreshTeamProgress(sessionId) {
+    if (!teamProgress || !sessionId) return;
+    try {
+      const data = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/swarm');
+      if (chatWrap.dataset.sessionId !== sessionId) return;
+      const run = data.runs && data.runs[0];
+      if (run) {
+        run.tasks = (run.tasks || []).map(function (task) {
+          var owner = (data.agents || []).find(function (a) { return a.id === task.agent_id; });
+          task.agent_name = owner ? owner.name : agentName(task.agent_id);
+          return task;
+        });
+      }
+      renderTeamProgress(run);
+    } catch (_) {}
+  }
+
+  chatWrap.addEventListener('tomo:team-event', function (event) {
+    const d = event.detail || {};
+    if (!d.run_id) return;
+    if (!teamRun || teamRun.id !== d.run_id) teamRun = { id: d.run_id, status: 'running', tasks: [] };
+    if (d.kind === 'task_created') {
+      if (!teamRun.tasks.some(function (t) { return t.id === d.task_id; })) {
+        teamRun.tasks.push({ id: d.task_id, agent_id: d.agent_id, agent_name: d.agent_name,
+                             brief: d.brief, status: 'queued' });
+      }
+    } else if (d.kind === 'task_started' || d.kind === 'task_done' || d.kind === 'task_blocked') {
+      var task = teamRun.tasks.find(function (t) { return t.id === d.task_id; });
+      if (task) task.status = d.kind === 'task_started' ? 'running' :
+        (d.kind === 'task_blocked' ? 'blocked' : d.status);
+    } else if (d.kind === 'run_done') teamRun.status = d.status || 'done';
+    renderTeamProgress(teamRun);
+  });
 
   function currentUserId() {
     return loginUserId || 'web';
@@ -138,8 +189,6 @@
   }
 
   function sessionLabel(s) {
-    // Never show agent totals ("Ops +1", "3 agents") — swarm is open-ended.
-    if (isSwarmSession(s)) return 'swarm';
     const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
     return agentName(ids[0] || s.agent_id) || 'Chat';
   }
@@ -229,7 +278,7 @@
     document.getElementById('chatAgentName').textContent = title;
     var wid = (s && s.workplace_id) || chatWrap.dataset.workplaceId || '';
     document.getElementById('chatSessionMeta').textContent =
-      isSwarmSession(s) ? 'swarm · live agents' : (label + ' · solo');
+      label;
     chatWrap.dataset.agentName = label;
     chatWrap.dataset.workplaceId = wid;
     // Read-only badge — workplace is fixed for the thread; show full path.
@@ -329,13 +378,19 @@
         .localeCompare(workplaceLabel(b === '__none__' ? '' : b));
     });
 
+    // "tomo · /home/me/Project/tomo" → "tomo"; bare paths → last folder.
+    function shortGroupLabel(key, head) {
+      if (key === '__none__') return 'Tomo workspace';
+      var name = String(head || '').split(' \u00b7 ')[0].trim();
+      var parts = name.split(/[\\/]+/).filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : (name || 'Workplace');
+    }
+
     function sessionButton(s) {
       const label = sessionLabel(s);
       const sel = s.id === activeId && !searchMode ? ' selected' : '';
-      const swarm = isSwarmSession(s);
       return '<button type="button" class="session-item' + sel + '" data-id="' + esc(s.id) + '">' +
-        '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') +
-        (swarm ? ' <span class="badge accent sm">swarm</span>' : '') + '</div>' +
+        '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') + '</div>' +
         '<div class="desc">' + esc(label) + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
         '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></button>';
     }
@@ -349,8 +404,8 @@
       });
       var head = key === '__none__' ? 'Tomo work dir (~/tomo/<agent>)' : workplaceLabel(key, { full: true });
       html += '<div class="session-group">' +
-        '<div class="session-group-head mono" title="' + esc(head) + '">' + esc(head) +
-        ' <span class="faint">(' + list.length + ')</span></div>' +
+        '<div class="session-group-head" title="' + esc(head) + '">' + esc(shortGroupLabel(key, head)) +
+        ' <span class="faint">' + list.length + '</span></div>' +
         list.map(sessionButton).join('') +
         '</div>';
     });
@@ -708,7 +763,7 @@
     if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(chatWrap);
     if (!entries.length) {
       bindQueryTracking(scroll);
-      scroll.innerHTML = '<div class="chat-empty"><div class="big">Talk to the swarm</div><div>Send a message — the coordinator routes, or @mention a member to hand off.</div></div>';
+      scroll.innerHTML = '<div class="chat-empty"><div class="big">Start a conversation</div><div>Ask for a team in chat or turn on Team for one message.</div></div>';
       stickChatScrollBottom(scroll);
       return;
     }
@@ -850,25 +905,10 @@
 
     function addSwarmRow(key, aid, name, task, idx, total) {
       var card = ensureSwarmCard();
-      var row = document.createElement('div');
-      row.className = 'swarm-row';
-      row.dataset.agentId = aid;
-      row.dataset.instanceKey = key;
-      var color = agentColor(aid);
-      var letter = esc((name || aid || '?').slice(0, 1).toUpperCase());
-      var idxStr = String(idx || 1).padStart(2, '0');
-      var totalStr = String(total || 1).padStart(2, '0');
-      row.innerHTML =
-        '<div class="av" style="background:' + color + '">' + letter + '</div>' +
-        '<div class="swarm-meta">' +
-          '<div class="swarm-row-head">' +
-            '<span class="name">' + esc(name || aid) + '</span>' +
-            '<span class="index">' + idxStr + ' / ' + totalStr + '</span>' +
-          '</div>' +
-          '<div class="task">' + esc(task || '') + '</div>' +
-          '<div class="swarm-progress"><div class="swarm-progress-bar" style="width:0%"></div></div>' +
-        '</div>' +
-        '<span class="si-open-hint" aria-hidden="true">inspect →</span>';
+      var row = Tomo.buildSwarmRow({
+        key: key, aid: aid, name: name, task: task, idx: idx || 1, total: total || 1,
+        historic: true,
+      });
       row.addEventListener('click', function () { openDetailPanel(row); });
       card.appendChild(row);
       var buf = getBuffer(key);
@@ -887,10 +927,7 @@
       if (!buf) return;
       buf.status = status === 'error' ? 'error' : 'done';
       if (!buf.row) return;
-      buf.row.classList.remove('active');
-      buf.row.classList.add(buf.status);
-      var bar = buf.row.querySelector('.swarm-progress-bar');
-      if (bar) bar.style.width = '100%';
+      Tomo.swarmRowDone(buf.row, buf.status);
     }
 
     function bumpSwarmProgress(key) {
@@ -907,6 +944,7 @@
     function bufferEvent(key, kind, data) {
       var buf = turnBuffers.get(key) || getBuffer(key);
       buf.events.push({ kind: kind, data: data });
+      Tomo.swarmRowEvent(buf.row, kind, data);
     }
 
     function makeToolCollapsible(card) {
@@ -1352,6 +1390,7 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
+    renderTeamProgress(null);
     // Keep the login account id — never adopt another session's user_id.
     chatWrap.dataset.userId = currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
@@ -1374,6 +1413,7 @@
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
       if (selection !== selectionSeq) return;
       renderHistory(hist.entries || []);
+      refreshTeamProgress(sessionId);
       chatHandle = TomoChat.init(chatWrap);
       // init may re-touch markdown; stick again after layout settles
       var scrollEl = chatWrap.querySelector('.chat-scroll');
@@ -1504,7 +1544,7 @@
 
     const draft = {
       id: '',
-      title: ids.length > 1 ? 'New swarm chat' : 'New conversation',
+      title: 'New conversation',
       agent_ids: ids,
       agent_id: ids[0],
       user_id: currentUserId(),
@@ -1521,7 +1561,7 @@
   }
 
   function startNewChat(agentIds, opts) {
-    var ids = agentIds && agentIds.length ? agentIds.slice() : allEnabledAgentIds();
+    var ids = agentIds && agentIds.length ? agentIds.slice() : allEnabledAgentIds().slice(0, 1);
     if (!ids.length) {
       Tomo.toast('No enabled agents', 'err');
       return;
@@ -1531,7 +1571,7 @@
   }
 
   function startDefaultSwarm(opts) {
-    startNewChat(allEnabledAgentIds(), opts);
+    startNewChat(allEnabledAgentIds().slice(0, 1), opts);
   }
 
   function buildEditList(ids) {
@@ -1664,7 +1704,7 @@
       return;
     }
     document.querySelectorAll('#newChatAgents input[name="agent"]').forEach(function (el) {
-      if (!el.disabled) el.checked = true;
+      if (!el.disabled) el.checked = el.value === allEnabledAgentIds()[0];
     });
     draftWorkplaceId = '';
     fillWorkplaceSelect(document.getElementById('newChatWorkplace'), '');
@@ -1709,7 +1749,7 @@
       draftWorkplaceId = wpSel ? (wpSel.value || '') : '';
       modal.classList.add('hidden');
       modal.setAttribute('aria-hidden', 'true');
-      startNewChat(ids.length ? ids : allEnabledAgentIds(), {
+      startNewChat(ids.length ? ids : allEnabledAgentIds().slice(0, 1), {
         workplaceId: draftWorkplaceId,
       });
     });

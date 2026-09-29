@@ -1142,56 +1142,70 @@
       });
   }
 
+  var CAT_LABEL = {
+    document: "Page", text: "Text", image: "Image", sound: "Audio",
+    video: "Video", data: "Data",
+  };
+
+  function relTime(ts) {
+    if (window.Tomo && Tomo.ts) return Tomo.ts(ts);
+    return "";
+  }
+
+  function homeRow(f, active) {
+    var cat = f.category || category(f.filename || "");
+    var meta = [CAT_LABEL[cat] || cat, f.size != null ? formatBytes(f.size) : "", f.modified ? relTime(f.modified) : ""]
+      .filter(Boolean).join(" · ");
+    return (
+      '<button type="button" class="cap-row cap-art-row' + (active ? " active" : "") +
+      '" data-cap-open="' + esc(f.url) + '" data-cap-file="' + esc(f.filename || "") +
+      '" data-cap-cat="' + esc(cat) + '" data-cap-size="' + esc(String(f.size || "")) + '">' +
+      '<span class="cap-ico cap-ico-' + esc(cat) + '">' + ICO_FILE + "</span>" +
+      '<span class="cap-row-text"><span class="cap-label">' + esc(f.title || prettyTitle(f.filename || "file")) +
+      "</span>" + (meta ? '<span class="cap-meta">' + esc(meta) + "</span>" : "") + "</span>" +
+      "</button>"
+    );
+  }
+
   function renderHome(root, wrap) {
-    var tabsHtml;
-    if (!_state.openTabs.length) {
-      tabsHtml = '<div class="cap-empty-hint">No open files</div>';
-    } else {
-      tabsHtml = _state.openTabs
-        .map(function (t) {
-          var active =
-            _state.art && _state.art.url === t.url && _state.view === "preview" ? " active" : "";
-          return (
-            '<button type="button" class="cap-row' +
-            active +
-            '" data-cap-tab="' +
-            esc(t.url) +
-            '">' +
-            '<span class="cap-ico">' +
-            ICO_FILE +
-            '</span><span class="cap-label">' +
-            esc(t.title || prettyTitle(t.filename)) +
-            "</span></button>"
-          );
-        })
-        .join("");
-    }
+    var sid = (wrap && wrap.dataset && wrap.dataset.sessionId) || _state.sessionId || "";
+    var activeUrl = _state.art && _state.view === "preview" ? _state.art.url : "";
+    var tabsHtml = _state.openTabs.map(function (t) {
+      return homeRow({ url: t.url, filename: t.filename, title: t.title, category: t.category, size: t.size },
+        t.url === activeUrl);
+    }).join("");
 
     root.innerHTML =
       '<div class="cap-home">' +
-      '<div class="cap-panel-head cap-panel-head-quiet">' +
-      '<span class="cap-panel-title"></span>' +
-      '<button type="button" class="cap-icon-btn cap-collapse" title="Collapse panel" aria-label="Collapse">✕</button>' +
+      '<div class="cap-panel-head">' +
+      '<span class="cap-panel-title">Files</span>' +
+      '<button type="button" class="cap-icon-btn cap-collapse" title="Close panel" aria-label="Close">✕</button>' +
       "</div>" +
+      (tabsHtml
+        ? '<section class="cap-section"><h3 class="cap-section-title">Open</h3><div class="cap-rows">' + tabsHtml + "</div></section>"
+        : "") +
       '<section class="cap-section">' +
-      '<h3 class="cap-section-title">Open Tabs</h3>' +
-      '<div class="cap-rows">' +
-      tabsHtml +
-      "</div>" +
+      '<h3 class="cap-section-title">In this chat <span class="cap-count" data-cap-count></span></h3>' +
+      '<div class="cap-rows" data-cap-list><div class="cap-empty-hint">Loading…</div></div>' +
       "</section>" +
-      '<section class="cap-section">' +
-      '<h3 class="cap-section-title">Library</h3>' +
-      '<div class="cap-rows">' +
-      '<button type="button" class="cap-row' +
-      (_state.view === "files" ? " active" : "") +
-      '" data-cap-nav="files">' +
-      '<span class="cap-ico">' +
-      ICO_FILE +
-      '</span><span class="cap-label">All files</span>' +
-      "</button>" +
-      "</div>" +
-      "</section>" +
+      '<button type="button" class="cap-all-files" data-cap-nav="files">Browse all files <span aria-hidden="true">→</span></button>' +
       "</div>";
+
+    function bindOpen(scope) {
+      scope.querySelectorAll("[data-cap-open]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var url = btn.getAttribute("data-cap-open");
+          var tab = _state.openTabs.find(function (t) { return t.url === url; });
+          openPreview(tab || {
+            url: url,
+            filename: btn.getAttribute("data-cap-file") || "file",
+            category: btn.getAttribute("data-cap-cat") || "",
+            size: Number(btn.getAttribute("data-cap-size")) || undefined,
+            session_id: sid,
+          }, { userGesture: true });
+        });
+      });
+    }
 
     root.querySelector(".cap-collapse").addEventListener("click", function () {
       closePanel();
@@ -1203,15 +1217,30 @@
         openFilesPane({ wrap: wrap, toggle: false });
       });
     });
-    root.querySelectorAll("[data-cap-tab]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var url = btn.getAttribute("data-cap-tab");
-        var tab = _state.openTabs.find(function (t) {
-          return t.url === url;
-        });
-        if (tab) openPreview(tab);
+    bindOpen(root);
+
+    var list = root.querySelector("[data-cap-list]");
+    if (!sid) {
+      list.innerHTML = '<div class="cap-empty-hint">Files the agent saves in this chat show up here.</div>';
+      return;
+    }
+    fetch("/api/sessions/" + encodeURIComponent(sid) + "/artifacts?sort=newest&limit=40", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : { files: [] }; })
+      .then(function (data) {
+        if (!list.isConnected) return;
+        var files = (data && data.files) || [];
+        var count = root.querySelector("[data-cap-count]");
+        if (count) count.textContent = files.length ? String(data.total || files.length) : "";
+        if (!files.length) {
+          list.innerHTML = '<div class="cap-empty-hint">Nothing saved yet. Files the agent creates — pages, reports, data — appear here.</div>';
+          return;
+        }
+        list.innerHTML = files.map(function (f) { return homeRow(f, f.url === activeUrl); }).join("");
+        bindOpen(list);
+      })
+      .catch(function () {
+        if (list.isConnected) list.innerHTML = '<div class="cap-empty-hint">Could not load files.</div>';
       });
-    });
   }
 
   function renderDrill(root, wrap, kind) {

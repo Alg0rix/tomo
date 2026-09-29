@@ -284,7 +284,7 @@ async def list_sessions_api(request: Request, _: AuthDep):
         # Do not expose a countable roster in labels — swarm is open-ended.
         is_swarm = bool(row.get("is_swarm")) or len(ids) > 1
         row["is_swarm"] = is_swarm
-        row["agent_name"] = "swarm" if is_swarm else (names[0] if names else row.get("agent_id", ""))
+        row["agent_name"] = names[0] if names else row.get("agent_id", "")
         sessions.append(row)
     return {"sessions": sessions, "agents": agents}
 
@@ -442,10 +442,10 @@ async def prune_draft_sessions(
 
 @router.post("/sessions/home")
 async def create_home_session(body: HomeSessionIn, request: Request, _: AuthDep):
-    """Start a full-swarm chat from the dashboard home composer.
+    """Start a solo chat from the dashboard home composer.
 
-    No agent picker — members are all enabled agents so ``delegate`` works
-    immediately. Coordinator is the super agent (``is_super``).
+    Coordinator is the super agent (``is_super``). A later chat turn can
+    explicitly request or approve a team.
     Optional ``message`` is returned so the client can deep-link
     ``/sessions?s=<id>&q=...`` and auto-send once.
     """
@@ -475,6 +475,25 @@ async def session_chat_history(session_id: str, request: Request, _: AuthDep):
     session = require_owned_session(request, session_id)
     entries = store.get_session_history(session_id)
     return {"entries": entries, "has_more": False, "session": session}
+
+
+@router.get("/sessions/{session_id}/swarm")
+async def session_swarm_history(session_id: str, request: Request, _: AuthDep):
+    """Durable task state for reload and inspection; owner-scoped."""
+    require_owned_session(request, session_id)
+    from app.models.mixins import swarm as swarm_store
+
+    def read(conn):
+        runs = swarm_store.list_runs(conn, session_id)
+        return {
+            "agents": swarm_store.list_agents(conn, session_id),
+            "runs": [{**run,
+                      "tasks": swarm_store.list_tasks(conn, run["id"]),
+                      "events": swarm_store.list_events(conn, run["id"])}
+                     for run in runs[:20]],
+        }
+
+    return store.with_db(read)
 
 
 @router.get("/sessions/{session_id}/attachments")
@@ -937,6 +956,49 @@ async def memory_forget_api(request: Request, entity_type: str, slug: str, body:
     if not changed:
         raise HTTPException(404, 'Fact not found')
     return {'ok': True}
+
+
+@router.get('/memory/overview')
+async def memory_overview_api(request: Request, _: AuthDep, days: int = Query(30, ge=1, le=365)):
+    """Everything the memory page needs in one call: entities with their
+    facts, links between them, and recent timeline days."""
+    import re
+    from app.runtime.memory.vault import doc, index
+    uid = session_user_id(request)
+    src_re = re.compile(r'\s*\(src: \[\[([^\]]+)\]\]\)\s*$')
+
+    def fact_rows(body):
+        out = []
+        for i, entry in enumerate(doc.parse(body).entries):
+            gone = entry.startswith('~~')
+            text = entry
+            if gone:
+                text = re.sub(r'^~~(.*?)~~.*$', r'\1', entry, flags=re.S)
+            m = src_re.search(text)
+            out.append({'n': i, 'text': src_re.sub('', text).strip(), 'source': m.group(1) if m else '', 'superseded': gone})
+        return out
+
+    def query(conn):
+        index.rebuild(conn, uid)
+        ents = conn.execute('SELECT path,type,slug,title,updated,tags,body FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
+        paths = {r['path']: f"{r['type']}/{r['slug']}" for r in ents}
+        aliases: dict[str, list[str]] = {}
+        for r in conn.execute('SELECT alias,path FROM vault_aliases WHERE path IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
+            aliases.setdefault(r['path'], []).append(r['alias'])
+        links = []
+        for r in conn.execute('SELECT src,dst_resolved FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
+            if r['src'] in paths and r['dst_resolved'] in paths and r['src'] != r['dst_resolved']:
+                links.append({'from': paths[r['src']], 'to': paths[r['dst_resolved']]})
+        entities = [{
+            'key': paths[r['path']], 'type': r['type'], 'slug': r['slug'], 'title': r['title'] or r['slug'],
+            'updated': r['updated'] or '', 'aliases': aliases.get(r['path'], []), 'facts': fact_rows(r['body'] or ''),
+        } for r in ents]
+        timeline = []
+        for r in conn.execute('SELECT slug,body FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug DESC LIMIT ?', (uid, days)).fetchall():
+            timeline.append({'date': r['slug'], 'items': [line[2:] for line in (r['body'] or '').splitlines() if line.startswith('- ')]})
+        return {'entities': entities, 'links': links, 'timeline': timeline}
+
+    return store.with_db(query)
 
 
 @router.get('/memory/timeline')

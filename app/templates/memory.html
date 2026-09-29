@@ -1,38 +1,44 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=herbarium2">
+<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=atlas1">
 {% endblock %}
 {% block content %}
-<section class="herbarium" id="herbarium" aria-labelledby="herbariumTitle">
-  <header class="herbarium-head">
-    <div class="herbarium-title-block">
-      <p class="herbarium-kicker"><span class="herbarium-sigil" aria-hidden="true">✳</span> TOMO ARCHIVE <span class="herbarium-divider">/</span> VOLUME 01</p>
-      <div class="herbarium-title-row"><h1 id="herbariumTitle">Herbarium<span>.</span></h1><span class="herbarium-head-rule" aria-hidden="true"></span><span class="herbarium-plate">PLATE<br>001—006</span></div>
-      <p class="herbarium-intro">A living atlas of what Tomo knows about you.</p>
+<section class="mem" id="mem" aria-labelledby="memTitle">
+  <header class="mem-head">
+    <div>
+      <h1 id="memTitle">Memory</h1>
+      <p class="mem-sub" id="memStats">What Tomo remembers about you.</p>
     </div>
-    <div class="herbarium-head-stat"><span class="herbarium-stat-label">IN THE COLLECTION</span><strong id="memoryCount">00</strong><span class="herbarium-stat-caption">PRESSED SPECIMENS</span></div>
+    <label class="mem-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="memQuery" type="search" placeholder="Search memory" autocomplete="off" spellcheck="false" aria-label="Search memory">
+      <kbd>/</kbd>
+    </label>
   </header>
 
-  <div class="herbarium-stage" id="memoryStage">
-    <aside class="herbarium-ledger" aria-label="Specimen index">
-      <div class="herbarium-ledger-head"><span>SPECIMEN INDEX</span><span aria-hidden="true">№</span></div>
-      <div class="herbarium-ledger-list" id="memoryIndex"></div>
-      <div class="herbarium-ledger-foot"><span class="herbarium-ledger-mark" aria-hidden="true">✳</span><p>Each mark holds a fact.<br>Each thread records a connection.</p><small>SELECT A SPECIMEN TO UNFOLD ITS LABEL</small></div>
-    </aside>
-    <div class="herbarium-chart" id="memoryChart">
-      <div class="herbarium-chart-top"><span>MEMORY UNIVERSE <i>·</i> DRAG TO ROTATE <i>·</i> SCROLL TO ZOOM</span><button type="button" id="memoryCameraReset" class="herbarium-camera-reset">RESET VIEW</button></div>
-      <svg id="memoryGraph" viewBox="0 0 1000 660" role="img" aria-label="Orbital graph of memory entities"></svg>
-      <div class="herbarium-detail" id="memoryDetail" hidden></div>
-      <div class="herbarium-empty" id="memoryEmpty" hidden><span aria-hidden="true">✳</span><strong>A quiet beginning</strong><p>Your first saved memory will appear here as a specimen.</p></div>
-      <div class="herbarium-chart-bottom"><span>✳  ENTITY STARS</span><span>◌  TYPE PLANETS</span><span id="memoryGraphMeta">00 CONSTELLATIONS</span></div>
+  <div class="mem-body">
+    <nav class="mem-list" id="memList" aria-label="Remembered things"></nav>
+
+    <div class="mem-map" id="memMap">
+      <svg id="memGraph" role="img" aria-label="Connections around the selected memory"></svg>
+      <div class="mem-map-hint" id="memMapHint"></div>
     </div>
+
+    <article class="mem-reader" id="memReader" aria-live="polite"></article>
   </div>
 
-  <footer class="herbarium-timeline" aria-label="Memory timeline">
-    <div class="herbarium-timeline-label"><span>FIELD NOTES <b>／</b> CHRONOLOGY</span><time id="memoryDate">NO RECORDS YET</time></div>
-    <div class="herbarium-bullets" id="memoryBullets" aria-live="polite"></div>
-    <div class="herbarium-scrub"><span>FIRST ENTRY</span><input id="memoryScrubber" type="range" min="0" max="0" value="0" aria-label="Memory timeline day"><span>MOST RECENT</span></div>
-  </footer>
+  <section class="mem-days" aria-labelledby="memDaysTitle">
+    <div class="mem-days-head">
+      <h2 id="memDaysTitle">Timeline</h2>
+      <span class="mem-days-note">What happened, day by day. Nightly, durable facts get pulled into the pages above.</span>
+    </div>
+    <div class="mem-days-strip" id="memDays"></div>
+  </section>
+
+  <div class="mem-empty" id="memEmpty" hidden>
+    <h2>Nothing remembered yet</h2>
+    <p>As you chat, Tomo writes what matters into Markdown pages — people, projects, tools — and links them together. They show up here, and you can correct anything that's wrong.</p>
+  </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=herbarium2"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=atlas1"></script>{% endblock %}

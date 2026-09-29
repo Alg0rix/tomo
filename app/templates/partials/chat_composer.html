@@ -24,6 +24,7 @@
         <button type="button" class="composer-mode" id="composerModeBtn" data-mode="smart" title="Permission mode — click to cycle (/manual /smart /auto)" aria-label="Permission mode">
           <span class="composer-mode-key">Smart</span><span class="composer-mode-suffix"> Mode</span>
         </button>
+        {% if toolbar %}<button type="button" class="composer-ghost chat-swarm-toggle" aria-pressed="false" title="Use agents together for the next message">Team</button>{% endif %}
         <div class="composer-reasoning hidden" aria-live="polite">
           <button class="composer-reasoning-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Model and reasoning effort">
             <span class="composer-reasoning-model">Model</span>
