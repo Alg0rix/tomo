@@ -458,16 +458,16 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
                 access = (
                     f"Coordinator on this install. **Local** workplaces you may "
                     f"use yourself: {names} ({my_wp}). "
-                    "**Tunnel/SSH work → delegate** to agents that own those "
-                    "workplaces. Specialty implementation (ops/research/coding) "
-                    "→ also delegate when their role fits."
+                    "Do what you can reach **yourself**. **Tunnel/SSH work → "
+                    "delegate** to agents that own those workplaces; an explicit "
+                    "agent ask or parallel swarm → also delegate."
                 )
             else:
                 access = (
                     "Coordinator on this install. **No local workplace** bound — "
-                    "pure chat/planning yourself; host/file work goes to agents "
-                    "with workplaces (see roster). "
-                    "**Tunnel/SSH and specialty work → always delegate.**"
+                    "chat/planning and non-host tools yourself. "
+                    "**Tunnel/SSH work → delegate** to an agent that has that "
+                    "workplace (see roster)."
                 )
         elif remote_wps or local_wps:
             access = (
@@ -485,9 +485,9 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
             "You are **{}** (id=`{}`). {}".format(
                 me.get("name") or agent_id, agent_id, access
             ),
-            "Routing: **local** (this install) → Tomo/coordinator when bound; "
-            "**tunnel/ssh** → agent that has that workplace; **specialty** → "
-            "matching role; **swarm** → parallel `delegate` for multi-agent. "
+            "Routing: default → **do it yourself**; **tunnel/ssh** → agent that "
+            "has that workplace; **explicit agent ask** → that agent; "
+            "**swarm** → parallel `delegate` for genuinely multi-agent work. "
             "Do not invent agents. Use `agent_id` or `name` from this list.",
             "",
             "Members:",

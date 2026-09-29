@@ -32,6 +32,7 @@ def is_transient_llm_error(exc: BaseException) -> bool:
         "timed out",
         "timeout",
         "deadline exceeded",
+        "stream stale",
         "temporarily unavailable",
         "connection reset",
         "connection aborted",

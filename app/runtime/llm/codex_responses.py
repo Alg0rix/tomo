@@ -14,9 +14,11 @@ answer salvage (see the design spec's "Out of scope").
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 import httpx
 import openai
@@ -29,6 +31,7 @@ from app.runtime.llm.openai_compat import (
     _parse_arguments,
     default_llm_timeout_seconds,
     format_llm_error,
+    llm_http_timeout,
     parse_usage,
 )
 
@@ -248,7 +251,7 @@ class CodexResponsesClient:
         resolved_token = (access_token or "").strip()
         if not resolved_token:
             raise LLMConfigError(
-                "ChatGPT sign-in required in System → Models (subscription profile has no token)."
+                "Configure an API key or ChatGPT sign-in in System → Models."
             )
         self._base_url = (base_url or DEFAULT_CODEX_BASE_URL).rstrip("/")
         self._model = model or "gpt-5-codex"
@@ -257,15 +260,16 @@ class CodexResponsesClient:
             float(timeout) if timeout is not None else default_llm_timeout_seconds()
         )
 
+        self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
         http_client = None
         if transport is not None:
-            http_client = httpx.AsyncClient(transport=transport, timeout=self._timeout)
+            http_client = httpx.AsyncClient(transport=transport, timeout=self._http_timeout)
 
         self._client = openai.AsyncOpenAI(
             base_url=self._base_url,
             api_key=resolved_token,
-            timeout=self._timeout,
-            max_retries=0 if transport is not None else 2,
+            timeout=self._http_timeout,
+            max_retries=0,
             http_client=http_client,
         )
 
@@ -284,6 +288,9 @@ class CodexResponsesClient:
             # The Codex backend rejects "minimal" (400) — clamp to "low".
             effort = "low" if self._reasoning_effort == "minimal" else self._reasoning_effort
             payload["reasoning"] = {"effort": effort, "summary": "auto"}
+        elif (urlparse(self._base_url).hostname == "api.openai.com"
+              and self._model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))):
+            payload["reasoning"] = {"summary": "auto"}
         return payload
 
     async def complete(
@@ -324,8 +331,13 @@ class CodexResponsesClient:
         try:
             stream = await self._client.responses.create(**payload)
             async for event in stream:
+                self._last_chunk_time = asyncio.get_running_loop().time()
                 etype = getattr(event, "type", "") or ""
-                if etype == "response.output_text.delta":
+                if etype == "response.reasoning_summary_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    if delta:
+                        yield {"type": "reasoning_delta", "content": delta}
+                elif etype == "response.output_text.delta":
                     delta = getattr(event, "delta", "") or ""
                     if delta:
                         content_parts.append(delta)

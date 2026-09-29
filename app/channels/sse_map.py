@@ -166,7 +166,15 @@ def map_loop_event(
     chunks: list[str] = []
     entries: list[dict[str, Any]] = []
 
-    if kind == "thinking":
+    if kind in {"thinking_delta", "status"}:
+        seq += 1
+        data = {"agent_id": agent_id, "agent": agent_name}
+        if kind == "thinking_delta":
+            data["content"] = ev["content"]
+        else:
+            data["message"] = ev["message"]
+        chunks.append(fmt_sse({"event": kind, "data": _stamp_dcid(data, ev), "seq": seq}))
+    elif kind == "thinking":
         seq += 1
         chunks.append(
             fmt_sse(
@@ -177,6 +185,7 @@ def map_loop_event(
                             "content": ev["content"],
                             "agent_id": agent_id,
                             "agent": agent_name,
+                            "replace_streamed": bool(ev.get("replace_streamed")),
                         },
                         ev,
                     ),

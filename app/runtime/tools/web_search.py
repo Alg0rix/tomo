@@ -7,6 +7,7 @@ Handles empty / non-JSON Instant Answer bodies without crashing.
 from __future__ import annotations
 
 import re
+import threading
 from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
@@ -14,6 +15,10 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 import httpx
 
 _TIMEOUT = 15.0
+# Hard wall clock for the whole search. httpx timeouts do not cover
+# socket.getaddrinfo, and the HTML→Instant-Answer fallback can chain two
+# slow requests — without a bound the tool card sits on RUNNING forever.
+_OVERALL_TIMEOUT = 25.0
 _HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
 _IA_ENDPOINT = "https://api.duckduckgo.com/"
 _MAX_RESULTS = 5
@@ -153,15 +158,8 @@ def _search_instant_answer(
     return _collect_ia_results(data, query)
 
 
-def run(arguments: dict[str, Any]) -> str:
-    """Search the web for ``query``; always returns a string."""
-    if not isinstance(arguments, dict):
-        return "Error: web_search expects a dict of arguments"
-    query = arguments.get("query")
-    if not isinstance(query, str) or not query.strip():
-        return "Error: 'query' argument must be a non-empty string"
-    query = query.strip()
-
+def _run_search(query: str) -> str:
+    """HTML search with Instant-Answer fallback. May block on DNS or a slow body."""
     try:
         with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
             blocks = _search_html(client, query)
@@ -177,6 +175,34 @@ def run(arguments: dict[str, Any]) -> str:
     if not blocks:
         return f"No results for {query!r}"
     return _format_blocks(blocks)
+
+
+def run(arguments: dict[str, Any]) -> str:
+    """Search the web for ``query``; always returns a string."""
+    if not isinstance(arguments, dict):
+        return "Error: web_search expects a dict of arguments"
+    query = arguments.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return "Error: 'query' argument must be a non-empty string"
+    query = query.strip()
+
+    box: list[str] = []
+    caught: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            box.append(_run_search(query))
+        except Exception as exc:  # noqa: BLE001 — tool must always return a string
+            caught.append(exc)
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(_OVERALL_TIMEOUT)
+    if box:
+        return box[0]
+    if caught:
+        return f"Error: search request failed: {caught[0]}"
+    return f"Error: search timed out after {_OVERALL_TIMEOUT:g}s"
 
 
 __all__ = ["run"]

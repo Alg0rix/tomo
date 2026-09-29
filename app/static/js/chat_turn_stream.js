@@ -15,6 +15,8 @@
     var turnAgentName = ctx.defaultAgentName;
     var turnAgentId = ctx.agentId || '';
     var thinkEl = null;
+    var streamedReasoning = null;
+    var reasoningText = '';
     var asstEl = null;
     var asstBody = null;
     var pendingEl = null;
@@ -210,14 +212,16 @@
 
     function appendReasoningCard(content) {
       if (window.Tomo && Tomo.buildReasoningCard) {
-        ctx.turn.appendChild(Tomo.buildReasoningCard(content));
-        return;
+        var card = Tomo.buildReasoningCard(content);
+        ctx.turn.appendChild(card);
+        return card;
       }
       var details = document.createElement('details');
       details.className = 'reasoning-card';
       details.innerHTML = '<summary>Reasoning</summary><pre></pre>';
       details.querySelector('pre').textContent = content;
       ctx.turn.appendChild(details);
+      return details;
     }
 
     function collapseRenderUiTools() {
@@ -914,6 +918,27 @@
       ctx.atBottom();
     });
 
+    es.addEventListener('status', function (e) {
+      bumpActivity();
+      var d = JSON.parse(e.data || '{}');
+      if (!isSubagentEvent(d)) ctx.setStatus('amber', d.message || ctx.busyStatusLabel());
+    });
+
+    es.addEventListener('thinking_delta', function (e) {
+      bumpActivity();
+      var d = JSON.parse(e.data || '{}');
+      if (isSubagentEvent(d)) return;
+      adoptAgent(d.agent_id, d.agent);
+      clearPending();
+      reasoningText += d.content || '';
+      if (!streamedReasoning) streamedReasoning = appendReasoningCard(reasoningText);
+      else {
+        var pre = streamedReasoning.querySelector('pre');
+        if (pre) pre.textContent = reasoningText;
+      }
+      ctx.atBottom();
+    });
+
     es.addEventListener('thinking', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
@@ -942,6 +967,9 @@
         asstBody = null;
       }
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+      if (streamedReasoning) streamedReasoning.remove();
+      streamedReasoning = null;
+      reasoningText = '';
       raw = '';
       appendReasoningCard(content);
       ctx.atBottom();
@@ -977,6 +1005,8 @@
       }
       adoptAgent(d.agent_id, d.agent);
       clearPending();
+      streamedReasoning = null;
+      reasoningText = '';
       sealAssistantBubble();
       ctx.turn.appendChild(buildToolCard(d));
       ctx.atBottom();

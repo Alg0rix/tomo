@@ -15,6 +15,8 @@ queues. Prior-turn context is loaded from SQLite via ``append_session_history``
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any
 
 from app.runtime.agent.loop import _truncate_result, run_turn
@@ -194,6 +196,27 @@ async def test_deltas_stream_as_produced_not_buffered_until_round_end() -> None:
     )
 
 
+async def test_hung_builtin_returns_tool_error_and_turn_finishes(monkeypatch) -> None:
+    from app.runtime.agent import loop
+    from app.runtime.tools import registry
+
+    release = threading.Event()
+    monkeypatch.setattr(loop, "_TOOL_TIMEOUT", 0.02)
+    monkeypatch.setitem(registry._BACKENDS, "read_file", lambda args: (release.wait(1), "late")[1])
+    llm = ScriptedLLM(tool_then_text(
+        LLMResponse(content=None, tool_calls=[ToolCall(id="r1", name="read_file", arguments={"path": "x"})]),
+        "handled timeout",
+    ))
+    try:
+        events = await _collect("read", llm=llm, tools=[{"type": "function", "function": {"name": "read_file"}}])
+        result = next(e for e in events if e["kind"] == "tool_result")
+        assert result["error"] is True
+        assert "timed out" in result["result"]
+        assert _final(events)["content"] == "handled timeout"
+    finally:
+        release.set()
+
+
 async def test_bash_path_emits_tool_then_result_then_final() -> None:
     llm = ScriptedLLM(tool_then_text(bash_call("echo 4"), _BASH_FINAL))
     events = await _collect("run: echo 4", llm=llm, tools=_bash_tools())
@@ -282,6 +305,21 @@ async def test_history_rebuilt_so_new_bash_turn_still_calls_tool(tmp_path) -> No
 
 
 # --- adversarial paths --------------------------------------------------
+
+
+async def test_repeated_tool_calls_keep_results_adjacent_before_loop_nudge() -> None:
+    llm = _RecordingScripted(
+        [bash_call("echo 1", id=f"call_{i}") for i in range(5)]
+        + [text_reply("stopped")]
+    )
+    events = await _collect("repeat", llm=llm, tools=_bash_tools(), max_iterations=6)
+    assert _final(events)["content"] == "stopped"
+    messages = llm.captured[-1]
+    for index, message in enumerate(messages):
+        if message.get("tool_calls"):
+            ids = [call["id"] for call in message["tool_calls"]]
+            assert [m["tool_call_id"] for m in messages[index + 1:index + 1 + len(ids)]] == ids
+    assert any("repeating" in str(m.get("content")) for m in messages if m["role"] == "user")
 
 
 async def test_max_iterations_force_final_when_budget_exhausted() -> None:
@@ -517,6 +555,45 @@ def _delegate_call(
             )
         ],
     )
+
+
+async def test_cancelling_parent_stops_parallel_subagents(monkeypatch) -> None:
+    monkeypatch.setattr("app.runtime.tools.registry.execute", lambda name, args: f"Delegated to {args['agent_id']}")
+    started = asyncio.Event()
+    cancelled = set()
+    entered = set()
+
+    class BlockingChild:
+        def __init__(self, name):
+            self.name = name
+
+        async def complete(self, messages, tools=None):
+            entered.add(self.name)
+            if len(entered) == 2:
+                started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.add(self.name)
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: BlockingChild(agent_id))
+    parent = ScriptedLLM([LLMResponse(content=None, tool_calls=[
+        ToolCall(id="d1", name="delegate", arguments={"agent_id": "ops", "reason": "one"}),
+        ToolCall(id="d2", name="delegate", arguments={"agent_id": "writer", "reason": "two"}),
+    ])])
+
+    async def consume():
+        async for _ in run_turn("delegate", llm=parent, tools=_delegate_tools(), agent_id="main", enable_atg=False):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), 3)
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, 3)
+    except asyncio.CancelledError:
+        pass
+    assert cancelled == {"ops", "writer"}
 
 
 async def test_successful_delegate_runs_subagent_and_parent_continues(

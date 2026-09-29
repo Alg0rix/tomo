@@ -73,6 +73,7 @@ from app.runtime.agent.subagent import (
 from app.runtime.agent.tool_errors import tool_result_is_error
 from app.runtime.llm import get_llm
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
+from app.runtime.llm.openai_compat import stream_stale_seconds
 from app.runtime.permissions.gate import Decision, apply_choice, evaluate
 from app.runtime.permissions.grants import reset_outside_grant, set_outside_grant
 from app.runtime.permissions import hitl as hitl_mod
@@ -88,6 +89,7 @@ _logger = logging.getLogger(__name__)
 _LOOP_WINDOW = 10
 _LOOP_THRESHOLD = 5
 _MAX_UI_RESULT_CHARS = 64_000
+_TOOL_TIMEOUT = 300.0
 
 # These tools already expose pagination/continuation contracts. Give their
 # complete pages room to reach the UI/model, while keeping the default cap for
@@ -190,6 +192,12 @@ def _record_response_usage(
     metrics.add_usage(prompt, completion)
 
 
+def _stream_stale_seconds(client: LLMClient) -> float:
+    return stream_stale_seconds(
+        getattr(client, "_model", ""), getattr(client, "_reasoning_effort", None)
+    )
+
+
 async def _llm_round(
     client: LLMClient,
     messages: list[dict[str, Any]],
@@ -208,11 +216,39 @@ async def _llm_round(
         yield {"kind": "_response", "response": resp}
         return
 
-    async for ev in stream_fn(messages, tool_schemas):
-        if ev.get("type") == "delta" and ev.get("content"):
-            yield {"kind": "delta", "content": ev["content"]}
-        elif ev.get("type") == "done":
-            yield {"kind": "_response", "response": ev["response"]}
+    stream = stream_fn(messages, tool_schemas)
+    stale = _stream_stale_seconds(client)
+    clock = asyncio.get_running_loop()
+    last_chunk = clock.time()
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            pending = asyncio.create_task(anext(stream))
+            while True:
+                last_chunk = max(last_chunk, getattr(client, "_last_chunk_time", 0))
+                elapsed = clock.time() - last_chunk
+                if elapsed >= stale:
+                    raise TimeoutError(f"LLM stream stale: no output for {stale:g}s")
+                try:
+                    ev = await asyncio.wait_for(asyncio.shield(pending), min(20.0, stale - elapsed))
+                    break
+                except asyncio.TimeoutError:
+                    yield {"kind": "status", "message": f"Waiting on {getattr(client, '_model', 'model')} — {int(clock.time() - last_chunk)}s without output"}
+            pending = None
+            last_chunk = clock.time()
+            if ev.get("type") == "delta" and ev.get("content"):
+                yield {"kind": "delta", "content": ev["content"]}
+            elif ev.get("type") == "reasoning_delta" and ev.get("content"):
+                yield {"kind": "thinking_delta", "content": ev["content"]}
+            elif ev.get("type") == "done":
+                yield {"kind": "_response", "response": ev["response"]}
+    except StopAsyncIteration:
+        return
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        await stream.aclose()
 
 
 async def _llm_round_with_retry(
@@ -238,7 +274,8 @@ async def _llm_round_with_retry(
         forwarded = False
         try:
             async for piece in _llm_round(client, messages, tool_schemas):
-                forwarded = True
+                if piece["kind"] != "status":
+                    forwarded = True
                 yield piece
             return
         except Exception as exc:
@@ -247,6 +284,7 @@ async def _llm_round_with_retry(
                 if metrics is not None:
                     metrics.llm_retries += 1
                 _logger.warning("LLM round transient failure — retrying: %s", exc)
+                yield {"kind": "status", "message": "LLM connection stalled — reconnecting…"}
                 await asyncio.sleep(0.75)
                 continue
             raise
@@ -449,7 +487,10 @@ async def _execute_authorized(call: ToolCall, decision: Decision) -> str:
     args = call.arguments if isinstance(call.arguments, dict) else {}
     grant_tok = set_outside_grant(decision.grant)
     try:
-        return await execute_async(call.name, args)
+        return await asyncio.wait_for(execute_async(call.name, args), _TOOL_TIMEOUT)
+    except asyncio.TimeoutError:
+        _logger.warning("tool %s timed out after %ss (thread may continue)", call.name, _TOOL_TIMEOUT)
+        return f"Error: tool '{call.name}' timed out after {_TOOL_TIMEOUT:g}s"
     except Exception as exc:
         return f"Error: {exc}"
     finally:
@@ -783,6 +824,7 @@ async def run_turn(
                 yield steer_ev
             resp: LLMResponse | None = None
             streamed = False
+            reasoning_streamed = False
             metrics.mark_llm_round()
             before_len = len(messages)
             compressed = maybe_compress_messages(messages)
@@ -797,8 +839,13 @@ async def run_turn(
                     if piece["kind"] == "delta":
                         streamed = True
                         yield piece
+                    elif piece["kind"] == "thinking_delta":
+                        reasoning_streamed = True
+                        yield piece
                     elif piece["kind"] == "_response":
                         resp = piece["response"]
+                    else:
+                        yield piece
             except Exception as exc:
                 metrics.ended_kind = "error"
                 metrics.log_summary()
@@ -825,7 +872,10 @@ async def run_turn(
                 # Provider-native reasoning summary (e.g. Codex/Responses
                 # API reasoning.summary) — takes precedence over the
                 # pre-tool-call-commentary heuristic below when present.
-                yield {"kind": "thinking", "content": resp.reasoning}
+                thinking = {"kind": "thinking", "content": resp.reasoning}
+                if reasoning_streamed:
+                    thinking["replace_streamed"] = True
+                yield thinking
             elif resp.has_tool_calls and resp.content:
                 yield {"kind": "thinking", "content": resp.content}
 
@@ -891,6 +941,7 @@ async def run_turn(
                     skills_touched.append(sid.strip())
 
             # ── Loop detection: identical (tool, args) repeated too often ──
+            loop_nudge = None
             for _cid, call in paired:
                 sig = _call_signature(call)
                 call_window.append(sig)
@@ -902,16 +953,14 @@ async def run_turn(
                         call.name,
                         sig[:80],
                     )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[SYSTEM] You are repeating the same tool call "
-                                f"({call.name}) without progress. Stop calling "
-                                "tools and give a final answer now."
-                            ),
-                        }
-                    )
+                    loop_nudge = {
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM] You are repeating the same tool call "
+                            f"({call.name}) without progress. Stop calling "
+                            "tools and give a final answer now."
+                        ),
+                    }
 
             # ── Tool execution: gate serially, run auto-allowed RO in parallel ──
             delegate_calls = [
@@ -1121,13 +1170,18 @@ async def run_turn(
                     for idx, (cid, call) in enumerate(delegate_calls)
                 ]
                 finished = 0
-                while finished < parallel_total:
-                    kind, payload = await merge_q.get()
-                    if kind == "ev":
-                        yield payload
-                    else:
-                        finished += 1
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    while finished < parallel_total:
+                        kind, payload = await merge_q.get()
+                        if kind == "ev":
+                            yield payload
+                        else:
+                            finished += 1
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
                 for cid, _call in delegate_calls:
                     messages.append(
                         {
@@ -1162,6 +1216,8 @@ async def run_turn(
                         }
                     )
 
+            if loop_nudge is not None:
+                messages.append(loop_nudge)
             continue
 
         # Max iterations: force one final no-tools synthesis instead of hard error.
@@ -1192,6 +1248,8 @@ async def run_turn(
                     yield piece
                 elif piece["kind"] == "_response":
                     resp_final = piece["response"]
+                else:
+                    yield piece
             if resp_final is not None:
                 _record_response_usage(metrics, messages, resp_final)
                 content = (resp_final.content or "").strip()

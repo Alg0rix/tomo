@@ -74,6 +74,26 @@ def test_responses_tools_converts_function_schema() -> None:
 
 
 @pytest.mark.asyncio
+async def test_public_api_key_uses_responses_wire_format() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/responses"
+        assert request.headers["authorization"] == "Bearer sk-test"
+        body = json.loads(request.content)
+        assert body["store"] is False
+        assert body["reasoning"]["summary"] == "auto"
+        return httpx.Response(200, json={"id": "resp_1", "output": [
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}
+        ]})
+
+    client = CodexResponsesClient(base_url="https://api.openai.com/v1", access_token="sk-test",
+                                  model="gpt-5", transport=httpx.MockTransport(handler))
+    try:
+        assert (await client.complete([{"role": "user", "content": "hi"}])).content == "ok"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_complete_returns_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -278,6 +298,26 @@ async def test_complete_reasoning_is_none_when_absent() -> None:
     client = _client(httpx.MockTransport(handler))
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_stream_complete_exposes_reasoning_before_answer() -> None:
+    events = [
+        {"type": "response.reasoning_summary_text.delta", "delta": "Working "},
+        {"type": "response.reasoning_summary_text.delta", "delta": "it out."},
+        {"type": "response.output_item.done", "item": {"type": "reasoning", "id": "rs_1", "summary": [
+            {"type": "summary_text", "text": "Working it out."}]}},
+        {"type": "response.output_text.delta", "delta": "answer"},
+        {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
+    ]
+    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+        200, content=_sse(events), headers={"content-type": "text/event-stream"})))
+    try:
+        output = [ev async for ev in client.stream_complete([{"role": "user", "content": "hi"}])]
+        assert [ev["type"] for ev in output] == ["reasoning_delta", "reasoning_delta", "delta", "done"]
+        assert output[-1]["response"].reasoning == "Working it out."
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

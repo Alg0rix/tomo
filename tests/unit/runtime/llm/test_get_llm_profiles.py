@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.runtime.llm import OpenAICompatClient, get_llm
+from app.runtime.llm import CodexResponsesClient, OpenAICompatClient, get_llm
 from app.runtime.llm.openai_compat import LLMConfigError
 from app.services import store
 
@@ -20,6 +20,20 @@ def _rebind(tmp_path) -> None:
 
 def _profile(pid: str, base: str, model: str) -> dict:
     return {"id": pid, "name": pid, "base_url": base, "api_key": "sk-" + pid, "model": model}
+
+
+def test_public_openai_key_uses_responses_but_proxy_keeps_chat(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(_profile("openai", "https://api.openai.com/v1", "gpt-5"))
+    store.set_default_llm_profile("openai")
+    client = get_llm()
+    assert isinstance(client, CodexResponsesClient)
+    assert client._payload([{"role": "user", "content": "hi"}], None)["input"] == [
+        {"role": "user", "content": "hi"}
+    ]
+    store.create_llm_profile(_profile("proxy", "https://api.openai.com.proxy.test/v1", "gpt-5"))
+    store.set_default_llm_profile("proxy")
+    assert isinstance(get_llm(), OpenAICompatClient)
 
 
 def test_get_llm_uses_agent_profile_when_assigned(tmp_path) -> None:

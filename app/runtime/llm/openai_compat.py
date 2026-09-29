@@ -18,6 +18,7 @@ to ``{"_raw": ...}``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -365,6 +366,25 @@ def _hint_for_llm_error(text: str, status: int | None) -> str:
     return ""
 
 
+def stream_stale_seconds(model: str, effort: str | None = None) -> float:
+    name = model.lower().split("/")[-1]
+    floor = 180.0
+    if name.startswith(("o1", "o3", "gpt-5", "gpt-6")):
+        floor = 600.0
+    elif name.startswith(("o4", "deepseek-r1", "qwq")):
+        floor = 300.0
+    if effort in {"high", "deep", "xhigh"}:
+        floor = max(floor, 300.0)
+    return floor
+
+
+def llm_http_timeout(read: float, model: str, effort: str | None = None) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=30.0, read=max(read, stream_stale_seconds(model, effort)),
+        write=60.0, pool=30.0,
+    )
+
+
 def default_llm_timeout_seconds() -> float:
     """HTTP timeout for chat completions (long answers need headroom)."""
     try:
@@ -630,19 +650,20 @@ class OpenAICompatClient:
             float(timeout) if timeout is not None else default_llm_timeout_seconds()
         )
         self._transport = transport
+        self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
 
         http_client = None
         if transport is not None:
             http_client = httpx.AsyncClient(
-                transport=transport, timeout=self._timeout
+                transport=transport, timeout=self._http_timeout
             )
 
         self._client = openai.AsyncOpenAI(
             base_url=self._base_url,
             api_key=resolved_key,
-            timeout=self._timeout,
+            timeout=self._http_timeout,
             # Mock transport is deterministic; SDK retries just burn ~1s each.
-            max_retries=0 if transport is not None else 2,
+            max_retries=0,
             http_client=http_client,
         )
 
@@ -769,6 +790,7 @@ class OpenAICompatClient:
             payload["tools"] = tools
 
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_acc: dict[int, dict[str, str]] = {}
         next_auto_idx = 0
         seen_ids: set[str] = set()
@@ -778,6 +800,7 @@ class OpenAICompatClient:
         try:
             stream = await self._client.chat.completions.create(**payload)
             async for chunk in stream:
+                self._last_chunk_time = asyncio.get_running_loop().time()
                 # Usage often arrives on a trailing chunk with empty choices.
                 u_prompt, u_completion = parse_usage(getattr(chunk, "usage", None))
                 if u_prompt or u_completion:
@@ -785,6 +808,16 @@ class OpenAICompatClient:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
+                extra = getattr(delta, "model_extra", None) or {}
+                reasoning = (
+                    getattr(delta, "reasoning_content", None)
+                    or getattr(delta, "reasoning", None)
+                    or extra.get("reasoning_content")
+                    or extra.get("reasoning")
+                )
+                if isinstance(reasoning, str) and reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield {"type": "reasoning_delta", "content": reasoning}
 
                 piece = getattr(delta, "content", None)
                 if piece:
@@ -867,6 +900,7 @@ class OpenAICompatClient:
                 tool_calls=_parse_tool_calls(raw_tools),
                 prompt_tokens=prompt_tok,
                 completion_tokens=completion_tok,
+                reasoning="".join(reasoning_parts) or None,
             ),
         }
 

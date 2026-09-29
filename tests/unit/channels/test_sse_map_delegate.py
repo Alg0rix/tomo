@@ -46,6 +46,15 @@ def test_delegate_events_carry_delegate_call_id() -> None:
     assert entries[0]["params"]["delegate_call_id"] == "call_ops_a"
 
 
+def test_live_reasoning_and_wait_status_have_renderable_sse_events() -> None:
+    for kind, key, value in (("thinking_delta", "content", "checking"), ("status", "message", "reconnecting")):
+        chunks, entries, _ = map_loop_event(
+            {"kind": kind, key: value}, "main", "Main", 0, "turn-1"
+        )
+        assert _parse(chunks) == [(kind, {"agent_id": "main", "agent": "Main", key: value})]
+        assert entries == []
+
+
 def test_nested_thinking_stamps_delegate_call_id() -> None:
     chunks, entries, _ = map_loop_event(
         {

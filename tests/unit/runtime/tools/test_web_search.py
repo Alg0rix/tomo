@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from app.runtime.tools import web_search
 from app.runtime.tools.registry import execute, reset_registry
 
 
@@ -128,3 +129,28 @@ def test_web_search_falls_back_to_instant_answer() -> None:
         result = execute("web_search", {"query": "python"})
     assert "1. Python" in result
     assert "A programming language." in result
+
+
+def test_web_search_overall_timeout_unsticks_hung_request(monkeypatch) -> None:
+    """A request stuck below httpx timeouts (e.g. getaddrinfo) must not hang the tool."""
+    import time
+
+    monkeypatch.setattr(web_search, "_OVERALL_TIMEOUT", 0.5)
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+
+    def hang(*_a, **_k):
+        time.sleep(2)
+        return MagicMock()
+
+    mock_client.get.side_effect = hang
+
+    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+        t0 = time.monotonic()
+        result = execute("web_search", {"query": "python"})
+        elapsed = time.monotonic() - t0
+    assert result.startswith("Error")
+    assert "timed out" in result.lower()
+    assert elapsed < 1.5

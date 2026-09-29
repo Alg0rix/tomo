@@ -178,7 +178,7 @@ def _seed_agents(conn: sqlite3.Connection) -> None:
         (
             "main",
             "Tomo",
-            "Swarm coordinator — local work, routing, and delegate / @mention handoffs.",
+            "Primary agent — does work directly; delegates for tunnel/SSH hosts, explicit agent asks, or parallel swarm.",
             "",
             "coordinator",
             1,

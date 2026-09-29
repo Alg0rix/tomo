@@ -7,6 +7,7 @@ returns canned OpenAI-shaped JSON so we can verify the wire mapping
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -123,6 +124,54 @@ def test_parse_usage_openai_and_aliases() -> None:
     assert parse_usage({"prompt_tokens": 10, "completion_tokens": 20}) == (10, 20)
     assert parse_usage({"input_tokens": 3, "output_tokens": 7}) == (3, 7)
     assert parse_usage({"prompt_tokens": "bad"}) == (0, 0)
+
+
+async def test_compatible_provider_reasoning_delta_reaches_turn() -> None:
+    from app.runtime.agent.loop import run_turn
+
+    body = (
+        'data: {"choices":[{"delta":{"reasoning_content":"checking ","content":null}}]}\n\n'
+        'data: {"choices":[{"delta":{"reasoning":"facts","content":null}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"done"}}]}\n\n'
+        'data: [DONE]\n\n'
+    ).encode()
+    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+        200, content=body, headers={"content-type": "text/event-stream"})))
+    try:
+        events = [ev async for ev in run_turn("hi", llm=client, tools=[], enable_atg=False)]
+        assert [ev["content"] for ev in events if ev["kind"] == "thinking_delta"] == ["checking ", "facts"]
+        assert [ev["content"] for ev in events if ev["kind"] == "thinking"] == ["checking facts"]
+        assert next(ev for ev in events if ev["kind"] == "thinking")["replace_streamed"] is True
+        assert events[-1]["content"] == "done"
+    finally:
+        await client.aclose()
+
+
+async def test_stale_stream_aborts_and_reports_retry(monkeypatch) -> None:
+    from app.runtime.agent import loop
+
+    attempts = 0
+
+    class StalledStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{}}]}\n\n'
+            await asyncio.sleep(1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(200, stream=StalledStream(), headers={"content-type": "text/event-stream"})
+
+    monkeypatch.setattr(loop, "_stream_stale_seconds", lambda client: 0.04)
+    client = _client(httpx.MockTransport(handler))
+    try:
+        events = [ev async for ev in loop.run_turn("hi", llm=client, tools=[], enable_atg=False)]
+        assert attempts == 2
+        assert any(ev["kind"] == "status" and "reconnect" in ev["message"] for ev in events)
+        assert events[-1]["kind"] == "error"
+        assert "stale" in events[-1]["message"].lower()
+    finally:
+        await client.aclose()
 
 
 def test_missing_api_key_raises() -> None:

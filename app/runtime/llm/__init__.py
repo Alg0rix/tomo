@@ -8,6 +8,8 @@ path — tests inject :class:`MockLLMClient` into ``run_turn``.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from app.runtime.llm.base import LLMClient, LLMResponse, ToolCall
 from app.runtime.llm.codex_responses import CodexResponsesClient
 from app.runtime.llm.mock import MockLLMClient
@@ -51,6 +53,14 @@ def get_llm(
         )
     base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
+    if urlparse(base_url).hostname == "api.openai.com":
+        return CodexResponsesClient(
+            base_url=base_url,
+            access_token=profile.get("api_key") or "",
+            model=model,
+            reasoning_effort=effective_effort,
+            timeout=default_llm_timeout_seconds(),
+        )
     # OpenAICompatClient raises LLMConfigError when the API key is empty.
     return OpenAICompatClient(
         base_url=base_url,
