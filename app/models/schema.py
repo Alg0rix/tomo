@@ -354,6 +354,63 @@ CREATE TABLE IF NOT EXISTS swarm_notes (
 CREATE INDEX IF NOT EXISTS idx_swarm_notes_session
     ON swarm_notes(session_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS swarm_agents (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    purpose     TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    base_agent_id TEXT NOT NULL DEFAULT '',
+    context_summary TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL DEFAULT 0,
+    UNIQUE(session_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_agents_session ON swarm_agents(session_id);
+
+CREATE TABLE IF NOT EXISTS swarm_runs (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    request     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'running',
+    result      TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL DEFAULT 0,
+    updated_at  REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_runs_session ON swarm_runs(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS swarm_tasks (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL,
+    brief       TEXT NOT NULL,
+    depends_json TEXT NOT NULL DEFAULT '[]',
+    write_scope_json TEXT NOT NULL DEFAULT '[]',
+    tools_json TEXT NOT NULL DEFAULT '[]',
+    status      TEXT NOT NULL DEFAULT 'queued',
+    result      TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL DEFAULT 0,
+    updated_at  REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run ON swarm_tasks(run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS swarm_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+    task_id     TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at  REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_swarm_events_run ON swarm_events(run_id, id);
+
+CREATE TABLE IF NOT EXISTS swarm_proposals (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    request TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at REAL NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS execution_snippets (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL DEFAULT '',
@@ -506,6 +563,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     ``ALTER TABLE``.
     """
     conn.executescript(_SCHEMA)
+    swarm_task_cols = {r[1] for r in conn.execute("PRAGMA table_info(swarm_tasks)")}
+    if "tools_json" not in swarm_task_cols:
+        conn.execute("ALTER TABLE swarm_tasks ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]'")
     cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)")}
     if "role" not in cols:
         conn.execute("ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''")

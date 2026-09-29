@@ -85,7 +85,7 @@ class ChatMessageIn(BaseModel):
 class SessionCreate(BaseModel):
     """Create/update session membership.
 
-    Empty ``agent_ids`` means full swarm (all enabled agents).
+    Empty ``agent_ids`` selects the coordinator for a solo chat.
     ``workplace_id`` is the chat default workplace (prefer local).
     """
 
@@ -102,7 +102,7 @@ class SessionWorkplaceIn(BaseModel):
 
 
 class HomeSessionIn(BaseModel):
-    """Dashboard chat-home start — no agent picker; full swarm."""
+    """Dashboard chat-home start — solo coordinator chat."""
 
     message: str = ""
     user_id: str = "web"

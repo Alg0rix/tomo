@@ -28,7 +28,7 @@ def test_create_swarm_session_picks_super_coordinator(tmp_path) -> None:
     assert set(s["agent_ids"]) >= {"main", "ops", "coder", "research"}
     assert s["coordinator_id"] == "main"
     assert s["agent_id"] == "main"
-    assert s["title"] == "New swarm chat"
+    assert s["title"] == "New conversation"
 
 
 def test_create_swarm_session_requires_valid_agent(tmp_path) -> None:
@@ -231,4 +231,3 @@ def test_prune_empty_draft_sessions_keeps_messaged_and_cleared(tmp_path) -> None
     assert store.get_session(messaged) is not None
     assert store.get_session(cleared) is not None
     assert store.get_session(draft) is None
-

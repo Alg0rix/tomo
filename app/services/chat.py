@@ -225,7 +225,8 @@ def cancel_session_turn(session_id: str) -> bool:
 
 
 async def start_session_turn(
-    session_id: str, message: str, user_id: str, start_seq: int = 0, attachment_ids: list[str] | None = None
+    session_id: str, message: str, user_id: str, start_seq: int = 0,
+    attachment_ids: list[str] | None = None, execution_mode: str = "solo",
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
     """Start a background agent turn and return ``(turn, subscription_queue)``.
 
@@ -259,6 +260,7 @@ async def start_session_turn(
                     message,
                     start_seq,
                     attachment_ids=attachment_ids,
+                    execution_mode=execution_mode,
                     acquire_lock=False,
                 )
             ) as agen:

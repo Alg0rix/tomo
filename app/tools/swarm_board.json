@@ -1,0 +1,22 @@
+{
+  "id": "swarm_board",
+  "name": "Swarm board",
+  "description": "Share a finding or read messages during an explicitly requested multi-agent run.",
+  "backend": "app.runtime.tools.swarm_board.run",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "swarm_board",
+      "description": "Publish a finding, message another worker, or read the run board. Available only inside an active swarm task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["publish", "send", "read"]},
+          "content": {"type": "string"},
+          "to_agent_id": {"type": "string"}
+        },
+        "required": ["action"]
+      }
+    }
+  }
+}

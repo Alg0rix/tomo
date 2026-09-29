@@ -166,7 +166,16 @@ def map_loop_event(
     chunks: list[str] = []
     entries: list[dict[str, Any]] = []
 
-    if kind in {"thinking_delta", "status"}:
+    if kind == "swarm_event":
+        seq += 1
+        chunks.append(fmt_sse({"event": "swarm.event", "data": {
+            "run_id": ev.get("run_id"), "event_id": ev.get("event_id"),
+            "kind": ev.get("event"), "task_id": ev.get("task_id"),
+            **{k: v for k, v in ev.items() if k not in {
+                "kind", "run_id", "event_id", "event", "task_id",
+            }},
+        }, "seq": seq}))
+    elif kind in {"thinking_delta", "status"}:
         seq += 1
         data = {"agent_id": agent_id, "agent": agent_name}
         if kind == "thinking_delta":

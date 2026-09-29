@@ -3,8 +3,9 @@
 Discovers agentskills.io-style packages (directory containing ``SKILL.md`` with
 optional YAML frontmatter) from:
 
-1. ``$TOMO_HOME/library/skills`` — managed install target (read/write)
-2. External dirs from ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). When the
+1. ``<Tomo repo>/skills/internal`` — bundled, read-only skills
+2. ``$TOMO_HOME/library/skills`` — managed install target (read/write)
+3. External dirs from ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). When the
    env var is **unset**, defaults to:
 
    - ``~/.agents/skills``
@@ -48,7 +49,7 @@ class DiscoveredSkill:
     version: str
     path: Path  # directory containing SKILL.md
     skill_md: Path
-    source: str  # library | agents | agent | tomo | claude | external
+    source: str  # internal | library | agents | agent | tomo | claude | external
     body: str
 
 
@@ -147,6 +148,9 @@ def external_skill_roots() -> list[Path]:
 def skill_search_roots(home_root: Path | None = None) -> list[tuple[Path, str]]:
     """Ordered ``(dir, source_label)`` roots to scan."""
     roots: list[tuple[Path, str]] = []
+    from app.core.config import REPO_ROOT
+
+    roots.append((REPO_ROOT / "skills" / "internal", "internal"))
     lib = home.library_skills_dir(home_root)
     roots.append((lib, "library"))
     for ext in external_skill_roots():
@@ -226,7 +230,7 @@ def load_discovered_skill(
 
 
 def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
-    """Scan all roots; library wins on id collisions, then first external."""
+    """Scan all roots; bundled skills keep their IDs, then library wins."""
     by_id: dict[str, DiscoveredSkill] = {}
     for root, source in skill_search_roots(home_root):
         for skill_md in iter_skill_md_files(root):
@@ -236,7 +240,7 @@ def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
             existing = by_id.get(skill.id)
             if existing is None:
                 by_id[skill.id] = skill
-            elif existing.source != "library" and source == "library":
+            elif existing.source not in {"internal", "library"} and source == "library":
                 by_id[skill.id] = skill
     return sorted(by_id.values(), key=lambda s: s.name.lower())
 
@@ -426,7 +430,7 @@ def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str
     # Remove previously synced disk skills that disappeared (keep empty-path seeds).
     for row in conn.execute(
         "SELECT id, path, source FROM skills WHERE path != '' OR source IN "
-        "('library','agents','agent','tomo','claude','external')"
+        "('internal','library','agents','agent','tomo','claude','external')"
     ).fetchall():
         if row["id"] not in disk_ids and (row["path"] or row["source"]):
             # Don't delete if it's a pure catalog seed with no path

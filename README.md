@@ -18,7 +18,7 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 |------|------------------------|
 | **General first** | One platform for any task — automate workflows, answer questions, run commands, manage files. Specialize later with skills and agent roles |
 | **Agents that learn** | Memory, knowledge base, and a learning loop — after successful turns, a background review can distill skills/facts; agents also save mid-turn via tools |
-| **Swarm coordination** | Multiple specialized agents delegate to each other; the coordinator routes work without a single bottleneck |
+| **Swarm coordination** | Opt into a team per message. The coordinator creates session-local specialists or uses configured agents, schedules dependent tasks, shares findings, and combines results |
 | **Talk from anywhere** | Web UI today; Telegram bot available (token in Settings); WhatsApp planned |
 | **Reach any machine** | Workplaces over WebSocket tunnel, SSH, or local path jail — same tools everywhere |
 | **Easy to extend** | Tools = JSON schema + Python backend (register in the tool registry); skills are filesystem playbooks |
@@ -28,6 +28,8 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 ## Getting started
 
 Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
+
+Chats start with one agent. To use a team in a new or existing chat, turn on **Team** for the next message or ask for multiple agents in the message itself. Tomo may suggest a task split for an ordinary request; reply **gas** or **ya** to approve it. The bundled policy is a discoverable [SKILL.md](skills/internal/swarm/SKILL.md), alongside skills from `~/.agents/skills`. A team run can mix configured agents with specialists that exist only in that chat. The coordinator selects enabled tools for each task, including `bash` and `portal` where appropriate. The chat shows actual task progress instead of a generic swarm label.
 
 ### Install (Linux, systemd user)
 
@@ -432,7 +434,7 @@ The agent doesn't change underneath. You pick the interface; Tomo handles routin
 
 | Channel | Status | Notes |
 |---------|--------|-------|
-| **Web UI** | ✅ Alpha | Dashboard, swarm chat (SSE), agent studio |
+| **Web UI** | ✅ Alpha | Dashboard, chat with optional team runs (SSE), agent studio |
 | **Telegram** | ✅ Code shipped | Bot token in System → Channels; long-poll. Currently routes to the **coordinator**. E2e not fully verified. |
 | **WhatsApp** | 🔜 Planned | WhatsApp Web bridge |
 | **Discord / Slack** | 🔜 Planned | |

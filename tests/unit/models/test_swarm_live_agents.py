@@ -11,17 +11,17 @@ def _rebind(tmp_path: Path) -> None:
     store.rebind(tmp_path / "swarm_live.db")
 
 
-def test_new_agent_joins_existing_swarm_session(tmp_path: Path) -> None:
+def test_new_agent_does_not_join_existing_solo_session(tmp_path: Path) -> None:
     _rebind(tmp_path)
     sid = store.create_swarm_session([], user_id="web")
     before = set(store.get_session(sid)["agent_ids"])
     assert "main" in before
-    assert "ops" in before
+    assert "ops" not in before
 
     store.create_agent({"id": "netops", "name": "NetOps", "role": "network"})
     after = set(store.get_session(sid)["agent_ids"])
-    assert "netops" in after
-    assert before.issubset(after)
+    assert "netops" not in after
+    assert before == after
 
 
 def test_solo_session_does_not_auto_add_agents(tmp_path: Path) -> None:
@@ -35,7 +35,7 @@ def test_solo_session_does_not_auto_add_agents(tmp_path: Path) -> None:
     assert "netops" not in store.get_session(sid)["agent_ids"]
 
 
-def test_reenabled_agent_rejoins_swarm(tmp_path: Path) -> None:
+def test_reenabled_agent_does_not_join_solo_session(tmp_path: Path) -> None:
     _rebind(tmp_path)
     sid = store.create_swarm_session([], user_id="web")
     store.update_agent("research", {"enabled": False})
@@ -43,13 +43,12 @@ def test_reenabled_agent_rejoins_swarm(tmp_path: Path) -> None:
     assert "research" not in store.get_session(sid)["agent_ids"]
 
     store.update_agent("research", {"enabled": True})
-    assert "research" in store.get_session(sid)["agent_ids"]
+    assert "research" not in store.get_session(sid)["agent_ids"]
 
 
-def test_swarm_api_label_not_agent_count(tmp_path: Path) -> None:
-    """is_swarm true; agent_name is 'swarm' not a countable roster string."""
+def test_solo_session_has_no_swarm_label(tmp_path: Path) -> None:
     _rebind(tmp_path)
     sid = store.create_swarm_session([], user_id="web")
     s = store.get_session(sid)
-    assert s["is_swarm"] is True
-    assert len(s["agent_ids"]) >= 2
+    assert s["is_swarm"] is False
+    assert s["agent_ids"] == ["main"]

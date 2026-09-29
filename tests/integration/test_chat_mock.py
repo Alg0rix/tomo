@@ -248,11 +248,10 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     assert store.get_agent("main")["busy"] is False
 
 
-async def test_delegate_tool_runs_subagent_and_parent_continues(
+async def test_plain_turn_cannot_delegate_to_session_member(
     tmp_path, monkeypatch
 ) -> None:
-    """Coordinator ``delegate`` → subagent runs in-loop → output fed back as
-    tool result → parent *continues* to its own final answer."""
+    """A stored session roster does not authorize delegation on an ordinary turn."""
     from app.runtime.llm.base import LLMResponse, ToolCall
 
     store.rebind(tmp_path / "chat_delegate.db")
@@ -303,30 +302,15 @@ async def test_delegate_tool_runs_subagent_and_parent_continues(
 
     events = await _collect(sid, "please have ops check the disk")
 
-    assert "delegate" in _names(events)
-    handoff = _data(events, "delegate")[0]
-    assert handoff["from"] == "main"
-    assert handoff["to"] == "ops"
-    assert handoff.get("reason") in ("ops work", "delegate")
-
-    # The subagent's answer appears as deltas attributed to ops.
-    deltas = _data(events, "delta")
-    ops_deltas = [d for d in deltas if d.get("agent_id") == "ops"]
-    assert ops_deltas, "subagent deltas should be attributed to ops"
-    assert "disk" in "".join(d.get("content", "") for d in ops_deltas).lower()
-
-    # The parent continues and its final is the terminal ``done``.
+    assert "delegate" not in _names(events)
     dones = _data(events, "done")
-    assert dones, "expected at least one done event"
+    assert dones
     assert dones[-1]["agent_id"] == "main"
-    assert "disk" in (dones[-1].get("content") or "").lower() or "Ops" in (
-        dones[-1].get("content") or ""
-    )
+    assert not any(d.get("agent_id") == "ops" for d in _data(events, "delta"))
 
     history = store.get_session_history(sid)
     types = [h["type"] for h in history]
-    assert "delegate" in types
-    assert types.count("tool_call") >= 1
+    assert "delegate" not in types
     finals = [h for h in history if h["type"] == "final"]
     assert finals and finals[-1]["agent_id"] == "main"
     assert store.get_agent("main")["busy"] is False

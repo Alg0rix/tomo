@@ -199,8 +199,8 @@ def create_swarm_session(
 ) -> str:
     """Create a session.
 
-    Empty / omitted ``agent_ids`` means **full swarm** (all enabled agents).
-    Pass a single id for intentional one-agent chat.
+    Empty / omitted ``agent_ids`` starts a solo chat with the coordinator.
+    Multiple members permit explicit @mentions but do not activate swarm.
 
     ``workplace_id`` is the chat's default workplace (prefer **local** for
     folder context). Tunnel/SSH remain reachable via agents that own them
@@ -210,8 +210,7 @@ def create_swarm_session(
 
     raw = list(agent_ids) if agent_ids is not None else []
     if not raw:
-        # Empty list / omitted → full swarm (all enabled agents).
-        raw = list_enabled_agent_ids(conn)
+        raw = list_enabled_agent_ids(conn)[:1]
     ids = _valid_agent_ids(conn, raw)
     if not ids:
         raise ValueError("At least one valid agent is required")
@@ -234,7 +233,7 @@ def create_swarm_session(
             raise ValueError(f"Workplace not found: {wid}")
     sid = _new_sid()
     now = _now()
-    title = "New swarm chat" if len(ids) > 1 else "New conversation"
+    title = "New conversation"
     conn.execute(
         "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
         "workplace_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",

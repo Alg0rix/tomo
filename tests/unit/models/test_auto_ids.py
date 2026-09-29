@@ -34,14 +34,14 @@ def test_agent_create_without_id(tmp_path: Path) -> None:
     assert "research" in a["id"] or "bot" in a["id"]
 
 
-def test_new_agent_joins_existing_swarm_sessions(tmp_path: Path) -> None:
+def test_new_agent_does_not_join_existing_home_session(tmp_path: Path) -> None:
     _rebind(tmp_path)
     sid = store.create_home_session()["session_id"]
     before = set(store.get_session(sid)["agent_ids"])
     a = store.create_agent({"name": "New Hire", "role": "ops"})
     after = set(store.get_session(sid)["agent_ids"])
-    assert a["id"] in after
-    assert before.issubset(after)
+    assert a["id"] not in after
+    assert before == after
 
 
 def test_llm_profile_create_without_id(tmp_path: Path) -> None:

@@ -32,6 +32,7 @@ from app.services.chat import (
 class SessionChatStreamIn(BaseModel):
     message: str = ""
     attachment_ids: list[str] = Field(default_factory=list)
+    execution_mode: str = "solo"
 
 
 class SessionUIActionIn(BaseModel):
@@ -151,6 +152,8 @@ async def session_chat_stream_post(
     session = require_owned_session(request, session_id)
     message = (body.message or "").strip()
     attachment_ids = list(body.attachment_ids or [])
+    if body.execution_mode not in {"solo", "swarm"}:
+        raise HTTPException(status_code=400, detail="Invalid execution mode")
     if not message and not attachment_ids:
         raise HTTPException(status_code=400, detail="Message is required")
     uid = session_user_id(request)
@@ -173,6 +176,7 @@ async def session_chat_stream_post(
                 uid,
                 start_seq=0,
                 attachment_ids=attachment_ids,
+                execution_mode=body.execution_mode,
             )
         except SessionTurnBusy:
             yield busy

@@ -1,4 +1,4 @@
-"""API: POST /api/sessions/home creates a full-swarm session."""
+"""API: POST /api/sessions/home creates a solo session."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from app.main import app
 from app.services import store
 
 
-def test_post_sessions_home_full_swarm(tmp_path) -> None:
+def test_post_sessions_home_solo(tmp_path) -> None:
     store.rebind(tmp_path / "home-api.db")
     app.dependency_overrides[require_auth] = lambda: None
     try:
@@ -24,10 +24,8 @@ def test_post_sessions_home_full_swarm(tmp_path) -> None:
 
         session = store.get_session(body["session_id"])
         assert session is not None
-        enabled = store.list_enabled_agent_ids()
-        assert session["agent_ids"][0] == "main"
-        assert set(session["agent_ids"]) == set(enabled)
-        assert len(session["agent_ids"]) >= 2
+        assert session["agent_ids"] == ["main"]
+        assert session["is_swarm"] is False
         assert session["coordinator_id"] == "main"
     finally:
         app.dependency_overrides.pop(require_auth, None)

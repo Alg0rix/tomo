@@ -53,6 +53,7 @@ from app.runtime.tools import todo as _todo_backend
 from app.runtime.tools import web_fetch as _web_fetch_backend
 from app.runtime.tools import web_search as _web_search_backend
 from app.runtime.tools import write_file as _write_file_backend
+from app.runtime.tools import swarm_board as _swarm_board_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
@@ -96,6 +97,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "portal": _portal_backend.run,
     "memory": _memory_backend.run,
     "agent_info": _agent_info_backend.run,
+    "swarm_board": _swarm_board_backend.run,
 }
 
 
@@ -235,6 +237,9 @@ def is_mcp_tool_name(name: str) -> bool:
 
 async def execute_async(name: str, arguments: dict[str, Any]) -> str:
     """Dispatch async: MCP calls await the live session; built-ins run in a worker thread."""
+    denial = _swarm_board_backend.authorize(name, arguments)
+    if denial:
+        return denial
     if is_mcp_tool_name(name):
         from app.runtime.mcp import mcp_manager
 

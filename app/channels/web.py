@@ -20,6 +20,8 @@ from typing import Any, AsyncIterator
 from app.channels.sse_map import fmt_sse, map_loop_event, now, session_busy_sse
 from app.runtime.agent.loop import run_turn as _agent_run_turn
 from app.runtime.coordinator.router import parse_leading_mention, resolve_target
+from app.runtime.coordinator.swarm import run_swarm_turn
+from app.runtime.coordinator.swarm import advise_swarm
 from app.runtime.session_title import (
     first_user_and_final,
     generate_session_title,
@@ -234,6 +236,8 @@ async def _drain_agent_turn(
     busy_ids: set[str],
     token_acc: dict[str, int] | None = None,
     origin: str | None = None,
+    swarm_request: str | None = None,
+    swarm_plan: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str, int]]:
     """Run ``run_turn`` for ``agent_id``, mapping/persisting events.
 
@@ -254,18 +258,26 @@ async def _drain_agent_turn(
     if history is None:
         history = store.get_session_history(session_id)
 
-    async for ev in _agent_run_turn(
-        user_message,
-        history=history,
-        agent_id=agent_id,
-        session_id=session_id,
-        origin=origin,
-    ):
+    if swarm_request is not None:
+        source = run_swarm_turn(
+            swarm_request, history=history, session_id=session_id,
+            coordinator_id=agent_id, origin=origin, initial_plan=swarm_plan,
+        )
+    else:
+        solo_tools = [
+            schema for schema in store.get_agent_openai_tools(agent_id)
+            if schema.get("function", {}).get("name") != "delegate"
+        ]
+        source = _agent_run_turn(
+            user_message, history=history, agent_id=agent_id,
+            session_id=session_id, origin=origin, tools=solo_tools,
+        )
+    async for ev in source:
         _accumulate_turn_tokens(token_acc, ev)
         # Nested subagent events carry their own agent_id for attribution.
         ev_agent_id = ev.get("agent_id") or agent_id
         if ev_agent_id != agent_id:
-            ev_agent_name = _agent_label(ev_agent_id)
+            ev_agent_name = ev.get("agent_name") or _agent_label(ev_agent_id)
             if ev_agent_id not in busy_ids:
                 store.set_busy(ev_agent_id, True, session_id=session_id)
                 busy_ids.add(ev_agent_id)
@@ -358,6 +370,7 @@ async def stream_turn_sse(
     start_seq: int,
     attachment_ids: list[str] | None = None,
     *,
+    execution_mode: str = "solo",
     acquire_lock: bool = True,
     origin: str | None = None,
 ) -> AsyncIterator[str]:
@@ -485,6 +498,31 @@ async def stream_turn_sse(
 
         session = store.get_session(session_id) or {}
         member_ids, member_agents = _session_agents(session)
+        use_swarm = execution_mode == "swarm" or (message or "").strip().startswith("/swarm ")
+        swarm_request = (message or "").strip()[7:].strip() if (message or "").strip().startswith("/swarm ") else message
+        solo_request: str | None = None
+        approved_plan: dict[str, Any] | None = None
+        from app.models.mixins import swarm as swarm_store
+
+        pending = store.with_db(lambda conn: swarm_store.get_proposal(conn, session_id))
+        answer = (message or "").strip().casefold().strip(".! ")
+        if pending and answer in {"gas", "ya", "iya", "yes", "go", "go ahead", "lanjut", "setuju"}:
+            use_swarm = True
+            swarm_request = pending["request"]
+            approved_plan = pending["plan"]
+            store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
+        elif pending and answer in {"tidak", "nggak", "enggak", "no", "gak", "ga", "solo", "kerjakan sendiri"}:
+            solo_request = pending["request"]
+            use_swarm = False
+            store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
+        elif pending:
+            store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
+        # Membership controls direct @mentions; it is not an execution mode.
+        # A normal turn cannot silently delegate to the whole stored roster.
+        routable_ids, routable_agents = member_ids, member_agents
+        if not use_swarm:
+            member_ids = [coordinator_id]
+            member_agents = [a for a in member_agents if a.get("id") == coordinator_id]
         ctx_token = delegate_tool.bind_context(
             agent_ids=member_ids, agents=member_agents
         )
@@ -493,7 +531,7 @@ async def stream_turn_sse(
         force_target: str | None = None
         if mention:
             force_target = resolve_target(
-                agent_ids=member_ids, agents=member_agents, query=mention
+                agent_ids=routable_ids, agents=routable_agents, query=mention
             )
 
         # Workplace for this turn: message token wins, else session default.
@@ -596,6 +634,8 @@ async def stream_turn_sse(
             # File contents are expanded only when building the LLM prompt.
             clean = (message or "").strip()
             user_entry: dict = {"type": "user", "content": clean, "ts": now()}
+            if use_swarm:
+                user_entry["execution_mode"] = "swarm"
             if attachment_ids:
                 meta = attachment_meta_for_ids(attachment_ids)
                 user_entry["attachment_ids"] = list(attachment_ids)
@@ -621,6 +661,29 @@ async def stream_turn_sse(
                         "seq": seq,
                     }
                 )
+
+            if not use_swarm and not force_target and not solo_request and not attachment_ids and origin is None and not clean.startswith("/"):
+                advice = await advise_swarm(
+                    clean, session_id=session_id, coordinator_id=coordinator_id,
+                    history=_history_before_last_user(store.get_session_history(session_id)),
+                )
+                if advice:
+                    decision, plan, summary = advice
+                    if decision == "run":
+                        use_swarm, swarm_request, approved_plan = True, clean, plan
+                    else:
+                        store.with_db(lambda conn: swarm_store.set_proposal(
+                            conn, session_id, clean, plan, summary,
+                        ))
+                        chunks, entries, seq = map_loop_event(
+                            {"kind": "final", "content": summary}, coordinator_id,
+                            _agent_label(coordinator_id), seq, turn_id,
+                        )
+                        for entry in entries:
+                            store.append_session_history(session_id, entry)
+                        for chunk in chunks:
+                            yield chunk
+                        return
 
             if force_target:
                 logger.info(
@@ -670,13 +733,16 @@ async def stream_turn_sse(
                 async for chunk, seq in _drain_agent_turn(
                     session_id,
                     coordinator_id,
-                    user_message=None,
-                    history=store.get_session_history(session_id),
+                    user_message=solo_request,
+                    history=(_history_before_last_user(store.get_session_history(session_id))
+                             if solo_request else store.get_session_history(session_id)),
                     seq=seq,
                     turn_id=turn_id,
                     busy_ids=busy_ids,
                     token_acc=token_acc,
                     origin=origin,
+                    swarm_request=(swarm_request or clean) if use_swarm else None,
+                    swarm_plan=approved_plan,
                 ):
                     yield chunk
 

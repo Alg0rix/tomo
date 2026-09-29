@@ -25,6 +25,7 @@ from app.models.mixins import messages as messages_store
 from app.models.mixins import modules as modules_store
 from app.models.mixins import schedules as schedules_store
 from app.models.mixins import sessions as sessions_store
+from app.models.mixins import swarm as swarm_store
 from app.models.mixins import skills as skills_store
 from app.models.mixins import llm_profiles as llm_profiles_store
 from app.models.mixins import mcp as mcp_store
@@ -65,6 +66,7 @@ class Store:
         path = self._path if self._path is not None else DB_PATH
         self._conn = get_connection(path)
         migrate(self._conn)
+        swarm_store.interrupt_inflight(self._conn)
         seed_if_empty(self._conn)
         users_store.ensure_bootstrap_admin(self._conn, ADMIN_PASSWORD)
         # A persisted "connected" status is never trustworthy after a restart
@@ -166,19 +168,13 @@ class Store:
             return agents_store.list_enabled_agent_ids(self._conn)
 
     def create_home_session(self, user_id: str = "web") -> dict[str, Any]:
-        """Create a **full-swarm** session for the dashboard chat home.
-
-        All enabled agents are members so delegate works without picking a team.
-        Coordinator is the super agent (or first enabled). Raises ``ValueError``
-        when no enabled agent exists.
-        """
+        """Create a solo chat for the dashboard composer."""
         with self._lock:
             coord = agents_store.get_coordinator(self._conn, self._busy.ids())
             if not coord:
                 raise ValueError("No enabled coordinator agent available")
-            swarm = agents_store.list_enabled_agent_ids(self._conn)
             session_id = sessions_store.create_swarm_session(
-                self._conn, swarm, user_id, coord["id"]
+                self._conn, [coord["id"]], user_id, coord["id"]
             )
             return {
                 "session_id": session_id,
