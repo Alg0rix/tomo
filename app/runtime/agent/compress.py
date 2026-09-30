@@ -78,7 +78,7 @@ def maybe_compress_messages(
 ) -> list[dict[str, Any]]:
     """Return messages, possibly with older mid-conversation turns compressed.
 
-    Preserves the leading system message (if any) and the most recent
+    Preserves system messages and the most recent
     ``keep_recent`` messages. No-op when under the soft token budget.
     """
     if not messages or soft_limit_tokens <= 0:
@@ -119,7 +119,8 @@ def maybe_compress_messages(
         len(suffix),
         total,
     )
-    return [*system, summary, *suffix]
+    context = [m for m in prefix if m.get("role") == "system"]
+    return [*system, summary, *context, *suffix]
 
 
 __all__ = ["maybe_compress_messages"]

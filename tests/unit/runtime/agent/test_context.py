@@ -94,7 +94,7 @@ def test_prompt_clock_freeze_is_stable_within_turn(tmp_path: Path) -> None:
 def test_build_messages_stamps_time_on_custom_system_prompt() -> None:
     msgs = build_messages([], user_message="hi", system_prompt="Custom agent.")
     assert msgs[0]["role"] == "system"
-    assert "## Current time" in msgs[0]["content"]
+    assert "## Current time" in msgs[-2]["content"]
     assert "Custom agent." in msgs[0]["content"]
 
 
@@ -380,17 +380,16 @@ def test_build_messages_assembles_system_history_user(tmp_path: Path) -> None:
     msgs = build_messages(history, "now", system_prompt="be brief")
     assert msgs[0]["role"] == "system"
     assert msgs[0]["content"].startswith("be brief")
-    assert "## Current time" in msgs[0]["content"]
-    assert msgs[1:] == [
-        {"role": "user", "content": "earlier"},
-        {"role": "user", "content": "now"},
-    ]
+    assert "## Current time" in msgs[-2]["content"]
+    assert msgs[1] == {"role": "user", "content": "earlier"}
+    assert msgs[2]["role"] == "system"
+    assert msgs[3] == {"role": "user", "content": "now"}
 
 
 def test_build_messages_omits_user_message_when_none(tmp_path: Path) -> None:
     history = _hist(tmp_path, {"type": "user", "content": "earlier"}, db_name="build2.db")
     msgs = build_messages(history, None, system_prompt="s")
-    assert [m["role"] for m in msgs] == ["system", "user"]
+    assert [m["role"] for m in msgs] == ["system", "user", "system"]
 
 
 def test_build_messages_defaults_system_prompt() -> None:
@@ -398,6 +397,55 @@ def test_build_messages_defaults_system_prompt() -> None:
     assert msgs[0]["role"] == "system"
     assert msgs[0]["content"]  # non-empty default from defaults file
     assert msgs[-1] == {"role": "user", "content": "hi"}
+
+
+def test_turn_context_changes_leave_history_prefix_stable(monkeypatch) -> None:
+    from app.runtime.agent import context
+    from app.runtime.llm.codex_responses import _messages_to_responses_input
+
+    history = [{"type": "user", "content": "earlier"},
+               {"type": "final", "content": "previous answer"}]
+    monkeypatch.setattr("app.runtime.memory.retrieve.retrieve_for_turn",
+                        lambda *a, **kw: "## Retrieved memory\nfirst memory")
+    monkeypatch.setattr(context, "_current_time_section", lambda: "first clock")
+    first = build_messages(history, "next", system_prompt="stable instructions")
+    monkeypatch.setattr("app.runtime.memory.retrieve.retrieve_for_turn",
+                        lambda *a, **kw: "## Retrieved memory\nsecond memory")
+    monkeypatch.setattr(context, "_current_time_section", lambda: "second clock")
+    second = build_messages(history, "next", system_prompt="stable instructions")
+    assert first[:3] == second[:3]
+    assert "first memory" in first[3]["content"]
+    assert "second memory" in second[3]["content"]
+    first_instructions, first_items = _messages_to_responses_input(first)
+    second_instructions, second_items = _messages_to_responses_input(second)
+    assert first_instructions == second_instructions == "stable instructions"
+    assert first_items[:2] == second_items[:2]
+    assert first_items[2]["role"] == "system"
+    assert "first clock" in first_items[2]["content"]
+
+
+def test_refreshing_clock_preserves_appended_instructions() -> None:
+    from app.runtime.agent.context import inject_current_time
+
+    prompt = inject_current_time("base") + "\n\n## Delegation\nUse delegate."
+    refreshed = inject_current_time(prompt)
+    assert "## Delegation\nUse delegate." in refreshed
+    assert refreshed.count("## Current time") == 1
+    messages = build_messages([], "hi", system_prompt=prompt)
+    assert "Use delegate." in messages[0]["content"]
+    assert "## Current time" not in messages[0]["content"]
+
+
+def test_compression_preserves_turn_context() -> None:
+    from app.runtime.agent.compress import maybe_compress_messages
+
+    clock = {"role": "system", "content": "current clock and retrieved memory"}
+    messages = [{"role": "system", "content": "base"},
+                {"role": "user", "content": "old request"}, clock,
+                *[{"role": "user", "content": "followup " * 100} for _ in range(20)]]
+    compressed = maybe_compress_messages(messages, soft_limit_tokens=100, keep_recent=4)
+    assert len(compressed) < len(messages)
+    assert clock in compressed
 
 
 # --- unpaired / surplus tool pairing -----------------------------------

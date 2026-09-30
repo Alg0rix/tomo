@@ -33,6 +33,7 @@ dangling; surplus outputs beyond the number of calls are dropped.
 from __future__ import annotations
 
 import json
+import re
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -118,15 +119,20 @@ def inject_current_time(prompt: str | None) -> str:
     stamp never changes so system text stays stable for the whole turn.
     """
     block = _current_time_section()
-    text = (prompt or "").rstrip()
+    text = _without_current_time(prompt)
     if not text:
         return block
-    marker = f"\n\n{_CURRENT_TIME_HEADER}\n"
-    if marker in text:
-        text = text.rsplit(marker, 1)[0].rstrip()
-    elif text.startswith(f"{_CURRENT_TIME_HEADER}\n"):
-        return block
     return f"{text}\n\n{block}"
+
+
+def _without_current_time(prompt: str | None) -> str:
+    """Remove generated clock blocks without dropping later instructions."""
+    return re.sub(
+        r"(?m)^## Current time\nLocal: [^\n]*\nUTC: [^\n]*\n"
+        r"This stamp is fixed for this turn\.[^\n]*",
+        "",
+        prompt or "",
+    ).strip()
 
 
 def coordinator_system_prompt(path: Path | None = None) -> str:
@@ -974,14 +980,16 @@ def build_messages(
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for one agent turn.
 
-    Layout: ``[system] + history_to_messages(history) + [user]``. The new
+    Layout: ``[system] + history + [turn context] + [user]``. The clock and
+    retrieved memory follow history so they cannot invalidate its cached prefix.
+    The new
     ``user_message`` is appended only when provided — callers that persist
     the user entry into history first may pass ``user_message=None``.
 
     Pass ``for_agent_id`` so multi-agent history attributes specialist work
     (required for the coordinator to see Ops results correctly).
     When a user message is present, inject a compact retrieved-memory block
-    into the system prompt (Reuse step of the learning loop).
+    into the turn-context system message (Reuse step of the learning loop).
 
     ``vision_capable`` threads through to :func:`history_to_messages` — see
     there. Only affects history-derived user messages; a caller-supplied
@@ -989,6 +997,8 @@ def build_messages(
     the ``@mention`` handoff path, don't carry attachment ids at this layer).
     """
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
+    prompt = _without_current_time(prompt)
+    turn_context = [_current_time_section()]
     query = (user_message or "").strip()
     if not query and history:
         for entry in reversed(history):
@@ -1003,17 +1013,16 @@ def build_messages(
                 query, agent_id=for_agent_id, session_id=session_id
             )
             if block:
-                prompt = f"{prompt.rstrip()}\n\n{block}"
+                turn_context.append(block)
         except Exception:
             pass
-    # Always stamp a fresh clock (covers custom system_prompt callers too).
-    prompt = inject_current_time(prompt)
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
     messages.extend(
         history_to_messages(
             history, for_agent_id=for_agent_id, vision_capable=vision_capable
         )
     )
+    messages.append({"role": "system", "content": "\n\n".join(turn_context)})
     if user_message:
         messages.append({"role": "user", "content": user_message})
     return messages
