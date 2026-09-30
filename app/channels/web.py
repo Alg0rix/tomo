@@ -292,7 +292,7 @@ async def _drain_agent_turn(
 
         solo_tools = [
             schema for schema in store.get_agent_openai_tools(agent_id)
-            if schema.get("function", {}).get("name") not in {"delegate", "start_swarm"}
+            if schema.get("function", {}).get("name") != "start_swarm"
         ]
         if origin is None:
             solo_tools += get_openai_tools(["start_swarm"])
@@ -576,14 +576,13 @@ async def stream_turn_sse(
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
         elif pending:
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
-        # Membership controls direct @mentions; it is not an execution mode.
-        # A normal turn cannot silently delegate to the whole stored roster.
+        # Chat membership controls direct mentions, not the coordinator's
+        # ability to delegate. Resolve enabled destinations on every turn so
+        # existing single-agent chats can hand work to configured specialists.
         routable_ids, routable_agents = member_ids, member_agents
-        if not use_swarm:
-            member_ids = [coordinator_id]
-            member_agents = [a for a in member_agents if a.get("id") == coordinator_id]
+        delegate_agents = [a for a in store.list_agents() if a.get("enabled")]
         ctx_token = delegate_tool.bind_context(
-            agent_ids=member_ids, agents=member_agents
+            agent_ids=[a["id"] for a in delegate_agents], agents=delegate_agents
         )
 
         mention, mention_rest = parse_leading_mention(message)
@@ -700,8 +699,9 @@ async def stream_turn_sse(
                 )
                 if advice and advice[0] == "run":
                     use_swarm, swarm_request = True, clean
-                    # The runtime plans and validates workers after routing.
-                    approved_plan = None
+                    # Automatic selection already supplied a split; explicit
+                    # requests can route first and plan inside the runtime.
+                    approved_plan = advice[1] or None
             user_entry: dict = {"type": "user", "content": clean, "ts": now()}
             if use_swarm:
                 user_entry["execution_mode"] = "swarm"

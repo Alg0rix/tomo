@@ -249,10 +249,10 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     assert store.get_agent("main")["busy"] is False
 
 
-async def test_plain_turn_cannot_delegate_to_session_member(
+async def test_plain_turn_can_delegate_to_enabled_agent(
     tmp_path, monkeypatch
 ) -> None:
-    """A stored session roster does not authorize delegation on an ordinary turn."""
+    """An explicit request can delegate in the current chat without a mention."""
     from app.runtime.llm.base import LLMResponse, ToolCall
 
     store.rebind(tmp_path / "chat_delegate.db")
@@ -303,15 +303,15 @@ async def test_plain_turn_cannot_delegate_to_session_member(
 
     events = await _collect(sid, "please have ops check the disk")
 
-    assert "delegate" not in _names(events)
+    assert "delegate" in _names(events)
     dones = _data(events, "done")
     assert dones
     assert dones[-1]["agent_id"] == "main"
-    assert not any(d.get("agent_id") == "ops" for d in _data(events, "delta"))
+    assert any(d.get("agent_id") == "ops" for d in _data(events, "delta"))
 
     history = store.get_session_history(sid)
     types = [h["type"] for h in history]
-    assert "delegate" not in types
+    assert "delegate" in types
     finals = [h for h in history if h["type"] == "final"]
     assert finals and finals[-1]["agent_id"] == "main"
     assert store.get_agent("main")["busy"] is False

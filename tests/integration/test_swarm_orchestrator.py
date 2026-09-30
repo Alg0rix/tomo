@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import pytest
 
@@ -14,6 +15,56 @@ from app.runtime.llm.base import ToolCall
 from app.runtime.tools import swarm_board
 from app.services.chat import run_session_turn
 from app.services.store import store
+
+
+async def test_single_agent_chat_can_delegate_repeatedly_without_mentions(tmp_path, monkeypatch) -> None:
+    from tests.fakes.llm import ScriptedLLM, text_reply
+
+    store.rebind(tmp_path / "single_chat_delegate.db")
+    sid = store.get_or_create_session("main", "web")
+    store.update_agent("research", {"enabled": False})
+
+    async def no_swarm(*args, **kwargs):
+        return None
+
+    class MainLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            assert "delegate" in {s["function"]["name"] for s in tools}
+            return await super().complete(messages, tools)
+
+    def delegate_call(task):
+        return LLMResponse(content=None, tool_calls=[ToolCall(
+            id=task, name="delegate", arguments={"agent_id": "research", "reason": task},
+        )])
+
+    main = MainLLM([
+        text_reply("Hello"),
+        delegate_call("Check the supplied research sources"),
+        text_reply("First delegated result"),
+        delegate_call("Check the remaining research gap"),
+        text_reply("Second delegated result"),
+    ])
+    research = ScriptedLLM([text_reply("Sources checked"), text_reply("Gap checked")])
+    monkeypatch.setattr("app.channels.web.advise_swarm", no_swarm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm",
+                        lambda agent_id, **kwargs: research if agent_id == "research" else main)
+    async for _ in run_session_turn(sid, "Hello", "web", start_seq=0):
+        pass
+    # An agent enabled after the chat was created is routable next turn.
+    store.update_agent("research", {"enabled": True})
+    chunks = []
+    for request in ("Delegate source checking to Research", "Delegate the remaining gap to Research"):
+        chunks.extend([chunk async for chunk in run_session_turn(sid, request, "web", start_seq=0)])
+    assert sum(chunk.startswith("event: delegate\n") for chunk in chunks) == 2
+    history = store.get_session_history(sid)
+    calls = [e for e in history if e["type"] == "tool_call" and e["function"] == "delegate"]
+    assert len(calls) == 2
+    outputs = [e for e in history if e["type"] == "tool_output" and not e.get("error")]
+    assert any("Sources checked" in e["content"] for e in outputs)
+    assert any("Gap checked" in e["content"] for e in outputs)
+    assert store.get_session(sid)["agent_ids"] == ["main"]
+    assert store.with_db(lambda conn: swarm_store.list_runs(conn, sid)) == []
+    assert main.remaining == research.remaining == 0
 
 
 async def test_root_agent_can_start_real_workers_when_advisor_misses(tmp_path, monkeypatch) -> None:
@@ -41,7 +92,7 @@ async def test_root_agent_can_start_real_workers_when_advisor_misses(tmp_path, m
 
     main_llm = ScriptedLLM([
         LLMResponse(content=None, tool_calls=[
-            ToolCall(id="swarm", name="start_swarm", arguments={"request": request, "consent_quote": "bikin swarm"}),
+            ToolCall(id="swarm", name="start_swarm", arguments={"request": request}),
             ToolCall(id="skip", name="write_file", arguments={"path": "must-not-exist", "content": "oops"}),
         ]),
         text_reply("Combined architecture and tools findings"),
@@ -184,7 +235,7 @@ async def test_dynamic_workers_run_concurrently_then_synthesize(tmp_path, monkey
     assert {a["name"] for a in workers} == {"Reviewer A", "Reviewer B"}
 
 
-async def test_advisor_never_grants_consent(tmp_path, monkeypatch) -> None:
+async def test_advisor_selects_useful_independent_workers_without_chat_consent(tmp_path, monkeypatch) -> None:
     store.rebind(tmp_path / "advice.db")
     session_id = store.create_swarm_session(["main"], user_id="web")
 
@@ -200,8 +251,99 @@ async def test_advisor_never_grants_consent(tmp_path, monkeypatch) -> None:
         coordinator_id="main",
     )
     assert advice is not None
-    assert advice[0] == "propose"
+    assert advice[0] == "run"
+    assert len(advice[1]["tasks"]) == 2
     assert store.with_db(lambda conn: swarm_store.list_runs(conn, session_id)) == []
+
+
+async def test_automatic_split_dispatches_real_workers_without_chat_approval(tmp_path, monkeypatch) -> None:
+    from tests.fakes.llm import ScriptedLLM, text_reply
+
+    store.rebind(tmp_path / "automatic_swarm.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    request = "Investigate API correctness and UI accessibility separately"
+    plan = {"agents": [], "tasks": [
+        {"key": "api", "agent_id": "ops", "brief": "Review API correctness", "tools": []},
+        {"key": "ui", "agent_id": "research", "brief": "Review UI accessibility", "tools": []},
+    ]}
+
+    async def fake_plan(*args, **kwargs):
+        return {"decision": "run", **plan} if kwargs.get("advisory") else {}
+
+    clients = {"ops": ScriptedLLM([text_reply("API finding")]),
+               "research": ScriptedLLM([text_reply("UI finding")]),
+               "main": ScriptedLLM([text_reply("Combined findings")])}
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id, **kwargs: clients[agent_id])
+    chunks = [chunk async for chunk in run_session_turn(sid, request, "web", start_seq=0)]
+    runs = store.with_db(lambda conn: swarm_store.list_runs(conn, sid))
+    assert len(runs) == 1
+    assert runs[0]["status"] == "done"
+    assert runs[0]["result"] == "Combined findings"
+    tasks = store.with_db(lambda conn: swarm_store.list_tasks(conn, runs[0]["id"]))
+    assert len(tasks) == 2
+    assert all(task["status"] == "done" for task in tasks)
+    assert store.with_db(lambda conn: swarm_store.get_proposal(conn, sid)) is None
+    assert any("task_started" in chunk for chunk in chunks)
+    assert all(client.remaining == 0 for client in clients.values())
+
+
+async def test_clarify_answer_can_dispatch_without_another_chat_message(tmp_path, monkeypatch) -> None:
+    from app.runtime.permissions import hitl
+    from tests.fakes.llm import ScriptedLLM, text_reply
+
+    store.rebind(tmp_path / "clarify_dispatch.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    request = "Review the supplied evidence"
+
+    async def missed_intent(*args, **kwargs):
+        return None
+
+    async def fake_plan(*args, **kwargs):
+        if args[4]:
+            return {}
+        return {"agents": [], "tasks": [
+            {"key": "review", "agent_id": "research", "brief": "Review supplied evidence", "tools": []},
+        ]}
+
+    class MainLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            if self.remaining == 2:
+                answers = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+                assert any(a.get("user_response") == "Evidence and coverage" for a in answers)
+            return await super().complete(messages, tools)
+
+    main = MainLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="clarify", name="clarify", arguments={"question": "Which review criteria?",
+                                                      "choices": ["Evidence", "Evidence and coverage"]},
+        )]),
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="swarm", name="start_swarm",
+            arguments={"request": request + "; clarify answer: Evidence and coverage"},
+        )]),
+        text_reply("Reviewed evidence and coverage"),
+    ])
+    worker = ScriptedLLM([text_reply("Evidence finding")])
+    monkeypatch.setattr("app.channels.web.advise_swarm", missed_intent)
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm",
+                        lambda agent_id, **kwargs: worker if agent_id == "research" else main)
+    answered = False
+    async for chunk in run_session_turn(sid, request, "web", start_seq=0):
+        for line in chunk.splitlines():
+            if line.startswith("data:"):
+                payload = json.loads(line[5:])
+                if chunk.startswith("event: clarify_required\n"):
+                    hitl.resolve_clarify(payload["id"], "Evidence and coverage")
+                    answered = True
+    assert answered
+    runs = store.with_db(lambda conn: swarm_store.list_runs(conn, sid))
+    assert runs[0]["status"] == "done"
+    assert "clarify answer: Evidence and coverage" in runs[0]["request"]
+    assert runs[0]["result"] == "Reviewed evidence and coverage"
+    assert len([e for e in store.get_session_history(sid) if e["type"] == "user"]) == 1
+    assert main.remaining == worker.remaining == 0
 
 
 async def test_explicit_team_request_in_plain_chat_is_recognized(tmp_path, monkeypatch) -> None:
@@ -260,6 +402,81 @@ def test_invalid_plan_does_not_create_session_worker(tmp_path) -> None:
     assert swarm._accept_plan(plan, session_id=session_id, run_id=run_id,
                               coordinator_id="main", tasks={}) == []
     assert store.with_db(lambda conn: swarm_store.list_agents(conn, session_id)) == []
+
+
+@pytest.mark.parametrize("proposal", [
+    {},
+    {"decision": "solo", "agents": [], "tasks": []},
+    {"agents": [], "tasks": [{"key": "bad", "agent_id": "missing", "brief": "Review"}]},
+])
+async def test_dispatch_failure_never_falls_back_to_solo(tmp_path, monkeypatch, proposal) -> None:
+    store.rebind(tmp_path / "dispatch_failure.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    attempts = []
+
+    async def fake_plan(*args, **kwargs):
+        attempts.append(kwargs.get("planning_feedback"))
+        return proposal
+
+    async def unexpected_turn(*args, **kwargs):
+        pytest.fail("failed dispatch must not become a simulated solo answer")
+        yield
+
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr(swarm, "run_turn", unexpected_turn)
+    events = [ev async for ev in swarm.run_swarm_turn(
+        "Bikin swarm untuk review", session_id=sid, coordinator_id="main", history=[]
+    )]
+    assert len(attempts) == swarm.MAX_PLAN_CALLS
+    assert attempts[0] == ""
+    assert all(attempts[1:])
+    assert any(ev.get("kind") == "error" and "No workers were started" in ev["message"]
+               for ev in events)
+    assert events[-1]["event"] == "run_done"
+    assert events[-1]["status"] == "failed"
+    assert not any(ev.get("kind") == "final" for ev in events)
+    runs = store.with_db(lambda conn: swarm_store.list_runs(conn, sid))
+    assert runs[0]["status"] == "failed"
+    assert "valid worker plan" in runs[0]["result"]
+    assert store.with_db(lambda conn: swarm_store.list_tasks(conn, runs[0]["id"])) == []
+
+
+async def test_invalid_initial_plan_is_repaired_before_dispatch(tmp_path, monkeypatch) -> None:
+    from tests.fakes.llm import ScriptedLLM, text_reply
+
+    store.rebind(tmp_path / "dispatch_repair.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    calls = []
+    outputs = iter([
+        {"tasks": [{"key": "bad", "agent_id": "missing", "brief": "Review"}]},
+        {"agents": [{"name": "Reviewer", "purpose": "Review", "base_agent_id": "main"}],
+         "tasks": [{"key": "review", "agent_id": "Reviewer", "brief": "Inspect supplied evidence",
+                    "tools": []}]},
+        {},
+    ])
+
+    async def fake_plan(*args, **kwargs):
+        calls.append(kwargs.get("planning_feedback"))
+        return next(outputs)
+
+    llm = ScriptedLLM([text_reply("Verified evidence"), text_reply("Combined real worker result")])
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda *args, **kwargs: llm)
+    events = [ev async for ev in swarm.run_swarm_turn(
+        "Bikin swarm untuk review", session_id=sid, coordinator_id="main", history=[]
+    )]
+    assert calls[0] == ""
+    assert calls[1]
+    assert calls[2] == ""
+    assert any(ev.get("event") == "task_started" for ev in events)
+    assert events[-1]["status"] == "done"
+    runs = store.with_db(lambda conn: swarm_store.list_runs(conn, sid))
+    tasks = store.with_db(lambda conn: swarm_store.list_tasks(conn, runs[0]["id"]))
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["result"] == "Verified evidence"
+    assert runs[0]["result"] == "Combined real worker result"
+    assert llm.remaining == 0
 
 
 async def test_dependent_worker_waits_for_result(tmp_path, monkeypatch) -> None:

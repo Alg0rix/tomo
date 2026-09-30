@@ -5,11 +5,22 @@ def test_requires_root_chat_context():
     assert start_swarm.run({"request": "Research MCP", "consent_quote": "swarm"}).startswith("Error:")
 
 
-def test_requires_current_user_consent_quote():
+def test_handoff_without_separate_chat_consent():
     token = start_swarm.bind_context("Research MCP")
     try:
-        assert start_swarm.run({"request": "Research MCP", "consent_quote": "run a swarm"}).startswith("Error:")
-        assert start_swarm.run({"request": "Research MCP", "consent_quote": ""}).startswith("Error:")
+        assert start_swarm.run({"request": "Research MCP"}) == start_swarm.ACCEPTED
+        assert start_swarm.run({"request": "Research MCP", "consent_quote": ""}) == start_swarm.ACCEPTED
+        assert start_swarm.run({"request": "Research MCP; clarify answer: compare architecture and tools",
+                                "consent_quote": "Proceed with both"}) == start_swarm.ACCEPTED
+    finally:
+        start_swarm.reset_context(token)
+
+
+def test_handoff_requires_complete_task():
+    token = start_swarm.bind_context("Research MCP")
+    try:
+        for request in (None, "", "  ", 42):
+            assert start_swarm.run({"request": request}).startswith("Error:")
     finally:
         start_swarm.reset_context(token)
 

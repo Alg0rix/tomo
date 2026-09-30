@@ -1,9 +1,9 @@
-"""Delegate tool — hand a turn to another session member.
+"""Delegate tool — hand a task to an enabled configured peer.
 
-Membership is resolved against a process-local context bound by the web/loop
-layer before ``run_turn`` (session ``agent_ids`` + agent records). Without
-context, or when the target is not a member, returns an ``Error:`` string —
-never raises.
+Destinations are resolved against a process-local context bound by the
+web/loop layer before ``run_turn``. Web chat binds the live enabled roster
+independently of selected chat members. Without context, or when the target
+is outside the bound roster, returns an ``Error:`` string — never raises.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def bind_context(
     agent_ids: list[str],
     agents: list[dict[str, Any]],
 ) -> Token:
-    """Bind session membership for subsequent ``delegate`` tool calls."""
+    """Bind allowed destinations for subsequent ``delegate`` tool calls."""
     return _ctx.set({"agent_ids": list(agent_ids), "agents": list(agents)})
 
 
@@ -41,7 +41,7 @@ def reset_context(token: Token | None = None) -> None:
 
 
 def run(arguments: dict[str, Any]) -> str:
-    """Tool backend: resolve target within the bound session and confirm handoff."""
+    """Resolve the target within the bound roster and confirm handoff."""
     if not isinstance(arguments, dict):
         return "Error: delegate expects a dict of arguments"
 
@@ -61,7 +61,7 @@ def run(arguments: dict[str, Any]) -> str:
     if not target:
         return (
             f"Error: no enabled agent matches '{query.strip()}'. "
-            "Check the agent name/id (swarm sessions include all enabled agents)."
+            "Check the enabled agent roster and use its actual name/id."
         )
 
     return f"Delegated to {target}"

@@ -70,6 +70,7 @@ async def _plan(
     planner: Any = None,
     advisory: bool = False,
     history: list[dict[str, Any]] | None = None,
+    planning_feedback: str = "",
 ) -> dict[str, Any]:
     configured = [
         {"id": a["id"], "name": a["name"], "role": a.get("role") or "",
@@ -87,19 +88,28 @@ async def _plan(
     ]
     instruction = (
         _SKILL_PATH.read_text(encoding="utf-8") + "\n\n"
-        + ("Decide whether the user explicitly asked for a team (decision=run), "
-         "the task would benefit from a team but needs approval (decision=propose), "
-         "or a single agent should answer (decision=solo). Return empty tasks for solo. "
-         "Determine explicit user intent in any language using the Consent section of the skill. "
-         "For run, return only the decision and consent_quote; worker planning happens later. "
+        + ("Decide whether the user explicitly asked for a team or independent workers "
+         "clearly improve the requested task (decision=run), or a single agent should "
+         "answer (decision=solo). No separate approval is required. Respect a request "
+         "to work solo; questions about swarms, quotations, and negations do not "
+         "themselves request a team. Return empty tasks for solo. "
+         "A bounded handoff to one configured peer belongs in the normal chat's "
+         "delegate tool loop; choose solo for that unless a team was also requested. "
+         "For an explicit team request, return decision=run and an exact consent_quote "
+         "from the request; worker planning happens later. For automatic selection, "
+         "return at least two genuinely useful independent tasks and their agents. "
          "Missing worker assignments, audit scope questions, or unavailable specialists "
          "must not turn an explicit team request into solo. "
-         "For propose, require at least two genuinely useful independent tasks. "
-         if advisory else "You coordinate a user-requested agent swarm. ")
-        + "Return one JSON object only. For decision=run, consent_quote must be an exact "
-        "substring of the user's request that explicitly asks for multiple agents or a team. "
-        "Do not use run for a request that merely mentions agents as subject matter. "
-        'Shape: {"decision":"solo|propose|run","consent_quote":"...","agents":[{"name":"...","purpose":"...","instructions":"...",'
+         if advisory else
+         "You coordinate an already authorized agent swarm. Consent and routing are "
+         "complete; create actual worker tasks, not another consent decision. Before any "
+         "worker has been assigned, return at least one concrete task. Use session-local "
+         "workers based on an enabled template if no configured specialist fits. An empty "
+         "or invalid initial plan is a dispatch failure, not permission to answer solo. ")
+        + "Return one JSON object only. "
+        + ('Shape: {"decision":"solo|run","consent_quote":"optional explicit request quote",'
+           if advisory else 'Shape: {')
+        + '"agents":[{"name":"...","purpose":"...","instructions":"...",'
         '"base_agent_id":"..."}],"tasks":[{"key":"unique",'
         '"agent_id":"configured id OR session agent id OR new agent name",'
         '"brief":"precise objective, output format and boundary",'
@@ -117,7 +127,7 @@ async def _plan(
         "reading messages, and communicating with other workers. "
         "write_scope applies to file-edit tools; give relative paths for those tools. "
         "Use messages to steer running workers. "
-        "Return empty tasks when work is complete or one agent suffices. "
+        "Return empty tasks when existing worker results suffice to complete the work. "
         "Never invent an agent id outside the listed roster or new names."
     )
     payload = {
@@ -133,6 +143,7 @@ async def _plan(
             lambda conn: db.list_events(conn, run_id)
         ) if e["kind"] in {"finding", "message"}][-20:] if run_id else [],
         "remaining_task_budget": MAX_TASKS - len(tasks),
+        "planning_feedback": planning_feedback,
     }
     try:
         model = planner or get_llm(coordinator_id)
@@ -149,7 +160,7 @@ async def _plan(
 async def advise_swarm(request: str, *, session_id: str, coordinator_id: str,
                        planner: Any = None,
                        history: list[dict[str, Any]] | None = None) -> tuple[str, dict[str, Any], str] | None:
-    """Read the internal skill and draft a proposal, without starting workers."""
+    """Select a team for explicit requests or a useful independent task split."""
     if not request.strip():
         return None
     plan = await _plan(coordinator_id, request, session_id, "", {}, set(),
@@ -157,12 +168,10 @@ async def advise_swarm(request: str, *, session_id: str, coordinator_id: str,
     decision = str(plan.get("decision") or "solo")
     if decision not in {"run", "propose"}:
         return None
-    # Ground immediate execution in the user's own words. Otherwise even a
-    # model-produced "run" remains only a proposal.
+    # An explicit request routes before worker-plan validation. Automatic
+    # selection needs a concrete independent split, not just a run label.
     quote = str(plan.get("consent_quote") or "").strip()
-    if decision == "run" and (not quote or quote.casefold() not in request.casefold()):
-        decision = "propose"
-    if decision == "run":
+    if decision == "run" and quote and quote.casefold() in request.casefold():
         # Routing consent is independent of worker-plan validity. Planning is
         # done inside run_swarm_turn, where invalid assignments are rejected.
         return "run", {}, ""
@@ -175,11 +184,7 @@ async def advise_swarm(request: str, *, session_id: str, coordinator_id: str,
     if any(not isinstance(t, dict) or t.get("agent_id") not in known | names
            or not str(t.get("brief") or "").strip() for t in proposed):
         return None
-    lines = ["Aku bisa bagi ini ke beberapa agent:"]
-    for task in proposed[:4]:
-        lines.append(f"- {task['agent_id']}: {str(task['brief']).strip()[:180]}")
-    lines.append("Mau saya jalankan rencana ini? Balas **gas** atau **ya**. Kalau tidak, saya kerjakan sendiri.")
-    return decision, plan, "\n".join(lines)
+    return "run", plan, ""
 
 
 def _accept_plan(
@@ -412,6 +417,7 @@ async def run_swarm_turn(
     finished = False
     final_status = "done"
     board_cursor = 0
+    planning_feedback = ""
     coordinator = store.get_agent(coordinator_id) or {}
     yield _event(run_id, "run_started", {
         "request": request, "coordinator_id": coordinator_id,
@@ -429,9 +435,20 @@ async def run_swarm_turn(
                 else:
                     proposal = await _plan(coordinator_id, request, session_id, run_id,
                                            tasks, set(active), planner=planner,
-                                           history=history)
+                                           history=history, planning_feedback=planning_feedback)
                 accepted = _accept_plan(proposal, session_id=session_id, run_id=run_id,
                                         coordinator_id=coordinator_id, tasks=tasks)
+                if not tasks and not accepted:
+                    planning_feedback = (
+                        "No worker tasks were accepted. Return a non-empty worker plan. "
+                        "Use enabled roster IDs or declare session-local agents with valid "
+                        "base_agent_id values. Tasks need unique keys, non-empty briefs, "
+                        "valid acyclic dependencies, relative write scopes, and tools from "
+                        "the assigned template's enabled catalog. Do not choose solo."
+                    )
+                    need_plan = True
+                else:
+                    planning_feedback = ""
                 for task in accepted:
                     tasks[task["key"]] = task
                     yield _event(run_id, "task_created", {
@@ -466,6 +483,8 @@ async def run_swarm_turn(
                     run_id=run_id, dependencies=deps, events=events,
                 ))
             if not active:
+                if not tasks and need_plan and plan_calls < MAX_PLAN_CALLS:
+                    continue
                 if not any(t["status"] == "queued" for t in tasks.values()):
                     break
                 for task in tasks.values():
@@ -510,24 +529,18 @@ async def run_swarm_turn(
                 # Replan while siblings still work; don't wait for a batch barrier.
                 need_plan = True
                 continue
-        yield _event(run_id, "phase", {"phase": "synthesizing" if tasks else "solo"})
         if not tasks:
-            # Even explicit opt-in need not spawn anyone for a trivial request.
-            coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)
-                                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS]
-            # History ends with the user's message; if that was only an opt-in
-            # ("swarm"), answer the real request instead.
-            last_user = next((e for e in reversed(history or []) if e.get("type") == "user"), None)
-            prompt = None if last_user and str(last_user.get("content") or "").strip() == request.strip() else request
-            async for ev in run_turn(prompt, history=history, agent_id=coordinator_id,
-                                     session_id=session_id, origin=origin,
-                                     tools=coordinator_tools):
-                if ev.get("kind") == "final":
-                    store.with_db(lambda conn: db.update_run(conn, run_id, "done", ev.get("content") or ""))
-                elif ev.get("kind") == "error":
-                    final_status = "failed"
-                yield ev
+            message = (
+                "Swarm dispatch failed: the coordinator could not produce a valid worker "
+                f"plan after {plan_calls} planning attempts. No workers were started."
+            )
+            store.with_db(lambda conn: db.update_run(conn, run_id, "failed", message))
+            yield {"kind": "error", "message": message}
+            finished = True
+            yield _event(run_id, "run_done", {"status": "failed"})
+            return
         else:
+            yield _event(run_id, "phase", {"phase": "synthesizing"})
             board = [
                 {"task": t["brief"], "agent": t["agent_name"],
                  "status": t["status"], "result": str(t["result"])[:6000]}

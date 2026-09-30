@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "delegate",
-      "description": "Hand off to another session member. Use sparingly — only when (1) work is on a tunnel/SSH workplace owned by them and you cannot reach it, (2) the user asked for that agent or @mentioned them, or (3) you want a genuinely parallel swarm. For anything you can reach yourself — including local coding, ops, or research — do it yourself; a matching role is not a reason to delegate. After success the target runs immediately.",
+      "description": "Delegate a bounded task to an enabled configured agent by id or name. Available in a chat led by a single agent too: no @mention or new chat is required. Use for work owned by a remote workplace agent or when the user requests delegation, choosing a suitable enabled peer if they did not name one. For a multi-worker team use start_swarm. After success the target runs immediately and its result returns to you for synthesis.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -29,6 +29,5 @@
     }
   }
 }
-
 
 

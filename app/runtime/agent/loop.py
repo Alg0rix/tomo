@@ -758,17 +758,29 @@ async def run_turn(
             prompt = system_prompt
             if prompt is None:
                 prompt = build_system_prompt(agent_id, session_id=session_id)
+            if any(s.get("function", {}).get("name") == "delegate" for s in tool_schemas):
+                prompt += (
+                    "\n\n## Delegation for this turn\n"
+                    "The delegate tool is available. You can hand a bounded task to "
+                    "an enabled configured peer in the live roster, including in a chat "
+                    "that selected only you. No @mention, new chat, or separate chat "
+                    "approval is required. If the user asks to delegate without naming "
+                    "a target, choose a suitable enabled peer and provide the full brief. "
+                    "The peer's result returns to you for synthesis."
+                )
             if any(s.get("function", {}).get("name") == "start_swarm" for s in tool_schemas):
                 prompt += (
                     "\n\n## Swarm execution for this turn\n"
                     "The start_swarm tool is available. Read the swarm skill. "
-                    "If the user explicitly requests or approves a swarm/team, "
-                    "call start_swarm with the full task and exact current-user consent quote. "
+                    "If the user requests a swarm/team, or independent workers clearly "
+                    "improve the requested task, call start_swarm with the full task. "
                     "It transfers execution to the runtime, which starts real workers. "
                     "Use this even if older instructions describe swarm as delegate calls; "
                     "do not claim dispatch is unavailable or silently do the task solo. "
-                    "A mention, quotation, or negation is not consent. Ask before "
-                    "starting a team the user has not requested."
+                    "No separate chat approval or consent_quote is required. Use clarify "
+                    "only for material missing scope or preferences, and include its answer "
+                    "in the task. Respect a request to work solo. A question about swarms "
+                    "does not itself request a worker run."
                 )
             from app.runtime.llm.vision import agent_supports_vision
 

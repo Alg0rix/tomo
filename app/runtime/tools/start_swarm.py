@@ -1,4 +1,4 @@
-"""Validate a chat handoff; the web runtime owns actual swarm execution."""
+"""Validate a root chat handoff; the web runtime owns swarm execution."""
 
 from __future__ import annotations
 
@@ -27,9 +27,6 @@ def run(arguments: dict[str, Any]) -> str:
     if user_request is None or current_depth() > 0:
         return "Error: start_swarm is available only in the root chat turn"
     request = arguments.get("request")
-    quote = arguments.get("consent_quote")
     if not isinstance(request, str) or not request.strip():
         return "Error: provide the complete user task"
-    if not isinstance(quote, str) or not quote.strip() or quote.casefold() not in user_request.casefold():
-        return "Error: consent_quote must quote the current user's explicit request or approval; ask for approval if absent"
     return ACCEPTED

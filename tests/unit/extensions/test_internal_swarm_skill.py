@@ -9,4 +9,4 @@ def test_internal_swarm_skill_is_discoverable(tmp_path, monkeypatch) -> None:
     assert skill is not None
     assert skill.source == "internal"
     assert skill.skill_md.name == "SKILL.md"
-    assert "Never launch workers before an affirmative reply" in skill.body
+    assert skill.body
