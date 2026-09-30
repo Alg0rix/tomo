@@ -1,48 +1,106 @@
 /* memory.js — Memory page.
  *
- * One call to /api/memory/overview, then three linked views:
- *   list   — every remembered thing, grouped by type, filtered by search
- *   map    — the focused thing in the middle, what it links to around it,
- *            one more hop faintly behind; click to move the focus
- *   reader — its facts in plain text, where each came from, what mentions
- *            it, and a way to forget a fact that's wrong
- * plus a day-by-day timeline underneath.
+ * Two views over the vault:
+ *   Pages   — index of remembered things (filter by type, sort), a reader
+ *             for the focused page's facts with inline correction, and a
+ *             small connection map + link list beside it.
+ *   Journal — every turn as goal → outcome, newest day first, paged from
+ *             /api/memory/journal; an activity heatmap to jump through time
+ *             and filters for agent, page and not-yet-distilled days.
  */
 (function () {
   'use strict';
 
   var TYPES = ['person', 'project', 'tool', 'place', 'org', 'topic'];
-  var esc = function (s) { return window.Tomo && Tomo.escapeHtml ? Tomo.escapeHtml(s) : String(s == null ? '' : s); };
+  var ORIGINS = {
+    agent: { label: 'Saved by agent', c: 'var(--text-faint)' },
+    extraction: { label: 'Auto-extracted', c: 'var(--info)' },
+    consolidation: { label: 'Distilled from journal', c: 'var(--think)' },
+    user: { label: 'Edited by you', c: 'var(--ok)' },
+  };
+  var ICON = {
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    move: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>',
+    forget: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  };
+  var PAGE_DAYS = 10;
+  var DAY_PREVIEW = 6;
+
+  var esc = function (s) { return window.Tomo && Tomo.escapeHtml ? Tomo.escapeHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); };
   var root = document.getElementById('mem');
   if (!root) return;
+  var $ = function (id) { return document.getElementById(id); };
 
   var els = {
-    stats: document.getElementById('memStats'),
-    query: document.getElementById('memQuery'),
-    list: document.getElementById('memList'),
-    map: document.getElementById('memMap'),
-    svg: document.getElementById('memGraph'),
-    hint: document.getElementById('memMapHint'),
-    reader: document.getElementById('memReader'),
-    days: document.getElementById('memDays'),
-    empty: document.getElementById('memEmpty'),
-    body: root.querySelector('.mem-body'),
+    stats: $('memStats'), query: $('memQuery'),
+    tabs: root.querySelectorAll('.mem-tabs [role="tab"]'), pagesN: $('memTabPagesN'), journalN: $('memTabJournalN'),
+    pages: $('memPages'), journal: $('memJournal'), empty: $('memEmpty'),
+    types: $('memTypes'), sort: root.querySelector('.mem-sort'), list: $('memList'),
+    reader: $('memReader'), map: $('memMap'), svg: $('memGraph'), mapNote: $('memMapNote'), sideLinks: $('memSideLinks'),
+    heat: $('memHeat'), heatNote: $('memHeatNote'), filters: $('memFilters'), stream: $('memStream'),
   };
 
   var state = {
-    byKey: {},        // key -> entity
-    adj: {},          // key -> Set of neighbour keys (either direction)
-    out: {},          // key -> [keys it links to]
-    inc: {},          // key -> [keys linking to it]
-    timeline: [],
-    focus: null,
-    q: '',
-    pos: {},          // key -> {x, y} currently drawn
-    anim: 0,
+    view: 'pages',
+    byKey: {}, adj: {}, out: {}, inc: {},
+    activity: [], agents: [],
+    focus: null, q: '', type: '', sort: 'name',
+    pos: {}, anim: 0,
+    recent: {},
+    j: { days: [], next: null, loading: false, seq: 0, before: null, entity: '', agent: '', pending: false, loaded: false },
   };
 
-  function typeColor(t) {
-    return 'var(--mem-type-' + (TYPES.indexOf(t) >= 0 ? t : 'topic') + ')';
+  // ── Small helpers ─────────────────────────────────────────────────
+  function typeColor(t) { return 'var(--mem-type-' + (TYPES.indexOf(t) >= 0 ? t : 'topic') + ')'; }
+  // Busiest agent gets the first colour, so the common case stays stable.
+  var AGENT_COLORS = ['var(--accent)', 'var(--info)', 'var(--ok)', 'var(--think)', 'var(--danger)', 'var(--mem-type-topic)'];
+  function agentColor(id) {
+    var i = state.agents.map(function (a) { return a.id; }).indexOf(id);
+    return i < 0 ? 'var(--text-faint)' : AGENT_COLORS[i % AGENT_COLORS.length];
+  }
+  function words() { return state.q ? state.q.split(/\s+/).filter(Boolean) : []; }
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+  function activeFacts(e) { return (e.facts || []).filter(function (f) { return !f.superseded; }); }
+
+  function parseDay(d) { return new Date(d + 'T12:00:00'); }
+  function iso(dt) { return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'); }
+  var TODAY = iso(new Date());
+  function addDays(d, n) { var dt = parseDay(d); dt.setDate(dt.getDate() + n); return iso(dt); }
+  function relDay(d) {
+    if (!d) return '';
+    if (d === TODAY) return 'Today';
+    if (d === addDays(TODAY, -1)) return 'Yesterday';
+    return '';
+  }
+  function shortDay(d) {
+    if (!d) return '';
+    var dt = parseDay(d);
+    var opts = { day: 'numeric', month: 'short' };
+    if (dt.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return dt.toLocaleDateString(undefined, opts);
+  }
+  function longDay(d) {
+    var dt = parseDay(d);
+    var opts = { weekday: 'long', day: 'numeric', month: 'long' };
+    if (dt.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return dt.toLocaleDateString(undefined, opts);
+  }
+  function ago(d) {
+    if (!d) return '';
+    var r = relDay(d);
+    if (r) return r.toLowerCase();
+    var days = Math.round((parseDay(TODAY) - parseDay(d)) / 864e5);
+    return days < 14 ? days + 'd ago' : shortDay(d);
+  }
+
+  // Escape `raw`, wrapping search words in <mark>.
+  function marked(raw) {
+    var ws = words();
+    if (!ws.length) return esc(raw);
+    var re = new RegExp('(' + ws.map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')', 'gi');
+    return String(raw).split(re).map(function (part, i) { return i % 2 ? '<mark class="mem-hl">' + esc(part) + '</mark>' : esc(part); }).join('');
   }
 
   // ── Data ──────────────────────────────────────────────────────────
@@ -51,15 +109,20 @@
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         index(data);
-        var hasAny = Object.keys(state.byKey).length > 0;
+        state.recent = {};
+        var hasPages = Object.keys(state.byKey).length > 0;
+        var hasAny = hasPages || state.activity.length > 0;
         els.empty.hidden = hasAny;
-        els.body.hidden = !hasAny;
-        if (!hasAny) { renderStats(); renderDays(); return; }
-        if (!keepFocus || !state.byKey[state.focus]) state.focus = pickDefaultFocus();
+        root.querySelector('.mem-tabs').hidden = !hasAny;
+        if (!hasAny) { els.pages.hidden = true; els.journal.hidden = true; renderStats(); return; }
+        if (!keepFocus || !state.byKey[state.focus]) state.focus = hasPages ? pickDefaultFocus() : null;
         renderStats();
+        renderTypes();
         renderList();
-        renderDays();
-        focus(state.focus, { instant: true, noScroll: true });
+        renderHeat();
+        renderFilters();
+        if (state.focus) focus(state.focus, { instant: true, noScroll: true, noHash: true });
+        else renderReader();
       })
       .catch(function (err) {
         els.stats.textContent = 'Could not load memory (' + err.message + ').';
@@ -67,10 +130,7 @@
   }
 
   function index(data) {
-    state.byKey = {};
-    state.adj = {};
-    state.out = {};
-    state.inc = {};
+    state.byKey = {}; state.adj = {}; state.out = {}; state.inc = {};
     (data.entities || []).forEach(function (e) {
       state.byKey[e.key] = e;
       state.adj[e.key] = new Set();
@@ -84,17 +144,17 @@
       if (state.out[l.from].indexOf(l.to) < 0) state.out[l.from].push(l.to);
       if (state.inc[l.to].indexOf(l.from) < 0) state.inc[l.to].push(l.from);
     });
-    state.timeline = data.timeline || [];
+    state.activity = data.activity || [];
+    state.agents = data.agents || [];
   }
-
-  function activeFacts(e) { return (e.facts || []).filter(function (f) { return !f.superseded; }); }
 
   function pickDefaultFocus() {
     var keys = Object.keys(state.byKey);
-    // Start where the most threads meet — the richest view on first load.
+    // Start on whatever's been talked about most lately.
     keys.sort(function (a, b) {
-      return state.adj[b].size - state.adj[a].size ||
-        activeFacts(state.byKey[b]).length - activeFacts(state.byKey[a]).length;
+      var ea = state.byKey[a], eb = state.byKey[b];
+      return (eb.last_seen || '').localeCompare(ea.last_seen || '') || (eb.mentions || 0) - (ea.mentions || 0) ||
+        state.adj[b].size - state.adj[a].size;
     });
     return keys[0];
   }
@@ -116,100 +176,149 @@
     var re = /\[\[([^\]]+)\]\]/g;
     var last = 0;
     var m;
+    text = String(text || '');
     while ((m = re.exec(text))) {
-      out += esc(text.slice(last, m.index));
+      out += marked(text.slice(last, m.index));
       var link = resolveLink(m[1].split('#')[0]);
       if (link && link.kind === 'entity') {
-        out += '<button type="button" class="mem-link" data-focus="' + esc(link.key) + '">' + esc(state.byKey[link.key].title) + '</button>';
+        var e = state.byKey[link.key];
+        out += '<button type="button" class="mem-link" style="--c:' + typeColor(e.type) + '" data-focus="' + esc(link.key) + '" title="Open ' + esc(e.title) + '">' + marked(e.title) + '</button>';
       } else if (link && link.kind === 'day') {
-        out += '<button type="button" class="mem-link is-day" data-day="' + esc(link.date) + '">' + esc(link.date) + '</button>';
+        out += '<button type="button" class="mem-link is-day" data-day="' + esc(link.date) + '">' + esc(shortDay(link.date)) + '</button>';
       } else {
-        out += esc(m[1]);
+        out += marked(m[1].split('/').pop());
       }
       last = re.lastIndex;
     }
-    return out + esc(text.slice(last));
+    return out + marked(text.slice(last));
   }
 
-  // ── Stats + list ──────────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────
   function renderStats() {
     var keys = Object.keys(state.byKey);
-    if (!keys.length) { els.stats.textContent = 'Nothing remembered yet.'; return; }
+    var turns = state.activity.reduce(function (n, d) { return n + d.turns; }, 0);
+    if (!keys.length && !turns) { els.stats.textContent = 'Nothing remembered yet.'; return; }
     var facts = 0;
-    var latest = '';
-    keys.forEach(function (k) {
-      facts += activeFacts(state.byKey[k]).length;
-      if (state.byKey[k].updated > latest) latest = state.byKey[k].updated;
-    });
+    keys.forEach(function (k) { facts += activeFacts(state.byKey[k]).length; });
     var links = keys.reduce(function (n, k) { return n + state.out[k].length; }, 0);
-    els.stats.textContent = keys.length + ' things · ' + facts + ' facts · ' + links + ' connections' +
-      (latest ? ' · last updated ' + latest : '');
+    els.stats.innerHTML = '<b>' + keys.length + '</b> pages · <b>' + facts + '</b> facts · <b>' + links + '</b> links · <b>' +
+      turns + '</b> turns over <b>' + state.activity.length + '</b> days';
+    els.pagesN.textContent = keys.length;
+    els.journalN.textContent = turns;
   }
 
+  function setView(view, opts) {
+    opts = opts || {};
+    state.view = view;
+    root.dataset.view = view;
+    els.tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.view === view)); });
+    els.pages.hidden = view !== 'pages';
+    els.journal.hidden = view !== 'journal';
+    els.query.placeholder = view === 'pages' ? 'Search pages' : 'Search journal';
+    if (view === 'journal') {
+      if (!state.j.loaded || opts.reload) loadJournal(true);
+    } else {
+      renderList();
+      drawMap({ instant: true });
+    }
+    if (!opts.noHash) writeHash();
+  }
+
+  function writeHash() {
+    var h = state.view === 'journal' ? 'journal' + (state.j.entity ? '/' + state.j.entity : '') : (state.focus || '');
+    if (history.replaceState) history.replaceState(null, '', h ? '#' + h : location.pathname);
+  }
+
+  // ── Pages · index ─────────────────────────────────────────────────
   function matches(e, q) {
     if (!q) return true;
-    var hay = (e.title + ' ' + (e.aliases || []).join(' ') + ' ' + activeFacts(e).map(function (f) { return f.text; }).join(' ')).toLowerCase();
+    var hay = (e.title + ' ' + e.key + ' ' + (e.aliases || []).join(' ') + ' ' + activeFacts(e).map(function (f) { return f.text; }).join(' ')).toLowerCase();
     return q.split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; });
   }
 
-  function highlight(title, q) {
-    if (!q) return esc(title);
-    var i = title.toLowerCase().indexOf(q.split(/\s+/)[0]);
-    if (i < 0) return esc(title);
-    var n = q.split(/\s+/)[0].length;
-    return esc(title.slice(0, i)) + '<mark>' + esc(title.slice(i, i + n)) + '</mark>' + esc(title.slice(i + n));
+  function allTypes() {
+    var extra = [];
+    Object.keys(state.byKey).forEach(function (k) {
+      var t = state.byKey[k].type;
+      if (TYPES.indexOf(t) < 0 && extra.indexOf(t) < 0) extra.push(t);
+    });
+    return TYPES.concat(extra);
+  }
+
+  function renderTypes() {
+    var counts = {};
+    Object.keys(state.byKey).forEach(function (k) { counts[state.byKey[k].type] = (counts[state.byKey[k].type] || 0) + 1; });
+    var html = '<button type="button" data-type="" aria-pressed="' + (!state.type) + '">All <small>' + Object.keys(state.byKey).length + '</small></button>';
+    allTypes().forEach(function (t) {
+      if (!counts[t]) return;
+      html += '<button type="button" data-type="' + esc(t) + '" aria-pressed="' + (state.type === t) + '"><i class="mem-dot" style="--c:' + typeColor(t) + '"></i>' + esc(t) + ' <small>' + counts[t] + '</small></button>';
+    });
+    els.types.innerHTML = html;
+  }
+
+  function itemHtml(k, sub) {
+    var e = state.byKey[k];
+    var n = activeFacts(e).length;
+    return '<button type="button" class="mem-item" data-focus="' + esc(k) + '"' + (k === state.focus ? ' aria-current="true"' : '') + '>' +
+      '<i class="mem-dot" style="--c:' + typeColor(e.type) + '"></i><b>' + marked(e.title) + '</b>' +
+      '<small title="' + plural(n, 'fact') + '">' + n + '</small>' + (sub ? '<em>' + sub + '</em>' : '') + '</button>';
+  }
+
+  function visibleKeys() {
+    var q = state.q;
+    return Object.keys(state.byKey).filter(function (k) {
+      var e = state.byKey[k];
+      return (!state.type || e.type === state.type) && matches(e, q);
+    });
   }
 
   function renderList() {
-    var q = state.q;
+    var keys = visibleKeys();
     var html = '';
-    var shown = 0;
-    TYPES.concat(Object.keys(state.byKey).map(function (k) { return state.byKey[k].type; })
-      .filter(function (t, i, a) { return TYPES.indexOf(t) < 0 && a.indexOf(t) === i; }))
-      .forEach(function (t) {
-        var items = Object.keys(state.byKey).filter(function (k) {
-          return state.byKey[k].type === t && matches(state.byKey[k], q);
-        }).sort(function (a, b) { return state.byKey[a].title.localeCompare(state.byKey[b].title); });
+    if (state.sort === 'name') {
+      allTypes().forEach(function (t) {
+        var items = keys.filter(function (k) { return state.byKey[k].type === t; })
+          .sort(function (a, b) { return state.byKey[a].title.localeCompare(state.byKey[b].title); });
         if (!items.length) return;
-        shown += items.length;
-        html += '<div class="mem-group"><div class="mem-group-head"><i style="background:' + typeColor(t) + '"></i>' +
-          esc(t) + '<span>' + items.length + '</span></div>' +
-          items.map(function (k) {
-            var e = state.byKey[k];
-            return '<button type="button" class="mem-item" data-focus="' + esc(k) + '"' +
-              (k === state.focus ? ' aria-current="true"' : '') + '><b>' + highlight(e.title, q) + '</b><small>' +
-              activeFacts(e).length + '</small></button>';
-          }).join('') + '</div>';
+        html += '<div class="mem-group"><div class="mem-group-head"><i class="mem-dot" style="--c:' + typeColor(t) + '"></i>' + esc(t) + '<span>' + items.length + '</span></div>' +
+          items.map(function (k) { return itemHtml(k); }).join('') + '</div>';
       });
-    els.list.innerHTML = html || '<div class="mem-list-empty">No match for “' + esc(q) + '”.</div>';
-    return shown;
+    } else {
+      var by = state.sort === 'recent'
+        ? function (a, b) { return (state.byKey[b].last_seen || state.byKey[b].updated || '').localeCompare(state.byKey[a].last_seen || state.byKey[a].updated || ''); }
+        : function (a, b) { return (state.byKey[b].mentions || 0) - (state.byKey[a].mentions || 0); };
+      html = keys.sort(function (a, b) { return by(a, b) || state.byKey[a].title.localeCompare(state.byKey[b].title); }).map(function (k) {
+        var e = state.byKey[k];
+        var sub = state.sort === 'recent'
+          ? (e.last_seen ? 'mentioned ' + ago(e.last_seen) : e.updated ? 'updated ' + ago(e.updated) : 'no activity')
+          : (e.mentions ? plural(e.mentions, 'mention') + ' in journal' : 'not in journal');
+        return itemHtml(k, esc(sub));
+      }).join('');
+    }
+    els.list.innerHTML = html || '<div class="mem-list-empty">No page matches' + (state.q ? ' “' + esc(state.q) + '”' : '') + '.' +
+      (state.q ? '<br><button type="button" class="mem-textbtn" data-goto-journal>Search the journal instead →</button>' : '') + '</div>';
+    return keys.length;
   }
 
-  // ── Map ───────────────────────────────────────────────────────────
+  // ── Pages · map (focus + neighbours + a faint second ring) ────────
   var SVGNS = 'http://www.w3.org/2000/svg';
 
   function layout(focusKey, w, h) {
-    var cx = w / 2;
-    var cy = h / 2;
+    var cx = w / 2, cy = h / 2;
     var r1 = Math.min(w, h) * 0.30;
-    var r2 = Math.min(w, h) * 0.46;
-    var pos = {};
-    var roles = {};
+    var r2 = Math.min(w, h) * 0.45;
+    var pos = {}, roles = {}, angleOf = {};
     pos[focusKey] = { x: cx, y: cy };
     roles[focusKey] = 'focus';
     var near = Array.from(state.adj[focusKey] || []).sort(function (a, b) {
-      var ta = TYPES.indexOf(state.byKey[a].type);
-      var tb = TYPES.indexOf(state.byKey[b].type);
-      return ta - tb || a.localeCompare(b);
-    });
-    var angleOf = {};
+      return TYPES.indexOf(state.byKey[a].type) - TYPES.indexOf(state.byKey[b].type) || a.localeCompare(b);
+    }).slice(0, 12);
     near.forEach(function (k, i) {
       var a = -Math.PI / 2 + (i / Math.max(1, near.length)) * Math.PI * 2;
       angleOf[k] = a;
       pos[k] = { x: cx + Math.cos(a) * r1, y: cy + Math.sin(a) * r1 };
       roles[k] = 'near';
     });
-    // Second hop: fan out behind the neighbour that leads to it.
     var far = [];
     near.forEach(function (k) {
       Array.from(state.adj[k]).sort().forEach(function (k2) {
@@ -217,12 +326,12 @@
         far.push({ key: k2, via: k });
       });
     });
-    far = far.slice(0, 14);
+    far = far.slice(0, 10);
     var perParent = {};
     far.forEach(function (f) { (perParent[f.via] = perParent[f.via] || []).push(f.key); });
     Object.keys(perParent).forEach(function (via) {
       var kids = perParent[via];
-      var spread = Math.min(0.9, 0.32 * kids.length);
+      var spread = Math.min(0.8, 0.3 * kids.length);
       kids.forEach(function (k2, i) {
         var off = kids.length === 1 ? 0 : -spread / 2 + (i / (kids.length - 1)) * spread;
         var a = angleOf[via] + off;
@@ -230,22 +339,12 @@
         roles[k2] = 'far';
       });
     });
-    // Nothing linked yet: show unrelated things faintly so the map isn't empty.
-    if (!near.length) {
-      var rest = Object.keys(state.byKey).filter(function (k) { return k !== focusKey; }).slice(0, 10);
-      rest.forEach(function (k, i) {
-        var a = -Math.PI / 2 + (i / Math.max(1, rest.length)) * Math.PI * 2;
-        pos[k] = { x: cx + Math.cos(a) * r2, y: cy + Math.sin(a) * r2 };
-        roles[k] = 'far';
-      });
-    }
-    return { pos: pos, roles: roles, near: near.length, far: far.length };
+    return { pos: pos, roles: roles, near: near.length, r1: r1 };
   }
 
   function nodeRadius(k, role) {
     var n = activeFacts(state.byKey[k]).length;
-    var base = role === 'focus' ? 14 : role === 'near' ? 8 : 5;
-    return base + Math.min(8, n * (role === 'focus' ? 1.2 : 0.8));
+    return role === 'focus' ? 11 + Math.min(5, n * 0.8) : role === 'near' ? 6 + Math.min(4, n * 0.6) : 4;
   }
 
   function ensureNode(k) {
@@ -258,11 +357,8 @@
     g.setAttribute('tabindex', '0');
     g.setAttribute('role', 'button');
     g.setAttribute('aria-label', e.title + ', ' + e.type);
-    g.innerHTML =
-      '<circle class="ring"></circle><circle class="core"></circle>' +
-      '<text class="label" text-anchor="middle"></text><text class="sub" text-anchor="middle"></text>';
-    g.querySelector('.label').textContent = e.title;
-    g.querySelector('.sub').textContent = e.type;
+    g.innerHTML = '<circle class="ring"></circle><circle class="core"></circle><text class="label" text-anchor="middle"></text>';
+    g.querySelector('.label').textContent = e.title.length > 18 ? e.title.slice(0, 17) + '…' : e.title;
     g.addEventListener('click', function () { focus(k); });
     g.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); focus(k); }
@@ -273,15 +369,14 @@
 
   function drawMap(opts) {
     opts = opts || {};
+    if (!state.focus || els.pages.hidden || !els.map.offsetParent) return;
     var rect = els.map.getBoundingClientRect();
-    var w = Math.max(320, rect.width);
-    var h = Math.max(320, rect.height);
+    var w = Math.max(200, rect.width), h = Math.max(200, rect.height);
     els.svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
     var L = layout(state.focus, w, h);
     var keys = Object.keys(L.pos);
     var q = state.q;
 
-    // Remove nodes that left the view.
     els.svg.querySelectorAll('g.mem-node').forEach(function (g) {
       if (!L.pos[g.getAttribute('data-key')]) g.remove();
     });
@@ -291,66 +386,49 @@
       orbits.setAttribute('class', 'orbits');
       els.svg.insertBefore(orbits, els.svg.firstChild);
     }
-    var ocx = w / 2, ocy = h / 2, om = Math.min(w, h);
-    orbits.innerHTML =
-      '<circle class="mem-orbit" cx="' + ocx + '" cy="' + ocy + '" r="' + (om * 0.30).toFixed(1) + '"/>' +
-      '<circle class="mem-orbit is-far" cx="' + ocx + '" cy="' + ocy + '" r="' + (om * 0.46).toFixed(1) + '"/>';
+    orbits.innerHTML = L.near ? '<circle class="mem-orbit" cx="' + (w / 2) + '" cy="' + (h / 2) + '" r="' + L.r1.toFixed(1) + '"/>' : '';
     var edgeLayer = els.svg.querySelector('g.edges');
     if (!edgeLayer) {
       edgeLayer = document.createElementNS(SVGNS, 'g');
       edgeLayer.setAttribute('class', 'edges');
-      els.svg.insertBefore(edgeLayer, els.svg.firstChild);
+      orbits.after(edgeLayer);
     }
 
     var from = {};
     keys.forEach(function (k) {
-      from[k] = state.pos[k] || (state.pos[state.focus] ? { x: state.pos[state.focus].x, y: state.pos[state.focus].y } : L.pos[k]);
+      var fp = state.pos[state.focus];
+      from[k] = state.pos[k] || (fp ? { x: fp.x, y: fp.y } : L.pos[k]);
       var g = ensureNode(k);
       var role = L.roles[k];
       var r = nodeRadius(k, role);
       var e = state.byKey[k];
       g.setAttribute('class', 'mem-node is-' + role + (q && !matches(e, q) ? ' is-dim' : ''));
-      var core = g.querySelector('.core');
-      core.setAttribute('r', r);
-      core.setAttribute('fill', typeColor(e.type));
-      var ring = g.querySelector('.ring');
-      ring.setAttribute('r', r + 5);
-      ring.setAttribute('stroke', typeColor(e.type));
-      var label = g.querySelector('.label');
-      label.setAttribute('y', r + (role === 'focus' ? 20 : 17));
-      var sub = g.querySelector('.sub');
-      sub.setAttribute('y', r + (role === 'focus' ? 35 : 31));
-      sub.style.display = role === 'far' ? 'none' : '';
+      g.querySelector('.core').setAttribute('r', r);
+      g.querySelector('.core').setAttribute('fill', typeColor(e.type));
+      g.querySelector('.ring').setAttribute('r', r + 4);
+      g.querySelector('.ring').setAttribute('stroke', typeColor(e.type));
+      g.querySelector('.label').setAttribute('y', r + 14);
     });
 
     var edges = [];
     keys.forEach(function (a) {
       state.out[a].forEach(function (b) {
-        if (!L.pos[b]) return;
-        var far = L.roles[a] === 'far' || L.roles[b] === 'far';
-        edges.push({ a: a, b: b, far: far });
+        if (L.pos[b]) edges.push({ a: a, b: b, far: L.roles[a] === 'far' || L.roles[b] === 'far' });
       });
     });
 
     function frame(t) {
       var cur = {};
       keys.forEach(function (k) {
-        var p0 = from[k];
-        var p1 = L.pos[k];
+        var p0 = from[k], p1 = L.pos[k];
         cur[k] = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
         var g = els.svg.querySelector('g.mem-node[data-key="' + CSS.escape(k) + '"]');
         if (g) g.setAttribute('transform', 'translate(' + cur[k].x.toFixed(1) + ',' + cur[k].y.toFixed(1) + ')');
       });
       edgeLayer.innerHTML = edges.map(function (e) {
-        var p = cur[e.a];
-        var q2 = cur[e.b];
-        var mx = (p.x + q2.x) / 2;
-        var my = (p.y + q2.y) / 2;
-        // Gentle bow so overlapping edges stay distinguishable.
-        var dx = q2.x - p.x;
-        var dy = q2.y - p.y;
-        var bx = mx - dy * 0.08;
-        var by = my + dx * 0.08;
+        var p = cur[e.a], q2 = cur[e.b];
+        var dx = q2.x - p.x, dy = q2.y - p.y;
+        var bx = (p.x + q2.x) / 2 - dy * 0.08, by = (p.y + q2.y) / 2 + dx * 0.08;
         return '<path class="mem-edge' + (e.far ? ' is-far' : '') + '" d="M' + p.x.toFixed(1) + ',' + p.y.toFixed(1) +
           ' Q' + bx.toFixed(1) + ',' + by.toFixed(1) + ' ' + q2.x.toFixed(1) + ',' + q2.y.toFixed(1) + '"/>';
       }).join('');
@@ -358,81 +436,98 @@
     }
 
     var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (opts.instant || reduce) { frame(1); }
+    if (opts.instant || reduce) frame(1);
     else {
       var start = performance.now();
       var id = ++state.anim;
-      var dur = 520;
       (function tick(now) {
         if (id !== state.anim) return;
-        var t = Math.min(1, (now - start) / dur);
+        var t = Math.min(1, (now - start) / 480);
         frame(1 - Math.pow(1 - t, 3));
         if (t < 1) requestAnimationFrame(tick);
       })(start);
     }
-
-    var focusE = state.byKey[state.focus];
-    els.hint.textContent = L.near
-      ? focusE.title + ' connects to ' + L.near + (L.near === 1 ? ' thing' : ' things') + (L.far ? ' · faint: one more step away' : '')
-      : focusE.title + " isn't linked to anything yet";
+    els.mapNote.textContent = L.near ? plural(state.adj[state.focus].size, 'link') : 'not linked yet';
   }
 
-  // ── Reader ────────────────────────────────────────────────────────
-  function mentionsOf(e) {
-    var needles = ['[[' + e.key + ']]', '[[' + e.slug + ']]'].concat((e.aliases || []).map(function (a) { return '[[' + a + ']]'; }));
-    var out = [];
-    state.timeline.forEach(function (d) {
-      d.items.forEach(function (it) {
-        var low = it.toLowerCase();
-        if (needles.some(function (n) { return low.indexOf(n) >= 0; })) out.push({ date: d.date, text: it });
-      });
-    });
-    return out;
+  function renderSideLinks() {
+    var e = state.byKey[state.focus];
+    if (!e) { els.sideLinks.innerHTML = ''; return; }
+    var outs = state.out[e.key] || [];
+    var ins = (state.inc[e.key] || []).filter(function (k) { return outs.indexOf(k) < 0; });
+    var block = function (title, keys) {
+      return keys.length ? '<div class="mem-side-sec">' + title + '<span>' + keys.length + '</span></div>' + keys.map(function (k) { return itemHtml(k); }).join('') : '';
+    };
+    els.sideLinks.innerHTML = (block('Links to', outs) + block('Linked from', ins)) ||
+      '<p class="mem-side-empty">Nothing links here yet. Links appear when a fact mentions another page, like [[project/tomo]].</p>';
   }
 
-  function chip(k) {
-    var e = state.byKey[k];
-    return '<button type="button" class="mem-chip" data-focus="' + esc(k) + '"><i style="background:' + typeColor(e.type) + '"></i>' + esc(e.title) + '</button>';
+  // ── Pages · reader ────────────────────────────────────────────────
+  function factHtml(e, f) {
+    var o = ORIGINS[f.origin] || ORIGINS.agent;
+    var src = f.source ? f.source.split('#')[0] : '';
+    return '<li class="mem-fact' + (f.superseded ? ' is-gone' : '') + '" data-n="' + f.n + '">' +
+      '<div class="mem-fact-text">' + richText(f.text) + '</div>' +
+      '<div class="mem-fact-foot">' +
+        '<span class="mem-origin"><i class="mem-dot" style="--c:' + o.c + '"></i>' + o.label + '</span>' +
+        (src ? (/^\d{4}-\d{2}-\d{2}$/.test(src)
+          ? '<span>from <button type="button" class="mem-link is-day" data-day="' + esc(src) + '">' + esc(shortDay(src)) + '</button></span>'
+          : '<span>from ' + richText('[[' + src + ']]') + '</span>') : '') +
+        (f.superseded ? '<span>forgotten</span>' :
+          '<span class="mem-fact-actions">' +
+            '<button type="button" class="mem-act" data-edit="' + f.n + '" title="Edit" aria-label="Edit this fact">' + ICON.edit + '</button>' +
+            '<button type="button" class="mem-act" data-move="' + f.n + '" title="Move to another page" aria-label="Move this fact to another page">' + ICON.move + '</button>' +
+            '<button type="button" class="mem-act is-danger" data-forget="' + f.n + '" title="Forget" aria-label="Forget this fact">' + ICON.forget + '</button>' +
+          '</span>') +
+      '</div></li>';
+  }
+
+  function chipRow(keys) {
+    return '<div class="mem-chips">' + keys.map(function (k) {
+      var e = state.byKey[k];
+      return '<button type="button" class="mem-chip" data-focus="' + esc(k) + '"><i class="mem-dot" style="--c:' + typeColor(e.type) + '"></i>' + esc(e.title) + '</button>';
+    }).join('') + '</div>';
   }
 
   function renderReader() {
     var e = state.byKey[state.focus];
-    if (!e) { els.reader.innerHTML = '<p class="mem-reader-empty">Pick something on the left.</p>'; return; }
+    if (!e) {
+      els.reader.innerHTML = '<p class="mem-reader-empty">' + (Object.keys(state.byKey).length ? 'Pick a page on the left.' :
+        'No pages yet. Tomo is still journaling — facts get distilled into pages each night.') + '</p>';
+      return;
+    }
     var live = activeFacts(e);
     var gone = (e.facts || []).filter(function (f) { return f.superseded; });
-    var factHtml = function (f) {
-      return '<li class="mem-fact' + (f.superseded ? ' is-gone' : '') + '" style="--mem-c:' + typeColor(e.type) + '" data-n="' + f.n + '">' +
-        '<div class="mem-fact-text">' + richText(f.text) + '</div>' +
-        '<div class="mem-fact-foot">' +
-          '<span class="mem-origin">' + esc(({ agent: 'Saved by agent', consolidation: 'Consolidated', user: 'Edited by you', extraction: 'Auto-extracted' })[f.origin] || 'Saved by agent') + '</span>' +
-          (f.source ? '<span>from ' + richText('[[' + f.source + ']]') + '</span>' : '<span>no source</span>') +
-          '<span class="spacer"></span>' +
-          (f.superseded ? '<span>forgotten</span>' : '<button type="button" class="forget" data-edit="' + f.n + '">Edit</button><button type="button" class="forget" data-move="' + f.n + '">Move</button><button type="button" class="forget" data-forget="' + f.n + '">Forget</button>') +
-        '</div></li>';
-    };
     var outs = state.out[e.key] || [];
     var ins = (state.inc[e.key] || []).filter(function (k) { return outs.indexOf(k) < 0; });
-    var mentions = mentionsOf(e);
+    var others = (e.aliases || []).filter(function (a) { return a !== e.slug && a !== e.title.toLowerCase(); });
 
     els.reader.innerHTML =
-      '<span class="mem-r-type"><i style="background:' + typeColor(e.type) + '"></i>' + esc(e.type) + '</span>' +
+      '<div class="mem-fade">' +
+      '<div class="mem-r-type"><i class="mem-dot" style="--c:' + typeColor(e.type) + '"></i>' + esc(e.type) + '</div>' +
       '<h2>' + esc(e.title) + '</h2>' +
-      '<div class="mem-r-meta">' +
-        (e.updated ? 'Updated ' + esc(e.updated) + ' · ' : '') +
-        '<code>' + esc('entities/' + e.type + '/' + e.slug + '.md') + '</code>' +
+      (others.length ? '<div class="mem-r-aliases">Also known as ' + others.map(esc).join(', ') + '</div>' : '') +
+      '<div class="mem-r-stats">' +
+        '<span><b>' + live.length + '</b> ' + (live.length === 1 ? 'fact' : 'facts') + '</span>' +
+        '<span><b>' + (e.mentions || 0) + '</b> journal ' + (e.mentions === 1 ? 'mention' : 'mentions') + '</span>' +
+        (e.last_seen ? '<span>last mentioned <b>' + esc(ago(e.last_seen)) + '</b></span>' : '') +
+        (e.updated ? '<span>updated ' + esc(shortDay(e.updated)) + '</span>' : '') +
+        '<span><code>entities/' + esc(e.type + '/' + e.slug) + '.md</code></span>' +
       '</div>' +
-      '<div class="mem-r-sec">What Tomo knows <span>' + live.length + '</span></div>' +
-      (live.length ? '<ul class="mem-facts">' + live.map(factHtml).join('') + '</ul>'
-        : '<p class="mem-reader-empty" style="padding:0">No facts left on this page.</p>') +
-      (outs.length ? '<div class="mem-r-sec">Links to</div><div class="mem-chips">' + outs.map(chip).join('') + '</div>' : '') +
-      (ins.length ? '<div class="mem-r-sec">Mentioned by</div><div class="mem-chips">' + ins.map(chip).join('') + '</div>' : '') +
-      (mentions.length ? '<div class="mem-r-sec">In the timeline</div><ul class="mem-mentions">' +
-        mentions.slice(0, 8).map(function (m) {
-          return '<li><time>' + esc(m.date) + '</time>' + richText(m.text) + '</li>';
-        }).join('') + '</ul>' : '') +
-      (gone.length ? '<details class="mem-raw"><summary>' + gone.length + ' forgotten ' + (gone.length === 1 ? 'fact' : 'facts') +
-        '</summary><ul class="mem-facts" style="margin-top:8px">' + gone.map(factHtml).join('') + '</ul></details>' : '') +
-      '<details class="mem-raw" data-raw><summary>Markdown source</summary><pre>Loading…</pre></details>';
+      '<div class="mem-r-sec"><h3>What Tomo knows</h3></div>' +
+      (live.length ? '<ol class="mem-facts">' + live.map(function (f) { return factHtml(e, f); }).join('') + '</ol>'
+        : '<p class="mem-reader-empty">No facts left on this page.</p>') +
+      '<div class="mem-inline-links">' +
+        (outs.length ? '<div class="mem-r-sec"><h3>Links to</h3><span>' + outs.length + '</span></div>' + chipRow(outs) : '') +
+        (ins.length ? '<div class="mem-r-sec"><h3>Linked from</h3><span>' + ins.length + '</span></div>' + chipRow(ins) : '') +
+      '</div>' +
+      (e.mentions ? '<div class="mem-r-sec"><h3>Recent activity</h3><span>' + e.mentions + '</span>' +
+        '<button type="button" class="mem-textbtn" data-journal-entity="' + esc(e.key) + '">Open in journal →</button></div>' +
+        '<ul class="mem-activity" data-recent><li><time>…</time><p class="mem-muted">Loading…</p></li></ul>' : '') +
+      (gone.length ? '<details class="mem-raw"><summary>' + plural(gone.length, 'forgotten fact') + '</summary><ol class="mem-facts">' +
+        gone.map(function (f) { return factHtml(e, f); }).join('') + '</ol></details>' : '') +
+      '<details class="mem-raw" data-raw><summary>Markdown source</summary><pre>Loading…</pre></details>' +
+      '</div>';
 
     var raw = els.reader.querySelector('[data-raw]');
     raw.addEventListener('toggle', function () {
@@ -442,30 +537,56 @@
         .then(function (r) { return r.json(); })
         .then(function (d) { raw.querySelector('pre').textContent = d.raw || ''; })
         .catch(function () { raw.querySelector('pre').textContent = 'Could not load the file.'; });
-    }, { once: false });
+    });
+    if (e.mentions) loadRecent(e.key);
+  }
+
+  function loadRecent(key) {
+    var put = function (entries) {
+      var ul = els.reader.querySelector('[data-recent]');
+      if (!ul || state.focus !== key) return;
+      ul.innerHTML = entries.slice(0, 5).map(function (t) {
+        return '<li><time>' + esc(shortDay(t.date)) + (t.time ? ' ' + esc(t.time) : '') + '</time><p>' + richText(t.goal || t.outcome || t.notes[0] || '') + '</p></li>';
+      }).join('') || '<li><time></time><p class="mem-muted">No recent turns.</p></li>';
+    };
+    if (state.recent[key]) { put(state.recent[key]); return; }
+    fetch('/api/memory/journal?days=3&entity=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (d) {
+        var flat = [];
+        d.days.forEach(function (day) { day.entries.slice().reverse().forEach(function (t) { flat.push(Object.assign({ date: day.date }, t)); }); });
+        state.recent[key] = flat;
+        put(flat);
+      })
+      .catch(function () { put([]); });
   }
 
   function correctFact(li, n, move) {
     var e = state.byKey[state.focus];
     var fact = e.facts.find(function (f) { return f.n === n; });
     if (!fact || li.classList.contains('is-confirm')) return;
-    li.classList.add('is-confirm');
+    li.classList.add('is-confirm', 'is-editing');
     var editor = document.createElement('form');
     editor.className = 'mem-correction';
     editor.innerHTML = move
-      ? '<label>Destination page<select class="input" name="destination">' +
-        Object.values(state.byKey).filter(function (page) { return page.key !== e.key; }).map(function (page) {
-          return '<option value="' + esc(page.key) + '">' + esc(page.title + ' (' + page.key + ')') + '</option>';
-        }).join('') + '<option value="__new">New page…</option></select></label>' +
+      ? '<label>Move to page<select class="input" name="destination">' +
+        Object.values(state.byKey).filter(function (page) { return page.key !== e.key; })
+          .sort(function (a, b) { return a.title.localeCompare(b.title); }).map(function (page) {
+            return '<option value="' + esc(page.key) + '">' + esc(page.title + ' · ' + page.type) + '</option>';
+          }).join('') + '<option value="__new">New page…</option></select></label>' +
         '<label data-new-page hidden>New page key<input class="input" name="newPage" placeholder="project/my-project"></label>'
-      : '<label>Fact<textarea class="input" name="text" rows="3" required></textarea></label>';
-    editor.innerHTML += '<div class="mem-correction-actions"><span role="status"></span><button type="button" class="btn ghost sm" data-cancel>Cancel</button><button type="submit" class="btn primary sm">' + (move ? 'Move fact' : 'Save fact') + '</button></div>';
+      : '<label>Correct the fact<textarea class="input" name="text" rows="3" required></textarea></label>';
+    editor.innerHTML += '<div class="mem-correction-actions"><span role="status"></span><button type="button" class="btn ghost sm" data-cancel>Cancel</button><button type="submit" class="btn primary sm">' + (move ? 'Move fact' : 'Save') + '</button></div>';
     li.appendChild(editor);
     if (!move) editor.elements.text.value = fact.text;
     else editor.elements.destination.addEventListener('change', function () {
       editor.querySelector('[data-new-page]').hidden = editor.elements.destination.value !== '__new';
     });
     editor.querySelector('[data-cancel]').addEventListener('click', function () { renderReader(); });
+    editor.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); renderReader(); }
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); editor.requestSubmit(); }
+    });
     editor.addEventListener('submit', function (ev) {
       ev.preventDefault();
       var body = { number: n, expected: fact.text };
@@ -483,59 +604,222 @@
         submit.disabled = false;
       });
     });
-    editor.querySelector('textarea,select').focus();
+    var field = editor.querySelector('textarea,select');
+    field.focus();
+    if (field.setSelectionRange && field.value) field.setSelectionRange(field.value.length, field.value.length);
   }
 
   function askForget(li, n) {
     var e = state.byKey[state.focus];
     if (li.classList.contains('is-confirm')) return;
     li.classList.add('is-confirm');
-    var foot = li.querySelector('.mem-fact-foot');
-    var prev = foot.innerHTML;
-    foot.innerHTML = '<span>Forget this fact? It stays in the file, struck through.</span><span class="spacer"></span>' +
-      '<button type="button" class="forget" style="opacity:1;color:var(--danger)" data-yes>Forget</button>' +
-      '<button type="button" class="forget" style="opacity:1" data-no>Keep</button>';
-    foot.querySelector('[data-no]').addEventListener('click', function () {
-      li.classList.remove('is-confirm');
-      foot.innerHTML = prev;
-    });
-    foot.querySelector('[data-yes]').addEventListener('click', function () {
+    var box = document.createElement('div');
+    box.className = 'mem-confirm';
+    box.innerHTML = '<span>Forget this fact? It stays in the file, struck through.</span>' +
+      '<button type="button" class="btn ghost sm" data-no>Keep</button><button type="button" class="btn sm" style="color:var(--danger)" data-yes>Forget</button>';
+    li.querySelector('.mem-fact-foot').appendChild(box);
+    box.querySelector('[data-no]').addEventListener('click', function () { li.classList.remove('is-confirm'); box.remove(); });
+    box.querySelector('[data-yes]').addEventListener('click', function () {
       fetch('/api/memory/entity/' + encodeURIComponent(e.type) + '/' + encodeURIComponent(e.slug) + '/forget', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: n }),
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ number: n }),
       }).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return load(true);
       }).catch(function (err) {
-        foot.innerHTML = '<span style="color:var(--danger)">Could not forget: ' + esc(err.message) + '</span>';
+        box.querySelector('span').textContent = 'Could not forget: ' + err.message;
       });
     });
-    foot.querySelector('[data-no]').focus();
+    box.querySelector('[data-no]').focus();
   }
 
-  // ── Timeline ──────────────────────────────────────────────────────
-  function weekday(date) {
-    try { return new Date(date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' }); } catch (_) { return ''; }
-  }
-
-  function renderDays() {
-    if (!state.timeline.length) {
-      els.days.innerHTML = '<p class="mem-reader-empty" style="padding:0">No days recorded yet.</p>';
-      return;
+  // ── Journal · heatmap ─────────────────────────────────────────────
+  function renderHeat() {
+    var byDay = {};
+    var max = 0;
+    state.activity.forEach(function (d) { byDay[d.date] = d.turns; if (d.turns > max) max = d.turns; });
+    var weeks = 18;
+    var today = parseDay(TODAY);
+    var monOffset = (today.getDay() + 6) % 7;
+    var start = new Date(today); start.setDate(today.getDate() - monOffset - (weeks - 1) * 7);
+    var cells = '';
+    var inRange = 0, turnsInRange = 0;
+    for (var w = 0; w < weeks; w++) {
+      var first = new Date(start); first.setDate(start.getDate() + w * 7);
+      var label = '';
+      for (var k = 0; k < 7; k++) {
+        var t = new Date(first); t.setDate(first.getDate() + k);
+        if (t.getDate() === 1 || (w === 0 && k === 0)) { label = t.toLocaleDateString(undefined, { month: 'short' }); break; }
+      }
+      cells += '<span class="mem-heat-month">' + (w === weeks - 1 && !label ? '' : esc(label)) + '</span>';
+      for (var d = 0; d < 7; d++) {
+        var dt = new Date(first); dt.setDate(first.getDate() + d);
+        var key = iso(dt);
+        var n = byDay[key] || 0;
+        if (n) { inRange++; turnsInRange += n; }
+        var lvl = n ? Math.max(1, Math.ceil((n / max) * 4)) : 0;
+        var future = key > TODAY;
+        cells += '<button type="button" class="mem-heat-cell' + (n ? '' : ' is-empty') + (future ? ' is-future' : '') +
+          (state.j.before && addDays(state.j.before, -1) === key ? ' is-on' : '') + '" data-l="' + lvl + '"' +
+          (n ? ' data-jump="' + key + '"' : ' tabindex="-1"') +
+          ' title="' + esc(longDay(key)) + ' — ' + (n ? plural(n, 'turn') : 'no turns') + '" aria-label="' + esc(longDay(key)) + ', ' + plural(n, 'turn') + '"></button>';
+      }
     }
-    els.days.innerHTML = state.timeline.map(function (d) {
-      return '<section class="mem-day" data-date="' + esc(d.date) + '"><time>' + esc(d.date) + '<small>' + esc(weekday(d.date)) + '</small></time>' +
-        '<ul>' + d.items.map(function (it) { return '<li>' + richText(it) + '</li>'; }).join('') + '</ul></section>';
-    }).join('');
+    els.heat.innerHTML = '<div class="mem-heat-days"><span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span></span></div>' +
+      '<div class="mem-heat-grid" style="grid-template-columns:repeat(' + weeks + ',1fr)">' + cells + '</div>';
+    var older = state.activity.length - inRange;
+    els.heatNote.textContent = plural(turnsInRange, 'turn') + ' · ' + weeks + ' wks' + (older > 0 ? ' (+' + older + ' older days)' : '');
   }
 
-  function markDays() {
-    var e = state.byKey[state.focus];
-    var hits = e ? mentionsOf(e).map(function (m) { return m.date; }) : [];
-    els.days.querySelectorAll('.mem-day').forEach(function (d) {
-      d.classList.toggle('is-hit', hits.indexOf(d.dataset.date) >= 0);
-    });
+  // ── Journal · filters ─────────────────────────────────────────────
+  function renderFilters() {
+    var j = state.j;
+    var agentChips = '<button type="button" class="mem-chip" data-agent="" aria-pressed="' + (!j.agent) + '">Everyone</button>' +
+      state.agents.map(function (a) {
+        return '<button type="button" class="mem-chip" data-agent="' + esc(a.id) + '" aria-pressed="' + (j.agent === a.id) + '"><i class="mem-dot" style="--c:' + agentColor(a.id) + '"></i>' + esc(a.name) + ' <small>' + a.turns + '</small></button>';
+      }).join('');
+    var mentioned = Object.keys(state.byKey).filter(function (k) { return state.byKey[k].mentions; })
+      .sort(function (a, b) { return state.byKey[b].mentions - state.byKey[a].mentions; });
+    var ent = j.entity && state.byKey[j.entity];
+    var any = j.agent || j.entity || j.pending || j.before;
+    els.filters.innerHTML =
+      (state.agents.length > 1 ? '<div class="mem-filter"><h4>Agent</h4><div class="mem-chips">' + agentChips + '</div></div>' : '') +
+      '<div class="mem-filter"><h4>About</h4>' +
+        (ent ? '<div class="mem-chips" style="margin-bottom:8px"><button type="button" class="mem-chip" aria-pressed="true" data-clear-entity title="Remove filter"><i class="mem-dot" style="--c:' + typeColor(ent.type) + '"></i>' + esc(ent.title) + '<span class="x" aria-hidden="true">×</span></button></div>' : '') +
+        '<select class="input" data-entity-select aria-label="Only turns about a page"><option value="">' + (ent ? 'Change page…' : 'Any page') + '</option>' +
+          mentioned.map(function (k) { return '<option value="' + esc(k) + '"' + (k === j.entity ? ' selected' : '') + '>' + esc(state.byKey[k].title) + ' (' + state.byKey[k].mentions + ')</option>'; }).join('') +
+        '</select></div>' +
+      '<div class="mem-filter"><label class="mem-toggle"><input type="checkbox" data-pending' + (j.pending ? ' checked' : '') + '> Only days not yet distilled</label></div>' +
+      (any ? '<div><button type="button" class="mem-textbtn" data-clear-filters>Clear filters</button></div>' : '');
+  }
+
+  // ── Journal · stream ──────────────────────────────────────────────
+  function loadJournal(reset) {
+    var j = state.j;
+    if (!reset && (j.loading || !j.next)) return;
+    var seq = ++j.seq;
+    j.loading = true;
+    var p = new URLSearchParams({ days: String(PAGE_DAYS) });
+    var before = reset ? j.before : j.next;
+    if (before) p.set('before', before);
+    if (j.entity) p.set('entity', j.entity);
+    if (j.agent) p.set('agent', j.agent);
+    if (j.pending) p.set('pending', 'true');
+    if (state.q) p.set('q', state.q);
+    if (reset) {
+      j.days = [];
+      els.stream.innerHTML = streamBar() + '<div class="mem-skel" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>';
+      els.stream.scrollTop = 0;
+    } else {
+      var more = els.stream.querySelector('[data-more]');
+      if (more) { more.disabled = true; more.textContent = 'Loading…'; }
+    }
+    return fetch('/api/memory/journal?' + p, { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        if (seq !== j.seq) return;
+        j.loaded = true;
+        j.loading = false;
+        j.next = d.next;
+        j.days = j.days.concat(d.days);
+        if (reset) els.stream.innerHTML = streamBar();
+        var end = els.stream.querySelector('.mem-stream-end');
+        if (end) end.remove();
+        els.stream.insertAdjacentHTML('beforeend', d.days.map(dayHtml).join('') + streamEnd());
+        observeEnd();
+      })
+      .catch(function (err) {
+        if (seq !== j.seq) return;
+        j.loading = false;
+        els.stream.innerHTML = streamBar() + '<div class="mem-stream-empty"><h3>Could not load the journal</h3>' + esc(err.message) + '</div>';
+      });
+  }
+
+  function streamBar() {
+    var j = state.j;
+    if (!j.before) return '';
+    return '<div class="mem-stream-bar mem-day"><span>Showing ' + esc(longDay(addDays(j.before, -1))) + ' and earlier.</span>' +
+      '<button type="button" class="mem-textbtn" data-latest>Back to latest ↑</button></div>';
+  }
+
+  function streamEnd() {
+    var j = state.j;
+    if (!j.days.length) {
+      var filtered = j.agent || j.entity || j.pending || state.q;
+      return '<div class="mem-stream-empty mem-stream-end"><h3>' + (filtered ? 'No turns match' : 'The journal is empty') + '</h3>' +
+        (filtered ? 'Try a different search or <button type="button" class="mem-textbtn" data-clear-filters>clear filters</button>.' : 'Turns show up here as you chat with Tomo.') + '</div>';
+    }
+    if (j.next) return '<div class="mem-stream-end"><button type="button" class="btn ghost sm" data-more>Load older days</button></div>';
+    return '<div class="mem-stream-end">That’s the beginning — ' + plural(j.days.length, 'day') + ' shown.</div>';
+  }
+
+  var endObserver = null;
+  function observeEnd() {
+    if (!('IntersectionObserver' in window)) return;
+    if (!endObserver) {
+      endObserver = new IntersectionObserver(function (items) {
+        if (items.some(function (i) { return i.isIntersecting; })) loadJournal(false);
+      }, { root: window.innerWidth >= 900 ? els.stream : null, rootMargin: '400px' });
+    }
+    endObserver.disconnect();
+    var more = els.stream.querySelector('[data-more]');
+    if (more) endObserver.observe(more);
+  }
+
+  function turnHtml(t, hidden) {
+    var agent = t.agent ? '<span class="mem-agent"><i class="mem-dot" style="--c:' + agentColor(t.agent) + '"></i>' + esc(t.agent_name || t.agent) + '</span>' : '';
+    var session = t.session
+      ? (t.session_exists
+        ? '<a class="mem-session" href="/sessions?s=' + encodeURIComponent(t.session) + '" title="Open this chat">↗ ' + esc(t.session_title || 'Open chat') + '</a>'
+        : '')
+      : '';
+    var long = (t.outcome || '').length > 170 || (t.notes || []).length > 2;
+    var head = t.goal ? '<p class="mem-turn-goal">' + richText(t.goal) + '</p>' : '';
+    var outcome = t.outcome ? '<p class="mem-turn-out">' + richText(t.outcome) + '</p>' : '';
+    if (!t.goal && !t.outcome && t.notes.length) {
+      head = '<p class="mem-turn-goal is-untitled">' + richText(t.notes[0]) + '</p>';
+      t = Object.assign({}, t, { notes: t.notes.slice(1) });
+    }
+    return '<li class="mem-turn"' + (hidden ? ' hidden data-extra' : '') + ' style="--c:' + agentColor(t.agent) + '">' +
+      '<span class="mem-turn-time">' + esc(t.time) + '</span><span class="mem-turn-pin" aria-hidden="true"></span>' +
+      '<div class="mem-turn-body">' + head + outcome +
+        (t.notes.length ? '<ul class="mem-turn-notes">' + t.notes.map(function (n) { return '<li>' + richText(n) + '</li>'; }).join('') + '</ul>' : '') +
+        ((agent || session || long) ? '<div class="mem-turn-meta">' + agent + session +
+          (long ? '<button type="button" data-expand aria-expanded="false">Show all</button>' : '') + '</div>' : '') +
+      '</div></li>';
+  }
+
+  function dayHtml(d) {
+    var turns = d.entries.slice().reverse();
+    var collapse = turns.length > DAY_PREVIEW + 2 && !state.q;
+    var rel = relDay(d.date);
+    var status = d.consolidated
+      ? '<span class="mem-state is-done" title="Durable facts from this day were distilled into Pages">' + ICON.check + 'Distilled</span>'
+      : (d.date >= TODAY
+        ? '<span class="mem-state is-wait" title="Distilled into Pages after the day ends">' + ICON.clock + 'Distills tonight</span>'
+        : '<span class="mem-state is-wait" title="Waiting for the nightly distill">' + ICON.clock + 'Waiting to distill</span>');
+    return '<section class="mem-day mem-fade" data-date="' + esc(d.date) + '">' +
+      '<header class="mem-day-head"><h3>' + (rel ? '<em>' + rel + '</em>' : '') + esc(longDay(d.date)) + '</h3>' +
+        '<span class="mem-day-count">' + plural(turns.length, 'turn') + '</span><span class="spacer"></span>' + status + '</header>' +
+      '<ol class="mem-turns">' + turns.map(function (t, i) { return turnHtml(t, collapse && i >= DAY_PREVIEW); }).join('') + '</ol>' +
+      (collapse ? '<button type="button" class="mem-textbtn mem-day-more" data-day-more>Show ' + plural(turns.length - DAY_PREVIEW, 'earlier turn') + '</button>' : '') +
+      '</section>';
+  }
+
+  function jumpTo(date) {
+    state.j.before = date && date < TODAY ? addDays(date, 1) : null;
+    if (state.view !== 'journal') setView('journal', { noHash: true });
+    loadJournal(true);
+    renderHeat();
+    renderFilters();
+    writeHash();
+  }
+
+  function setJournalFilter(patch) {
+    Object.assign(state.j, patch);
+    renderFilters();
+    renderHeat();
+    if (state.view === 'journal') { loadJournal(true); writeHash(); }
+    else { state.j.loaded = false; setView('journal'); }
   }
 
   // ── Focus / wiring ────────────────────────────────────────────────
@@ -543,6 +827,8 @@
     opts = opts || {};
     if (!state.byKey[key]) return;
     state.focus = key;
+    if (state.view !== 'pages' && !opts.noView) setView('pages', { noHash: true });
+    if (state.type && state.byKey[key].type !== state.type) { state.type = ''; renderTypes(); renderList(); }
     els.list.querySelectorAll('.mem-item').forEach(function (b) {
       if (b.dataset.focus === key) {
         b.setAttribute('aria-current', 'true');
@@ -550,62 +836,133 @@
       } else b.removeAttribute('aria-current');
     });
     drawMap({ instant: opts.instant });
+    renderSideLinks();
     renderReader();
-    markDays();
-    if (history.replaceState) history.replaceState(null, '', '#' + encodeURIComponent(key));
+    if (!opts.instant) els.reader.scrollTop = 0;
+    if (!opts.noHash) writeHash();
   }
 
   root.addEventListener('click', function (ev) {
-    var f = ev.target.closest('[data-focus]');
-    if (f) { focus(f.dataset.focus); return; }
-    var d = ev.target.closest('[data-day]');
-    if (d) {
-      var day = els.days.querySelector('.mem-day[data-date="' + CSS.escape(d.dataset.day) + '"]');
-      if (day) {
-        day.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-        day.classList.add('is-hit');
-      }
+    var t = ev.target;
+    var tab = t.closest('.mem-tabs [role="tab"]');
+    if (tab) { setView(tab.dataset.view); return; }
+    var type = t.closest('[data-type]');
+    if (type) { state.type = type.dataset.type; renderTypes(); renderList(); return; }
+    var sort = t.closest('[data-sort]');
+    if (sort) {
+      state.sort = sort.dataset.sort;
+      els.sort.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === sort)); });
+      renderList();
       return;
     }
-    if (ev.target.closest('form')) return;
-    var edit = ev.target.closest('[data-edit], [data-move]');
+    if (t.closest('[data-goto-journal]')) { setView('journal', { reload: true }); return; }
+    var je = t.closest('[data-journal-entity]');
+    if (je) { setJournalFilter({ entity: je.dataset.journalEntity, before: null }); return; }
+    var f = t.closest('[data-focus]');
+    if (f) {
+      focus(f.dataset.focus);
+      if (window.innerWidth < 900 && f.closest('.mem-list')) els.reader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    var jump = t.closest('[data-jump]');
+    if (jump) { jumpTo(jump.dataset.jump); return; }
+    var d = t.closest('[data-day]');
+    if (d) { jumpTo(d.dataset.day); return; }
+    if (t.closest('[data-latest]')) { jumpTo(null); return; }
+    var ag = t.closest('[data-agent]');
+    if (ag) { setJournalFilter({ agent: ag.dataset.agent }); return; }
+    if (t.closest('[data-clear-entity]')) { setJournalFilter({ entity: '' }); return; }
+    if (t.closest('[data-clear-filters]')) {
+      els.query.value = ''; state.q = '';
+      setJournalFilter({ entity: '', agent: '', pending: false, before: null });
+      return;
+    }
+    if (t.closest('[data-more]')) { loadJournal(false); return; }
+    var dm = t.closest('[data-day-more]');
+    if (dm) {
+      dm.closest('.mem-day').querySelectorAll('[data-extra]').forEach(function (li) { li.hidden = false; });
+      dm.remove();
+      return;
+    }
+    var ex = t.closest('[data-expand]');
+    if (ex) {
+      var turn = ex.closest('.mem-turn');
+      var open = turn.classList.toggle('is-open');
+      ex.textContent = open ? 'Show less' : 'Show all';
+      ex.setAttribute('aria-expanded', String(open));
+      return;
+    }
+    if (t.closest('form')) return;
+    var edit = t.closest('[data-edit], [data-move]');
     if (edit) { correctFact(edit.closest('.mem-fact'), Number(edit.dataset.edit || edit.dataset.move), edit.hasAttribute('data-move')); return; }
-    var fg = ev.target.closest('[data-forget]');
+    var fg = t.closest('[data-forget]');
     if (fg) askForget(fg.closest('.mem-fact'), Number(fg.dataset.forget));
   });
 
+  root.addEventListener('change', function (ev) {
+    if (ev.target.matches('[data-entity-select]')) { if (ev.target.value) setJournalFilter({ entity: ev.target.value }); }
+    else if (ev.target.matches('[data-pending]')) setJournalFilter({ pending: ev.target.checked });
+  });
+
+  // Arrow keys walk the page index.
+  els.list.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+    var items = Array.from(els.list.querySelectorAll('.mem-item'));
+    var i = items.indexOf(document.activeElement);
+    if (i < 0) return;
+    ev.preventDefault();
+    var next = items[Math.max(0, Math.min(items.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)))];
+    next.focus();
+    focus(next.dataset.focus, { noScroll: true });
+  });
+
+  var qTimer = 0;
   els.query.addEventListener('input', function () {
     state.q = els.query.value.trim().toLowerCase();
-    renderList();
-    drawMap({ instant: true });
-  });
-  els.query.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter') {
-      var first = els.list.querySelector('.mem-item');
-      if (first) focus(first.dataset.focus);
-    } else if (ev.key === 'Escape') {
-      els.query.value = '';
-      state.q = '';
+    if (state.view === 'pages') {
       renderList();
       drawMap({ instant: true });
+    } else {
+      clearTimeout(qTimer);
+      qTimer = setTimeout(function () { loadJournal(true); }, 250);
+    }
+    state.j.loaded = state.view === 'journal';
+  });
+  els.query.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && state.view === 'pages') {
+      var first = els.list.querySelector('.mem-item');
+      if (first) { focus(first.dataset.focus); first.focus(); }
+    } else if (ev.key === 'Escape') {
+      els.query.value = '';
+      els.query.dispatchEvent(new Event('input'));
       els.query.blur();
     }
   });
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === '/' && document.activeElement !== els.query && !/input|textarea/i.test(document.activeElement.tagName)) {
-      ev.preventDefault();
-      els.query.focus();
-    }
+    var tag = document.activeElement && document.activeElement.tagName;
+    if (/input|textarea|select/i.test(tag || '') || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (ev.key === '/') { ev.preventDefault(); els.query.focus(); }
+    else if (ev.key === 'g') setView('pages');
+    else if (ev.key === 'j' && state.view !== 'journal') setView('journal');
   });
 
   var resizeT = 0;
   window.addEventListener('resize', function () {
     clearTimeout(resizeT);
-    resizeT = setTimeout(function () { if (state.focus) drawMap({ instant: true }); }, 120);
+    resizeT = setTimeout(function () { drawMap({ instant: true }); }, 120);
   });
 
+  // #journal, #journal/<type/slug>, or #<type/slug>
   var fromHash = decodeURIComponent((location.hash || '').slice(1));
   load(false).then(function () {
-    if (fromHash && state.byKey[fromHash]) focus(fromHash, { instant: true });
+    if (/^journal(\/|$)/.test(fromHash)) {
+      state.j.entity = fromHash.slice(8);
+      renderFilters();
+      setView('journal', { noHash: true });
+    } else if (fromHash && state.byKey[fromHash]) {
+      focus(fromHash, { instant: true });
+    } else if (!Object.keys(state.byKey).length && state.activity.length) {
+      setView('journal', { noHash: true });
+    }
   });
 })();

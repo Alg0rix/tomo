@@ -81,3 +81,58 @@ def test_world_card_in_system_prompt_without_query(tmp_path, monkeypatch):
     assert 'World card' in prompt
     assert 'favorite F1 driver' in prompt
     assert 'Secret favorite' not in prompt
+
+
+def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
+    from app.runtime.memory.vault import doc
+    from app.runtime.memory.vault.write import atomic_write
+
+    monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
+    store.rebind(tmp_path / 'journal.db')
+    agent_id = store.get_coordinator()['id']
+    live = store.get_or_create_session(agent_id, 'web')
+    add_entity('web', 'project/tomo', 'Tomo is an agent runtime.', aliases=['tomo-app'])
+
+    def day(d, body, consolidated):
+        path = timeline_path('web', d)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(path, doc.serialize(doc.Document({'date': d, 'consolidated': consolidated}, body)))
+
+    day('2026-01-03', f'## 09:15 · session {live} · agent {agent_id}\n- Goal: Fix [[tomo-app]] memory page\n- Outcome: Journal is paged'
+                      '\n## 11:00 · session ses_gone · agent ops\n- Goal: Check tunnel\n- Outcome: Offline', 'false')
+    day('2026-01-02', '## 08:00 · session ses_gone · agent ops\n- Goal: Restart box\n- Outcome: Done', 'true')
+    day('2026-01-01', '- Set up [[project/tomo]] vault.\n- Unrelated legacy note.', 'true')
+    day('2025-12-31', '- Hidden fact.', 'true')
+    timeline_path('other', '2026-01-03').parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(timeline_path('other', '2026-01-04'), '- Other account [[project/tomo]] secret.\n')
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        client = TestClient(app)
+        first = client.get('/api/memory/journal', params={'days': 2}).json()
+        assert [d['date'] for d in first['days']] == ['2026-01-03', '2026-01-02']
+        assert first['next'] == '2026-01-02'
+        turn = first['days'][0]['entries'][0]
+        assert (turn['time'], turn['goal'], turn['outcome'], turn['keys']) == ('09:15', 'Fix [[tomo-app]] memory page', 'Journal is paged', ['project/tomo'])
+        assert turn['session_exists'] and not first['days'][0]['entries'][1]['session_exists']
+        assert first['days'][0]['consolidated'] is False and first['days'][1]['consolidated'] is True
+
+        rest = client.get('/api/memory/journal', params={'days': 2, 'before': first['next']}).json()
+        assert [d['date'] for d in rest['days']] == ['2026-01-01', '2025-12-31'] and rest['next'] is None
+        assert len(rest['days'][0]['entries']) == 2  # legacy bullets are separate entries
+
+        about = client.get('/api/memory/journal', params={'entity': 'project/tomo'}).json()
+        assert [(d['date'], len(d['entries'])) for d in about['days']] == [('2026-01-03', 1), ('2026-01-01', 1)]
+        assert [d['date'] for d in client.get('/api/memory/journal', params={'agent': 'ops'}).json()['days']] == ['2026-01-03', '2026-01-02']
+        assert [d['date'] for d in client.get('/api/memory/journal', params={'pending': 'true'}).json()['days']] == ['2026-01-03']
+        assert [d['date'] for d in client.get('/api/memory/journal', params={'q': 'RESTART box'}).json()['days']] == ['2026-01-02']
+        assert 'secret' not in str(client.get('/api/memory/journal').json())
+        assert client.get('/api/memory/journal', params={'before': 'nope'}).status_code == 400
+
+        overview = client.get('/api/memory/overview').json()
+        assert overview['activity'] == [{'date': '2025-12-31', 'turns': 1}, {'date': '2026-01-01', 'turns': 2},
+                                        {'date': '2026-01-02', 'turns': 1}, {'date': '2026-01-03', 'turns': 2}]
+        tomo = overview['entities'][0]
+        assert (tomo['mentions'], tomo['last_seen']) == (2, '2026-01-03')
+        assert {a['id']: a['turns'] for a in overview['agents']} == {'ops': 2, agent_id: 1}
+    finally:
+        app.dependency_overrides.pop(require_auth, None)

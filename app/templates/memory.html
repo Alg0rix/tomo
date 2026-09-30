@@ -1,44 +1,66 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=atlas3">
+<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=ledger1">
 {% endblock %}
 {% block content %}
-<section class="mem" id="mem" aria-labelledby="memTitle">
+<section class="mem" id="mem" data-view="pages" aria-labelledby="memTitle">
   <header class="mem-head">
-    <div>
+    <div class="mem-title">
       <h1 id="memTitle">Memory</h1>
       <p class="mem-sub" id="memStats">What Tomo remembers about you.</p>
     </div>
+    <div class="mem-tabs" role="tablist" aria-label="Memory views">
+      <button type="button" role="tab" id="memTabPages" data-view="pages" aria-selected="true" aria-controls="memPages">Pages<span id="memTabPagesN"></span></button>
+      <button type="button" role="tab" id="memTabJournal" data-view="journal" aria-selected="false" aria-controls="memJournal">Journal<span id="memTabJournalN"></span></button>
+    </div>
     <label class="mem-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="memQuery" type="search" placeholder="Search memory" autocomplete="off" spellcheck="false" aria-label="Search memory">
+      <input id="memQuery" type="search" placeholder="Search pages" autocomplete="off" spellcheck="false" aria-label="Search memory">
       <kbd>/</kbd>
     </label>
   </header>
 
-  <div class="mem-body">
-    <nav class="mem-list" id="memList" aria-label="Remembered things"></nav>
-
-    <div class="mem-map" id="memMap">
-      <svg id="memGraph" role="img" aria-label="Connections around the selected memory"></svg>
-      <div class="mem-map-hint" id="memMapHint"></div>
-    </div>
+  <div class="mem-view mem-pages" id="memPages" role="tabpanel" aria-labelledby="memTabPages">
+    <aside class="mem-index" aria-label="Remembered pages">
+      <div class="mem-index-tools">
+        <div class="mem-types" id="memTypes" role="group" aria-label="Filter by type"></div>
+        <div class="mem-sort" role="group" aria-label="Sort pages">
+          <button type="button" data-sort="name" aria-pressed="true">A–Z</button>
+          <button type="button" data-sort="recent" aria-pressed="false">Recent</button>
+          <button type="button" data-sort="mentions" aria-pressed="false">Active</button>
+        </div>
+      </div>
+      <nav class="mem-list" id="memList"></nav>
+    </aside>
 
     <article class="mem-reader" id="memReader" aria-live="polite"></article>
+
+    <aside class="mem-side" aria-label="Connections">
+      <div class="mem-side-head"><span>Connections</span><small id="memMapNote"></small></div>
+      <div class="mem-map" id="memMap">
+        <svg id="memGraph" role="img" aria-label="Pages linked to the selected page"></svg>
+      </div>
+      <div class="mem-side-links" id="memSideLinks"></div>
+    </aside>
   </div>
 
-  <section class="mem-days" aria-labelledby="memDaysTitle">
-    <div class="mem-days-head">
-      <h2 id="memDaysTitle">Timeline</h2>
-      <span class="mem-days-note">What happened, day by day. Durable facts go into the pages above after each turn.</span>
-    </div>
-    <div class="mem-days-strip" id="memDays"></div>
-  </section>
+  <div class="mem-view mem-journal" id="memJournal" role="tabpanel" aria-labelledby="memTabJournal" hidden>
+    <aside class="mem-jside">
+      <section class="mem-heat-wrap" aria-labelledby="memHeatTitle">
+        <div class="mem-jside-head"><span id="memHeatTitle">Activity</span><small id="memHeatNote"></small></div>
+        <div class="mem-heat" id="memHeat"></div>
+        <div class="mem-heat-legend" aria-hidden="true">Less <i data-l="0"></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i> More</div>
+      </section>
+      <section class="mem-filters" id="memFilters" aria-label="Journal filters"></section>
+      <p class="mem-jside-note">Every turn lands here as a goal and its outcome. Each night Tomo distills finished days into facts on Pages.</p>
+    </aside>
+    <div class="mem-stream" id="memStream" tabindex="-1"></div>
+  </div>
 
   <div class="mem-empty" id="memEmpty" hidden>
     <h2>Nothing remembered yet</h2>
-    <p>As you chat, Tomo writes what matters into Markdown pages — people, projects, tools — and links them together. They show up here, and you can correct anything that's wrong.</p>
+    <p>As you chat, Tomo writes what matters into Markdown pages — people, projects, tools — and keeps a journal of each turn. They show up here, and you can correct anything that's wrong.</p>
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=atlas2"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=ledger1"></script>{% endblock %}

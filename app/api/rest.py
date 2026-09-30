@@ -988,11 +988,28 @@ def _correct_memory(request: Request, entity_type: str, slug: str, body: dict, *
     return {'ok': True}
 
 
+def _memory_resolver(conn, uid: str) -> dict[str, str]:
+    """Map every way a page can be linked (key, slug, alias) to its type/slug key."""
+    ents = conn.execute('SELECT path,type,slug FROM vault_docs WHERE user_id=? AND kind="entity"', (uid,)).fetchall()
+    by_path = {r['path']: f"{r['type']}/{r['slug']}" for r in ents}
+    names: dict[str, str] = {}
+    for r in conn.execute('SELECT alias,path FROM vault_aliases WHERE path IN (SELECT path FROM vault_docs WHERE user_id=?) ORDER BY path', (uid,)).fetchall():
+        names.setdefault(r['alias'].casefold(), by_path.get(r['path'], ''))
+    names.update({key.casefold(): key for key in by_path.values()})
+    return {k: v for k, v in names.items() if v}
+
+
+def _journal_keys(entry: dict, resolver: dict[str, str]) -> list[str]:
+    keys = (resolver.get(link.split('#')[0].strip().casefold()) for link in entry['links'])
+    return list(dict.fromkeys(k for k in keys if k))
+
+
 @router.get('/memory/overview')
-async def memory_overview_api(request: Request, _: AuthDep, days: int = Query(30, ge=1, le=365)):
-    """Everything the memory page needs in one call: entities with their
-    facts, links between them, and recent timeline days."""
-    from app.runtime.memory.vault import doc, index
+async def memory_overview_api(request: Request, _: AuthDep):
+    """Pages with their facts, the links between them, and a per-day activity
+    count for the journal heatmap. Journal entries themselves are paged
+    through /memory/journal so a long history never loads at once."""
+    from app.runtime.memory.vault import doc, index, journal
     uid = session_user_id(request)
 
     def fact_rows(body):
@@ -1009,14 +1026,98 @@ async def memory_overview_api(request: Request, _: AuthDep, days: int = Query(30
         for r in conn.execute('SELECT src,dst_resolved FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
             if r['src'] in paths and r['dst_resolved'] in paths and r['src'] != r['dst_resolved']:
                 links.append({'from': paths[r['src']], 'to': paths[r['dst_resolved']]})
+        resolver = _memory_resolver(conn, uid)
+        activity, agents = [], {}
+        mentions: dict[str, int] = {}
+        last_seen: dict[str, str] = {}
+        for r in conn.execute('SELECT slug,body FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug', (uid,)).fetchall():
+            turns = journal.entries(r['body'] or '')
+            if not turns:
+                continue
+            activity.append({'date': r['slug'], 'turns': len(turns)})
+            for turn in turns:
+                if turn['agent']:
+                    agents[turn['agent']] = agents.get(turn['agent'], 0) + 1
+                for key in _journal_keys(turn, resolver):
+                    mentions[key] = mentions.get(key, 0) + 1
+                    last_seen[key] = r['slug']
+        names = _agent_names(conn, list(agents))
         entities = [{
             'key': paths[r['path']], 'type': r['type'], 'slug': r['slug'], 'title': r['title'] or r['slug'],
             'updated': r['updated'] or '', 'aliases': aliases.get(r['path'], []), 'facts': fact_rows(r['body'] or ''),
+            'mentions': mentions.get(paths[r['path']], 0), 'last_seen': last_seen.get(paths[r['path']], ''),
         } for r in ents]
-        timeline = []
-        for r in conn.execute('SELECT slug,body FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug DESC LIMIT ?', (uid, days)).fetchall():
-            timeline.append({'date': r['slug'], 'items': [line[2:] for line in (r['body'] or '').splitlines() if line.startswith('- ')]})
-        return {'entities': entities, 'links': links, 'timeline': timeline}
+        return {'entities': entities, 'links': links, 'activity': activity,
+                'agents': [{'id': a, 'name': names.get(a, a), 'turns': n} for a, n in sorted(agents.items(), key=lambda x: -x[1])]}
+
+    return store.with_db(query)
+
+
+def _agent_names(conn, ids: list[str]) -> dict[str, str]:
+    if not ids:
+        return {}
+    marks = ','.join('?' * len(ids))
+    return {r['id']: r['name'] for r in conn.execute(f'SELECT id,name FROM agents WHERE id IN ({marks})', ids).fetchall()}
+
+
+@router.get('/memory/journal')
+async def memory_journal_api(request: Request, _: AuthDep,
+                             before: str | None = None, days: int = Query(10, ge=1, le=60),
+                             entity: str | None = None, agent: str | None = None,
+                             q: str | None = None, pending: bool = False):
+    """Day notes newest first, split into turns, filtered and paged by day.
+    ``next`` is the ``before`` value for the following page (None at the end)."""
+    from datetime import date as _date
+    from app.runtime.memory.vault import doc, index, journal, paths as vpaths
+    uid = session_user_id(request)
+    if before:
+        try:
+            before = _date.fromisoformat(before).isoformat()
+        except ValueError:
+            raise HTTPException(400, 'Invalid date')
+    words = [w for w in (q or '').casefold().split() if w]
+    entity = (entity or '').strip().casefold() or None
+
+    def query(conn):
+        index.rebuild(conn, uid)
+        resolver = _memory_resolver(conn, uid)
+        rows = conn.execute('SELECT slug,body FROM vault_docs WHERE user_id=? AND kind="timeline" AND slug < ? ORDER BY slug DESC',
+                            (uid, before or '9999-12-31')).fetchall()
+        out, more = [], False
+        for r in rows:
+            turns = []
+            for turn in journal.entries(r['body'] or ''):
+                turn['keys'] = _journal_keys(turn, resolver)
+                if entity and entity not in turn['keys']:
+                    continue
+                if agent and turn['agent'] != agent:
+                    continue
+                if words and not journal.matches(turn, words):
+                    continue
+                turns.append(turn)
+            if not turns:
+                continue
+            path = vpaths.timeline_path(uid, r['slug'])
+            consolidated = path.is_file() and doc.parse(path.read_text(encoding='utf-8')).meta.get('consolidated') == 'true'
+            if pending and consolidated:
+                continue
+            if len(out) == days:
+                more = True
+                break
+            out.append({'date': r['slug'], 'consolidated': consolidated, 'entries': turns})
+        sessions = list({t['session'] for d in out for t in d['entries'] if t['session']})
+        titles = {}
+        if sessions:
+            marks = ','.join('?' * len(sessions))
+            titles = {s['id']: s['title'] for s in conn.execute(
+                f'SELECT id,title FROM sessions WHERE user_id=? AND id IN ({marks})', [uid, *sessions]).fetchall()}
+        names = _agent_names(conn, list({t['agent'] for d in out for t in d['entries'] if t['agent']}))
+        for d in out:
+            for t in d['entries']:
+                t['session_exists'] = t['session'] in titles
+                t['session_title'] = titles.get(t['session'], '')
+                t['agent_name'] = names.get(t['agent'], t['agent'])
+        return {'days': out, 'next': out[-1]['date'] if more else None}
 
     return store.with_db(query)
 
