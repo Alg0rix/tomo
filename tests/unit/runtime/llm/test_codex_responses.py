@@ -73,15 +73,23 @@ def test_responses_tools_converts_function_schema() -> None:
     ]
 
 
+def _completed_sse(response: dict) -> httpx.Response:
+    events = [{"type": "response.output_item.done", "item": item}
+              for item in response.get("output", [])]
+    events.append({"type": "response.completed", "response": response})
+    return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+
+
 @pytest.mark.asyncio
 async def test_public_api_key_uses_responses_wire_format() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/responses"
         assert request.headers["authorization"] == "Bearer sk-test"
         body = json.loads(request.content)
+        assert body["stream"] is True
         assert body["store"] is False
         assert body["reasoning"]["summary"] == "auto"
-        return httpx.Response(200, json={"id": "resp_1", "output": [
+        return _completed_sse({"id": "resp_1", "output": [
             {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}
         ]})
 
@@ -98,11 +106,10 @@ async def test_complete_returns_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["model"] == _MODEL
+        assert body["stream"] is True
         assert body["store"] is False
         assert body["instructions"] == "sys"
-        return httpx.Response(
-            200,
-            json={
+        return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
                 "output": [
@@ -112,8 +119,7 @@ async def test_complete_returns_text() -> None:
                     }
                 ],
                 "usage": {"input_tokens": 10, "output_tokens": 5},
-            },
-        )
+            })
 
     client = _client(httpx.MockTransport(handler))
     resp = await client.complete([{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}])
@@ -127,9 +133,7 @@ async def test_complete_returns_text() -> None:
 @pytest.mark.asyncio
 async def test_complete_returns_tool_calls() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
+        return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
                 "output": [
@@ -138,8 +142,7 @@ async def test_complete_returns_tool_calls() -> None:
                         "name": "bash", "arguments": '{"cmd":"ls"}', "status": "completed",
                     }
                 ],
-            },
-        )
+            })
 
     client = _client(httpx.MockTransport(handler))
     resp = await client.complete(
@@ -206,13 +209,10 @@ async def test_complete_sends_reasoning_effort() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={"id": "resp_1", "status": "completed", "output": [
+        return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
-            ]},
-        )
+            ]})
 
     client = _client(httpx.MockTransport(handler), reasoning_effort="high")
     await client.complete([{"role": "user", "content": "hi"}])
@@ -225,13 +225,10 @@ async def test_complete_clamps_minimal_effort_to_low() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={"id": "resp_1", "status": "completed", "output": [
+        return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
-            ]},
-        )
+            ]})
 
     client = _client(httpx.MockTransport(handler), reasoning_effort="minimal")
     await client.complete([{"role": "user", "content": "hi"}])
@@ -244,13 +241,10 @@ async def test_complete_omits_reasoning_when_not_configured() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={"id": "resp_1", "status": "completed", "output": [
+        return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
-            ]},
-        )
+            ]})
 
     client = _client(httpx.MockTransport(handler))
     await client.complete([{"role": "user", "content": "hi"}])
@@ -260,9 +254,7 @@ async def test_complete_omits_reasoning_when_not_configured() -> None:
 @pytest.mark.asyncio
 async def test_complete_extracts_reasoning_summary() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
+        return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
                 "output": [
@@ -275,8 +267,7 @@ async def test_complete_extracts_reasoning_summary() -> None:
                         "content": [{"type": "output_text", "text": "Here's the answer."}],
                     },
                 ],
-            },
-        )
+            })
 
     client = _client(httpx.MockTransport(handler))
     resp = await client.complete([{"role": "user", "content": "hi"}])
@@ -287,13 +278,10 @@ async def test_complete_extracts_reasoning_summary() -> None:
 @pytest.mark.asyncio
 async def test_complete_reasoning_is_none_when_absent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"id": "resp_1", "status": "completed", "output": [
+        return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
-            ]},
-        )
+            ]})
 
     client = _client(httpx.MockTransport(handler))
     resp = await client.complete([{"role": "user", "content": "hi"}])
@@ -344,3 +332,125 @@ async def test_stream_complete_extracts_reasoning_summary() -> None:
             final = ev["response"]
     assert final.content == "answer"
     assert final.reasoning == "Working it out."
+
+
+@pytest.mark.asyncio
+async def test_complete_collects_deltas_reasoning_tools_and_usage() -> None:
+    events = [
+        {"type": "response.reasoning_summary_text.delta", "delta": "Thinking"},
+        {"type": "response.output_text.delta", "delta": "Checking "},
+        {"type": "response.output_text.delta", "delta": "files"},
+        {"type": "response.output_item.done", "item": {
+            "type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "Thinking"}]}},
+        {"type": "response.output_item.done", "item": {
+            "type": "function_call", "call_id": "call_1", "name": "bash", "arguments": '{"cmd":"ls"}'}},
+        {"type": "response.completed", "response": {
+            "id": "resp_1", "status": "completed", "usage": {"input_tokens": 12, "output_tokens": 7}}},
+    ]
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["stream"] is True
+        assert body["tools"][0]["name"] == "bash"
+        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        resp = await client.complete([{"role": "user", "content": "check files"}], tools=[
+            {"type": "function", "function": {"name": "bash"}}])
+        assert resp.content == "Checking files"
+        assert resp.reasoning == "Thinking"
+        assert resp.tool_calls[0].id == "call_1"
+        assert resp.tool_calls[0].arguments == {"cmd": "ls"}
+        assert (resp.prompt_tokens, resp.completion_tokens) == (12, 7)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['complete', 'stream_complete'])
+@pytest.mark.parametrize(('terminal', 'error'), [
+    (None, 'without a completion'),
+    ({'type': 'response.failed', 'response': {'error': {'message': 'backend failed'}}}, 'backend failed'),
+    ({'type': 'response.incomplete', 'response': {'incomplete_details': {'reason': 'max_output_tokens'}}}, 'max_output_tokens'),
+    ({'type': 'error', 'message': 'backend error', 'code': 'server_error'}, 'backend error'),
+])
+async def test_partial_stream_is_not_accepted_as_success(method, terminal, error):
+    events = [{'type': 'response.output_text.delta', 'delta': 'partial output'}]
+    if terminal:
+        events.append(terminal)
+    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+        200, content=_sse(events), headers={'content-type': 'text/event-stream'})))
+    try:
+        with pytest.raises(LLMRequestError, match=error):
+            if method == 'complete':
+                await client.complete([{'role': 'user', 'content': 'hi'}])
+            else:
+                async for event in client.stream_complete([{'role': 'user', 'content': 'hi'}]):
+                    assert event['type'] != 'done'
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_and_session_title_use_codex_stream(tmp_path):
+    import sqlite3
+    from app.runtime.memory.vault.extract import extract_turn, entity_context
+    from app.runtime.session_title import generate_session_title
+
+    requests = []
+    replies = [json.dumps([{'entity': 'person/max-verstappen', 'fact': 'The user’s favorite F1 driver.'}]),
+               'Favorite F1 Driver']
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body['stream'] is True
+        assert request.url.path == '/backend-api/codex/responses'
+        requests.append(body)
+        return _completed_sse({'id': 'resp_1', 'status': 'completed', 'output': [
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': replies.pop(0)}]}]})
+
+    client = _client(httpx.MockTransport(handler), reasoning_effort='low')
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    try:
+        assert await extract_turn('alice', 'ses_1', 'My favorite F1 driver is Max Verstappen.',
+                                  'Got it.', client, home_root=tmp_path, conn=conn) == 1
+        assert entity_context('alice', home_root=tmp_path)['person/max-verstappen'] == ['The user’s favorite F1 driver.']
+        assert await generate_session_title('Favorite driver', 'Max Verstappen', llm=client) == 'Favorite F1 Driver'
+        assert len(requests) == 2
+    finally:
+        conn.close()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_complete_cancellation_closes_http_stream():
+    import asyncio
+
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    class WaitingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield _sse([{'type': 'response.output_text.delta', 'delta': 'partial'}])
+            started.set()
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            closed.set()
+
+    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+        200, stream=WaitingStream(), headers={'content-type': 'text/event-stream'})))
+    task = asyncio.create_task(client.complete([{'role': 'user', 'content': 'hi'}]))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert closed.is_set()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await client.aclose()

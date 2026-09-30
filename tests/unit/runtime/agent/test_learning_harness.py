@@ -304,3 +304,41 @@ async def test_review_llm_prefers_stream_complete(monkeypatch) -> None:
     assert llm.stream_calls >= 1
     assert llm.stream_had_tools is True
     assert llm.complete_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('subscription', [True, False])
+async def test_review_selected_profile_uses_llm_factory(subscription):
+    from app.models.mixins import llm_profiles as profiles
+    from app.runtime.agent.learning.runner import _resolve_review_client
+    from app.runtime.llm import CodexResponsesClient
+
+    if subscription:
+        with store._lock:
+            selected = profiles.create_subscription_profile(
+                store._conn, provider='openai-codex', access_token='at-review',
+                refresh_token='rt-review', expires_at=99999999999.0,
+                name='Review Codex', model='gpt-6-luna',
+                base_url='https://chatgpt.com/backend-api/codex')
+    else:
+        selected = store.create_llm_profile({
+            'id': 'review-openai', 'name': 'Review OpenAI', 'api_key': 'sk-review',
+            'base_url': 'https://api.openai.com/v1', 'model': 'gpt-6-luna'})
+    store.update_settings({'learning_review_profile_id': selected['id']})
+    fallback = ScriptedLLM([text_reply('fallback')])
+    client, owned = _resolve_review_client(fallback)
+    try:
+        assert owned is True
+        assert isinstance(client, CodexResponsesClient)
+        assert client._model == 'gpt-6-luna'
+        assert client._client.api_key == ('at-review' if subscription else 'sk-review')
+    finally:
+        await client.aclose()
+
+
+def test_review_unavailable_profile_keeps_fallback():
+    from app.runtime.agent.learning.runner import _resolve_review_client
+
+    store.update_settings({'learning_review_profile_id': 'missing'})
+    fallback = ScriptedLLM([text_reply('fallback')])
+    assert _resolve_review_client(fallback) == (fallback, False)

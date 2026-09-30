@@ -279,17 +279,9 @@ def _resolve_review_client(fallback: LLMClient) -> tuple[LLMClient, bool]:
         profile = store.get_llm_profile(pid)
         if not profile or not profile.get("enabled", True):
             return fallback, False
-        from app.runtime.llm.openai_compat import OpenAICompatClient
+        from app.runtime.llm import get_llm
 
-        base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
-        model = (profile.get("model") or "").strip() or "gpt-4o-mini"
-        key = profile.get("api_key") or ""
-        if not key:
-            return fallback, False
-        return (
-            OpenAICompatClient(base_url=base_url, api_key=key, model=model),
-            True,
-        )
+        return get_llm(profile_id=pid), True
     except Exception as exc:
         _logger.debug("learning review client route failed: %s", exc)
         return fallback, False

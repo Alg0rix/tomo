@@ -199,36 +199,6 @@ def _reasoning_text_from_items(items: list[Any]) -> str | None:
     return "\n\n".join(chunks) if chunks else None
 
 
-def _normalize_response(resp: Any) -> LLMResponse:
-    output = getattr(resp, "output", None) or []
-    content_parts: list[str] = []
-    tool_calls: list[ToolCall] = []
-    for item in output:
-        item_type = getattr(item, "type", None)
-        if item_type == "message":
-            text = _extract_message_text(item)
-            if text:
-                content_parts.append(text)
-        elif item_type == "function_call":
-            tc = _tool_call_from_item(item)
-            if tc is not None:
-                tool_calls.append(tc)
-
-    text = "\n".join(p for p in content_parts if p).strip() or None
-    if text is None and not tool_calls:
-        out_text = getattr(resp, "output_text", None)
-        if isinstance(out_text, str) and out_text.strip():
-            text = out_text.strip()
-    if text is None and not tool_calls:
-        raise LLMRequestError("LLM request failed: Responses API returned no output")
-
-    prompt_tok, completion_tok = parse_usage(getattr(resp, "usage", None))
-    return LLMResponse(
-        content=text, tool_calls=tool_calls, prompt_tokens=prompt_tok, completion_tokens=completion_tok,
-        reasoning=_reasoning_text_from_items(output),
-    )
-
-
 class CodexResponsesClient:
     """Async Responses-API client for Codex/ChatGPT-subscription profiles.
 
@@ -296,17 +266,18 @@ class CodexResponsesClient:
     async def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
     ) -> LLMResponse:
-        payload = self._payload(messages, tools)
-        try:
-            resp = await self._client.responses.create(**payload)
-        except LLMRequestError:
-            raise
-        except Exception as exc:
-            _logger.warning(
-                "Codex Responses complete failed model=%s: %s", self._model, format_llm_error(exc)
-            )
-            raise LLMRequestError(format_llm_error(exc)) from exc
-        return _normalize_response(resp)
+        """Collect a streamed response for callers needing one final result.
+
+        The Codex subscription backend requires streaming even for background
+        operations such as memory extraction and session titles.
+        """
+        response: LLMResponse | None = None
+        async for event in self.stream_complete(messages, tools):
+            if event.get("type") == "done":
+                response = event["response"]
+        if response is None:
+            raise LLMRequestError("LLM request failed: stream ended without a completion")
+        return response
 
     async def stream_complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
@@ -327,37 +298,51 @@ class CodexResponsesClient:
         output_items: list[Any] = []
         prompt_tok = 0
         completion_tok = 0
+        completed = False
 
         try:
             stream = await self._client.responses.create(**payload)
-            async for event in stream:
-                self._last_chunk_time = asyncio.get_running_loop().time()
-                etype = getattr(event, "type", "") or ""
-                if etype == "response.reasoning_summary_text.delta":
-                    delta = getattr(event, "delta", "") or ""
-                    if delta:
-                        yield {"type": "reasoning_delta", "content": delta}
-                elif etype == "response.output_text.delta":
-                    delta = getattr(event, "delta", "") or ""
-                    if delta:
-                        content_parts.append(delta)
-                        yield {"type": "delta", "content": delta}
-                elif etype == "response.output_item.done":
-                    item = getattr(event, "item", None)
-                    if item is not None:
-                        output_items.append(item)
-                elif etype == "response.completed":
-                    resp_obj = getattr(event, "response", None)
-                    usage = getattr(resp_obj, "usage", None) if resp_obj is not None else None
-                    if usage is not None:
-                        prompt_tok, completion_tok = parse_usage(usage)
-                elif etype == "response.failed":
-                    resp_obj = getattr(event, "response", None)
-                    err = getattr(resp_obj, "error", None) if resp_obj is not None else None
-                    message = getattr(err, "message", None) if err is not None else None
-                    raise LLMRequestError(
-                        f"LLM request failed: {message or 'Codex Responses stream failed'}"
-                    )
+            async with stream:
+                async for event in stream:
+                    self._last_chunk_time = asyncio.get_running_loop().time()
+                    etype = getattr(event, "type", "") or ""
+                    if etype == "response.reasoning_summary_text.delta":
+                        delta = getattr(event, "delta", "") or ""
+                        if delta:
+                            yield {"type": "reasoning_delta", "content": delta}
+                    elif etype == "response.output_text.delta":
+                        delta = getattr(event, "delta", "") or ""
+                        if delta:
+                            content_parts.append(delta)
+                            yield {"type": "delta", "content": delta}
+                    elif etype == "response.output_item.done":
+                        item = getattr(event, "item", None)
+                        if item is not None:
+                            output_items.append(item)
+                    elif etype == "response.completed":
+                        completed = True
+                        resp_obj = getattr(event, "response", None)
+                        usage = getattr(resp_obj, "usage", None) if resp_obj is not None else None
+                        if usage is not None:
+                            prompt_tok, completion_tok = parse_usage(usage)
+                    elif etype == "error":
+                        raise LLMRequestError(
+                            f"LLM request failed: {getattr(event, 'message', None) or 'Codex Responses stream error'}"
+                        )
+                    elif etype == "response.incomplete":
+                        resp_obj = getattr(event, "response", None)
+                        details = getattr(resp_obj, "incomplete_details", None)
+                        reason = getattr(details, "reason", None)
+                        raise LLMRequestError(
+                            f"LLM request failed: Codex Responses incomplete ({reason or 'unknown reason'})"
+                        )
+                    elif etype == "response.failed":
+                        resp_obj = getattr(event, "response", None)
+                        err = getattr(resp_obj, "error", None) if resp_obj is not None else None
+                        message = getattr(err, "message", None) if err is not None else None
+                        raise LLMRequestError(
+                            f"LLM request failed: {message or 'Codex Responses stream failed'}"
+                        )
         except LLMRequestError:
             raise
         except Exception as exc:
@@ -366,6 +351,9 @@ class CodexResponsesClient:
                 self._model, len(content_parts), format_llm_error(exc),
             )
             raise LLMRequestError(format_llm_error(exc)) from exc
+
+        if not completed:
+            raise LLMRequestError("LLM request failed: stream ended without a completion")
 
         tool_calls = [tc for tc in (_tool_call_from_item(it) for it in output_items) if tc is not None]
         text = "".join(content_parts) if content_parts else None
