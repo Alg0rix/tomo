@@ -7,8 +7,9 @@ overrides via :mod:`app.runtime.tools.workplace_ctx`.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
+from app.runtime.tools import progress
 from app.runtime.tools.sandbox import current_agent_id
 from app.runtime.tools.workplace_ctx import (
     current_workplace_hint,
@@ -242,7 +243,11 @@ def format_rpc_result(method: str, result: Any) -> str:
 
 
 def _call_tunnel(
-    wp: dict[str, Any], method: str, params: dict[str, Any], timeout: float
+    wp: dict[str, Any],
+    method: str,
+    params: dict[str, Any],
+    timeout: float,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     wid = str(wp.get("id") or "")
     if not wid:
@@ -255,7 +260,7 @@ def _call_tunnel(
                 "(connector not connected)"
             ),
         }
-    return hub.call(wid, method, dict(params), timeout=timeout)
+    return hub.call(wid, method, dict(params), timeout=timeout, on_progress=on_progress)
 
 
 def _call_ssh(
@@ -302,7 +307,9 @@ def try_remote(
             timeout if timeout is not None else params.get("timeout")
         )
         if kind == "tunnel":
-            payload = _call_tunnel(wp, method, params, to)
+            # Live terminal output for the bash tool card (connector exec-stream).
+            sink = progress.current() if method in ("exec_bash", "bash") else None
+            payload = _call_tunnel(wp, method, params, to, on_progress=sink)
         else:
             payload = _call_ssh(wp, method, params)
         if not payload.get("ok"):

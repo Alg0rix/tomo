@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -18,7 +19,7 @@ type ExecResult struct {
 	ExecutionTime float64 `json:"execution_time"`
 }
 
-func execBash(params map[string]any) (any, error) {
+func execBash(params map[string]any, progress Progress) (any, error) {
 	script := strings.TrimSpace(paramString(params, "script", "command"))
 	if script == "" {
 		return nil, fmt.Errorf("'script' (or 'command') is required")
@@ -28,7 +29,10 @@ func execBash(params map[string]any) (any, error) {
 	if cwd == "" {
 		cwd = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
 	}
-	return runExec(timeout, cwd, paramEnv(params), "bash", "-s", script)
+	if stream, _ := params["stream"].(bool); !stream {
+		progress = nil
+	}
+	return runExec(timeout, cwd, paramEnv(params), "bash", "-s", script, progress)
 }
 
 func execPython(params map[string]any) (any, error) {
@@ -41,14 +45,18 @@ func execPython(params map[string]any) (any, error) {
 	if cwd == "" {
 		cwd = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
 	}
-	return runExec(timeout, cwd, paramEnv(params), "python3", "-", code)
+	return runExec(timeout, cwd, paramEnv(params), "python3", "-", code, nil)
 }
 
-func runExec(timeout int, cwd string, env map[string]string, bin, flag, stdin string) (ExecResult, error) {
+// runExec runs bin with stdin; when progress is non-nil, stdout and stderr are
+// also forwarded live as they are produced.
+func runExec(timeout int, cwd string, env map[string]string, bin, flag, stdin string, progress Progress) (ExecResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, bin, flag)
+	prepareProcess(cmd)
+	cmd.Cancel = func() error { return terminateProcess(cmd) }
 	cmd.Dir = cwd
 	cmd.Stdin = bytes.NewBufferString(stdin)
 	cmd.Env = os.Environ()
@@ -56,16 +64,23 @@ func runExec(timeout int, cwd string, env map[string]string, bin, flag, stdin st
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr outputBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if progress != nil {
+		live := newStreamWriter(progress)
+		defer live.Close()
+		cmd.Stdout = io.MultiWriter(&stdout, live)
+		cmd.Stderr = io.MultiWriter(&stderr, live)
+	}
 
 	t0 := time.Now()
 	exitCode := 0
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return ExecResult{
-				Stderr:        fmt.Sprintf("Execution timed out after %ds", timeout),
+				Stdout:        stdout.String(),
+				Stderr:        stderr.String() + fmt.Sprintf("\nExecution timed out after %ds", timeout),
 				ExitCode:      -1,
 				ExecutionTime: time.Since(t0).Seconds(),
 			}, nil
@@ -77,8 +92,8 @@ func runExec(timeout int, cwd string, env map[string]string, bin, flag, stdin st
 		}
 	}
 	return ExecResult{
-		Stdout:        truncate(stdout.String()),
-		Stderr:        truncate(stderr.String()),
+		Stdout:        stdout.String(),
+		Stderr:        stderr.String(),
 		ExitCode:      exitCode,
 		ExecutionTime: time.Since(t0).Seconds(),
 	}, nil

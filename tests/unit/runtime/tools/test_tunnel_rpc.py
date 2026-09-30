@@ -62,7 +62,7 @@ def test_format_exec_bash_result() -> None:
 def test_tunnel_rpc_exec_bash_via_mock_hub() -> None:
     _tunnel_agent()
 
-    def _fake_call(wid, method, params=None, timeout=60.0):
+    def _fake_call(wid, method, params=None, timeout=60.0, **_kw):
         assert wid == "wp_tun"
         assert method == "exec_bash"
         assert params["script"] == "pwd && echo hello-tunnel"
@@ -87,7 +87,7 @@ def test_tunnel_rpc_exec_bash_via_mock_hub() -> None:
 def test_tunnel_rpc_exec_python_via_mock_hub() -> None:
     _tunnel_agent()
 
-    def _fake_call(wid, method, params=None, timeout=60.0):
+    def _fake_call(wid, method, params=None, timeout=60.0, **_kw):
         assert method == "exec_python"
         assert "print" in params["code"]
         return {
@@ -110,7 +110,7 @@ def test_tunnel_rpc_exec_python_via_mock_hub() -> None:
 def test_tunnel_rpc_files_via_mock_hub() -> None:
     _tunnel_agent()
 
-    def _fake_call(wid, method, params=None, timeout=60.0):
+    def _fake_call(wid, method, params=None, timeout=60.0, **_kw):
         if method == "write_file":
             assert params["path"] == "note.txt"
             assert params["content"] == "hi"
@@ -150,7 +150,7 @@ def test_tunnel_rpc_files_via_mock_hub() -> None:
 def test_tunnel_background_process_start() -> None:
     _tunnel_agent()
 
-    def _fake_call(wid, method, params=None, timeout=60.0):
+    def _fake_call(wid, method, params=None, timeout=60.0, **_kw):
         assert method == "process_start"
         return {"ok": True, "result": {"id": "job_9", "status": "running"}}
 

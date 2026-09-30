@@ -15,11 +15,17 @@ import (
 
 // Handle dispatches method → result (JSON-serializable).
 func Handle(method string, params map[string]any) (any, error) {
+	return HandleWithProgress(method, params, nil)
+}
+
+// HandleWithProgress is Handle plus live output for exec_bash requests that
+// set "stream": true. progress may be nil.
+func HandleWithProgress(method string, params map[string]any, progress Progress) (any, error) {
 	if params == nil {
 		params = map[string]any{}
 	}
 	t0 := time.Now()
-	clog.Event("exec.start", "method", method, "params", clog.JSON(params, 400))
+	clog.Event("exec.start", "method", method)
 	var (
 		result any
 		err    error
@@ -30,7 +36,7 @@ func Handle(method string, params map[string]any) (any, error) {
 	case "cwd_info":
 		result = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
 	case "exec_bash", "bash":
-		result, err = execBash(params)
+		result, err = execBash(params, progress)
 	case "exec_python":
 		result, err = execPython(params)
 	case "read_file":
@@ -62,9 +68,9 @@ func Handle(method string, params map[string]any) (any, error) {
 	}
 	ms := time.Since(t0).Milliseconds()
 	if err != nil {
-		clog.Error("exec.done", err, "method", method, "ok", false, "ms", ms)
+		clog.Event("exec.done", "method", method, "ok", false, "ms", ms)
 	} else {
-		clog.Event("exec.done", "method", method, "ok", true, "ms", ms, "result", clog.JSON(result, 400))
+		clog.Event("exec.done", "method", method, "ok", true, "ms", ms)
 	}
 	return result, err
 }

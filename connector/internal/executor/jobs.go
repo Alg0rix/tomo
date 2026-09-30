@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,20 +13,27 @@ import (
 )
 
 type bgJob struct {
-	ID        string
-	Command   string
-	StartedAt time.Time
-	Cmd       *exec.Cmd
-	Stdout    strings.Builder
-	Stderr    strings.Builder
-	Done      atomic.Bool
-	ExitCode  atomic.Int32
+	ID         string
+	Command    string
+	StartedAt  time.Time
+	Cmd        *exec.Cmd
+	Stdout     outputBuffer
+	Stderr     outputBuffer
+	Done       atomic.Bool
+	ExitCode   atomic.Int32
+	finishedAt time.Time
+	processMu  sync.Mutex
 }
 
+const (
+	maxJobs        = 128
+	maxRunningJobs = 16
+	jobTTL         = 15 * time.Minute
+)
+
 var (
-	jobMu      sync.Mutex
-	jobs       = map[string]*bgJob{}
-	jobCounter atomic.Uint64
+	jobMu sync.Mutex
+	jobs  = map[string]*bgJob{}
 )
 
 func processStart(params map[string]any) (any, error) {
@@ -64,33 +73,39 @@ func startBackgroundJob(command, cwd string) (map[string]any, error) {
 		}
 		cwd = resolved
 	}
-	id := fmt.Sprintf("job_%d", jobCounter.Add(1))
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	cleanupJobsLocked(time.Now())
+	running := 0
+	for _, j := range jobs {
+		if !j.Done.Load() {
+			running++
+		}
+	}
+	if len(jobs) >= maxJobs || running >= maxRunningJobs {
+		return nil, fmt.Errorf("busy: background job limit reached")
+	}
+	var randomID [16]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return nil, fmt.Errorf("generate job id: %w", err)
+	}
+	id := "job_" + hex.EncodeToString(randomID[:])
 	// Agent workplace tooling intentionally runs shell scripts from the coordinator.
 	// #nosec G204 -- command is the product surface (bash tool); cwd is jailed above.
 	cmd := exec.Command("bash", "-lc", command) //nolint:gosec
+	prepareProcess(cmd)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 
 	job := &bgJob{ID: id, Command: command, StartedAt: time.Now(), Cmd: cmd}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
+	cmd.Stdout = &job.Stdout
+	cmd.Stderr = &job.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("could not start background command: %w", err)
 	}
-
-	jobMu.Lock()
 	jobs[id] = job
-	jobMu.Unlock()
-
-	go drain(stdout, &job.Stdout)
-	go drain(stderr, &job.Stderr)
 	go func() {
+		// Wait's writer-copy goroutines finish before publishing Done.
 		err := cmd.Wait()
 		code := 0
 		if err != nil {
@@ -100,8 +115,11 @@ func startBackgroundJob(command, cwd string) (map[string]any, error) {
 				code = -1
 			}
 		}
+		jobMu.Lock()
 		job.ExitCode.Store(int32(code))
+		job.finishedAt = time.Now()
 		job.Done.Store(true)
+		jobMu.Unlock()
 	}()
 
 	return map[string]any{
@@ -111,15 +129,10 @@ func startBackgroundJob(command, cwd string) (map[string]any, error) {
 	}, nil
 }
 
-func drain(r interface{ Read([]byte) (int, error) }, b *strings.Builder) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			b.Write(buf[:n])
-		}
-		if err != nil {
-			return
+func cleanupJobsLocked(now time.Time) {
+	for id, j := range jobs {
+		if j.Done.Load() && now.Sub(j.finishedAt) >= jobTTL {
+			delete(jobs, id)
 		}
 	}
 }
@@ -136,14 +149,15 @@ func jobSnapshot(j *bgJob) map[string]any {
 		"status":     status,
 		"returncode": rc,
 		"command":    j.Command,
-		"stdout":     truncate(j.Stdout.String()),
-		"stderr":     truncate(j.Stderr.String()),
+		"stdout":     j.Stdout.String(),
+		"stderr":     j.Stderr.String(),
 	}
 }
 
 func listJobs() any {
 	jobMu.Lock()
 	defer jobMu.Unlock()
+	cleanupJobsLocked(time.Now())
 	out := make([]map[string]any, 0, len(jobs))
 	for _, j := range jobs {
 		out = append(out, jobSnapshot(j))
@@ -153,6 +167,7 @@ func listJobs() any {
 
 func getBackgroundJob(id string) (map[string]any, error) {
 	jobMu.Lock()
+	cleanupJobsLocked(time.Now())
 	j := jobs[id]
 	jobMu.Unlock()
 	if j == nil {
@@ -163,14 +178,20 @@ func getBackgroundJob(id string) (map[string]any, error) {
 
 func killBackgroundJob(id string) (map[string]any, error) {
 	jobMu.Lock()
+	cleanupJobsLocked(time.Now())
 	j := jobs[id]
 	jobMu.Unlock()
 	if j == nil {
 		return nil, fmt.Errorf("unknown job id %q", id)
 	}
+	j.processMu.Lock()
 	if !j.Done.Load() && j.Cmd != nil && j.Cmd.Process != nil {
-		_ = j.Cmd.Process.Kill()
+		if err := terminateProcess(j.Cmd); err != nil && err != os.ErrProcessDone {
+			j.processMu.Unlock()
+			return nil, fmt.Errorf("kill job: %w", err)
+		}
 	}
+	j.processMu.Unlock()
 	for i := 0; i < 20 && !j.Done.Load(); i++ {
 		time.Sleep(50 * time.Millisecond)
 	}

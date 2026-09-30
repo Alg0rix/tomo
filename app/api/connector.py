@@ -9,6 +9,8 @@ Protocol (JSON, ``v: 1``) after auth:
 * ``heartbeat`` ↔ ``heartbeat_ack`` (or ``ping`` ↔ ``pong``)
 * server ``rpc_request`` {id, method, params}
 * client ``rpc_response`` {id, ok, result|error}
+* client ``rpc_progress`` {id, result: {data}} — live exec_bash output, only
+  for requests sent with ``params.stream`` (caps ``exec-stream``)
 """
 
 from __future__ import annotations
@@ -22,7 +24,13 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import TRUST_PROXY
 from app.services import store
-from app.workplaces.hub import ConnectorSession, client_supports_replay, hub
+from app.workplaces.hub import (
+    ConnectorSession,
+    client_supports_replay,
+    client_supports_stream,
+    emit_rpc_progress,
+    hub,
+)
 from app.workplaces.pairing import rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -331,6 +339,14 @@ async def connector_ws(websocket: WebSocket) -> None:
                 session.resolve_rpc(req_id, payload)
                 continue
 
+            if msg_type == "rpc_progress":
+                result = raw.get("result")
+                data = result.get("data") if isinstance(result, dict) else None
+                if isinstance(data, str) and data:
+                    session.touch()
+                    emit_rpc_progress(workplace_id, str(raw.get("id") or ""), data)
+                continue
+
             await websocket.send_json(_err(f"unknown message type: {msg_type}"))
 
     finally:
@@ -364,6 +380,7 @@ async def _bind_session(
         platform=platform,
         remote_ip=remote_ip,
         replay_ok=replay_ok,
+        stream_ok=client_supports_stream(caps),
     )
     prev = hub.register(session)
     if prev is not None and prev.websocket is not websocket:
@@ -371,7 +388,7 @@ async def _bind_session(
         if replay_ok and prev.replay_ok:
             pending = prev.take_pending_for_replay()
             if pending:
-                session.adopt_pending(pending)
+                await session.adopt_pending(pending)
         else:
             prev.fail_all("replaced by new connector session")
         try:

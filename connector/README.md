@@ -101,15 +101,20 @@ Override binary path with `TOMO_CONNECTOR_BIN` if needed.
 ### Connect — `WS /api/connector/ws`
 
 Headers: `Authorization: Bearer <token>`, `X-Device-Name`, `X-Platform`,
-`X-Tomo-Connector-Version`, `X-Tomo-Caps: idempotent-replay`.
+`X-Tomo-Connector-Version`, `X-Tomo-Caps: idempotent-replay,exec-stream`.
 
 | Method | Params | Result |
 |--------|--------|--------|
-| `exec_bash` | `{script, timeout, env, cwd}` | `{stdout, stderr, exit_code, …}` |
+| `exec_bash` | `{script, timeout, env, cwd, stream?}` | `{stdout, stderr, exit_code, …}` |
 | `exec_python` | `{code, …}` | same |
 | `read_file` / `write_file` | path/content | structured |
 | `str_replace` / `patch` / `delete_file` / `search_files` | … | structured |
 | `process_start` / `list` / `status` / `kill` | jobs | job records |
 | `read_file_b64` / `write_file_b64` | binary chunks | portal-ready |
+
+Live output: when the server sends `exec_bash` with `"stream": true` (only to
+connectors advertising `exec-stream`), the connector emits
+`{"type":"rpc_progress","id":…,"result":{"data":"…"}}` every ~100 ms while the
+command runs, then the normal `rpc_response`. Journal replays send no progress.
 
 Exactly-once: client caches RPC results by request `id` (~5 min).

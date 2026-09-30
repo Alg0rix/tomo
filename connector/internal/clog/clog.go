@@ -1,7 +1,7 @@
 // Package clog is a tiny structured logger for tomo-connector events.
 //
 // Format: 2006-01-02T15:04:05.000Z event=name key=value ...
-// Sensitive values (tokens) are never logged in full.
+// Payloads and sensitive values are redacted, including pairing credentials.
 package clog
 
 import (
@@ -37,7 +37,13 @@ func Event(name string, kv ...any) {
 		b.WriteByte(' ')
 		b.WriteString(fmt.Sprint(kv[i]))
 		b.WriteByte('=')
-		b.WriteString(formatVal(kv[i+1]))
+		key := strings.ToLower(fmt.Sprint(kv[i]))
+		switch key {
+		case "params", "result", "body", "preview", "script", "command", "env", "content", "data", "token", "code", "stdout", "stderr":
+			b.WriteString("[redacted]")
+		default:
+			b.WriteString(formatVal(kv[i+1]))
+		}
 	}
 	if len(kv)%2 == 1 {
 		b.WriteString(" _odd=")

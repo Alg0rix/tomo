@@ -79,7 +79,6 @@ func HTTP(server, code string) error {
 	}
 	clog.Event("pair.request",
 		"server", server,
-		"code", strings.ToUpper(strings.TrimSpace(code)),
 		"device", hostname,
 		"platform", runtime.GOOS,
 		"version", version.Version,
@@ -95,11 +94,10 @@ func HTTP(server, code string) error {
 	raw, _ := io.ReadAll(resp.Body)
 	clog.Event("pair.response",
 		"http_status", resp.StatusCode,
-		"body", clog.Truncate(string(raw), 300),
 	)
 	if resp.StatusCode != 200 {
-		clog.Event("pair.failed", "http_status", resp.StatusCode, "body", clog.Truncate(string(raw), 200))
-		return fmt.Errorf("pairing failed (HTTP %d): %s", resp.StatusCode, string(raw))
+		clog.Event("pair.failed", "http_status", resp.StatusCode)
+		return fmt.Errorf("pairing failed (HTTP %d)", resp.StatusCode)
 	}
 	var result struct {
 		OK             bool   `json:"ok"`
@@ -114,8 +112,8 @@ func HTTP(server, code string) error {
 		return fmt.Errorf("invalid pair response: %w", err)
 	}
 	if !result.OK {
-		clog.Event("pair.failed", "error", result.Error)
-		return fmt.Errorf("pairing failed: %s", result.Error)
+		clog.Event("pair.failed")
+		return fmt.Errorf("pairing was refused by server")
 	}
 	token := result.ConnectorToken
 	if token == "" {

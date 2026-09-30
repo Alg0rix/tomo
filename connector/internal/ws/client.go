@@ -9,19 +9,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/tomo-project/tomo/connector/internal/clog"
-	"github.com/tomo-project/tomo/connector/internal/executor"
 	"github.com/tomo-project/tomo/connector/internal/state"
 	"github.com/tomo-project/tomo/connector/internal/version"
 )
-
-const rpcCacheTTL = 5 * time.Minute
 
 type envelope struct {
 	V           int            `json:"v"`
@@ -36,16 +33,9 @@ type envelope struct {
 	WorkplaceID string         `json:"workplace_id,omitempty"`
 }
 
-type inflight struct {
-	done chan struct{}
-	out  envelope
-}
+type heartbeatConfig struct{ interval, readTimeout, writeTimeout time.Duration }
 
-var (
-	writeMu  sync.Mutex
-	rpcMu    sync.Mutex
-	rpcCache = map[string]*inflight{}
-)
+var defaultHeartbeat = heartbeatConfig{25 * time.Second, 75 * time.Second, 10 * time.Second}
 
 // Run loads saved state and reconnects forever with backoff.
 func Run() error {
@@ -60,22 +50,43 @@ func Run() error {
 		"token", clog.MaskToken(st.Token),
 		"version", version.Version,
 	)
-	return runReconnectLoop(st)
+	home, err := state.Home()
+	if err != nil {
+		return err
+	}
+	base := filepath.Join(home, "rpc-journal")
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return err
+	}
+	if err := syncJournalDir(home); err != nil {
+		return err
+	}
+	scope := hashBytes([]byte(st.ServerURL + "\x00" + st.WorkplaceID + "\x00" + st.Token))
+	store, err := openRPCStore(filepath.Join(base, scope))
+	if err != nil {
+		return fmt.Errorf("open RPC journal: %w", err)
+	}
+	defer store.close()
+	dispatcher := newRPCDispatcher(store)
+	defer dispatcher.close()
+	return runReconnectLoop(st, dispatcher)
 }
 
-func runReconnectLoop(st *state.State) error {
+func runReconnectLoop(st *state.State, dispatcher *rpcDispatcher) error {
 	backoff := 1.0
 	const maxBackoff = 30.0
 	attempt := 0
 	for {
 		attempt++
-		connectedAt := time.Now()
 		clog.Event("ws.connect.attempt",
 			"n", attempt,
 			"server", st.ServerURL,
 			"workplace_id", st.WorkplaceID,
 		)
-		err := connectBearer(st)
+		uptime, err := connectBearer(st, dispatcher)
+		if uptime > 10*time.Second {
+			backoff = 1.0
+		}
 		if err != nil {
 			jitter := 1.0 + (0.4*float64(time.Now().UnixNano()%100)/100.0 - 0.2)
 			wait := time.Duration(backoff*jitter*1000) * time.Millisecond
@@ -85,17 +96,14 @@ func runReconnectLoop(st *state.State) error {
 			clog.Error("ws.disconnected", err,
 				"attempt", attempt,
 				"retry_in_s", fmt.Sprintf("%.1f", wait.Seconds()),
-				"uptime_s", fmt.Sprintf("%.1f", time.Since(connectedAt).Seconds()),
+				"uptime_s", fmt.Sprintf("%.1f", uptime.Seconds()),
 			)
 			time.Sleep(wait)
 			backoff = math.Min(backoff*2, maxBackoff)
 			continue
 		}
-		if time.Since(connectedAt) > 10*time.Second {
-			backoff = 1.0
-		}
 		clog.Event("ws.session.ended_clean",
-			"uptime_s", fmt.Sprintf("%.1f", time.Since(connectedAt).Seconds()),
+			"uptime_s", fmt.Sprintf("%.1f", uptime.Seconds()),
 		)
 		return nil
 	}
@@ -175,10 +183,10 @@ func localIPv4() string {
 	return fallback
 }
 
-func connectBearer(st *state.State) error {
+func connectBearer(st *state.State, dispatcher *rpcDispatcher) (time.Duration, error) {
 	wsURL, err := toWSURL(st.ServerURL)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	lip := localIPv4()
 	clog.Event("ws.dial", "url", wsURL, "device", hostname(), "platform", runtime.GOOS, "local_ip", lip)
@@ -188,7 +196,7 @@ func connectBearer(st *state.State) error {
 	header.Set("X-Device-Name", hostname())
 	header.Set("X-Platform", runtime.GOOS)
 	header.Set("X-Tomo-Connector-Version", version.Version)
-	header.Set("X-Tomo-Caps", "idempotent-replay")
+	header.Set("X-Tomo-Caps", "idempotent-replay,exec-stream")
 	if lip != "" {
 		header.Set("X-Tomo-Local-IP", lip)
 		header.Set("X-Device-IP", lip)
@@ -208,7 +216,7 @@ func connectBearer(st *state.State) error {
 		if resp != nil {
 			code = resp.StatusCode
 		}
-		return fmt.Errorf("dial: %w (HTTP %d)", err, code)
+		return 0, fmt.Errorf("dial: %w (HTTP %d)", err, code)
 	}
 	defer conn.Close()
 	conn.SetReadLimit(512 * 1024)
@@ -216,25 +224,30 @@ func connectBearer(st *state.State) error {
 		"workplace_id", st.WorkplaceID,
 		"url", wsURL,
 	)
-	return serveLoop(conn, st)
+	connectedAt := time.Now()
+	err = serveLoop(conn, st, dispatcher, defaultHeartbeat)
+	return time.Since(connectedAt), err
 }
 
-func serveLoop(conn *websocket.Conn, st *state.State) error {
+func serveLoop(conn *websocket.Conn, st *state.State, dispatcher *rpcDispatcher, heartbeat heartbeatConfig) error {
+	writer := &socketWriter{conn: conn, timeout: heartbeat.writeTimeout}
+	if err := conn.SetReadDeadline(time.Now().Add(heartbeat.readTimeout)); err != nil {
+		return err
+	}
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
-		t := time.NewTicker(25 * time.Second)
+		t := time.NewTicker(heartbeat.interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-t.C:
-				writeMu.Lock()
-				err := conn.WriteJSON(envelope{V: 1, Type: "ping"})
-				writeMu.Unlock()
+				err := writer.send(envelope{V: 1, Type: "ping"})
 				if err != nil {
 					clog.Error("ws.ping.send_fail", err)
+					return
 				} else {
 					clog.Event("ws.out", "type", "ping")
 				}
@@ -248,10 +261,10 @@ func serveLoop(conn *websocket.Conn, st *state.State) error {
 			clog.Error("ws.read_error", err)
 			return err
 		}
-		clog.Event("ws.in.raw", "bytes", len(data), "preview", clog.Truncate(string(data), 300))
+		clog.Event("ws.in.raw", "bytes", len(data))
 		var msg envelope
 		if err := json.Unmarshal(data, &msg); err != nil {
-			clog.Error("ws.in.bad_json", err, "preview", clog.Truncate(string(data), 200))
+			clog.Event("ws.in.bad_json", "bytes", len(data))
 			continue
 		}
 		clog.Event("ws.in",
@@ -259,13 +272,17 @@ func serveLoop(conn *websocket.Conn, st *state.State) error {
 			"id", msg.ID,
 			"method", msg.Method,
 			"workplace_id", msg.WorkplaceID,
-			"message", clog.Truncate(msg.Message, 200),
-			"params", clog.JSON(msg.Params, 400),
 		)
 		switch msg.Type {
 		case "pong", "heartbeat_ack":
+			if err := conn.SetReadDeadline(time.Now().Add(heartbeat.readTimeout)); err != nil {
+				return err
+			}
 			clog.Event("ws.liveness", "type", msg.Type)
 		case "hello_ok":
+			if err := conn.SetReadDeadline(time.Now().Add(heartbeat.readTimeout)); err != nil {
+				return err
+			}
 			if msg.WorkplaceID != "" {
 				st.WorkplaceID = msg.WorkplaceID
 				if err := state.Save(st); err != nil {
@@ -274,88 +291,11 @@ func serveLoop(conn *websocket.Conn, st *state.State) error {
 			}
 			clog.Event("ws.hello_ok", "workplace_id", st.WorkplaceID)
 		case "rpc_request":
-			go handleRPCRequest(conn, msg)
+			dispatcher.submit(writer, msg)
 		case "error":
-			clog.Event("ws.server_error", "message", msg.Message)
+			clog.Event("ws.server_error")
 		default:
 			clog.Event("ws.in.unknown_type", "type", msg.Type)
 		}
 	}
-}
-
-func handleRPCRequest(conn *websocket.Conn, msg envelope) {
-	t0 := time.Now()
-	clog.Event("rpc.request",
-		"id", msg.ID,
-		"method", msg.Method,
-		"params", clog.JSON(msg.Params, 500),
-	)
-	out := executeCached(msg)
-	elapsed := time.Since(t0)
-	if out.OK {
-		clog.Event("rpc.response",
-			"id", out.ID,
-			"method", msg.Method,
-			"ok", true,
-			"ms", elapsed.Milliseconds(),
-			"result", clog.JSON(out.Result, 500),
-		)
-	} else {
-		clog.Event("rpc.response",
-			"id", out.ID,
-			"method", msg.Method,
-			"ok", false,
-			"ms", elapsed.Milliseconds(),
-			"error", out.Error,
-		)
-	}
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	if werr := conn.WriteJSON(out); werr != nil {
-		clog.Error("rpc.write_fail", werr, "id", out.ID, "method", msg.Method)
-	} else {
-		clog.Event("ws.out", "type", "rpc_response", "id", out.ID, "ok", out.OK)
-	}
-}
-
-func executeCached(msg envelope) envelope {
-	id := msg.ID
-	run := func() envelope {
-		result, err := executor.Handle(msg.Method, msg.Params)
-		out := envelope{V: 1, Type: "rpc_response", ID: id, OK: err == nil}
-		if err != nil {
-			out.Error = err.Error()
-		} else {
-			out.Result = result
-		}
-		return out
-	}
-	if id == "" {
-		clog.Event("rpc.no_id", "method", msg.Method)
-		return run()
-	}
-
-	rpcMu.Lock()
-	if existing, ok := rpcCache[id]; ok {
-		rpcMu.Unlock()
-		clog.Event("rpc.cache_hit", "id", id, "method", msg.Method)
-		<-existing.done
-		return existing.out
-	}
-	entry := &inflight{done: make(chan struct{})}
-	rpcCache[id] = entry
-	rpcMu.Unlock()
-
-	out := run()
-	entry.out = out
-	close(entry.done)
-
-	go func() {
-		time.Sleep(rpcCacheTTL)
-		rpcMu.Lock()
-		delete(rpcCache, id)
-		rpcMu.Unlock()
-		clog.Event("rpc.cache_evict", "id", id)
-	}()
-	return out
 }
