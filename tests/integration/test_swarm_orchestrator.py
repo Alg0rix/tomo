@@ -333,6 +333,44 @@ async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypa
     assert task["tools"] == ["bash", "portal", "swarm_board"]
 
 
+async def test_board_posts_stream_live_with_run_phases(tmp_path, monkeypatch) -> None:
+    """The work panel renders findings while workers run, then marks synthesis."""
+    store.rebind(tmp_path / "board_live.db")
+    session_id = store.create_swarm_session(["main"], user_id="web")
+    plan = {"agents": [{"name": "Scout", "purpose": "Finds prices", "base_agent_id": "main"}],
+            "tasks": [{"key": "price", "agent_id": "Scout", "brief": "Find GPU prices"}]}
+
+    async def fake_plan(*args, **kwargs):
+        return {}
+
+    async def fake_turn(message, *, agent_id, **kwargs):
+        if "Assigned swarm task" in kwargs.get("system_prompt", ""):
+            swarm_board.run({"action": "publish", "content": "H100 is $2.49/hr"})
+            yield {"kind": "tool_result", "tool": "swarm_board", "result": "Saved"}
+            yield {"kind": "final", "content": "Prices collected"}
+        else:
+            yield {"kind": "final", "content": "Summary"}
+
+    monkeypatch.setattr(swarm, "_plan", fake_plan)
+    monkeypatch.setattr(swarm, "run_turn", fake_turn)
+    events = [e async for e in swarm.run_swarm_turn(
+        "Price GPUs", session_id=session_id, coordinator_id="main",
+        history=[], initial_plan=plan,
+    )]
+    kinds = [e.get("event") for e in events if e.get("kind") == "swarm_event"]
+    finding = next(e for e in events if e.get("event") == "finding")
+    assert finding["content"] == "H100 is $2.49/hr" and finding["task_id"]
+    assert kinds.index("finding") < kinds.index("task_done")
+    assert kinds.index("phase") < kinds.index("task_created")
+    phases = [e["phase"] for e in events if e.get("event") == "phase"]
+    assert phases == ["planning", "synthesizing"]
+    created = next(e for e in events if e.get("event") == "task_created")
+    assert created["purpose"] == "Finds prices" and created["dynamic"] is True
+    run = store.with_db(lambda conn: swarm_store.list_runs(conn, session_id))[0]
+    stored = [e["kind"] for e in store.with_db(lambda conn: swarm_store.list_events(conn, run["id"]))]
+    assert stored.count("finding") == 1
+
+
 def test_coordinator_cannot_assign_disabled_tool(tmp_path) -> None:
     store.rebind(tmp_path / "disabled_tool.db")
     session_id = store.create_swarm_session(["main"], user_id="web")

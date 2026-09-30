@@ -5,7 +5,6 @@
   const listEl = document.getElementById('sessionList');
   const emptyEl = document.getElementById('sessionEmpty');
   const chatWrap = document.getElementById('sessionChat');
-  const teamProgress = document.getElementById('chatTeamProgress');
   const searchView = document.getElementById('sessionSearchView');
   const searchInput = document.getElementById('sessionSearchInput');
   const searchResultsEl = document.getElementById('sessionSearchResults');
@@ -37,42 +36,19 @@
   // Account id from the server-rendered page (login session).
   var loginUserId = chatWrap.dataset.userId || 'web';
 
-  var teamRun = null;
-  var teamRefreshTimer = null;
-  var teamRefreshSeq = 0;
-  function resetTeamProgress() {
-    ++teamRefreshSeq;
-    clearTimeout(teamRefreshTimer);
-    teamRefreshTimer = null;
-    renderTeamProgress(null);
-  }
-  function renderTeamProgress(run) {
-    teamRun = run || null;
-    if (!teamProgress || !window.TomoLoom) return;
-    TomoLoom.render(teamProgress, teamRun);
-  }
-
-  async function refreshTeamProgress(sessionId) {
-    if (!teamProgress || !sessionId || !window.TomoLoom) return;
+  // Stored swarm runs attach to the history turns that ran them.
+  var swarmHydrateSeq = 0;
+  function cancelSwarmHydrate() { ++swarmHydrateSeq; }
+  async function hydrateSwarmRuns(sessionId) {
+    if (!sessionId || !window.TomoSwarm || !chatWrap.querySelector('.chat-scroll .swarm-card')) return;
     const selection = selectionSeq;
-    const refresh = ++teamRefreshSeq;
+    const seq = ++swarmHydrateSeq;
     try {
       const data = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/swarm');
-      if (selection !== selectionSeq || refresh !== teamRefreshSeq || chatWrap.dataset.sessionId !== sessionId) return;
-      renderTeamProgress(TomoLoom.fromApi(data));
+      if (selection !== selectionSeq || seq !== swarmHydrateSeq || chatWrap.dataset.sessionId !== sessionId) return;
+      TomoSwarm.hydrate(chatWrap.querySelector('.chat-scroll'), data);
     } catch (_) {}
   }
-
-  chatWrap.addEventListener('tomo:team-event', function (event) {
-    const d = event.detail || {};
-    if (!d.run_id || !d.session_id || d.session_id !== chatWrap.dataset.sessionId || searchMode || !window.TomoLoom) return;
-    ++teamRefreshSeq; // An older API snapshot must not overwrite a live event.
-    renderTeamProgress(TomoLoom.apply(teamRun, d));
-    // Findings live only in the durable board; pull it in after bursts.
-    clearTimeout(teamRefreshTimer);
-    const sid = chatWrap.dataset.sessionId;
-    teamRefreshTimer = setTimeout(function () { refreshTeamProgress(sid); }, 900);
-  });
 
   function currentUserId() {
     return loginUserId || 'web';
@@ -98,6 +74,7 @@
       }
       lastHistLen = entries.length;
       renderHistory(entries);
+      hydrateSwarmRuns(sessionId);
       if (!chatHandle) chatHandle = TomoChat.init(chatWrap);
       // History wipe removes HITL cards + todo dock — rehydrate from server.
       if (chatHandle && chatHandle.rehydratePending) {
@@ -480,7 +457,7 @@
 
   function openSearchView() {
     ++selectionSeq;
-    resetTeamProgress();
+    cancelSwarmHydrate();
     searchMode = true;
     if (emptyEl) emptyEl.style.display = 'none';
     chatWrap.style.display = 'none';
@@ -889,6 +866,7 @@
       swarmCard = document.createElement('div');
       swarmCard.className = 'swarm-card';
       turn.appendChild(swarmCard);
+      if (window.TomoSwarm) TomoSwarm.lanes(swarmCard);
       return swarmCard;
     }
 
@@ -899,7 +877,7 @@
         historic: true,
       });
       row.addEventListener('click', function () { openDetailPanel(row); });
-      card.appendChild(row);
+      (window.TomoSwarm ? TomoSwarm.lanes(card) : card).appendChild(row);
       var buf = getBuffer(key);
       buf.row = row;
       buf.key = key;
@@ -1379,7 +1357,7 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
-    resetTeamProgress();
+    cancelSwarmHydrate();
     // Keep the login account id — never adopt another session's user_id.
     chatWrap.dataset.userId = currentUserId();
     chatWrap.dataset.agentIds = ids.join(',');
@@ -1402,7 +1380,7 @@
       const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
       if (selection !== selectionSeq) return;
       renderHistory(hist.entries || []);
-      refreshTeamProgress(sessionId);
+      hydrateSwarmRuns(sessionId);
       chatHandle = TomoChat.init(chatWrap);
       // init may re-touch markdown; stick again after layout settles
       var scrollEl = chatWrap.querySelector('.chat-scroll');
@@ -1480,7 +1458,7 @@
         activeId = null;
         ++selectionSeq;
         delete chatWrap.dataset.sessionId;
-        resetTeamProgress();
+        cancelSwarmHydrate();
         stopHistoryPoll();
         if (chatHandle && chatHandle.destroy) chatHandle.destroy();
         chatHandle = null;
@@ -1511,7 +1489,7 @@
 
   function openDraft(agentIds, opts) {
     ++selectionSeq;
-    resetTeamProgress();
+    cancelSwarmHydrate();
     stopHistoryPoll();
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';

@@ -301,6 +301,8 @@ def _accept_plan(
                          "depends_on": deps, "write_scope": scope,
                          "tools": tools,
                          "agent_name": local[aid]["name"] if aid in local else configured[aid]["name"],
+                         "purpose": local[aid]["purpose"] if aid in local else (
+                             configured[aid].get("role") or configured[aid].get("description") or ""),
                          "base_agent_id": local[aid]["base_agent_id"] if aid in local else aid,
                          "instructions": local[aid]["instructions"] if aid in local else "",
                          "context_summary": local[aid]["context_summary"] if aid in local else "",
@@ -409,10 +411,17 @@ async def run_swarm_turn(
     need_plan = True
     finished = False
     final_status = "done"
-    yield _event(run_id, "run_started", {"request": request})
+    board_cursor = 0
+    coordinator = store.get_agent(coordinator_id) or {}
+    yield _event(run_id, "run_started", {
+        "request": request, "coordinator_id": coordinator_id,
+        "coordinator_name": coordinator.get("name") or coordinator_id,
+    })
     try:
         while True:
             if need_plan and plan_calls < MAX_PLAN_CALLS and len(tasks) < MAX_TASKS:
+                if not plan_calls:
+                    yield _event(run_id, "phase", {"phase": "planning"})
                 plan_calls += 1
                 need_plan = False
                 if initial_plan is not None:
@@ -429,7 +438,7 @@ async def run_swarm_turn(
                         "task_id": task["id"], "key": task["key"],
                         "agent_id": task["agent_id"], "agent_name": task["agent_name"],
                         "brief": task["brief"], "depends_on": task["depends_on"],
-                        "tools": task["tools"],
+                        "tools": task["tools"], "purpose": task["purpose"],
                         "dynamic": task["dynamic"],
                     }, task["id"])
                 for msg in proposal.get("messages") or []:
@@ -477,7 +486,14 @@ async def run_swarm_turn(
             elif kind == "worker_event":
                 yield payload
                 if payload.get("kind") == "tool_result" and payload.get("tool") == "swarm_board":
-                    yield _event(run_id, "board_updated", {"agent_id": task["agent_id"]}, task["id"])
+                    # The board tool persisted the post; relay it live so the
+                    # work panel shows findings as they land, not on reload.
+                    posted = store.with_db(lambda conn, after=board_cursor: db.list_events(conn, run_id, after))
+                    for post in posted:
+                        board_cursor = max(board_cursor, post["id"])
+                        if post["kind"] in {"finding", "message"} and post["task_id"]:
+                            yield {"kind": "swarm_event", "run_id": run_id, "event_id": post["id"],
+                                   "event": post["kind"], "task_id": post["task_id"], **post["payload"]}
                     need_plan = True
             elif kind == "task_done":
                 task["status"] = payload["status"]
@@ -494,6 +510,7 @@ async def run_swarm_turn(
                 # Replan while siblings still work; don't wait for a batch barrier.
                 need_plan = True
                 continue
+        yield _event(run_id, "phase", {"phase": "synthesizing" if tasks else "solo"})
         if not tasks:
             # Even explicit opt-in need not spawn anyone for a trivial request.
             coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)

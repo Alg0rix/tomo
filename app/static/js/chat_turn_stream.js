@@ -543,13 +543,27 @@
       return swarmCard;
     }
 
+    function laneHost(card) {
+      return window.TomoSwarm ? TomoSwarm.lanes(card) : card;
+    }
+
+    // Lanes pre-created from the run plan (queued tasks) get their trace
+    // click once the worker actually starts. History rows own their own.
+    function wireRow(key, row) {
+      if (!row || row._wired || row._buffer) return row;
+      row._wired = true;
+      row.classList.remove('no-trace');
+      row.addEventListener('click', function () { openDetailPanel(key); });
+      return row;
+    }
+
     function addSwarmRow(key, aid, name, task, idx, total) {
       var card = swarmCard || createSwarmCard();
       var row = Tomo.buildSwarmRow({
         key: key, aid: aid, name: name, task: task, idx: idx, total: total,
       });
-      row.addEventListener('click', function () { openDetailPanel(key); });
-      card.appendChild(row);
+      wireRow(key, row);
+      laneHost(card).appendChild(row);
       var buf = getBuffer(key);
       buf.row = row;
       buf.name = name || aid;
@@ -755,7 +769,8 @@
       row = Tomo.buildSwarmRow({
         key: instKey, aid: aid, name: name, task: task, idx: idx || 1, total: total || 1,
       });
-      card.appendChild(row);
+      wireRow(instKey, row);
+      laneHost(card).appendChild(row);
       ctx.atBottom();
       return row;
     }
@@ -868,7 +883,7 @@
       buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
       buf.agentId = target;
       // Reuse history-rendered swarm rows on resume so replay does not duplicate cards.
-      if (!buf.row) buf.row = swarmRowFor(key) || swarmRowFor(target);
+      if (!buf.row) buf.row = wireRow(key, swarmRowFor(key) || swarmRowFor(target));
       if (!buf.row) addSwarmRow(key, target, name, task, idx, total);
       ctx.setStatus('amber', 'busy \u00b7 ' + (total > 1 ? total + ' agents' : name));
       ctx.atBottom();
@@ -892,7 +907,7 @@
       var buf = getBuffer(key);
       buf.name = name; buf.task = task; buf.index = idx; buf.total = total;
       buf.agentId = aid;
-      if (!buf.row) buf.row = swarmRowFor(key) || swarmRowFor(aid);
+      if (!buf.row) buf.row = wireRow(key, swarmRowFor(key) || swarmRowFor(aid));
       if (!buf.row) addSwarmRow(key, aid, name, task, idx, total);
       if (buf.row && (liveCaughtUp ||
           !buf.row.classList.contains('done') && !buf.row.classList.contains('error'))) {
@@ -909,14 +924,25 @@
       ctx.atBottom();
     });
 
+    // The run board lives in this turn: plan, lanes, board and phases.
+    var swarmRun = null;
     on('swarm.event', function (e) {
       bumpActivity();
-      try {
-        if (ctx.currentSessionId && ctx.currentSessionId() !== streamSessionId) return;
-        ctx.wrap.dispatchEvent(new CustomEvent('tomo:team-event', {
-          detail: Object.assign({}, JSON.parse(e.data || '{}'), { session_id: streamSessionId }), bubbles: true,
-        }));
-      } catch (_) {}
+      var d;
+      try { d = JSON.parse(e.data || '{}'); } catch (_) { return; }
+      if (ctx.currentSessionId && ctx.currentSessionId() !== streamSessionId) return;
+      if (!isLive) sawTurnEvent = true;
+      if (window.TomoSwarm && d.run_id) {
+        var card = swarmCard || ctx.turn.querySelector('.swarm-card') || createSwarmCard();
+        swarmCard = card;
+        // A history snapshot may already hold this run; events dedupe by id.
+        swarmRun = TomoSwarm.apply(card._srRun || swarmRun, d);
+        TomoSwarm.mount(card, swarmRun, { live: true, collapse: false });
+        if (d.kind === 'run_started' || d.kind === 'task_created') ctx.atBottom();
+      }
+      ctx.wrap.dispatchEvent(new CustomEvent('tomo:team-event', {
+        detail: Object.assign({}, d, { session_id: streamSessionId }), bubbles: true,
+      }));
     });
 
     on('status', function (e) {

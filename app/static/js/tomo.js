@@ -952,17 +952,23 @@
     row.dataset.instanceKey = o.key || aid;
     if (!o.historic) row.dataset.start = String(Date.now());
     row._stats = { tools: 0, errors: 0, steps: 0 };
-    var color = Tomo.avatarColor ? Tomo.avatarColor(aid || name) : 'var(--accent)';
+    row.style.setProperty('--c', Tomo.avatarColor ? Tomo.avatarColor(aid || name) : 'var(--accent)');
     var lane = (o.total || 1) > 1 ? '<span class="sw-lane">' + (o.idx || 1) + '/' + o.total + '</span>' : '';
     row.innerHTML =
-      '<div class="sw-head">' +
-        '<span class="sw-dot" style="background:' + color + '" aria-hidden="true"></span>' +
-        '<span class="name">' + esc(name) + '</span>' + lane +
-        '<span class="sw-state">' + (o.historic ? '' : 'starting') + '</span>' +
-        '<span class="sw-open" aria-hidden="true">Open</span>' +
+      '<span class="sw-av" aria-hidden="true"><span>' + esc(name.charAt(0).toUpperCase()) + '</span></span>' +
+      '<div class="sw-body">' +
+        '<div class="sw-head">' +
+          '<span class="sw-dot" aria-hidden="true"></span>' +
+          '<span class="name">' + esc(name) + '</span>' + lane +
+          '<span class="sw-role"></span>' +
+          '<span class="sw-state">' + (o.historic ? '' : 'starting') + '</span>' +
+          '<span class="sw-open" aria-hidden="true">Trace</span>' +
+        '</div>' +
+        (o.task ? '<div class="task">' + esc(o.task) + '</div>' : '') +
+        '<div class="sw-deps" hidden></div>' +
+        '<div class="sw-live" aria-live="polite"></div>' +
       '</div>' +
-      (o.task ? '<div class="task">' + esc(o.task) + '</div>' : '') +
-      '<div class="sw-live" aria-live="polite"></div>' +
+      '<div class="sw-track" aria-hidden="true"><i></i></div>' +
       // Kept for older callers that still poke its width; hidden by CSS.
       '<div class="swarm-progress" hidden><div class="swarm-progress-bar"></div></div>';
     row.addEventListener('keydown', function (ev) {
@@ -993,6 +999,9 @@
     if (kind === 'thinking' && data.content) {
       st.steps++;
       set('is-note', esc(firstSentence(data.content, 140)));
+    } else if (kind === 'tool' && data.tool === 'swarm_board') {
+      var act = (data.args || {}).action;
+      set('is-note', act === 'read' ? 'reading the shared board' : act === 'send' ? 'messaging another agent' : 'posting to the shared board');
     } else if (kind === 'tool') {
       st.tools++;
       var sum = Tomo.formatToolSummary(data.tool || '', data.args || {});
@@ -1036,7 +1045,7 @@
       var state = rows[i].querySelector('.sw-state');
       if (!state) continue;
       var secs = Math.max(0, Math.round((Date.now() - Number(rows[i].dataset.start)) / 1000));
-      var clock = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+      var clock = Math.floor(secs / 60) + ':' + (secs % 60 < 10 ? '0' : '') + (secs % 60);
       state.textContent = 'working · ' + clock + (state.dataset.counts ? ' · ' + state.dataset.counts : '');
     }
   }, 1000);
