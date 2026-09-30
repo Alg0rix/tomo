@@ -1,9 +1,3 @@
----
-name: swarm
-description: Choose useful independent worker tasks and coordinate configured or session-local agents through the swarm runtime.
-version: 1.3
----
-
 # Swarm
 
 Read this before recommending a team for an ordinary user request.
@@ -33,12 +27,14 @@ Plan in the main chat, submit the session-scoped run, then verify and synthesize
 - Workers share actionable findings and blockers through `swarm_board`, and read it before finishing. Return evidence, checks performed, and unresolved limits; agreement between agents alone is not verification.
 - Add work only for a concrete remaining gap. Respect runtime limits, stop when the requested outcome is supported, and identify failed or blocked tasks in the final synthesis.
 
-Call `start_swarm(request=<full task and context>, plan={"agents": [...], "tasks": [...]})` for an explicitly requested team or a clearly useful independent split. Include any relevant `clarify` answer in the request. `consent_quote` is optional compatibility metadata, not a dispatch requirement. The runtime validates your plan and schedules actual workers. Invalid plans return specific tool errors here, without starting another planner. Worker evidence returns as the tool result to the same main model. For a concrete remaining gap, submit a follow-up plan here; never invent worker output. Do not claim that dispatch is unavailable when this tool is present. Loading this skill reads guidance and does not itself launch workers. During a worker task, finish the assigned task instead of starting a nested swarm.
+Call `start_swarm(request=<full task and context>, plan={"agents": [...], "tasks": [...]})` for an explicitly requested team or a clearly useful independent split. Include any relevant `clarify` answer in the request. `consent_quote` is optional compatibility metadata, not a dispatch requirement. The runtime validates your plan and schedules actual workers. Invalid plans return specific tool errors here, without starting another planner. Worker evidence returns as the tool result to the same main model. For a concrete remaining gap, submit a follow-up plan here; never invent worker output. Do not claim that dispatch is unavailable when this tool is present. Loading this file reads guidance and does not itself launch workers. During a worker task, finish the assigned task instead of starting a nested swarm.
 
-## References
+## Support files
 
-Load supporting files with `use_skill(skill_id="swarm", file="references/<name>.md")` when needed.
+Load with `use_skill(skill_id="tomo", file="references/swarm/<name>.md")`.
 
-- [Coordination playbook](references/coordination.md): read when designing task briefs, handling dependencies or shared edits, communicating findings, or checking completion. Use it while planning in the main chat and carrying out assigned worker tasks.
-- [Worker creation and task plans](references/workers.md): read for configured versus session-local workers, template inheritance, plan examples, capability selection, and follow-up work.
-- [Sources and pattern selection](references/sources.md): read for the reasoning behind swarm patterns and links to primary references. These sources inform the guidance; Tomo's runtime and tool permissions define execution.
+- `coordination.md`: task briefs, dependencies, shared edits, the board, completion.
+- `workers.md`: configured versus session-local workers, plan shape, follow-up work.
+- `sources.md`: why a pattern fits. Tomo's runtime and tool permissions still define execution.
+
+Install paths, the `tomo` CLI, config, and the connector are other files of this same skill. See the Tomo skill index.

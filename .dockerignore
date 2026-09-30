@@ -26,7 +26,6 @@ benchmarks/
 connector/
 tests/
 seed/
-skills/
 skillsets/
 evaluator/
 .env

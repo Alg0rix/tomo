@@ -40,6 +40,19 @@ Repair the demonstrated failure and repeat a harmless target probe. Re-pairing
 is not needed for every network interruption. The client retries failed
 connections with exponential backoff and jitter capped at 30 seconds.
 
+## Coordinator CLI checks
+
+Run `tomo workplaces list --json` and `show <id> --json` in the coordinator's
+installation to inspect saved configuration. For an expired code, use
+`pairing-code <id> --json` on the same enabled tunnel. CLI `online: null` means
+live connectivity is unavailable to that process, not that the target is
+necessarily offline. A saved `connected` status may also be stale. Verify with
+the running server's workplace tool and a harmless target probe.
+
+If CLI reports a missing database, check the OS account, TOMO_HOME/TOMO_DB_PATH,
+and whether Tomo runs in Docker. Do not recreate the workplace/database to fix
+an installation-context mistake. See [CLI configuration](../configuration-cli.md).
+
 ## Admin API map
 
 These are server HTTP routes, not agent tool names. Workplace management requires

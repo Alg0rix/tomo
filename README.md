@@ -29,7 +29,7 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 
 Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
-Chats start with one agent. To use a team in a new or existing chat, turn on **Team** for the next message or ask for multiple agents in the message itself. Tomo may suggest a task split for an ordinary request; reply **gas** or **ya** to approve it. The bundled policy is a discoverable [SKILL.md](skills/internal/swarm/SKILL.md), alongside skills from `~/.agents/skills`. A team run can mix configured agents with specialists that exist only in that chat. The coordinator selects enabled tools for each task, including `bash` and `portal` where appropriate. The chat shows actual task progress instead of a generic swarm label.
+Chats start with one agent. To use a team in a new or existing chat, turn on **Team** for the next message or ask for multiple agents in the message itself. Tomo may suggest a task split for an ordinary request; reply **gas** or **ya** to approve it. The bundled policy is the [Tomo skill](skills/internal/tomo/SKILL.md) (`references/swarm.md`), alongside skills from `~/.agents/skills`. A team run can mix configured agents with specialists that exist only in that chat. The coordinator selects enabled tools for each task, including `bash` and `portal` where appropriate. The chat shows actual task progress instead of a generic swarm label.
 
 ### Install (Linux, systemd user)
 
@@ -92,6 +92,7 @@ Skills are folders with a `SKILL.md` (agentskills.io style). Tomo discovers:
 
 | Path | Role |
 |------|------|
+| `<install>/skills/internal` | Bundled [Tomo](skills/internal/tomo/SKILL.md) skill (read-only) |
 | `$TOMO_HOME/library/skills` | Managed installs |
 | `~/.agents/skills` | Shared user skills (default) |
 | `~/.agent/skills` | Alternate shared path |

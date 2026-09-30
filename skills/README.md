@@ -17,13 +17,29 @@ with optional YAML frontmatter (`name`, `description`, `version`).
 Override external roots with ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). Set
 empty to disable external discovery.
 
-## Internal skills
+## Internal skill
 
-- [Swarm](internal/swarm/SKILL.md) — plan and coordinate worker agents.
-- [Connector](internal/connector/SKILL.md) — install/pair and operate tunnel
-  workplaces, transfer files, troubleshoot connections, and configure MCP services.
-  Detailed procedures are under the skill's `references/` directory and can be
-  loaded with `use_skill(skill_id="connector", file="references/setup.md")`.
+One package: [Tomo](internal/tomo/SKILL.md). Agents load a topic with
+`use_skill(skill_id="tomo", file="references/<file>")`.
+
+| File | Topic |
+|------|--------|
+| `references/swarm.md` | Worker teams |
+| `references/connector.md` | Tunnel workplaces and MCP |
+| `references/config.md` | Home, env, secrets, models |
+| `references/cli.md` | CLI lifecycle and skill packages |
+| `references/configuration-cli.md` | Local configuration syntax, action support, schemas, reloads |
+| `references/agents-models.md` | Agents, personas, LLM profiles, workplace scopes |
+| `references/skills-modules.md` | Packages, tool/skill assignments, reusable playbooks, modules |
+| `references/schedules.md` | Scheduled prompts, recurrence, pause/resume, run verification |
+| `references/channels-settings.md` | Telegram, transcription, approvals, learning, general limits |
+| `references/memory-knowledge.md` | Memory/knowledge/episode selection, recall, corrections |
+| `references/accounts-sessions.md` | Login accounts, API keys, sessions/history, saved/shared artifacts |
+| `references/install.md` | Install paths: systemd, Docker, source, connector binary |
+
+The catalog shows this skill's `description`, truncated at 80 characters
+(`app/runtime/agent/skills_prompt.py`). Keep that line short enough to survive
+the cut. A bundled id wins over a library or external package with the same id.
 
 ## CLI
 

@@ -38,15 +38,24 @@ requires `bash`, and Python execution requires `python3` on the target.
 
 ## Register and pair
 
-Create a tunnel workplace in **Workplaces**, then use its pairing code. The
-available agent tool can create a record with:
+On the coordinator, create a tunnel and retrieve its pairing code directly:
+
+```bash
+tomo workplaces create build-host --json
+```
+
+Reuse the returned ID on retries: `tomo workplaces show <id> --json` or
+`tomo workplaces pairing-code <id> --json` for a fresh code. Run with the
+coordinator's OS account and TOMO_HOME/TOMO_DB_PATH; no HTTP API key is needed.
+The web **Workplaces** page and the available agent tool can also create a record:
 
 ```text
 register_workplace(name="build-host", kind="tunnel", assign_to_agent=true, use_now=true)
 ```
 
 This tool's result identifies the workplace but does not return the pairing
-code; retrieve it through the authenticated workplace UI/admin API. It does not
+code; retrieve it with `tomo workplaces show <id> --json` on the coordinator
+or through the authenticated workplace UI/admin API. It does not
 install or connect the target, and `root_path` on this tunnel tool call does not
 configure the connector's filesystem root. Avoid creating duplicate tunnel
 records during retries.
@@ -129,7 +138,13 @@ subject to OS permissions. Non-systemd hosts need their own process supervisor.
 
 ## SSH-assisted installation
 
-Workplaces offers installation via SSH. Supply the real SSH account, a
+For an agent with terminal access, use ordinary SSH to run the target install,
+pair, and service commands above. Create/reuse the workplace and fetch its code
+through the coordinator CLI first; keep SSH credentials in the existing terminal
+access mechanism. Confirm the target account/host and trusted host key, and use
+the coordinator address reachable from the target.
+
+The web Workplaces page also offers installation via SSH. Supply the real SSH account, a
 coordinator URL reachable from the remote host, and available architecture/release.
 The target downloads the binary, installs the service, pairs, and becomes a
 tunnel workplace. SSH host keys must already be trusted by the coordinator;
@@ -157,10 +172,16 @@ already running connection. Restart after pairing changes.
 
 - `service uninstall` stops/disables and removes the unit, keeping binary/state.
 - `logout` removes local `state.json`; it does not revoke the server token.
-- Disable a workplace in Tomo to disconnect it and reject new authentication;
+- Disabling through the running web/API disconnects the workplace and rejects new authentication;
   re-enabling retains its token and allows reconnection.
-- Deleting the workplace removes the server record and drops its live session.
+- Deleting through the running web/API removes the server record and drops its live session.
   Treat deletion as a separate requested action, not a routine reconnect repair.
+
+CLI `tomo config workplaces disable <id>` / `delete <id>` persist changes but
+cannot close another process's live socket. Apply the coordinator's lifecycle
+when immediate disconnection is required, then verify the target state. A
+reconnect repair should preserve the existing workplace and token unless the
+failure demonstrates a credential issue.
 
 For credential replacement, use a fresh pairing code and complete pairing on
 the intended machine, then verify connectivity. Generating a code alone does

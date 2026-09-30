@@ -792,7 +792,8 @@ async def run_turn(
                 ]
                 prompt += (
                     "\n\n## Swarm execution for this turn\n"
-                    "The start_swarm tool is available. Read the swarm skill. "
+                    "The start_swarm tool is available. Call "
+                    "use_skill(skill_id=\"tomo\", file=\"references/swarm.md\") and follow it. "
                     "Plan workers here using this main chat model, its context and reasoning "
                     "settings. If the user requests a swarm/team, or independent workers "
                     "clearly improve the requested task, call start_swarm with the full "

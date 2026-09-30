@@ -12,6 +12,7 @@ COPY app ./app
 COPY cli ./cli
 COPY modules ./modules
 COPY defaults ./defaults
+COPY skills ./skills
 
 RUN uv sync --frozen --no-dev \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin tomo \

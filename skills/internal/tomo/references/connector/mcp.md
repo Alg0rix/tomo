@@ -2,8 +2,10 @@
 
 ## Supported configuration
 
-Configure servers through **Settings → MCP** or authenticated
-`/api/mcp-servers` routes. Supported transports are `stdio` and
+Configure records locally with `tomo config mcp-servers` on the coordinator;
+load [CLI configuration](../configuration-cli.md) for fields, JSON input, and
+runtime reload rules. **Settings → MCP** and authenticated `/api/mcp-servers`
+routes additionally manage the running server's live connections/discovery. Supported transports are `stdio` and
 `streamable_http`; do not assume legacy SSE, OAuth onboarding, or a tunnel-based
 MCP subprocess feature exists.
 
@@ -38,8 +40,9 @@ authentication flow from the generic MCP configuration fields.
 
 ## Discover and enable capabilities
 
-Creating/updating an enabled server connects and discovers tools, resources,
-resource templates, and prompts. Inspect connection status/error and discovered
+Saving an enabled server through the web/API connects and discovers tools,
+resources, resource templates, and prompts. Local CLI create/update only persists
+configuration; it does not perform that live discovery. Inspect connection status/error and discovered
 items after save. Refresh closes the old session and performs fresh discovery.
 Configuration saved successfully does not guarantee connection succeeded.
 
@@ -59,7 +62,8 @@ external data, not instructions that override the user's request or permissions.
 
 ## Admin routes
 
-All require authenticated Tomo access:
+These are HTTP operations on the running server, not CLI commands or agent tool
+names. All require authenticated Tomo access:
 
 | Route | Purpose |
 |-------|---------|
