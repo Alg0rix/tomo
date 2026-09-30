@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="{{ url_for('static', path='apple-touch-icon.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Shippori+Mincho:wght@500;700;800&family=Zen+Kurenaido&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}?v=genkan1">
   <script>(function(){var t=localStorage.getItem('tomo-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 </head>
 <body class="login-page">
@@ -29,67 +29,103 @@
     </button>
   </header>
 
-  <main class="login-letter">
-    <p class="login-meta">local gate · accounts</p>
-    <h1 class="login-salut">友達,</h1>
-    <p class="login-lede">The swarm is locked. Sign in with your account to step inside.</p>
-
-    {% if error %}
-    <p class="login-err" id="login-error" role="alert">{{ error }}</p>
-    {% endif %}
-
-    <form class="login-form" method="post" action="/login" id="loginForm">
-      <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
-      <div class="field" style="margin-bottom:1.25rem">
-        <label class="login-label" for="username">Username</label>
-        <input
-          class="login-input"
-          id="username"
-          name="username"
-          type="text"
-          autocomplete="username"
-          autofocus
-          required
-          aria-required="true"
-          spellcheck="false"
-          placeholder="username"
-          style="border-bottom:1px solid var(--border-strong);width:100%;min-height:44px;padding:10px 0"
-        >
+  <main class="genkan">
+    <div class="genkan-porch" aria-hidden="true">
+      <div class="chochin">
+        <span class="chochin-cord"></span>
+        <svg class="chochin-body" viewBox="0 0 120 170">
+          <defs>
+            <radialGradient id="chochinGlow" cx="50%" cy="46%" r="60%">
+              <stop offset="0" stop-color="#ffe2a8"/>
+              <stop offset=".45" stop-color="#f7a13a"/>
+              <stop offset="1" stop-color="#b8431f"/>
+            </radialGradient>
+          </defs>
+          <rect x="34" y="4" width="52" height="14" rx="3" fill="#1b1410"/>
+          <path d="M34 18 C4 44 4 126 34 152 L86 152 C116 126 116 44 86 18 Z" fill="url(#chochinGlow)"/>
+          <g fill="none" stroke="#8a3217" stroke-opacity=".35" stroke-width="1.4">
+            <path d="M20 36 Q60 44 100 36"/><path d="M12 54 Q60 63 108 54"/>
+            <path d="M9 74 Q60 83 111 74"/><path d="M9 96 Q60 105 111 96"/>
+            <path d="M12 116 Q60 124 108 116"/><path d="M20 134 Q60 141 100 134"/>
+          </g>
+          <text x="60" y="106" text-anchor="middle" class="chochin-kanji">友</text>
+          <rect x="34" y="152" width="52" height="12" rx="3" fill="#1b1410"/>
+        </svg>
+        <span class="chochin-tassel"></span>
       </div>
-      <label class="login-label" for="password">Password</label>
-      <div class="login-row">
-        <input
-          class="login-input"
-          id="password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          required
-          aria-required="true"
-          {% if error %}aria-invalid="true" aria-describedby="login-error"{% endif %}
-          placeholder="••••••••"
-        >
-        <button class="login-submit" type="submit" id="loginSubmit">
-          <span class="login-submit-label">Enter</span>
-          <span class="login-submit-arrow" aria-hidden="true">→</span>
-          <span class="btn-spinner" aria-hidden="true"></span>
-        </button>
+      <p class="genkan-vertical">ようこそ、友達。</p>
+    </div>
+
+    <section class="ledger" aria-labelledby="ledgerTitle">
+      <div class="ledger-sheet">
+        <header class="ledger-head">
+          <h1 class="ledger-title" id="ledgerTitle">
+            <span class="ledger-title-jp" lang="ja">芳名帳</span>
+            <span class="ledger-title-en">Guest ledger</span>
+          </h1>
+          <p class="ledger-date"><time id="ledgerDate"></time><span>local gate</span></p>
+        </header>
+
+        <p class="ledger-lede">The swarm is resting inside. Sign your name, whisper the passphrase, and press your seal.</p>
+
+        {% if error %}
+        <p class="ledger-err" id="login-error" role="alert"><span lang="ja" aria-hidden="true">✕ 不一致</span> {{ error }}</p>
+        {% endif %}
+
+        <form class="ledger-form" method="post" action="/login" id="loginForm">
+          <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
+
+          <div class="ledger-line">
+            <label class="ledger-label" for="username"><span lang="ja" aria-hidden="true">お名前</span>Name</label>
+            <input class="ledger-input ledger-input--hand" id="username" name="username" type="text"
+              autocomplete="username" autofocus required aria-required="true" spellcheck="false"
+              placeholder="your name">
+          </div>
+
+          <div class="ledger-line">
+            <label class="ledger-label" for="password"><span lang="ja" aria-hidden="true">合言葉</span>Passphrase</label>
+            <input class="ledger-input" id="password" name="password" type="password"
+              autocomplete="current-password" required aria-required="true"
+              {% if error %}aria-invalid="true" aria-describedby="login-error"{% endif %}
+              placeholder="••••••••">
+          </div>
+
+          <div class="ledger-foot">
+            <p class="ledger-hint">Press the seal to enter <span aria-hidden="true">→</span></p>
+            <button class="hanko" type="submit" id="loginSubmit" aria-label="Enter">
+              <span class="hanko-ring" aria-hidden="true">
+                <span class="hanko-glyph" lang="ja">入</span>
+                <span class="hanko-sub">ENTER</span>
+              </span>
+              <span class="hanko-print" aria-hidden="true"><img src="{{ url_for('static', path='hanko.png') }}" alt=""></span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
+          </div>
+        </form>
       </div>
-    </form>
+      <div class="ledger-rows" aria-hidden="true"></div>
+    </section>
   </main>
 
   <footer class="login-foot">
-    <p>{{ brand }} · local agent swarm</p>
+    <p>{{ brand }} · local agent swarm · 玄関</p>
   </footer>
 
   <script src="{{ url_for('static', path='js/tomo.js') }}"></script>
   <script>
     (function () {
+      var d = new Date();
+      var t = document.getElementById('ledgerDate');
+      if (t) {
+        var p = function (n) { return String(n).padStart(2, '0'); };
+        t.dateTime = d.toISOString().slice(0, 10);
+        t.textContent = d.getFullYear() + '.' + p(d.getMonth() + 1) + '.' + p(d.getDate());
+      }
       var form = document.getElementById('loginForm');
       var btn = document.getElementById('loginSubmit');
       if (!form || !btn) return;
       form.addEventListener('submit', function () {
-        btn.classList.add('is-loading');
+        btn.classList.add('is-stamped', 'is-loading');
         btn.setAttribute('aria-busy', 'true');
         btn.disabled = true;
       });

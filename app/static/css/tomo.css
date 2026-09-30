@@ -4488,12 +4488,15 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .kb-search-row .input { max-width: 420px; flex: 1; min-width: 0; }
 .kb-search-meta { font-size: 12px; flex-shrink: 0; white-space: nowrap; }
 
-/* Hallmark · genre: atmospheric · macrostructure: Letter · tone: technical-austere
- * theme: Darkroom · enrichment: none · nav: N9 · footer: Ft2
- * H5 knobs: salutation=greeting · body=1 paragraph · signoff=form-as-cta (C2)
- * Pre-emit critique: P4 H5 E4 S4 R5 V4
+/* Login · "Genkan" — a hanging chōchin at the porch and a paper guest
+ * ledger (芳名帳). Sign by hand, press the hanko seal to enter.
  */
 .login-page {
+  --paper: #efe4cc;
+  --paper-edge: #d9c9a8;
+  --sumi: #2a2119;
+  --sumi-dim: #6d5e4b;
+  --shu: #c8402e;
   position: relative;
   z-index: 1;
   min-height: 100dvh;
@@ -4507,12 +4510,13 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 42% 36% at 18% 22%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%),
-    radial-gradient(ellipse 34% 28% at 88% 78%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%);
+    radial-gradient(circle at 24% 42%, color-mix(in srgb, #f7a13a 22%, transparent), transparent 34%),
+    radial-gradient(ellipse 60% 40% at 24% 100%, color-mix(in srgb, #f7a13a 7%, transparent), transparent 70%),
+    repeating-linear-gradient(90deg, transparent 0 118px, color-mix(in srgb, var(--text) 3%, transparent) 118px 120px);
 }
 .login-nav {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -4537,134 +4541,321 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   overflow: hidden;
   flex-shrink: 0;
 }
-.login-letter {
+
+.genkan {
   position: relative;
   z-index: 1;
   flex: 1;
-  width: min(100%, 28rem);
-  margin: 0;
-  padding: clamp(2.5rem, 12vh, 6rem) clamp(1rem, 4vw, 2.5rem) 2rem;
-  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: clamp(1.5rem, 5vw, 5rem);
+  width: min(100%, 72rem);
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 2.5rem) clamp(2rem, 6vh, 4rem);
 }
-.login-meta {
+
+/* porch: lantern + vertical greeting */
+.genkan-porch {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-self: start;
+}
+.chochin {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 0;
+  animation: chochin-sway 7s var(--ease-in-out, ease-in-out) infinite;
+  margin-top: -20px;
+}
+.chochin-cord {
+  width: 2px;
+  height: clamp(40px, 10vh, 96px);
+  background: linear-gradient(var(--border), var(--text-faint));
+}
+.chochin-body {
+  width: clamp(130px, 15vw, 190px);
+  height: auto;
+  filter:
+    drop-shadow(0 0 28px color-mix(in srgb, #f7a13a 55%, transparent))
+    drop-shadow(0 0 90px color-mix(in srgb, #f7a13a 30%, transparent));
+}
+.chochin-kanji {
+  font-family: "Shippori Mincho", serif;
+  font-weight: 800;
+  font-size: 58px;
+  fill: #1b1410;
+  opacity: 0.86;
+}
+.chochin-tassel {
+  width: 10px;
+  height: 36px;
+  margin-top: -1px;
+  background: repeating-linear-gradient(90deg, var(--shu) 0 2px, #8d2a1c 2px 3px);
+  border-radius: 0 0 3px 3px;
+}
+.genkan-vertical {
+  writing-mode: vertical-rl;
+  font-family: "Shippori Mincho", serif;
+  font-weight: 700;
+  font-size: clamp(2rem, 3.4vw, 3rem);
+  letter-spacing: 0.28em;
+  line-height: 1;
+  color: var(--text);
+  padding-top: clamp(60px, 12vh, 130px);
+}
+@keyframes chochin-sway {
+  0%, 100% { transform: rotate(-2.2deg); }
+  50% { transform: rotate(2.2deg); }
+}
+
+/* the ledger sheet */
+.ledger {
+  position: relative;
+  justify-self: start;
+  width: min(100%, 34rem);
+}
+.ledger-sheet {
+  position: relative;
+  z-index: 1;
+  padding: clamp(1.5rem, 3.5vw, 2.5rem) clamp(1.25rem, 3.5vw, 2.5rem) clamp(1.25rem, 3vw, 2rem) clamp(2.5rem, 5vw, 3.5rem);
+  color: var(--sumi);
+  background:
+    linear-gradient(90deg, transparent calc(clamp(2.5rem, 5vw, 3.5rem) - 14px), color-mix(in srgb, var(--shu) 55%, transparent) calc(clamp(2.5rem, 5vw, 3.5rem) - 14px) calc(clamp(2.5rem, 5vw, 3.5rem) - 13px), transparent calc(clamp(2.5rem, 5vw, 3.5rem) - 13px)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .27 0 0 0 0 .16 0 0 0 .11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+    var(--paper);
+  border-radius: 3px;
+  transform: rotate(-0.8deg);
+  box-shadow:
+    0 1px 0 var(--paper-edge),
+    0 30px 60px -20px rgba(0, 0, 0, 0.55),
+    0 12px 24px -12px rgba(0, 0, 0, 0.4);
+}
+/* two sheets beneath — the rest of the book */
+.ledger-rows,
+.ledger::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paper) 88%, #000);
+  transform: rotate(1.4deg) translate(6px, 8px);
+  box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.5);
+}
+.ledger::before {
+  background: color-mix(in srgb, var(--paper) 76%, #000);
+  transform: rotate(3deg) translate(12px, 14px);
+}
+.ledger-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 3px double color-mix(in srgb, var(--sumi) 70%, transparent);
+}
+.ledger-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.ledger-title-jp {
+  font-family: "Shippori Mincho", serif;
+  font-weight: 800;
+  font-size: clamp(2.1rem, 4.4vw, 2.9rem);
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+.ledger-title-en {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-faint);
-  letter-spacing: 0.06em;
-  margin-bottom: 1.25rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sumi-dim);
 }
-.login-salut {
-  font-family: var(--font-display);
-  font-style: normal;
-  font-weight: 700;
-  font-size: clamp(2.25rem, 6vw + 0.5rem, 3.25rem);
-  letter-spacing: -0.035em;
-  line-height: 1.05;
-  color: var(--text);
-  overflow-wrap: anywhere;
-  min-width: 0;
-  margin-bottom: 0.85rem;
+.ledger-date {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--sumi);
+  white-space: nowrap;
 }
-.login-lede {
-  max-width: 36ch;
-  font-size: 15px;
+.ledger-date span {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sumi-dim);
+}
+.ledger-lede {
+  max-width: 40ch;
+  margin: 1.1rem 0 0.5rem;
+  font-size: 14px;
   line-height: 1.55;
-  color: var(--text-dim);
-  margin-bottom: 2rem;
+  color: var(--sumi-dim);
 }
-.login-err {
-  color: var(--danger);
+.ledger-err {
+  margin: 0.75rem 0 0;
+  padding: 8px 12px;
   font-size: 13px;
   line-height: 1.45;
-  margin: 0 0 1.25rem;
-  padding: 10px 12px;
-  background: var(--danger-soft);
-  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
-  border-radius: var(--r-sm);
+  color: var(--shu);
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  transform: rotate(-0.6deg);
+  background: color-mix(in srgb, var(--shu) 8%, transparent);
 }
-.login-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-}
-.login-row {
+.ledger-err span { font-family: "Shippori Mincho", serif; font-weight: 800; margin-right: 4px; }
+
+.ledger-form { margin: 0; }
+.ledger-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 0;
-  border-bottom: 1px solid var(--border-strong);
-  transition: border-color 0.18s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: end;
+  gap: 0.75rem;
+  min-height: 64px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sumi) 28%, transparent);
+  transition: border-color var(--dur-short, 180ms) var(--ease-out, ease-out);
 }
-.login-row:focus-within { border-color: var(--accent); }
-.login-input {
+.ledger-line:focus-within { border-bottom-color: var(--shu); }
+.ledger-label {
+  display: grid;
+  gap: 1px;
+  padding-bottom: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sumi-dim);
+}
+.ledger-label span {
+  font-family: "Shippori Mincho", serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: none;
+  color: var(--sumi);
+}
+.ledger-input {
   width: 100%;
   min-width: 0;
   min-height: 48px;
-  padding: 12px 0;
+  padding: 10px 0 8px;
   background: transparent;
   border: 0;
   border-radius: 0;
-  color: var(--text);
+  color: var(--sumi);
   font-family: var(--font-mono);
-  font-size: 15px;
-  letter-spacing: 0.04em;
+  font-size: 18px;
+  letter-spacing: 0.2em;
+  caret-color: var(--shu);
 }
-.login-input::placeholder { color: var(--text-faint); letter-spacing: 0.12em; }
-.login-input:hover { background: transparent; }
-.login-input:focus { outline: none; }
-.login-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+.ledger-input--hand {
+  font-family: "Zen Kurenaido", "Segoe Print", cursive;
+  font-size: 26px;
+  letter-spacing: 0.02em;
 }
-.login-input[aria-invalid="true"] { color: var(--danger); }
-.login-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.login-submit {
-  display: inline-flex;
+.ledger-input::placeholder { color: color-mix(in srgb, var(--sumi) 30%, transparent); }
+.ledger-input:hover { background: transparent; }
+.ledger-input:focus { outline: none; }
+.ledger-input:focus-visible { outline: none; }
+.ledger-input[aria-invalid="true"] { color: var(--shu); }
+
+.ledger-foot {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 48px;
-  padding: 0 4px 0 14px;
-  white-space: nowrap;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  color: var(--accent);
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+.ledger-hint {
+  font-family: "Zen Kurenaido", cursive;
+  font-size: 15px;
+  color: var(--sumi-dim);
+}
+
+/* hanko seal = submit */
+.hanko {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  padding: 0;
+  flex-shrink: 0;
   background: transparent;
   border: 0;
-  border-radius: 0;
-  transition: color 0.18s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)), opacity 0.18s;
+  border-radius: 50%;
+  color: var(--shu);
+  cursor: pointer;
+  transform: rotate(-8deg);
+  transition: transform 0.25s var(--ease-out, ease-out);
 }
-.login-submit-arrow {
-  display: inline-block;
-  transition: transform 0.18s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+.hanko-ring {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  border: 3px solid currentColor;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 4px var(--paper), inset 0 0 0 5.5px currentColor;
+  mix-blend-mode: multiply;
 }
+.hanko-glyph {
+  font-family: "Shippori Mincho", serif;
+  font-weight: 800;
+  font-size: 38px;
+  line-height: 0.95;
+}
+.hanko-sub {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  margin-left: 0.24em;
+}
+.hanko-print {
+  position: absolute;
+  inset: -2px;
+  opacity: 0;
+  transform: scale(1.5);
+  mix-blend-mode: multiply;
+}
+.hanko-print img { width: 100%; height: 100%; display: block; }
 @media (hover: hover) and (pointer: fine) {
-  .login-submit:hover { color: var(--text); }
-  .login-submit:hover .login-submit-arrow { transform: translateX(3px); }
+  .hanko:hover { transform: rotate(-2deg) scale(1.05); }
 }
-.login-submit:focus { outline: none; }
-.login-submit:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+.hanko:focus { outline: none; }
+.hanko:focus-visible { outline: 2px dashed var(--shu); outline-offset: 5px; }
+.hanko:active { transform: rotate(-8deg) scale(0.94); }
+.hanko:disabled,
+.hanko.is-loading { cursor: progress; pointer-events: none; }
+.hanko.is-stamped .hanko-ring { opacity: 0; transition: opacity 0.12s; }
+.hanko.is-stamped .hanko-print { animation: hanko-press 0.42s var(--ease-out, ease-out) forwards; }
+.hanko .btn-spinner {
+  display: none;
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
 }
-.login-submit:active { transform: translateY(1px); }
-.login-submit:disabled,
-.login-submit.is-loading {
-  opacity: 0.55;
-  cursor: not-allowed;
-  pointer-events: none;
+.hanko.is-loading .btn-spinner { display: inline-block; }
+@keyframes hanko-press {
+  0% { opacity: 0; transform: scale(1.5); }
+  60% { opacity: 0.95; transform: scale(0.92); }
+  100% { opacity: 0.9; transform: scale(1); }
 }
-.login-submit .btn-spinner { display: none; }
-.login-submit.is-loading .btn-spinner { display: inline-block; }
-.login-submit.is-loading .login-submit-arrow { display: none; }
-.login-submit.is-success { color: var(--ok); }
+
 .login-foot {
   position: relative;
   z-index: 1;
@@ -4678,30 +4869,43 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   color: var(--text-faint);
   letter-spacing: 0.02em;
 }
-.login-foot code {
-  font-family: inherit;
-  color: var(--text-dim);
+
+[data-theme="light"] .login-page .ledger-sheet {
+  box-shadow: 0 1px 0 var(--paper-edge), 0 24px 50px -22px rgba(60, 40, 10, 0.35);
 }
-@media (max-width: 24rem) {
-  .login-row {
+[data-theme="light"] .login-bloom {
+  background:
+    radial-gradient(circle at 24% 42%, color-mix(in srgb, #f7a13a 16%, transparent), transparent 34%),
+    repeating-linear-gradient(90deg, transparent 0 118px, rgba(60, 40, 10, 0.04) 118px 120px);
+}
+
+@media (max-width: 52rem) {
+  .genkan {
     grid-template-columns: minmax(0, 1fr);
-    border-bottom: 0;
+    gap: 0.5rem;
+    padding-top: 0;
   }
-  .login-input {
-    border-bottom: 1px solid var(--border-strong);
-    padding-right: 0;
-  }
-  .login-row:focus-within .login-input { border-color: var(--accent); }
-  .login-submit {
-    justify-content: flex-start;
-    padding: 12px 0 0;
-    min-height: 44px;
-  }
+  .genkan-porch { align-self: center; gap: 1.25rem; }
+  .chochin-cord { height: 24px; }
+  .chochin-body { width: 92px; }
+  .chochin-tassel { height: 22px; }
+  .genkan-vertical { font-size: 1.15rem; letter-spacing: 0.16em; padding-top: 30px; }
+  .ledger { justify-self: center; margin-top: -0.5rem; }
+  .ledger-sheet { transform: rotate(-0.5deg); }
+}
+@media (max-width: 26rem) {
+  .ledger-line { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 10px; }
+  .ledger-label { padding-bottom: 0; grid-auto-flow: column; justify-content: start; align-items: baseline; gap: 8px; }
+  .ledger-head { flex-direction: column; }
+  .ledger-date { justify-items: start; }
+  .hanko { width: 80px; height: 80px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .login-row,
-  .login-submit,
-  .login-submit-arrow { transition: none; }
+  .chochin { animation: none; }
+  .ledger-line,
+  .hanko,
+  .hanko-ring { transition: none; }
+  .hanko.is-stamped .hanko-print { animation: none; opacity: 0.9; transform: none; }
 }
 
 /* error page */
