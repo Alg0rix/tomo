@@ -208,6 +208,37 @@ async def test_plain_content_mapped_and_request_shape() -> None:
     assert resp.reasoning_tokens == 2
 
 
+async def test_opencode_gets_stable_session_header_per_conversation() -> None:
+    from app.runtime.artifacts import fs as artifacts_fs
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_completion_body(content="ok"))
+
+    transport = httpx.MockTransport(handler)
+    opencode = OpenAICompatClient(
+        base_url="https://opencode.ai/zen/go/v1", api_key=_KEY, model="glm-5.3",
+        transport=transport,
+    )
+    msgs = [{"role": "user", "content": "hi"}]
+    for sid in ("ses_a", "ses_a", "ses_b"):
+        token = artifacts_fs.bind_session(sid)
+        try:
+            await opencode.complete(msgs)
+        finally:
+            artifacts_fs.reset_session(token)
+    await opencode.complete(msgs)  # background call, no session bound
+    await _client(transport).complete(msgs)
+
+    ids = [r.headers.get("x-opencode-session") for r in seen]
+    assert ids[0] == ids[1] and ids[0] != ids[2]
+    assert ids[3] and ids[3] not in ids[:3]
+    assert ids[4] is None
+    assert all(r.headers["User-Agent"].startswith("tomo/") for r in seen)
+
+
 async def test_reasoning_effort_is_forwarded_to_non_stream_request() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)

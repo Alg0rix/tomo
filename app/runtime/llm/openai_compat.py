@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from app.runtime.llm.base import LLMResponse, ToolCall
-from app.runtime.llm.http import provider_ssl_context, stream_json
+from app.runtime.llm.http import provider_ssl_context, session_headers, stream_json, user_agent
 from app.runtime.llm.prompt_cache import stable_tools
 
 _logger = logging.getLogger(__name__)
@@ -643,6 +643,7 @@ def parse_usage_details(usage: Any) -> dict[str, int | None]:
 # ── Client ────────────────────────────────────────────────────────
 
 
+
 class OpenAICompatClient:
     """Async OpenAI-compatible chat completions client.
 
@@ -679,12 +680,15 @@ class OpenAICompatClient:
         self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
 
         self._client = httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {resolved_key}"},
+            headers={"Authorization": f"Bearer {resolved_key}", "User-Agent": user_agent()},
             timeout=self._http_timeout,
             transport=transport,
             follow_redirects=True,
             verify=provider_ssl_context() if transport is None else True,
         )
+
+    def _request_headers(self, messages: list[dict[str, Any]]) -> dict[str, str] | None:
+        return session_headers(self._base_url, self._model, messages)
 
     @property
     def endpoint(self) -> str:
@@ -734,7 +738,9 @@ class OpenAICompatClient:
             payload["reasoning_effort"] = self._reasoning_effort
 
         try:
-            response = await self._client.post(self.endpoint, json=payload)
+            response = await self._client.post(
+                self.endpoint, json=payload, headers=self._request_headers(messages)
+            )
             response.raise_for_status()
             if response.headers.get("content-type", "").split(";", 1)[0].strip() == "text/event-stream":
                 return await self._complete_via_stream(messages, tools)
@@ -823,7 +829,9 @@ class OpenAICompatClient:
         usage_details = parse_usage_details(None)
 
         try:
-            async with stream_json(self._client, self.endpoint, payload) as stream:
+            async with stream_json(
+                self._client, self.endpoint, payload, headers=self._request_headers(messages)
+            ) as stream:
                 async for chunk in stream:
                     self._last_chunk_time = asyncio.get_running_loop().time()
                     # Usage often arrives on a trailing chunk with empty choices.
@@ -943,7 +951,7 @@ class OpenAICompatClient:
         }
         if self._transport is not None:
             kwargs["transport"] = self._transport
-        headers = {"Authorization": f"Bearer {self._api_key}"}
+        headers = {"Authorization": f"Bearer {self._api_key}", "User-Agent": user_agent()}
         async with httpx.AsyncClient(base_url=self._base_url, **kwargs) as http:
             r = await http.get(path, headers=headers)
             r.raise_for_status()

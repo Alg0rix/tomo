@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.runtime.llm.base import LLMResponse, ToolCall
-from app.runtime.llm.http import provider_ssl_context, stream_json
+from app.runtime.llm.http import provider_ssl_context, session_headers, stream_json, user_agent
 from app.runtime.llm.prompt_cache import stable_tools
 from app.runtime.llm.codex_oauth import DEFAULT_CODEX_BASE_URL
 from app.runtime.llm.openai_compat import (
@@ -264,6 +264,8 @@ class CodexResponsesClient:
         if endpoint.hostname == "chatgpt.com" and endpoint.path.startswith("/backend-api/codex"):
             # ChatGPT derives cache affinity from this header (Codex client.rs).
             payload["extra_headers"] = {"session-id": payload["prompt_cache_key"]}
+        elif opencode := session_headers(self._base_url, self._model, messages):
+            payload["extra_headers"] = {**opencode, "User-Agent": user_agent()}
         responses_tools = stable_tools(_responses_tools(tools))
         if responses_tools:
             payload["tools"] = responses_tools
