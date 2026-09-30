@@ -153,9 +153,15 @@
         var body = {
           telegram_enabled: !!(enabledEl && enabledEl.checked),
           telegram_allowed_chat_ids: (document.getElementById('setTgChatIds') || {}).value || '',
+          telegram_rich_messages: !!(document.getElementById('setTgRich') || {}).checked,
+          telegram_transcription_enabled: !!(document.getElementById('setTgTranscription') || {}).checked,
+          telegram_transcription_base_url: (document.getElementById('setTgTranscriptionUrl') || {}).value || '',
+          telegram_transcription_model: (document.getElementById('setTgTranscriptionModel') || {}).value || '',
         };
         var token = tokenEl ? tokenEl.value : '';
         if (token && token.indexOf('•') === -1) body.telegram_bot_token = token;
+        var transcriptionKey = (document.getElementById('setTgTranscriptionKey') || {}).value || '';
+        if (transcriptionKey && transcriptionKey.indexOf('•') === -1) body.telegram_transcription_api_key = transcriptionKey;
         var data = await Tomo.api('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

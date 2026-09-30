@@ -468,7 +468,9 @@ Planned messaging tools (not in `app/tools/` yet):
 - **transcribe_audio** — voice memos → text
 - **describe_image** — vision on photos sent in chat
 
-Web chat already supports text attachments in-session. Telegram today is text-focused (`sendMessage`).
+Web and Telegram chats support session attachments. Telegram receives photos, documents, voice/audio, video, animations, and stickers, with a 20 MB download bound and album grouping. Enable voice transcription in **System → Channels** and configure a compatible speech service to turn audio into a user message. Original files remain attached to the conversation.
+
+Enable **Rich answers** in the same panel for native tables, headings, lists, and fenced math blocks. Private chats stream rich drafts; group chats edit their preview in place. Definite API rejections fall back to balanced HTML, while ambiguous failures avoid duplicate sends. See [Telegram interaction UX](docs/telegram-ux.md) for configuration and limits.
 
 Sessions are keyed by `(agent_id, user_id)` (Telegram uses `tg_<chat_id>` as the user). Separate histories per chat identity.
 

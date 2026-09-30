@@ -9,6 +9,101 @@ from urllib.parse import urlsplit
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+
+def render_rich_html(text: str) -> str:
+    """Keep native headings/tables/lists; escape raw HTML and disallow media fetches."""
+    parser = (
+        MarkdownIt("commonmark", {"html": False})
+        .enable("table")
+        .enable("strikethrough")
+    )
+
+    def image(tokens, idx, options, env):
+        token = tokens[idx]
+        return html.escape(token.content or "[image]", quote=False)
+
+    def fence(tokens, idx, options, env):
+        token = tokens[idx]
+        if token.info.strip() in {"math", "latex"}:
+            return (
+                "<tg-math-block>"
+                + html.escape(token.content, quote=False)
+                + "</tg-math-block>"
+            )
+        return (
+            "<pre><code>" + html.escape(token.content, quote=False) + "</code></pre>\n"
+        )
+
+    parser.renderer.rules["image"] = image
+    parser.renderer.rules["fence"] = fence
+    return parser.render(text) or "<p>…</p>"
+
+
+def rich_plain_text(value, depth: int = 0) -> str:
+    """Flatten received rich blocks, tables, lists and inline nodes as content."""
+    if depth > 20:
+        return ""
+    if isinstance(value, str):
+        return value[:32000]
+    if isinstance(value, list):
+        separator = (
+            "\n"
+            if any(
+                isinstance(v, dict)
+                and v.get("type")
+                in {
+                    "paragraph",
+                    "heading",
+                    "table",
+                    "list",
+                    "pre",
+                    "blockquote",
+                    "details",
+                    "footer",
+                }
+                for v in value
+            )
+            else ""
+        )
+        return separator.join(rich_plain_text(v, depth + 1) for v in value[:200])[
+            :32000
+        ]
+    if isinstance(value, dict):
+        if value.get("type") == "table":
+            rows = value.get("cells", [])
+            if isinstance(rows, list):
+                return "\n".join(
+                    " | ".join(rich_plain_text(cell, depth + 1) for cell in row[:30])
+                    for row in rows[:100]
+                    if isinstance(row, list)
+                )[:32000]
+        if value.get("type") == "details":
+            return (
+                rich_plain_text(value.get("summary"), depth + 1)
+                + "\n"
+                + rich_plain_text(value.get("blocks"), depth + 1)
+            )
+        if value.get("caption") is not None:
+            return (
+                rich_plain_text(value.get("blocks"), depth + 1)
+                + "\n"
+                + rich_plain_text(value["caption"], depth + 1)
+            )
+        for key in (
+            "text",
+            "blocks",
+            "items",
+            "rows",
+            "cells",
+            "children",
+            "expression",
+            "alternative_text",
+        ):
+            if key in value:
+                return rich_plain_text(value[key], depth + 1)
+    return ""
+
+
 _MARKDOWN = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
 _TAGS = {"strong": "b", "em": "i", "s": "s"}
 

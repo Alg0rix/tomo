@@ -75,9 +75,61 @@ uv run pytest -n 0 tests/unit/channels/test_telegram*.py \
   tests/integration/test_telegram_approval_api.py
 ```
 
-This adapter remains text focused. Telegram voice/media ingestion and the newer
-rich-message API are not part of this change. An in-progress turn does not survive
-a process restart. Stop cancels the agent turn and pending approvals; synchronous
+## Voice and media
+
+Send photos, documents, voice notes, audio, video, round video notes, animations,
+or stickers. Files are downloaded only for approved chats and saved as ordinary
+session attachments, visible in Tomo's Chat history. Photos choose the largest
+available size and reach vision-capable models through the existing image input
+path. Text and supported documents use Tomo's existing attachment extraction.
+Video and animated stickers are saved as files; this does not add video frame
+analysis. Both announced and streamed download sizes are bounded to 20 MiB.
+Telegram's hosted API also has a [20 MB download limit](https://core.telegram.org/bots/api#getfile).
+
+Albums arriving within a fixed 800 ms collection window share one turn, up to
+10 files. Rich-message media blocks use the same ingestion path, up to 10 files.
+An album arriving late is treated as another inbound attachment and gets the
+busy notice if a turn is already running. Captions and speech are user content,
+so a caption like `/new` does not execute a bot command. Media received during
+an existing task gets a resend notice instead of being silently discarded or
+used as an approval answer. Stop cancels collection, download, and transcription;
+other chats and callbacks remain responsive during those operations.
+
+Enable **System → Channels → Voice transcription**, enter the service base URL,
+model, and API key, then save. Tomo posts multipart audio to
+`<base URL>/audio/transcriptions` using the
+[OpenAI-compatible transcription shape](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create).
+This can use an external provider or your local compatible service. Audio goes
+to that configured service only when transcription is enabled. The key is
+encrypted and masked using the same settings protection as the bot token.
+ChatGPT subscription credentials are not automatically used as transcription
+credentials. The original audio remains attached and the transcript becomes
+the user message. With transcription disabled, failed, or empty, the file stays
+saved and the bot explains how to continue; without a caption it does not run
+an agent on unrecognized speech.
+
+## Native rich answers
+
+Enable **System → Channels → Rich answers** to use Telegram's
+[rich-message API](https://core.telegram.org/bots/api#sendrichmessage).
+Native headings, tables, lists, code, and fenced `math`/`latex` blocks keep their
+structure. Raw HTML is escaped, and Markdown images do not trigger remote
+media fetches or inject control buttons. Private chats stream
+`sendRichMessageDraft` with a stable draft ID and refresh before its 30-second
+expiry; completion sends a persisted answer. Groups and servers rejecting drafts
+use a persistent preview that is edited in place. Received rich text and rich
+media blocks are also accepted.
+
+Definite rich API rejections fall back to the existing balanced HTML formatting,
+including long-answer chunking. Unsupported rich endpoints are remembered for
+the lifetime of the current API client; draft-only failures do not disable rich
+final answers. Timeouts, permission failures, and ambiguous server errors never
+trigger a second legacy send. Approval and stop buttons retain their existing
+message/sender/session checks. Rich answers are opt-in because Telegram client
+support and copying behavior vary.
+
+An in-progress turn does not survive a process restart. Stop cancels the agent
+turn and pending approvals; synchronous
 or remote tools already dispatched may still finish, and completed effects are
 not undone. Persisted update cursors prevent replay of admitted updates,
 and stale buttons return an expiry notice. A crash after admission can interrupt

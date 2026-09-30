@@ -44,6 +44,33 @@
     </div>
     <p class="machine-field-hint">1. Save your bot token. 2. Enable long-poll and save. 3. Send /id in Telegram, add that ID above, and save again. Then send a message. No manual chat ID is needed for replies.</p>
     <p class="machine-field-hint">Enabled means polling is configured; it does not verify the bot connection. Telegram conversations appear in <a href="/sessions">Chat</a> for administrators. Bot commands: /help, /new, /stop, /status, /manual, /smart, /id. Tasks show tool progress, formatted answers, and approval buttons.</p>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Rich answers</div>
+        <p class="machine-field-hint">Native headings, tables, lists, and math code blocks. Streams drafts in private chats, with HTML fallback when Telegram rejects rich formatting.</p>
+      </div>
+      <div class="machine-field-control">{{ toggle(id='setTgRich', checked=settings.telegram_rich_messages) }}</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Voice transcription</div>
+        <p class="machine-field-hint">Send voice notes and audio to your configured transcription service. The original file and transcript stay in the conversation. Disabled audio is saved without running the agent unless it has a caption.</p>
+      </div>
+      <div class="machine-field-control">{{ toggle(id='setTgTranscription', checked=settings.telegram_transcription_enabled) }}</div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><label class="machine-field-name" for="setTgTranscriptionUrl">Transcription service URL</label><p class="machine-field-hint">Base URL of an OpenAI-compatible service. Tomo calls /audio/transcriptions. Local services may leave the API key blank.</p></div>
+      <div class="machine-field-control machine-field-control-wide"><input class="input" type="url" id="setTgTranscriptionUrl" value="{{ settings.telegram_transcription_base_url or '' }}" placeholder="https://api.openai.com/v1"></div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><label class="machine-field-name" for="setTgTranscriptionModel">Transcription model</label></div>
+      <div class="machine-field-control machine-field-control-wide"><input class="input" type="text" id="setTgTranscriptionModel" value="{{ settings.telegram_transcription_model or '' }}" placeholder="whisper-1"></div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><label class="machine-field-name" for="setTgTranscriptionKey">Transcription API key</label><p class="machine-field-hint">Encrypted at rest. Blank keeps the existing key. This is separate from a ChatGPT subscription.</p></div>
+      <div class="machine-field-control machine-field-control-wide"><input class="input" type="password" id="setTgTranscriptionKey" value="{{ settings.telegram_transcription_api_key or '' }}" autocomplete="new-password"></div>
+    </div>
+    <p class="machine-field-hint">Send photos, documents, video, voice, audio, animations, or stickers up to 20 MB. Albums received together are processed in one turn. Images use your model's vision support; other files use Tomo's attachment tools. Send attachments after the current task finishes.</p>
     <div class="machine-sheet-foot">
       <button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button>
     </div>

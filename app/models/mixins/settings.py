@@ -17,13 +17,14 @@ import json
 import re
 import sqlite3
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.secrets import decrypt_secret, encrypt_secret
 from app.services.platform_data import seed_settings
 
 _LLM_KEY = "llm_api_key"
 _TG_TOKEN_KEY = "telegram_bot_token"
-_SECRET_KEYS = frozenset({_LLM_KEY, _TG_TOKEN_KEY})
+_SECRET_KEYS = frozenset({_LLM_KEY, _TG_TOKEN_KEY, "telegram_transcription_api_key"})
 
 
 def _defaults() -> dict[str, Any]:
@@ -69,7 +70,9 @@ def normalize_telegram_chat_ids(value: Any) -> list[str]:
     elif isinstance(value, list):
         values = value
     else:
-        raise ValueError("Allowed Telegram chat IDs must be a list or comma-separated IDs")
+        raise ValueError(
+            "Allowed Telegram chat IDs must be a list or comma-separated IDs"
+        )
     result: list[str] = []
     for item in values:
         raw = str(item).strip()
@@ -91,7 +94,31 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     """
     payload = dict(data)
     if "telegram_allowed_chat_ids" in payload:
-        payload["telegram_allowed_chat_ids"] = normalize_telegram_chat_ids(payload["telegram_allowed_chat_ids"])
+        payload["telegram_allowed_chat_ids"] = normalize_telegram_chat_ids(
+            payload["telegram_allowed_chat_ids"]
+        )
+    for flag in ("telegram_rich_messages", "telegram_transcription_enabled"):
+        if flag in payload and not isinstance(payload[flag], bool):
+            raise ValueError("Telegram feature switches must be true or false")
+    if "telegram_transcription_base_url" in payload:
+        base = str(payload["telegram_transcription_base_url"] or "").strip().rstrip("/")
+        url = urlsplit(base)
+        if base and (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError(
+                "Transcription URL must be an HTTP(S) base URL without credentials or query parameters"
+            )
+        payload["telegram_transcription_base_url"] = base
+    if "telegram_transcription_model" in payload:
+        payload["telegram_transcription_model"] = str(
+            payload["telegram_transcription_model"] or ""
+        ).strip()[:200]
     for secret_key in _SECRET_KEYS:
         if secret_key not in payload:
             continue

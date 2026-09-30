@@ -54,6 +54,10 @@ def extract_text_message(update: dict[str, Any]) -> tuple[int, str] | None:
         return None
     chat_id = chat.get("id")
     text = msg.get("text")
+    if not isinstance(text, str) and isinstance(msg.get("rich_message"), dict):
+        from app.channels.telegram_format import rich_plain_text
+
+        text = rich_plain_text(msg["rich_message"].get("blocks", []))
     if chat_id is None or not isinstance(text, str):
         return None
     stripped = text.strip()
@@ -89,6 +93,8 @@ class TelegramAPI:
         if not raw:
             raise ValueError("Telegram bot token is required")
         self._token = raw
+        self._rich_disabled = False
+        self._draft_disabled = False
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0),
@@ -134,6 +140,155 @@ class TelegramAPI:
             payload["offset"] = offset
         result = await self._request("getUpdates", payload)
         return [u for u in (result or []) if isinstance(u, dict)]
+
+    async def download_file(self, file_id: str, *, max_bytes: int) -> bytes:
+        from pathlib import PurePosixPath
+        from app.channels.telegram_media import MediaError
+
+        try:
+            info = await self._request("getFile", {"file_id": file_id})
+        except (TelegramAPIError, RuntimeError):
+            raise MediaError(
+                "I couldn't retrieve this file from Telegram. Please resend it."
+            ) from None
+        path = str((info or {}).get("file_path") or "")
+        if (
+            not path
+            or path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or any(c in path for c in "\\%?#:")
+            or PurePosixPath(path).is_absolute()
+        ):
+            raise MediaError("Telegram did not provide a valid file. Please resend it.")
+        if int(info.get("file_size") or 0) > max_bytes:
+            raise MediaError("This file is too large. Send a file smaller than 20 MB.")
+        try:
+            async with self._client.stream(
+                "GET",
+                f"{API_ROOT}/file/bot{self._token}/{path}",
+                timeout=60,
+                follow_redirects=False,
+            ) as response:
+                response.raise_for_status()
+                data = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    if len(data) + len(chunk) > max_bytes:
+                        raise MediaError(
+                            "This file is too large. Send a file smaller than 20 MB."
+                        )
+                    data.extend(chunk)
+                if not data:
+                    raise MediaError("Telegram sent an empty file. Please resend it.")
+                return bytes(data)
+        except httpx.HTTPError:
+            raise MediaError(
+                "I couldn't download this file from Telegram. Please resend it."
+            ) from None
+
+    @property
+    def rich_enabled(self) -> bool:
+        return (
+            bool(store.get_settings().get("telegram_rich_messages"))
+            and not self._rich_disabled
+        )
+
+    async def _rich_request(self, method: str, payload: dict) -> Any:
+        try:
+            return await self._request(method, payload)
+        except TelegramAPIError as exc:
+            if exc.code == 400 and "message is not modified" in exc.description.lower():
+                return {}
+            # Only a definite rejection is safe to retry with legacy formatting.
+            if exc.code not in {400, 404, 501}:
+                raise
+            if exc.code in {404, 501} or "method" in exc.description.lower():
+                if method == "sendRichMessageDraft":
+                    self._draft_disabled = True
+                else:
+                    self._rich_disabled = True
+            return None
+
+    async def send_answer(
+        self, chat_id: int | str, text: str, *, preview: bool = False, **kwargs
+    ) -> dict:
+        from app.channels.telegram_format import (
+            render_rich_html,
+            render_markdown,
+            split_html,
+        )
+
+        if self.rich_enabled:
+            payload = {
+                "chat_id": chat_id,
+                "rich_message": {"html": render_rich_html(text)},
+                "disable_notification": kwargs.get("silent", False),
+            }
+            if kwargs.get("thread_id") is not None:
+                payload["message_thread_id"] = kwargs["thread_id"]
+            if kwargs.get("reply_to") is not None:
+                payload["reply_parameters"] = {
+                    "message_id": kwargs["reply_to"],
+                    "allow_sending_without_reply": True,
+                }
+            result = await self._rich_request("sendRichMessage", payload)
+            if result is not None:
+                return result
+        if preview:
+            chunks = split_html(render_markdown(text), limit=3600)
+            return await self.send_html(chat_id, chunks[0] if chunks else "…", **kwargs)
+        return await self.send_message(chat_id, text, formatted=True, **kwargs)
+
+    async def edit_answer(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        text: str,
+        *,
+        thread_id=None,
+        preview: bool = False,
+    ) -> dict:
+        from app.channels.telegram_format import (
+            render_rich_html,
+            render_markdown,
+            split_html,
+        )
+
+        if self.rich_enabled:
+            result = await self._rich_request(
+                "editMessageText",
+                {
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "rich_message": {"html": render_rich_html(text)},
+                },
+            )
+            if result is not None:
+                return result
+        chunks = split_html(render_markdown(text))
+        result = await self.edit_html(chat_id, message_id, chunks[0] if chunks else "…")
+        for chunk in [] if preview else chunks[1:]:
+            await self.send_html(chat_id, chunk, silent=True, thread_id=thread_id)
+        return result
+
+    async def send_rich_draft(
+        self, chat_id: int, draft_id: int, text: str, *, thread_id=None
+    ) -> bool:
+        from app.channels.telegram_format import render_rich_html
+
+        if chat_id <= 0 or not self.rich_enabled or self._draft_disabled:
+            return False
+        payload = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "rich_message": {"html": render_rich_html(text)},
+        }
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
+        result = await self._rich_request("sendRichMessageDraft", payload)
+        if result is None:
+            self._draft_disabled = True
+            return False
+        return True
 
     async def _formatted_request(self, method: str, payload: dict[str, Any]) -> Any:
         from app.channels.telegram_format import plain_text
@@ -310,7 +465,11 @@ class TelegramAPI:
 
 
 async def run_channel_turn(
-    session_id: str, message: str, *, ui: TelegramTurnUI | None = None
+    session_id: str,
+    message: str,
+    *,
+    ui: TelegramTurnUI | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> str:
     """Run the web turn pipeline; return the latest final (or error) text."""
     # Lazy import: chat → channels.web → channels package must not pull telegram
@@ -321,7 +480,9 @@ async def run_channel_turn(
     if not session:
         raise ValueError("Session not found")
     history_start = len(store.get_session_history(session_id))
-    turn, queue = await start_session_turn(session_id, message, session["user_id"])
+    turn, queue = await start_session_turn(
+        session_id, message, session["user_id"], attachment_ids=attachment_ids
+    )
     try:
         while True:
             chunk = await queue.get()
@@ -379,12 +540,17 @@ async def handle_inbound_text(
     send_reply: bool = True,
     ui: TelegramTurnUI | None = None,
     session_id: str | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Map chat → session, run one turn, optionally reply on Telegram.
 
     Returns ``{"session_id", "reply", "agent_id"}``.
     """
-    command = text.split()[0].split("@")[0].lower() if text.strip() else ""
+    command = (
+        text.split()[0].split("@")[0].lower()
+        if text.strip() and not attachment_ids
+        else ""
+    )
     if command == "/id":
         reply = f"Your Telegram chat ID: {chat_id}"
         if api is not None and send_reply:
@@ -460,8 +626,14 @@ async def handle_inbound_text(
         )
         try:
             reply = (
-                await run_channel_turn(session_id, text, ui=ui)
+                await run_channel_turn(
+                    session_id, text, ui=ui, attachment_ids=attachment_ids
+                )
                 if ui is not None
+                else await run_channel_turn(
+                    session_id, text, attachment_ids=attachment_ids
+                )
+                if attachment_ids
                 else await run_channel_turn(session_id, text)
             )
         finally:
@@ -473,7 +645,7 @@ async def handle_inbound_text(
         if ui is not None:
             await ui.finish(reply)
         else:
-            await api.send_message(chat_id, reply, formatted=True)
+            await api.send_answer(chat_id, reply)
     return {"session_id": session_id, "reply": reply, "agent_id": resolved}
 
 
@@ -486,6 +658,24 @@ async def process_update(
 ) -> dict[str, Any] | None:
     """Handle one Bot API update; return handle result or ``None`` if ignored."""
     extracted = extract_text_message(update)
+    from app.channels.telegram_media import media_descriptor
+
+    if (
+        isinstance(update.get("message"), dict)
+        and media_descriptor(update["message"]) is not None
+    ):
+        if api is None:
+            raise ValueError("Telegram API is required to receive media")
+        msg = update["message"]
+        chat_id = int(msg["chat"]["id"])
+        if not chat_is_allowed(chat_id):
+            return await handle_inbound_text(
+                chat_id, "", api=api, agent_id=agent_id, send_reply=send_reply
+            )
+        dispatcher = TelegramDispatcher(api, agent_id=agent_id)
+        return await dispatcher._run(
+            chat_id, str(msg.get("caption") or ""), msg, send_reply=send_reply
+        )
     if not extracted:
         return None
     chat_id, text = extracted
@@ -509,6 +699,7 @@ class TelegramDispatcher:
         self.tasks: dict[int, asyncio.Task] = {}
         self.uis: dict[int, TelegramTurnUI] = {}
         self.actors: dict[int, tuple[int | None, int | None]] = {}
+        self.albums: dict[int, list[dict]] = {}
 
     async def dispatch(self, update: dict) -> None:
         query = update.get("callback_query")
@@ -526,11 +717,27 @@ class TelegramDispatcher:
         message = update.get("message")
         if not isinstance(message, dict):
             return
+        from app.channels.telegram_media import media_descriptor
+
+        has_media = media_descriptor(message) is not None
         extracted = extract_text_message(update)
+        if not extracted and has_media:
+            try:
+                extracted = (
+                    int(message["chat"]["id"]),
+                    str(message.get("caption") or "").strip(),
+                )
+            except (KeyError, TypeError, ValueError):
+                return
         if not extracted:
             return
         chat_id, text = extracted
-        command = text.split()[0].split("@")[0].lower()
+        if not has_media and "text" not in message:
+            message = {**message, "text": text}
+        command = text.split()[0].split("@")[0].lower() if text else ""
+        # Captions and transcribed speech are content, never bot commands.
+        if has_media:
+            command = ""
         if command == "/id" or not chat_is_allowed(chat_id):
             await handle_inbound_text(
                 chat_id, text, api=self.api, agent_id=self.agent_id
@@ -597,6 +804,25 @@ class TelegramDispatcher:
                 )
             return
         if task and not task.done():
+            album = self.albums.get(chat_id)
+            if (
+                has_media
+                and album is not None
+                and message.get("media_group_id") == album[0].get("media_group_id")
+                and (sender_id, thread_id) == self.actors.get(chat_id)
+            ):
+                if len(album) < 10 and all(
+                    m.get("message_id") != message.get("message_id") for m in album
+                ):
+                    album.append(message)
+                return
+            if has_media:
+                await self.api.send_message(
+                    chat_id,
+                    "A task is running. Send this attachment again when it finishes, or use /stop first.",
+                    thread_id=thread_id,
+                )
+                return
             if ui is not None and await ui.answer_text(message):
                 return
             if (
@@ -631,9 +857,13 @@ class TelegramDispatcher:
             )
             return
         self.actors[chat_id] = (sender_id, thread_id)
+        if has_media and message.get("media_group_id"):
+            self.albums[chat_id] = [message]
         self.tasks[chat_id] = asyncio.create_task(self._run(chat_id, text, message))
 
-    async def _run(self, chat_id: int, text: str, message: dict) -> None:
+    async def _run(
+        self, chat_id: int, text: str, message: dict, *, send_reply: bool = True
+    ) -> dict | None:
         from app.channels.telegram_ui import TelegramTurnUI
 
         ui = None
@@ -654,16 +884,112 @@ class TelegramDispatcher:
                 thread_id=message.get("message_thread_id"),
             )
             self.uis[chat_id] = ui
-            await ui.start()
+            if send_reply:
+                await ui.start()
             if ui.stop_requested:
                 await ui.finish("Stopped.")
                 return
-            await handle_inbound_text(
-                chat_id, text, api=self.api, agent_id=resolved, ui=ui, session_id=sid
+            from app.channels.telegram_media import (
+                MediaError,
+                ingest_media,
+                media_descriptor,
+                media_messages,
+            )
+
+            attachment_ids: list[str] = []
+            if media_descriptor(message) is not None:
+                ui.phase = "Receiving media"
+                ui.receiving_task = asyncio.current_task()
+                if chat_id in self.albums:
+                    # A fixed bounded window groups a Telegram album into one turn.
+                    await asyncio.sleep(0.8)
+                messages = self.albums.pop(chat_id, [message])
+                messages = [part for item in messages for part in media_messages(item)][
+                    :10
+                ]
+                texts, notices = [], []
+                has_non_audio = False
+                for item in messages:
+                    if not chat_is_allowed(chat_id) or ui.stop_requested:
+                        return
+                    try:
+                        ids, transcript, notice = await ingest_media(
+                            self.api,
+                            sid,
+                            item,
+                            allowed=lambda: (
+                                chat_is_allowed(chat_id) and not ui.stop_requested
+                            ),
+                        )
+                        attachment_ids.extend(ids)
+                        descriptor = media_descriptor(item)
+                        if (
+                            descriptor
+                            and descriptor[0] not in {"voice", "audio"}
+                            and not descriptor[3].startswith("audio/")
+                        ):
+                            has_non_audio = True
+                        caption = str(item.get("caption") or "").strip()
+                        if caption:
+                            texts.append(caption)
+                        if transcript:
+                            texts.append("[Voice transcript]\n" + transcript)
+                        if notice:
+                            notices.append(notice)
+                    except MediaError as exc:
+                        notices.append(str(exc))
+                text = "\n\n".join(texts)
+                if notices and send_reply:
+                    await self.api.send_message(
+                        chat_id,
+                        "\n".join(dict.fromkeys(notices)),
+                        thread_id=ui.thread_id,
+                    )
+                if not attachment_ids:
+                    ui.outcome = "Failed"
+                    if send_reply:
+                        await ui.finish(
+                            "No attachment was received. Please resend your file."
+                        )
+                    return
+                if not text and notices and not has_non_audio:
+                    from app.services.chat import attachment_meta_for_ids
+
+                    store.append_session_history(
+                        sid,
+                        {
+                            "type": "user",
+                            "content": "[Audio attachment]",
+                            "attachment_ids": attachment_ids,
+                            "attachments": attachment_meta_for_ids(attachment_ids),
+                        },
+                    )
+                    if send_reply:
+                        await ui.finish(
+                            "Your audio is saved in this conversation. Send a text message to continue."
+                        )
+                    return
+                text = text or "Please review the attached media."
+                ui.receiving_task = None
+                ui.phase = "Thinking"
+                if ui.stop_requested or not chat_is_allowed(chat_id):
+                    return
+            return await handle_inbound_text(
+                chat_id,
+                text,
+                api=self.api,
+                agent_id=resolved,
+                ui=ui if send_reply else None,
+                session_id=sid,
+                attachment_ids=attachment_ids or None,
+                send_reply=send_reply,
             )
         except asyncio.CancelledError:
             if ui:
                 ui.outcome = "Stopped"
+                if send_reply and chat_is_allowed(chat_id):
+                    with contextlib.suppress(Exception):
+                        await ui.finish("Stopped.")
             raise
         except Exception:
             logger.error("telegram turn or delivery failed chat_id=%s", chat_id)
@@ -686,6 +1012,7 @@ class TelegramDispatcher:
             self.uis.pop(chat_id, None)
             self.tasks.pop(chat_id, None)
             self.actors.pop(chat_id, None)
+            self.albums.pop(chat_id, None)
 
     async def close(self) -> None:
         tasks = list(self.tasks.values())

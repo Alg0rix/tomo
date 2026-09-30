@@ -20,7 +20,9 @@ def test_seed_includes_telegram_keys(tmp_path) -> None:
 
 def test_public_settings_masks_telegram_token(tmp_path) -> None:
     _rebind(tmp_path)
-    store.update_settings({"telegram_bot_token": "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"})
+    store.update_settings(
+        {"telegram_bot_token": "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"}
+    )
     pub = store.get_public_settings()
     assert pub["telegram_bot_token_set"] is True
     assert pub["telegram_bot_token"] == "••••Dsaw"
@@ -57,7 +59,9 @@ def test_channel_status_needs_token_connected_off(tmp_path) -> None:
 
     _rebind(tmp_path)
     assert telegram_status() == "needs_token"
-    store.update_settings({"telegram_bot_token": "tok-abcdefg", "telegram_enabled": False})
+    store.update_settings(
+        {"telegram_bot_token": "tok-abcdefg", "telegram_enabled": False}
+    )
     assert telegram_status() == "off"
     store.update_settings({"telegram_enabled": True})
     assert telegram_status() == "connected"
@@ -73,16 +77,23 @@ def test_agent_and_shared_channels_reflect_status(tmp_path) -> None:
     assert sc["status"] == "needs_token"
 
     store.update_settings({"telegram_bot_token": "tok-xyz", "telegram_enabled": True})
-    assert next(c for c in store.get_agent_channels("main") if c["type"] == "telegram")[
-        "status"
-    ] == "connected"
-    assert next(c for c in store.list_shared_channels() if c["type"] == "telegram")[
-        "status"
-    ] == "connected"
+    assert (
+        next(c for c in store.get_agent_channels("main") if c["type"] == "telegram")[
+            "status"
+        ]
+        == "connected"
+    )
+    assert (
+        next(c for c in store.list_shared_channels() if c["type"] == "telegram")[
+            "status"
+        ]
+        == "connected"
+    )
 
 
 def test_allowed_chat_ids_validation_is_atomic(tmp_path):
     import pytest
+
     store.rebind(tmp_path / "allowlist.db")
     store.update_settings({"telegram_allowed_chat_ids": "00123, -10099 123"})
     assert store.get_settings()["telegram_allowed_chat_ids"] == ["123", "-10099"]
@@ -90,3 +101,50 @@ def test_allowed_chat_ids_validation_is_atomic(tmp_path):
         with pytest.raises(ValueError):
             store.update_settings({"telegram_allowed_chat_ids": bad})
         assert store.get_settings()["telegram_allowed_chat_ids"] == ["123", "-10099"]
+
+
+def test_transcription_secret_encrypted_masked_and_blank_preserves(tmp_path):
+    from app.models.db import get_connection
+    from app.models.mixins import settings as settings_store
+    from app.models.schema import migrate
+
+    conn = get_connection(tmp_path / "stt.db")
+    migrate(conn)
+    public = settings_store.update_settings(
+        conn, {"telegram_transcription_api_key": "private-transcription-secret"}
+    )
+    assert public["telegram_transcription_api_key_set"] is True
+    assert public["telegram_transcription_api_key"] == "••••cret"
+    raw = conn.execute(
+        "SELECT value_json FROM settings WHERE key='telegram_transcription_api_key'"
+    ).fetchone()["value_json"]
+    assert "private-transcription-secret" not in raw
+    assert json.loads(raw).startswith("enc:v1:")
+    settings_store.update_settings(conn, {"telegram_transcription_api_key": ""})
+    assert (
+        settings_store.get_settings(conn)["telegram_transcription_api_key"]
+        == "private-transcription-secret"
+    )
+    conn.close()
+
+
+def test_invalid_transcription_url_does_not_partially_update_settings(tmp_path):
+    import pytest
+
+    _rebind(tmp_path)
+    for url in [
+        "file:///secret",
+        "https://key:secret@example.com",
+        "https://example.com?secret=1",
+        "not-a-url",
+    ]:
+        with pytest.raises(ValueError):
+            store.update_settings(
+                {
+                    "telegram_transcription_enabled": True,
+                    "telegram_transcription_base_url": url,
+                }
+            )
+        assert store.get_settings()["telegram_transcription_enabled"] is False
+    with pytest.raises(ValueError):
+        store.update_settings({"telegram_rich_messages": "false"})

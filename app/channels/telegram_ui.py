@@ -62,9 +62,12 @@ class TelegramTurnUI:
         self.answer_id: int | None = None
         self.answer = ""
         self.last_preview = ""
+        self.draft_id = secrets.randbits(31) or 1
+        self.last_draft_at = 0.0
         self.last_status = ""
         self.outcome = "Done"
         self._ticker: asyncio.Task | None = None
+        self.receiving_task: asyncio.Task | None = None
         self._io_lock = asyncio.Lock()
 
     def stop_keyboard(self) -> dict:
@@ -174,6 +177,38 @@ class TelegramTurnUI:
                 )
                 self.last_status = text
             # Never publish private reasoning; only user-facing answer deltas.
+            if self.answer and self.api.rich_enabled:
+                preview_text = self.answer[:4000] + "\n\n…"
+                now = time.monotonic()
+                if preview_text != self.last_preview or (
+                    self.last_draft_at and now - self.last_draft_at >= 20
+                ):
+                    if self.answer_id is None and await self.api.send_rich_draft(
+                        self.chat_id,
+                        self.draft_id,
+                        preview_text,
+                        thread_id=self.thread_id,
+                    ):
+                        self.last_draft_at = now
+                    elif self.answer_id is None:
+                        sent = await self.api.send_answer(
+                            self.chat_id,
+                            preview_text,
+                            reply_to=self.reply_to,
+                            thread_id=self.thread_id,
+                            preview=True,
+                        )
+                        self.answer_id = sent.get("message_id")
+                    else:
+                        await self.api.edit_answer(
+                            self.chat_id,
+                            self.answer_id,
+                            preview_text,
+                            thread_id=self.thread_id,
+                            preview=True,
+                        )
+                    self.last_preview = preview_text
+                return
             chunks = (
                 split_html(render_markdown(self.answer[:4000]), limit=3600)
                 if self.answer
@@ -383,6 +418,8 @@ class TelegramTurnUI:
 
         self.stop_requested = True
         self.outcome = "Stopped"
+        if self.receiving_task is not None:
+            self.receiving_task.cancel()
         cancel_session_turn(self.session_id)
         return True
 
@@ -567,6 +604,19 @@ class TelegramTurnUI:
                 )
         if self.outcome == "Stopped":
             reply = "Stopped. A tool already running may still finish. You can send another message or use /new."
+        if self.api.rich_enabled or self.last_draft_at:
+            if self.answer_id is None:
+                await self.api.send_answer(
+                    self.chat_id,
+                    reply,
+                    thread_id=self.thread_id,
+                    reply_to=self.reply_to,
+                )
+            else:
+                await self.api.edit_answer(
+                    self.chat_id, self.answer_id, reply, thread_id=self.thread_id
+                )
+            return
         chunks = split_html(render_markdown(reply))
         if chunks:
             if self.answer_id is not None:
