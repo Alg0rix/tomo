@@ -63,8 +63,10 @@ def _messages_to_responses_input(
 ) -> tuple[str, list[dict[str, Any]]]:
     """Convert tomo's chat-style ``messages`` to ``(instructions, input_items)``.
 
-    System-role messages become the Responses ``instructions`` string
-    (joined, in order). Everything else becomes an ``input`` item:
+    The first system message becomes the Responses ``instructions`` string.
+    Later system messages stay in ``input`` at their original position so
+    dynamic turn context does not invalidate the reusable history prefix.
+    Everything else becomes an ``input`` item:
     plain user/assistant text, ``function_call`` for assistant tool calls,
     ``function_call_output`` for tool-role results.
     """
@@ -79,7 +81,10 @@ def _messages_to_responses_input(
         if role == "system":
             text = _flatten_content(msg.get("content"))
             if text.strip():
-                instructions_parts.append(text)
+                if instructions_parts or items:
+                    items.append({"role": "system", "content": text})
+                else:
+                    instructions_parts.append(text)
             continue
 
         if role == "tool":

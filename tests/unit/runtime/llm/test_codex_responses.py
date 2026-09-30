@@ -44,6 +44,19 @@ def test_messages_to_responses_input_splits_system_as_instructions() -> None:
     assert items == [{"role": "user", "content": "hi"}]
 
 
+def test_turn_context_stays_in_input_even_without_history() -> None:
+    instructions, items = _messages_to_responses_input([
+        {"role": "system", "content": "stable instructions"},
+        {"role": "system", "content": "current clock"},
+        {"role": "user", "content": "hi"},
+    ])
+    assert instructions == "stable instructions"
+    assert items == [
+        {"role": "system", "content": "current clock"},
+        {"role": "user", "content": "hi"},
+    ]
+
+
 def test_messages_to_responses_input_converts_tool_calls_and_results() -> None:
     messages = [
         {"role": "system", "content": "sys"},
