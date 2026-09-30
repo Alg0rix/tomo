@@ -848,7 +848,7 @@
           var box = document.createElement("div");
           box.className = "ap-md chat-prose prose artifact-inline-md";
           host.appendChild(box);
-          global.TomoMarkdown.renderInto(box, text);
+          global.TomoMarkdown.renderInto(box, text, { html: true });
           return;
         }
         if (cat === "csv") {
@@ -976,7 +976,7 @@
         var box = document.createElement("div");
         box.className = "ap-md chat-prose prose";
         stage.appendChild(box);
-        global.TomoMarkdown.renderInto(box, text);
+        global.TomoMarkdown.renderInto(box, text, { html: true });
       } else {
         stage.appendChild(renderHighlightedCode(text, filename, "markdown"));
       }

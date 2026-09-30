@@ -13,6 +13,7 @@
     table: 1, thead: 1, tbody: 1, tfoot: 1, tr: 1, th: 1, td: 1,
     span: 1, div: 1, img: 1, del: 1, s: 1, sub: 1, sup: 1, mark: 1,
     details: 1, summary: 1, input: 1, section: 1, figure: 1, figcaption: 1,
+    kbd: 1, u: 1, ins: 1, small: 1, abbr: 1,
   };
   var ALLOWED_ATTRS = {
     a: ["href", "title", "target", "rel", "class", "aria-hidden", "id"],
@@ -90,6 +91,16 @@
         child.setAttribute("type", "checkbox");
         child.setAttribute("disabled", "");
         child.classList.add("md-task-cb");
+        // Mark only the item that owns the checkbox (tight: li > input,
+        // loose: li > p > input) and its own list — not siblings or parents.
+        var owner = child.parentNode;
+        if (owner && owner.tagName === "P") owner = owner.parentNode;
+        if (owner && owner.tagName === "LI") {
+          owner.classList.add("task-list-item");
+          if (owner.parentNode && /^(UL|OL)$/.test(owner.parentNode.tagName)) {
+            owner.parentNode.classList.add("task-list");
+          }
+        }
       }
       if (tag === "a") {
         var href = child.getAttribute("href") || "";
@@ -199,7 +210,9 @@
     text = text.replace(/\\\(([\s\S]+?)\\\)/g, function (_m, tex) {
       return stashMath(tex, false);
     });
-    text = text.replace(/(?<!\$)\$(?!\$)([^\n$]+?)(?<!\$)\$(?!\$)/g, function (m, tex) {
+    // Pandoc rule: no space just inside the $…$ and no digit right after the
+    // closing $, so "$PATH and $HOME" or "$5 to $10" stay plain text.
+    text = text.replace(/(?<![$\\])\$(?![\s$])([^\n$]+?)(?<![\s$\\])\$(?![\d$])/g, function (m, tex) {
       if (!looksLikeMath(tex)) return m;
       return stashMath(tex, false);
     });
@@ -288,7 +301,8 @@
     // Unclosed **bold** in the paragraph still streaming: close it so the
     // heading renders bold now instead of flashing raw asterisks.
     if (!pending.fence && !pending.math) {
-      var tail = text.slice(text.lastIndexOf("\n\n") + 1).replace(/`[^`\n]*`/g, "");
+      // tmp has closed fences stashed, so "**" inside code doesn't count.
+      var tail = tmp.slice(tmp.lastIndexOf("\n\n") + 1).replace(/`[^`\n]*`/g, "");
       var stars = tail.match(/\*\*/g);
       if (stars && stars.length % 2 === 1) {
         var trimmed = text.replace(/\s+$/, "");
@@ -297,6 +311,33 @@
       }
     }
     return { text: text, pending: pending };
+  }
+
+  // Raw tags a model may legitimately write in prose. Anything else ("<div>",
+  // "<script>", "List<String>") is shown as text instead of becoming markup.
+  var RAW_TAGS_KEPT = {
+    br: 1, b: 1, i: 1, em: 1, strong: 1, u: 1, s: 1, del: 1, ins: 1, mark: 1,
+    sub: 1, sup: 1, kbd: 1, small: 1, abbr: 1, details: 1, summary: 1, hr: 1,
+  };
+
+  /** Prose fixes that marked's CommonMark rules get wrong for chat output. */
+  function normalizeInline(raw, keepHtml) {
+    var segs = [];
+    var text = String(raw || "").replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`|\$\$[\s\S]*?\$\$/g, function (m) {
+      segs.push(m);
+      return "\0NI" + (segs.length - 1) + "\0";
+    });
+    if (!keepHtml) {
+      text = text.replace(/<(\/?)([a-zA-Z][\w-]*)((?:\s[^<>]*)?)(\/?)>/g, function (m, _c, tag) {
+        return RAW_TAGS_KEPT[tag.toLowerCase()] ? m : m.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      });
+    }
+    // Python dunders ("__init__.py") are names, not bold.
+    text = text.replace(/(^|[^\w\\])__([A-Za-z0-9]\w*?)__(?!\w)/g, "$1\\_\\_$2\\_\\_");
+    // "**Catatan:**lanjut" / "kata**"kutip"**" fail CommonMark flanking rules;
+    // pair ** ourselves so bold renders wherever the model put it.
+    text = text.replace(/(^|[^\\*])\*\*(?![\s*])([^\n]*?[^\s*\\])\*\*(?!\*)/g, "$1<strong>$2</strong>");
+    return text.replace(/\0NI(\d+)\0/g, function (_m, i) { return segs[+i]; });
   }
 
   function preprocessCalloutsAndFootnotes(raw) {
@@ -355,15 +396,6 @@
     });
   }
 
-  function enhanceTaskLists(html) {
-    // Wrap ul/ol that contain checkbox inputs
-    return String(html || "").replace(/<(ul|ol)>([\s\S]*?)<\/\1>/gi, function (m, tag, inner) {
-      if (!/type="checkbox"/i.test(inner)) return m;
-      var cleaned = inner.replace(/<li>/gi, '<li class="task-list-item">');
-      return "<" + tag + ' class="task-list">' + cleaned + "</" + tag + ">";
-    });
-  }
-
   function enhanceAlign(html) {
     // marked emits align="left|center|right" — also mirror as style for sticky tables
     return String(html || "").replace(/\salign="(left|center|right)"/gi, function (_m, a) {
@@ -408,7 +440,7 @@
             token.tokens && this.parser
               ? this.parser.parseInline(token.tokens)
               : escapeHtml(text);
-          var id = slugify(text);
+          var id = slugify(String(text).replace(/<[^>]*>/g, ""));
           return (
             "<h" + depth + ' id="' + id + '">' +
             '<a class="md-h-anchor" href="#' + id + '" aria-hidden="true">#</a>' +
@@ -438,12 +470,12 @@
       raw = closePartialMarkdown(raw).text;
     }
     try {
+      raw = normalizeInline(raw, !!opts.html);
       raw = preprocessCalloutsAndFootnotes(raw);
       var extracted = extractMath(raw);
       var html = parseMarkdown(extracted.text);
       html = enhanceAlign(html);
       html = wrapTables(html);
-      html = enhanceTaskLists(html);
       html = sanitize(html);
       html = injectMath(html, extracted.blocks);
       return html;
@@ -812,7 +844,9 @@
     opts = opts || {};
     var partial = !!opts.partial || !!(el.closest && el.closest(".streaming, .msg.streaming"));
     var closed = partial ? closePartialMarkdown(text == null ? "" : String(text)) : null;
-    el.innerHTML = format(closed ? closed.text : text, { partial: false });
+    // opts.html: authored documents (artifacts) keep their raw HTML; chat
+    // output escapes stray tags.
+    el.innerHTML = format(closed ? closed.text : text, { partial: false, html: !!opts.html });
     el.classList.add("chat-prose");
     if (partial && closed && closed.pending.fence) {
       var pres = el.querySelectorAll("pre.md-pre, pre");

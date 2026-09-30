@@ -1164,16 +1164,25 @@ html.is-rail-collapsed .app-rail-collapse {
 .chat-prose ul ul, .chat-prose ol ol, .chat-prose ul ol, .chat-prose ol ul { margin: 0.15em 0; }
 .chat-prose .task-list { list-style: none; padding-left: 0.25em; }
 .chat-prose .task-list-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  /* Block, not flex: a flex row turns every inline run, <strong> and <pre>
+     inside the item into its own column. */
+  position: relative;
+  padding-left: 1.6em;
   margin: 0.2em 0;
+}
+/* Plain items sharing a list with checkboxes keep a bullet. */
+.chat-prose .task-list > li:not(.task-list-item) { position: relative; padding-left: 1.6em; margin: 0.2em 0; }
+.chat-prose .task-list > li:not(.task-list-item)::before {
+  content: ""; position: absolute; left: 0.45em; top: 0.7em;
+  width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .6;
 }
 .chat-prose .md-task-cb,
 .chat-prose .task-list-item input[type="checkbox"] {
-  margin-top: 0.35em;
+  position: absolute;
+  left: 0;
+  top: 0.35em;
+  margin: 0;
   accent-color: var(--accent);
-  flex-shrink: 0;
 }
 .chat-prose .md-callout {
   margin: 0.65em 0;
