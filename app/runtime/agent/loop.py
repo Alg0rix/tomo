@@ -761,8 +761,14 @@ async def run_turn(
 
             await wait_for_extraction(turn_user_id)
             prompt = system_prompt
+            live_context = ""
             if prompt is None:
-                prompt = build_system_prompt(agent_id, session_id=session_id)
+                from app.runtime.agent.context import build_live_context
+
+                prompt = build_system_prompt(
+                    agent_id, session_id=session_id, include_live_context=False
+                )
+                live_context = build_live_context(agent_id, session_id=session_id)
             if any(s.get("function", {}).get("name") == "delegate" for s in tool_schemas):
                 prompt += (
                     "\n\n## Delegation for this turn\n"
@@ -799,6 +805,8 @@ async def run_turn(
                     "only for material missing scope or preferences, and include its answer "
                     "in the task. Respect a request to work solo. A question about swarms "
                     "does not itself request a worker run."
+                )
+                live_context += (
                     "\nEnabled worker/template catalog: " + json.dumps(worker_catalog, ensure_ascii=False)
                     + f"\nCurrent coordinator/template ID: {agent_id}. Create session-local "
                     "agents based on this ID if needed; do not assign it directly as a worker."
@@ -813,6 +821,7 @@ async def run_turn(
                 for_agent_id=agent_id,
                 session_id=session_id,
                 vision_capable=vision_capable,
+                live_context=live_context,
             )
         except Exception as exc:
             metrics.ended_kind = "error"

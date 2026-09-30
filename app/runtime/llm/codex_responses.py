@@ -24,6 +24,7 @@ import httpx
 import openai
 
 from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.prompt_cache import stable_tools
 from app.runtime.llm.codex_oauth import DEFAULT_CODEX_BASE_URL
 from app.runtime.llm.openai_compat import (
     LLMConfigError,
@@ -257,7 +258,7 @@ class CodexResponsesClient:
             "input": input_items,
             "store": False,
         }
-        responses_tools = _responses_tools(tools)
+        responses_tools = stable_tools(_responses_tools(tools))
         if responses_tools:
             payload["tools"] = responses_tools
         if self._reasoning_effort:

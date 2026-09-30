@@ -28,6 +28,7 @@ import httpx
 import openai
 
 from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.prompt_cache import stable_tools
 
 _logger = logging.getLogger(__name__)
 
@@ -809,7 +810,7 @@ class OpenAICompatClient:
         if self._reasoning_effort:
             payload["reasoning_effort"] = self._reasoning_effort
         if tools:
-            payload["tools"] = tools
+            payload["tools"] = stable_tools(tools)
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []

@@ -94,6 +94,25 @@ async def test_text_only_path_yields_single_final() -> None:
     assert "".join(e["content"] for e in events if e["kind"] == "delta") == _DEFAULT_REPLY
 
 
+async def test_loop_keeps_live_context_after_history(monkeypatch) -> None:
+    from app.runtime.agent import context
+
+    seen = []
+
+    class CapturingLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            seen.extend(messages)
+            return await super().complete(messages, tools)
+
+    monkeypatch.setattr(context, "build_live_context", lambda *a, **kw: "host is online now")
+    monkeypatch.setattr("app.runtime.memory.retrieve.retrieve_for_turn", lambda *a, **kw: "")
+    await _collect("next", llm=CapturingLLM([text_reply("ok")]), tools=[],
+                   history=[{"type": "user", "content": "earlier"}])
+    assert seen[1] == {"role": "user", "content": "earlier"}
+    assert "host is online now" not in seen[0]["content"]
+    assert "host is online now" in seen[2]["content"]
+
+
 async def test_session_reasoning_effort_reaches_llm_factory(tmp_path, monkeypatch) -> None:
     store.rebind(tmp_path / "reasoning-loop.db")
     store.create_llm_profile(

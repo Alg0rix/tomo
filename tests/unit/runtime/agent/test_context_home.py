@@ -13,6 +13,49 @@ from app.core import home
 from app.runtime.agent.context import build_system_prompt
 
 
+def test_live_changes_preserve_system_and_history_prefix(tmp_path, monkeypatch) -> None:
+    from app.runtime.agent import context
+    from app.runtime.llm.codex_responses import _messages_to_responses_input
+    from app.services import store
+
+    home.ensure_tomo_home(tmp_path)
+    store.rebind(tmp_path / "cache.db")
+    monkeypatch.setattr(context, "_skills_prompt_section", lambda aid: "## Skills\nstable skills")
+    monkeypatch.setattr(context, "_swarm_agents_prompt_section", lambda aid: "roster one")
+    monkeypatch.setattr(context, "_workplace_prompt_section", lambda aid: "host online")
+    monkeypatch.setattr(context, "_artifacts_prompt_section", lambda aid: "session path one")
+    monkeypatch.setattr("app.runtime.memory.vault.read.world_card", lambda *a, **kw: "facts one")
+    monkeypatch.setattr("app.runtime.memory.retrieve.retrieve_for_turn", lambda *a, **kw: "")
+    history = [{"type": "user", "content": "previous request"},
+               {"type": "final", "content": "previous answer", "agent_id": "main"}]
+
+    def assemble():
+        return context.build_messages(
+            history, "next request", for_agent_id="main",
+            system_prompt=context.build_system_prompt(
+                "main", home_root=tmp_path, include_live_context=False
+            ),
+            live_context=context.build_live_context("main", home_root=tmp_path),
+        )
+
+    first = assemble()
+    monkeypatch.setattr(context, "_swarm_agents_prompt_section", lambda aid: "roster two")
+    monkeypatch.setattr(context, "_workplace_prompt_section", lambda aid: "host offline")
+    monkeypatch.setattr(context, "_artifacts_prompt_section", lambda aid: "session path two")
+    monkeypatch.setattr("app.runtime.memory.vault.read.world_card", lambda *a, **kw: "facts two")
+    second = assemble()
+    assert first[:3] == second[:3]
+    assert "stable skills" in first[0]["content"]
+    assert "host online" in first[3]["content"]
+    assert "host offline" in second[3]["content"]
+    assert "facts two" in second[3]["content"]
+    assert "session path two" in second[3]["content"]
+    instructions_one, items_one = _messages_to_responses_input(first)
+    instructions_two, items_two = _messages_to_responses_input(second)
+    assert instructions_one == instructions_two
+    assert items_one[:2] == items_two[:2]
+
+
 def test_build_system_prompt_uses_soul_and_system(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
     home.ensure_tomo_home(tmp_path)

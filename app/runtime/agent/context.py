@@ -171,10 +171,11 @@ def build_system_prompt(
     *,
     home_root: Path | None = None,
     session_id: str | None = None,
+    include_live_context: bool = True,
 ) -> str:
     """Build the system prompt for a coordinator/agent turn from ``$TOMO_HOME``.
 
-    Resolution order (locked, Alpha spec §2.1):
+    Persona resolution (Alpha spec §2.1) and cache-friendly section order:
 
     1. **Base instructions** — ``$TOMO_HOME/agents/<id>/SYSTEM.md`` when
        ``agent_id`` is given and the file is non-empty; otherwise the repo
@@ -182,18 +183,20 @@ def build_system_prompt(
     2. **Global persona** — ``$TOMO_HOME/SOUL.md`` is *prepended* when present.
     3. **Agent persona overlay** — ``$TOMO_HOME/agents/<id>/SOUL.md`` is
        *appended* after the base when present (only when ``agent_id`` is given).
-    4. **Swarm / workplace** — live roster and workplace bindings when relevant.
-    5. **Skills awareness** — compact enabled-skill catalog when the agent has
+    4. **Skills awareness / UI guidance** — compact enabled-skill catalog when the agent has
        ``list_skills`` / ``use_skill`` / ``manage_skill`` (full bodies via
        ``use_skill``).
-    6. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
+    5. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
        this session (file-backed; refreshes next session).
+    6. **Live context** — roster, workplace bindings, session artifacts and world facts.
     7. **Current time** — local + UTC, stamped once per turn (use bash ``date``
        for a live clock).
 
     Sections are joined with a blank line. No secrets are read from files.
     ``home_root`` overrides the home root (tests); it defaults to
     :data:`app.core.config.TOMO_HOME`.
+    Runtime callers set ``include_live_context=False`` and supply live context
+    separately after history via :func:`build_messages`.
     """
     root = Path(home_root) if home_root is not None else config.TOMO_HOME
     parts: list[str] = []
@@ -213,19 +216,9 @@ def build_system_prompt(
         agent_soul = _read_md(home.agent_soul_path(agent_id, root), home_root=root)
         if agent_soul:
             parts.append(agent_soul)
-        # Coordinator (and any agent with delegate) needs the live swarm roster.
-        swarm_block = _swarm_agents_prompt_section(agent_id)
-        if swarm_block:
-            parts.append(swarm_block)
-        wp_block = _workplace_prompt_section(agent_id)
-        if wp_block:
-            parts.append(wp_block)
         skills_block = _skills_prompt_section(agent_id)
         if skills_block:
             parts.append(skills_block)
-        arts_block = _artifacts_prompt_section(agent_id)
-        if arts_block:
-            parts.append(arts_block)
         ui_block = _ui_prompt_section(agent_id)
         if ui_block:
             parts.append(ui_block)
@@ -240,6 +233,32 @@ def build_system_prompt(
             parts.append(mem)
     except Exception:
         pass
+
+    if include_live_context:
+        live = build_live_context(agent_id, session_id=session_id, home_root=root)
+        if live:
+            parts.append(live)
+
+    return inject_current_time("\n\n".join(parts))
+
+
+def build_live_context(
+    agent_id: str | None = None,
+    *,
+    session_id: str | None = None,
+    home_root: Path | None = None,
+) -> str:
+    """Fresh roster, host status, session paths and world facts for this turn."""
+    root = Path(home_root) if home_root is not None else config.TOMO_HOME
+    parts: list[str] = []
+    if agent_id:
+        for section in (
+            _swarm_agents_prompt_section(agent_id),
+            _workplace_prompt_section(agent_id),
+            _artifacts_prompt_section(agent_id),
+        ):
+            if section:
+                parts.append(section)
 
     try:
         from app.runtime.memory.vault.read import world_card
@@ -258,8 +277,7 @@ def build_system_prompt(
         import logging
         logging.getLogger(__name__).debug('world card unavailable', exc_info=True)
 
-    # Time last so the stable prefix stays cache-friendly when the host supports it.
-    return inject_current_time("\n\n".join(parts))
+    return "\n\n".join(parts)
 
 
 def _agent_has_memory_tool(agent_id: str | None) -> bool:
@@ -977,13 +995,13 @@ def build_messages(
     for_agent_id: str | None = None,
     session_id: str | None = None,
     vision_capable: bool = False,
+    live_context: str | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for one agent turn.
 
     Layout: ``[system] + history + [turn context] + [user]``. The clock and
     retrieved memory follow history so they cannot invalidate its cached prefix.
-    The new
-    ``user_message`` is appended only when provided — callers that persist
+    The new ``user_message`` is appended only when provided — callers that persist
     the user entry into history first may pass ``user_message=None``.
 
     Pass ``for_agent_id`` so multi-agent history attributes specialist work
@@ -999,6 +1017,8 @@ def build_messages(
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
     prompt = _without_current_time(prompt)
     turn_context = [_current_time_section()]
+    if live_context:
+        turn_context.append(live_context)
     query = (user_message or "").strip()
     if not query and history:
         for entry in reversed(history):
@@ -1043,6 +1063,7 @@ def _dumps_args(params: Any) -> str:
 __all__ = [
     "coordinator_system_prompt",
     "build_system_prompt",
+    "build_live_context",
     "inject_current_time",
     "freeze_prompt_clock",
     "reset_prompt_clock",
