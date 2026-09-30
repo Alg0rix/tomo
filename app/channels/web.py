@@ -287,14 +287,42 @@ async def _drain_agent_turn(
             coordinator_id=agent_id, origin=origin, initial_plan=swarm_plan,
         )
     else:
+        from app.runtime.tools import start_swarm
+        from app.runtime.tools.registry import get_openai_tools
+
         solo_tools = [
             schema for schema in store.get_agent_openai_tools(agent_id)
-            if schema.get("function", {}).get("name") != "delegate"
+            if schema.get("function", {}).get("name") not in {"delegate", "start_swarm"}
         ]
-        source = _agent_run_turn(
-            user_message, history=history, agent_id=agent_id,
-            session_id=session_id, origin=origin, tools=solo_tools,
-        )
+        if origin is None:
+            solo_tools += get_openai_tools(["start_swarm"])
+
+        async def chat_events():
+            current_request = user_message or _last_user_content(history)
+            token = start_swarm.bind_context(current_request) if origin is None else None
+            solo = _agent_run_turn(
+                user_message, history=history, agent_id=agent_id,
+                session_id=session_id, origin=origin, tools=solo_tools,
+            )
+            handoff = None
+            try:
+                async for event in solo:
+                    if event.get("kind") == "swarm_requested":
+                        handoff = event["request"]
+                        break
+                    yield event
+            finally:
+                await solo.aclose()
+                if token is not None:
+                    start_swarm.reset_context(token)
+            if handoff:
+                async for event in run_swarm_turn(
+                    handoff, history=history, session_id=session_id,
+                    coordinator_id=agent_id, origin=origin,
+                ):
+                    yield event
+
+        source = chat_events()
     async for ev in source:
         _accumulate_turn_tokens(token_acc, ev)
         # Nested subagent events carry their own agent_id for attribution.

@@ -758,6 +758,18 @@ async def run_turn(
             prompt = system_prompt
             if prompt is None:
                 prompt = build_system_prompt(agent_id, session_id=session_id)
+            if any(s.get("function", {}).get("name") == "start_swarm" for s in tool_schemas):
+                prompt += (
+                    "\n\n## Swarm execution for this turn\n"
+                    "The start_swarm tool is available. Read the swarm skill. "
+                    "If the user explicitly requests or approves a swarm/team, "
+                    "call start_swarm with the full task and exact current-user consent quote. "
+                    "It transfers execution to the runtime, which starts real workers. "
+                    "Use this even if older instructions describe swarm as delegate calls; "
+                    "do not claim dispatch is unavailable or silently do the task solo. "
+                    "A mention, quotation, or negation is not consent. Ask before "
+                    "starting a team the user has not requested."
+                )
             from app.runtime.llm.vision import agent_supports_vision
 
             vision_capable = agent_supports_vision(agent_id)
@@ -931,6 +943,11 @@ async def run_turn(
                 return
 
             paired = _with_ids(resp.tool_calls, id_counter)
+            # A swarm handoff supersedes work in this round. Do not execute
+            # sibling tools before transferring ownership to the coordinator.
+            handoffs = [(cid, call) for cid, call in paired if call.name == "start_swarm"]
+            if handoffs:
+                paired = handoffs[:1]
             messages.append(_assistant_tool_calls_message(resp, paired))
 
             tool_names = [c.name for _cid, c in paired]
@@ -1093,6 +1110,12 @@ async def run_turn(
                                 "agent_id": agent_id or "",
                             }
                     yield payload
+                    if call.name == "start_swarm" and not err:
+                        from app.runtime.tools.start_swarm import ACCEPTED
+
+                        if text_res == ACCEPTED:
+                            yield {"kind": "swarm_requested", "request": call.arguments["request"].strip()}
+                            return
                     if call.name == "render_ui" and not err:
                         from app.runtime.tools.render_ui import parse_result
 

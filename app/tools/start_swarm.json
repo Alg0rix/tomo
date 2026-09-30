@@ -1,0 +1,21 @@
+{
+  "id": "start_swarm",
+  "name": "Start swarm",
+  "description": "Transfer this chat turn to Tomo's swarm coordinator after explicit user consent.",
+  "backend": "app.runtime.tools.start_swarm",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "start_swarm",
+      "description": "Start a real session-scoped swarm and transfer this turn to its coordinator. Read the swarm skill. When the user explicitly asks for a swarm/team, call this instead of saying dispatch tools are unavailable. Interpret consent in any language; never infer consent from a mere mention, quotation, or negation. Without explicit consent, propose the split and ask first. Do not call other work tools in the same batch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "request": {"type": "string", "description": "Complete user task, including relevant prior context, boundaries and proposed independent work."},
+          "consent_quote": {"type": "string", "description": "Exact substring of the current user message explicitly requesting or approving this swarm."}
+        },
+        "required": ["request", "consent_quote"]
+      }
+    }
+  }
+}

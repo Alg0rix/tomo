@@ -10,9 +10,64 @@ from app.models.mixins import swarm as swarm_store
 from app.models.schema import migrate
 from app.runtime.coordinator import swarm
 from app.runtime.llm.base import LLMResponse
+from app.runtime.llm.base import ToolCall
 from app.runtime.tools import swarm_board
 from app.services.chat import run_session_turn
 from app.services.store import store
+
+
+async def test_root_agent_can_start_real_workers_when_advisor_misses(tmp_path, monkeypatch) -> None:
+    """Exercise the real tool loop, handoff, scheduler and synthesis, not a fake dispatch."""
+    from app.runtime.agent import loop
+    from tests.fakes.llm import ScriptedLLM, text_reply
+
+    store.rebind(tmp_path / "handoff.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    request = "coba lu bikin swarm buat riset MCP"
+    plan_calls = 0
+
+    async def missed_intent(*args, **kwargs):
+        return None
+
+    async def plan(*args, **kwargs):
+        nonlocal plan_calls
+        plan_calls += 1
+        if plan_calls > 1:
+            return {}
+        return {"agents": [], "tasks": [
+            {"key": "architecture", "agent_id": "ops", "brief": "Review MCP architecture"},
+            {"key": "tools", "agent_id": "research", "brief": "Review MCP tools"},
+        ]}
+
+    main_llm = ScriptedLLM([
+        LLMResponse(content=None, tool_calls=[
+            ToolCall(id="swarm", name="start_swarm", arguments={"request": request, "consent_quote": "bikin swarm"}),
+            ToolCall(id="skip", name="write_file", arguments={"path": "must-not-exist", "content": "oops"}),
+        ]),
+        text_reply("Combined architecture and tools findings"),
+    ])
+    workers = {"ops": ScriptedLLM([text_reply("Architecture finding")]),
+               "research": ScriptedLLM([text_reply("Tools finding")])}
+
+    def get_llm(agent_id=None, **kwargs):
+        return workers.get(agent_id, main_llm)
+
+    monkeypatch.setattr("app.channels.web.advise_swarm", missed_intent)
+    monkeypatch.setattr(swarm, "_plan", plan)
+    monkeypatch.setattr(loop, "get_llm", get_llm)
+    chunks = [chunk async for chunk in run_session_turn(sid, request, "web", start_seq=0)]
+    runs = store.with_db(lambda c: swarm_store.list_runs(c, sid))
+    assert len(runs) == 1
+    assert runs[0]["status"] == "done"
+    assert runs[0]["result"] == "Combined architecture and tools findings"
+    tasks = store.with_db(lambda c: swarm_store.list_tasks(c, runs[0]["id"]))
+    assert len(tasks) == 2
+    assert all(task["status"] == "done" for task in tasks)
+    assert any("swarm.event" in chunk and "task_started" in chunk for chunk in chunks)
+    tools = [entry["function"] for entry in store.get_session_history(sid) if entry["type"] == "tool_call"]
+    assert "start_swarm" in tools
+    assert "write_file" not in tools
+    assert main_llm.remaining == 0
 
 
 @pytest.mark.parametrize("attachment_ids", [None, ["attachment_a"]])
@@ -246,7 +301,7 @@ async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypa
     session_id = store.create_swarm_session(["main"], user_id="web")
     plan = {"agents": [], "tasks": [
         {"key": "prod_a", "agent_id": "ops", "brief": "Inspect prod A",
-         "tools": ["bash", "portal"]},
+         "tools": ["bash", "portal", "swarm_board"]},
     ]}
     seen = []
 
@@ -256,6 +311,7 @@ async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypa
     async def fake_turn(message, *, agent_id, **kwargs):
         if "Assigned swarm task" in kwargs.get("system_prompt", ""):
             names = {s["function"]["name"] for s in kwargs["tools"]}
+            assert len(kwargs["tools"]) == len(names)
             seen.append(names)
             assert names == {"bash", "portal", "swarm_board"}
             assert swarm_board.authorize("bash", {"command": "true"}) is None
@@ -274,7 +330,7 @@ async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypa
     assert seen == [{"bash", "portal", "swarm_board"}]
     run = store.with_db(lambda conn: swarm_store.list_runs(conn, session_id))[0]
     task = store.with_db(lambda conn: swarm_store.list_tasks(conn, run["id"]))[0]
-    assert task["tools"] == ["bash", "portal"]
+    assert task["tools"] == ["bash", "portal", "swarm_board"]
 
 
 def test_coordinator_cannot_assign_disabled_tool(tmp_path) -> None:

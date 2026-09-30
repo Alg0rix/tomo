@@ -54,6 +54,7 @@ from app.runtime.tools import web_fetch as _web_fetch_backend
 from app.runtime.tools import web_search as _web_search_backend
 from app.runtime.tools import write_file as _write_file_backend
 from app.runtime.tools import swarm_board as _swarm_board_backend
+from app.runtime.tools import start_swarm as _start_swarm_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
@@ -98,6 +99,7 @@ _BACKENDS: dict[str, ToolRunner] = {
     "memory": _memory_backend.run,
     "agent_info": _agent_info_backend.run,
     "swarm_board": _swarm_board_backend.run,
+    "start_swarm": _start_swarm_backend.run,
 }
 
 

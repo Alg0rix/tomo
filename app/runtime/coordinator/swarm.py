@@ -30,7 +30,7 @@ MAX_PLAN_CALLS = 4
 _SKILL_PATH = Path(__file__).resolve().parents[3] / "skills" / "internal" / "swarm" / "SKILL.md"
 # Worker creation belongs to the coordinator's bounded scheduler. Other
 # capabilities are selected per task from the agent's enabled tool catalog.
-_ORCHESTRATION_TOOLS = {"delegate", "create_agent"}
+_ORCHESTRATION_TOOLS = {"delegate", "create_agent", "start_swarm"}
 
 
 def _json(content: str | None) -> dict[str, Any]:
@@ -113,6 +113,8 @@ async def _plan(
         "Do not duplicate work. Independent tasks should run concurrently. Dependent tasks "
         "must name prerequisites. Choose the few enabled tools each task needs, including "
         "bash or portal when appropriate. Tool use still follows the user's permission settings. "
+        "Every worker also receives swarm_board automatically for publishing findings, "
+        "reading messages, and communicating with other workers. "
         "write_scope applies to file-edit tools; give relative paths for those tools. "
         "Use messages to steer running workers. "
         "Return empty tasks when work is complete or one agent suffices. "
@@ -239,7 +241,7 @@ def _accept_plan(
                 s.get("function", {}).get("name")
                 for s in store.get_agent_openai_tools(base_agent_id)
                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS
-            }
+            } | {"swarm_board"}
         return enabled_tool_cache[base_agent_id]
 
     for raw in raw_tasks:
@@ -332,13 +334,13 @@ async def _worker(
             s.get("function", {}).get("name"): s
             for s in store.get_agent_openai_tools(base)
         }
+        available.update({s["function"]["name"]: s for s in get_openai_tools(["swarm_board"])})
         selected = set(task["tools"])
         missing = selected - available.keys()
         if missing:
             raise RuntimeError(f"Assigned tools are no longer available: {', '.join(sorted(missing))}")
         allowed = selected | {"swarm_board"}
-        tool_schemas = [available[name] for name in task["tools"]]
-        tool_schemas += get_openai_tools(["swarm_board"])
+        tool_schemas = [available[name] for name in dict.fromkeys([*task["tools"], "swarm_board"])]
         prompt = build_system_prompt(base, session_id=session_id)
         prompt += (
             f"\n\n## Assigned swarm task\nYou are {task['agent_name']} ({aid}). "
@@ -495,7 +497,7 @@ async def run_swarm_turn(
         if not tasks:
             # Even explicit opt-in need not spawn anyone for a trivial request.
             coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)
-                                 if s.get("function", {}).get("name") not in {"delegate", "create_agent"}]
+                                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS]
             # History ends with the user's message; if that was only an opt-in
             # ("swarm"), answer the real request instead.
             last_user = next((e for e in reversed(history or []) if e.get("type") == "user"), None)
@@ -528,7 +530,7 @@ async def run_swarm_turn(
                 f"\n\nShared findings and messages:\n{json.dumps(findings, ensure_ascii=False)}"
             )
             coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)
-                                 if s.get("function", {}).get("name") not in {"delegate", "create_agent"}]
+                                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS]
             async for ev in run_turn(synthesis, history=history, agent_id=coordinator_id,
                                      session_id=session_id, origin=origin,
                                      tools=coordinator_tools):

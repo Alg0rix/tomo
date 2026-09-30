@@ -39,10 +39,9 @@ _MAX_SKILL_CHARS = 48_000
 _ALLOWED_SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 
 
-# Bundled skills the runtime reads itself (e.g. the swarm planner). Hide these
-# from agent catalogs to avoid advertising orchestration as an agent action.
-# Explicit use_skill reads are allowed as guidance; loading never starts work.
-RUNTIME_ONLY_SKILLS = frozenset({"swarm"})
+# Skills reserved exclusively for runtime use. Swarm guidance is shared with
+# root chat agents, which can request a bounded runtime handoff via start_swarm.
+RUNTIME_ONLY_SKILLS = frozenset()
 
 
 def is_runtime_only_skill(skill_id: str | None, source: str | None = "internal") -> bool:
