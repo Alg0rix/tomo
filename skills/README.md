@@ -7,6 +7,7 @@ with optional YAML frontmatter (`name`, `description`, `version`).
 
 | Root | Role |
 |------|------|
+| `<Tomo repo>/skills/internal` | Bundled skills (read-only) |
 | `$TOMO_HOME/library/skills` | Managed installs (writable) |
 | `~/.agents/skills` | Shared user skills (read-only discover) |
 | `~/.agent/skills` | Alternate shared path (read-only) |
@@ -15,6 +16,14 @@ with optional YAML frontmatter (`name`, `description`, `version`).
 
 Override external roots with ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). Set
 empty to disable external discovery.
+
+## Internal skills
+
+- [Swarm](internal/swarm/SKILL.md) — plan and coordinate worker agents.
+- [Connector](internal/connector/SKILL.md) — install/pair and operate tunnel
+  workplaces, transfer files, troubleshoot connections, and configure MCP services.
+  Detailed procedures are under the skill's `references/` directory and can be
+  loaded with `use_skill(skill_id="connector", file="references/setup.md")`.
 
 ## CLI
 
