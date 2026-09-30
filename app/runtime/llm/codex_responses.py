@@ -1,7 +1,7 @@
 """Codex/ChatGPT subscription LLM client using the Responses API.
 
 Talks to ``https://chatgpt.com/backend-api/codex`` (or any Responses-API
-endpoint) via ``openai.AsyncOpenAI().responses.create(...)`` instead of
+endpoint) via HTTPX and a bounded SSE reader instead of
 chat/completions — the wire format the ChatGPT-subscription Codex backend
 actually accepts an OAuth access token against.
 
@@ -22,9 +22,9 @@ from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
 import httpx
-import openai
 
 from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.http import provider_ssl_context, stream_json
 from app.runtime.llm.prompt_cache import stable_tools
 from app.runtime.llm.codex_oauth import DEFAULT_CODEX_BASE_URL
 from app.runtime.llm.openai_compat import (
@@ -239,16 +239,12 @@ class CodexResponsesClient:
         )
 
         self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
-        http_client = None
-        if transport is not None:
-            http_client = httpx.AsyncClient(transport=transport, timeout=self._http_timeout)
-
-        self._client = openai.AsyncOpenAI(
-            base_url=self._base_url,
-            api_key=resolved_token,
+        self._client = httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {resolved_token}"},
             timeout=self._http_timeout,
-            max_retries=0,
-            http_client=http_client,
+            transport=transport,
+            follow_redirects=True,
+            verify=provider_ssl_context() if transport is None else True,
         )
 
     def _payload(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -322,8 +318,10 @@ class CodexResponsesClient:
         summary_key: tuple[Any, Any] | None = None
 
         try:
-            stream = await self._client.responses.create(**payload)
-            async with stream:
+            headers = payload.pop("extra_headers", None)
+            async with stream_json(
+                self._client, f"{self._base_url}/responses", payload, headers=headers,
+            ) as stream:
                 async for event in stream:
                     self._last_chunk_time = asyncio.get_running_loop().time()
                     etype = getattr(event, "type", "") or ""
@@ -407,7 +405,7 @@ class CodexResponsesClient:
         }
 
     async def aclose(self) -> None:
-        await self._client.close()
+        await self._client.aclose()
 
 
 __all__ = ["CodexResponsesClient"]

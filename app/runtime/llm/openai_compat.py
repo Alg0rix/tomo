@@ -1,8 +1,7 @@
-"""OpenAI-compatible LLM client using the official ``openai`` SDK.
+"""OpenAI-compatible LLM client using HTTPX.
 
 Talks to any endpoint exposing ``POST {base}/chat/completions`` (OpenAI,
-vLLM, LM Studio, OpenRouter, …). The SDK handles request serialization,
-retries, and streaming — we map its typed responses to our
+vLLM, LM Studio, OpenRouter, …). HTTPX handles connections and timeouts; we map provider JSON and SSE to our
 :class:`~app.runtime.llm.base.LLMResponse` / :class:`~app.runtime.llm.base.ToolCall`.
 
 **Parallel tool call streaming.** Each fragment's ``index`` is tracked
@@ -25,9 +24,9 @@ import re
 from typing import Any, AsyncIterator
 
 import httpx
-import openai
 
 from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.http import provider_ssl_context, stream_json
 from app.runtime.llm.prompt_cache import stable_tools
 
 _logger = logging.getLogger(__name__)
@@ -159,7 +158,9 @@ def format_llm_error(exc: BaseException) -> str:
 
     parts: list[str] = []
     name = type(exc).__name__
-    status = getattr(exc, "status_code", None)
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
     if isinstance(status, int) and status > 0:
         parts.append(f"HTTP {status}")
 
@@ -242,6 +243,8 @@ def _extract_provider_detail(exc: BaseException) -> str:
 
 
 def _resp_as_dict(resp: Any) -> dict[str, Any]:
+    if isinstance(resp, dict):
+        return resp
     dump = getattr(resp, "model_dump", None)
     if callable(dump):
         try:
@@ -262,9 +265,10 @@ def _first_choice_and_usage(resp: Any) -> tuple[Any | None, Any]:
     Some gateways (Cline, etc.) nest a valid chat.completion under ``data``
     and leave top-level ``choices`` null. Do not stream-retry in that case.
     """
-    choices = getattr(resp, "choices", None)
+    choices = resp.get("choices") if isinstance(resp, dict) else getattr(resp, "choices", None)
     if choices:
-        return choices[0], getattr(resp, "usage", None)
+        usage = resp.get("usage") if isinstance(resp, dict) else getattr(resp, "usage", None)
+        return choices[0], usage
     dump = _resp_as_dict(resp)
     data = dump.get("data")
     if isinstance(data, dict):
@@ -642,9 +646,9 @@ def parse_usage_details(usage: Any) -> dict[str, int | None]:
 class OpenAICompatClient:
     """Async OpenAI-compatible chat completions client.
 
-    Wraps :class:`openai.AsyncOpenAI` so streaming, retries, and parallel
-    tool call accumulation are handled by the SDK. The ``transport``
-    parameter (``httpx.MockTransport``) is preserved for test mocking.
+    Uses HTTPX for requests and a bounded SSE reader for streaming. Parallel
+    tool calls are accumulated per index. ``transport`` accepts
+    ``httpx.MockTransport`` for deterministic tests.
     """
 
     def __init__(
@@ -674,19 +678,12 @@ class OpenAICompatClient:
         self._transport = transport
         self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
 
-        http_client = None
-        if transport is not None:
-            http_client = httpx.AsyncClient(
-                transport=transport, timeout=self._http_timeout
-            )
-
-        self._client = openai.AsyncOpenAI(
-            base_url=self._base_url,
-            api_key=resolved_key,
+        self._client = httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {resolved_key}"},
             timeout=self._http_timeout,
-            # Mock transport is deterministic; SDK retries just burn ~1s each.
-            max_retries=0,
-            http_client=http_client,
+            transport=transport,
+            follow_redirects=True,
+            verify=provider_ssl_context() if transport is None else True,
         )
 
     @property
@@ -737,7 +734,11 @@ class OpenAICompatClient:
             payload["reasoning_effort"] = self._reasoning_effort
 
         try:
-            resp = await self._client.chat.completions.create(**payload)
+            response = await self._client.post(self.endpoint, json=payload)
+            response.raise_for_status()
+            if response.headers.get("content-type", "").split(";", 1)[0].strip() == "text/event-stream":
+                return await self._complete_via_stream(messages, tools)
+            resp = response.json()
         except LLMRequestError:
             raise
         except Exception as exc:
@@ -822,71 +823,70 @@ class OpenAICompatClient:
         usage_details = parse_usage_details(None)
 
         try:
-            stream = await self._client.chat.completions.create(**payload)
-            async for chunk in stream:
-                self._last_chunk_time = asyncio.get_running_loop().time()
-                # Usage often arrives on a trailing chunk with empty choices.
-                u_prompt, u_completion = parse_usage(getattr(chunk, "usage", None))
-                if u_prompt or u_completion:
-                    prompt_tok, completion_tok = u_prompt, u_completion
-                    usage_details = parse_usage_details(getattr(chunk, "usage", None))
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                extra = getattr(delta, "model_extra", None) or {}
-                reasoning = (
-                    getattr(delta, "reasoning_content", None)
-                    or getattr(delta, "reasoning", None)
-                    or extra.get("reasoning_content")
-                    or extra.get("reasoning")
-                )
-                if isinstance(reasoning, str) and reasoning:
-                    reasoning_parts.append(reasoning)
-                    yield {"type": "reasoning_delta", "content": reasoning}
-
-                piece = getattr(delta, "content", None)
-                if piece:
-                    content_parts.append(piece)
-                    yield {"type": "delta", "content": piece}
-
-                tc_list = getattr(delta, "tool_calls", None)
-                if not tc_list:
-                    continue
-
-                for tc in tc_list:
-                    # Resolve the index for this fragment.
-                    idx = getattr(tc, "index", None)
-                    if idx is None:
-                        # Provider omitted index — try to match by id.
-                        tc_id = getattr(tc, "id", None) or ""
-                        if tc_id and tc_id in seen_ids:
-                            for k, v in tool_acc.items():
-                                if v.get("id") == tc_id:
-                                    idx = k
-                                    break
-                        if idx is None:
-                            idx = next_auto_idx
-                            next_auto_idx += 1
-                    else:
-                        idx = int(idx)
-                        next_auto_idx = max(next_auto_idx, idx + 1)
-
-                    slot = tool_acc.setdefault(
-                        idx, {"id": "", "name": "", "arguments": ""}
+            async with stream_json(self._client, self.endpoint, payload) as stream:
+                async for chunk in stream:
+                    self._last_chunk_time = asyncio.get_running_loop().time()
+                    # Usage often arrives on a trailing chunk with empty choices.
+                    u_prompt, u_completion = parse_usage(getattr(chunk, "usage", None))
+                    if u_prompt or u_completion:
+                        prompt_tok, completion_tok = u_prompt, u_completion
+                        usage_details = parse_usage_details(getattr(chunk, "usage", None))
+                    if not getattr(chunk, "choices", None):
+                        continue
+                    delta = chunk.choices[0].delta
+                    extra = getattr(delta, "model_extra", None) or {}
+                    reasoning = (
+                        getattr(delta, "reasoning_content", None)
+                        or getattr(delta, "reasoning", None)
+                        or extra.get("reasoning_content")
+                        or extra.get("reasoning")
                     )
-                    tc_id = getattr(tc, "id", None) or ""
-                    if tc_id:
-                        slot["id"] = tc_id
-                        seen_ids.add(tc_id)
-                    fn = getattr(tc, "function", None)
-                    if fn is not None:
-                        name = getattr(fn, "name", None)
-                        if name:
-                            slot["name"] = name
-                        args_fragment = getattr(fn, "arguments", None)
-                        if args_fragment:
-                            slot["arguments"] += args_fragment
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_parts.append(reasoning)
+                        yield {"type": "reasoning_delta", "content": reasoning}
 
+                    piece = getattr(delta, "content", None)
+                    if piece:
+                        content_parts.append(piece)
+                        yield {"type": "delta", "content": piece}
+
+                    tc_list = getattr(delta, "tool_calls", None)
+                    if not tc_list:
+                        continue
+
+                    for tc in tc_list:
+                        # Resolve the index for this fragment.
+                        idx = getattr(tc, "index", None)
+                        if idx is None:
+                            # Provider omitted index — try to match by id.
+                            tc_id = getattr(tc, "id", None) or ""
+                            if tc_id and tc_id in seen_ids:
+                                for k, v in tool_acc.items():
+                                    if v.get("id") == tc_id:
+                                        idx = k
+                                        break
+                            if idx is None:
+                                idx = next_auto_idx
+                                next_auto_idx += 1
+                        else:
+                            idx = int(idx)
+                            next_auto_idx = max(next_auto_idx, idx + 1)
+
+                        slot = tool_acc.setdefault(
+                            idx, {"id": "", "name": "", "arguments": ""}
+                        )
+                        tc_id = getattr(tc, "id", None) or ""
+                        if tc_id:
+                            slot["id"] = tc_id
+                            seen_ids.add(tc_id)
+                        fn = getattr(tc, "function", None)
+                        if fn is not None:
+                            name = getattr(fn, "name", None)
+                            if name:
+                                slot["name"] = name
+                            args_fragment = getattr(fn, "arguments", None)
+                            if args_fragment:
+                                slot["arguments"] += args_fragment
         except LLMRequestError:
             raise
         except Exception as exc:
@@ -937,7 +937,10 @@ class OpenAICompatClient:
         (if any) so extra provider fields are preserved — the OpenAI SDK
         ``Model`` type strips them.
         """
-        kwargs: dict[str, Any] = {"timeout": min(float(self._timeout), 15.0)}
+        kwargs: dict[str, Any] = {
+            "timeout": min(float(self._timeout), 15.0),
+            "verify": provider_ssl_context() if self._transport is None else True,
+        }
         if self._transport is not None:
             kwargs["transport"] = self._transport
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -996,7 +999,7 @@ class OpenAICompatClient:
 
     async def aclose(self) -> None:
         """Close the underlying client and release connections."""
-        await self._client.close()
+        await self._client.aclose()
 
 
 __all__ = [

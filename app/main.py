@@ -11,9 +11,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.api import router as api_router
-from app.core import config
-from app.core.config import (
+from app.core.allocator import configure_allocator
+
+configure_allocator()
+
+from app.api import router as api_router  # noqa: E402
+from app.core import config  # noqa: E402
+from app.core.config import (  # noqa: E402
     BRAND,
     COOKIE_HTTPS_ONLY,
     HOST,
@@ -24,9 +28,9 @@ from app.core.config import (
     STATIC_DIR,
     assert_bind_safety,
 )
-from app.core.deps import templates
-from app.core.home import ensure_tomo_home
-from app.web import router as web_router
+from app.core.deps import templates  # noqa: E402
+from app.core.home import ensure_tomo_home  # noqa: E402
+from app.web import router as web_router  # noqa: E402
 
 
 def _bootstrap_runtime() -> None:
@@ -172,11 +176,24 @@ def _configure_logging() -> None:
 _configure_logging()
 
 
+def _websocket_protocol(*args, **kwargs):
+    """Load the connector's WebSocket protocol only on the first upgrade."""
+    from uvicorn.protocols.websockets.wsproto_impl import WSProtocol
+
+    return WSProtocol(*args, **kwargs)
+
+
 def main() -> None:
     import uvicorn
 
     assert_bind_safety()
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=RELOAD)
+    # Passing the import string without reload imports this module a second
+    # time under app.main when launched with python -m app.main. Each copy
+    # builds a full route tree; serve the existing instance in production.
+    uvicorn.run(
+        "app.main:app" if RELOAD else app, host=HOST, port=PORT, reload=RELOAD,
+        loop="asyncio", http="h11", ws=_websocket_protocol,
+    )
 
 
 if __name__ == "__main__":

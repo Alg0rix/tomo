@@ -14,9 +14,6 @@ from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable
 
 import httpx
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
 
 from app.runtime.mcp.discovery import (
     normalize_prompt,
@@ -89,6 +86,11 @@ class McpConnectionManager:
     async def _create_session(self, server: dict[str, Any]) -> tuple[AsyncExitStack, Any, Any]:
         if self.session_factory is not None:
             return await self.session_factory(server)
+        # Merely checking namespaced tool IDs must not load the MCP SDK.
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        from mcp.client.streamable_http import streamable_http_client
+
         stack = AsyncExitStack()
         try:
             if server["transport"] == "stdio":

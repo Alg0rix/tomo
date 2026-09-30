@@ -15,91 +15,57 @@ from __future__ import annotations
 
 import asyncio
 import json
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from app.core import config
-from app.runtime.tools import agent_state as _agent_state_backend
-from app.runtime.tools import agent_info as _agent_info_backend
-from app.runtime.tools import bash as _bash_backend
-from app.runtime.tools import clarify as _clarify_backend
-from app.runtime.tools import create_agent as _create_agent_backend
-from app.runtime.tools import delete_file as _delete_file_backend
-from app.runtime.tools import delegate as _delegate_backend
-from app.runtime.tools import forget_memory as _forget_memory_backend
-from app.runtime.tools import list_dir as _list_dir_backend
-from app.runtime.tools import list_workplaces as _list_workplaces_backend
-from app.runtime.tools import memory as _memory_backend
-from app.runtime.tools import patch as _patch_backend
-from app.runtime.tools import portal as _portal_backend
-from app.runtime.tools import process as _process_backend
-from app.runtime.tools import read_file as _read_file_backend
-from app.runtime.tools import recall as _recall_backend
-from app.runtime.tools import render_ui as _render_ui_backend
-from app.runtime.tools import register_workplace as _register_workplace_backend
-from app.runtime.tools import remember as _remember_backend
-from app.runtime.tools import record_episode as _record_episode_backend
-from app.runtime.tools import recall_episodes as _recall_episodes_backend
-from app.runtime.tools import runpy as _runpy_backend
-from app.runtime.tools import fetch_artifact as _fetch_artifact_backend
-from app.runtime.tools import list_artifacts as _list_artifacts_backend
-from app.runtime.tools import save_artifact as _save_artifact_backend
-from app.runtime.tools import schedule as _schedule_backend
-from app.runtime.tools import search_files as _search_files_backend
-from app.runtime.tools import session_search as _session_search_backend
-from app.runtime.tools import skills_tools as _skills_tools
-from app.runtime.tools import str_replace as _str_replace_backend
-from app.runtime.tools import todo as _todo_backend
-from app.runtime.tools import web_fetch as _web_fetch_backend
-from app.runtime.tools import web_search as _web_search_backend
-from app.runtime.tools import write_file as _write_file_backend
 from app.runtime.tools import swarm_board as _swarm_board_backend
-from app.runtime.tools import start_swarm as _start_swarm_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
 # Backends keyed by the tool name in each JSON ``schema.function.name``.
-# Repo-controlled Python modules; the JSON ``backend`` field is kept accurate
-# for documentation and a future dynamic-import task.
-_BACKENDS: dict[str, ToolRunner] = {
-    "delegate": _delegate_backend.run,
-    "create_agent": _create_agent_backend.run,
-    "bash": _bash_backend.run,
-    "runpy": _runpy_backend.run,
-    "register_workplace": _register_workplace_backend.run,
-    "read_file": _read_file_backend.run,
-    "write_file": _write_file_backend.run,
-    "str_replace": _str_replace_backend.run,
-    "patch": _patch_backend.run,
-    "list_dir": _list_dir_backend.run,
-    "list_workplaces": _list_workplaces_backend.run,
-    "search_files": _search_files_backend.run,
-    "delete_file": _delete_file_backend.run,
-    "web_fetch": _web_fetch_backend.run,
-    "web_search": _web_search_backend.run,
-    "process": _process_backend.run,
-    "todo": _todo_backend.run,
-    "session_search": _session_search_backend.run,
-    "schedule": _schedule_backend.run,
-    "list_skills": _skills_tools.list_skills_run,
-    "use_skill": _skills_tools.use_skill_run,
-    "manage_skill": _skills_tools.manage_skill_run,
-    "clarify": _clarify_backend.run,
-    "forget_memory": _forget_memory_backend.run,
-    "recall": _recall_backend.run,
-    "render_ui": _render_ui_backend.run,
-    "remember": _remember_backend.run,
-    "record_episode": _record_episode_backend.run,
-    "recall_episodes": _recall_episodes_backend.run,
-    "agent_state": _agent_state_backend.run,
-    "save_artifact": _save_artifact_backend.run,
-    "list_artifacts": _list_artifacts_backend.run,
-    "fetch_artifact": _fetch_artifact_backend.run,
-    "portal": _portal_backend.run,
-    "memory": _memory_backend.run,
-    "agent_info": _agent_info_backend.run,
-    "swarm_board": _swarm_board_backend.run,
-    "start_swarm": _start_swarm_backend.run,
+# Only these repo-controlled import paths may execute. The JSON backend
+# field stays descriptive; catalog discovery never imports tool implementations.
+_BACKENDS: dict[str, str | ToolRunner] = {
+    "delegate": "app.runtime.tools.delegate:run",
+    "create_agent": "app.runtime.tools.create_agent:run",
+    "bash": "app.runtime.tools.bash:run",
+    "runpy": "app.runtime.tools.runpy:run",
+    "register_workplace": "app.runtime.tools.register_workplace:run",
+    "read_file": "app.runtime.tools.read_file:run",
+    "write_file": "app.runtime.tools.write_file:run",
+    "str_replace": "app.runtime.tools.str_replace:run",
+    "patch": "app.runtime.tools.patch:run",
+    "list_dir": "app.runtime.tools.list_dir:run",
+    "list_workplaces": "app.runtime.tools.list_workplaces:run",
+    "search_files": "app.runtime.tools.search_files:run",
+    "delete_file": "app.runtime.tools.delete_file:run",
+    "web_fetch": "app.runtime.tools.web_fetch:run",
+    "web_search": "app.runtime.tools.web_search:run",
+    "process": "app.runtime.tools.process:run",
+    "todo": "app.runtime.tools.todo:run",
+    "session_search": "app.runtime.tools.session_search:run",
+    "schedule": "app.runtime.tools.schedule:run",
+    "list_skills": "app.runtime.tools.skills_tools:list_skills_run",
+    "use_skill": "app.runtime.tools.skills_tools:use_skill_run",
+    "manage_skill": "app.runtime.tools.skills_tools:manage_skill_run",
+    "clarify": "app.runtime.tools.clarify:run",
+    "forget_memory": "app.runtime.tools.forget_memory:run",
+    "recall": "app.runtime.tools.recall:run",
+    "render_ui": "app.runtime.tools.render_ui:run",
+    "remember": "app.runtime.tools.remember:run",
+    "record_episode": "app.runtime.tools.record_episode:run",
+    "recall_episodes": "app.runtime.tools.recall_episodes:run",
+    "agent_state": "app.runtime.tools.agent_state:run",
+    "save_artifact": "app.runtime.tools.save_artifact:run",
+    "list_artifacts": "app.runtime.tools.list_artifacts:run",
+    "fetch_artifact": "app.runtime.tools.fetch_artifact:run",
+    "portal": "app.runtime.tools.portal:run",
+    "memory": "app.runtime.tools.memory:run",
+    "agent_info": "app.runtime.tools.agent_info:run",
+    "swarm_board": "app.runtime.tools.swarm_board:run",
+    "start_swarm": "app.runtime.tools.start_swarm:run",
 }
 
 
@@ -196,6 +162,9 @@ class ToolRegistry:
         if not isinstance(arguments, dict):
             return f"Error: tool '{name}' expects a dict of arguments"
         try:
+            if isinstance(runner, str):
+                module, function = runner.split(":", 1)
+                runner = getattr(import_module(module), function)
             return runner(arguments)
         except Exception as exc:  # pragma: no cover - defensive
             return f"Error: tool '{name}' failed: {exc}"

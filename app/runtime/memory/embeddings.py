@@ -50,12 +50,19 @@ def embed_texts(
     base_url = (profile.get("base_url") or "https://api.openai.com/v1").rstrip("/")
     use_model = model or DEFAULT_EMBED_MODEL
     try:
-        from openai import OpenAI
+        import httpx
 
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        resp = client.embeddings.create(model=use_model, input=cleaned)
-        # Preserve input order
-        by_idx = {item.index: list(item.embedding) for item in resp.data}
+        from app.runtime.llm.http import provider_ssl_context
+
+        with httpx.Client(timeout=60.0, follow_redirects=True, verify=provider_ssl_context()) as client:
+            resp = client.post(
+                f"{base_url}/embeddings",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"model": use_model, "input": cleaned},
+            )
+            resp.raise_for_status()
+            # Preserve input order even when the provider reorders the batch.
+            by_idx = {item["index"]: list(item["embedding"]) for item in resp.json()["data"]}
         return [by_idx[i] for i in range(len(cleaned))]
     except Exception as exc:
         _logger.debug("embed_texts failed: %s", exc)

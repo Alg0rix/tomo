@@ -331,7 +331,8 @@ async def test_review_selected_profile_uses_llm_factory(subscription):
         assert owned is True
         assert isinstance(client, CodexResponsesClient)
         assert client._model == 'gpt-6-luna'
-        assert client._client.api_key == ('at-review' if subscription else 'sk-review')
+        assert client._client.headers['Authorization'] == (
+            'Bearer at-review' if subscription else 'Bearer sk-review')
     finally:
         await client.aclose()
 

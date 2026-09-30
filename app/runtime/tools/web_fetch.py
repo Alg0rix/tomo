@@ -11,7 +11,6 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from app.runtime.html_md import HtmlToMarkdown
 from app.runtime.tools.file_util import parse_positive_int
 
 _TIMEOUT = 15.0
@@ -133,6 +132,8 @@ def _html_to_markdown(html: str) -> str:
         or soup
     )
     fragment = str(root)
+
+    from app.runtime.html_md import HtmlToMarkdown
 
     td = HtmlToMarkdown(
         {
