@@ -18,8 +18,12 @@ _logger = logging.getLogger(__name__)
 DEFAULT_EMBED_MODEL = "text-embedding-3-small"
 
 
-def _profile() -> dict[str, Any]:
+def _profile(conn: Any = None) -> dict[str, Any]:
     try:
+        if conn is not None:
+            from app.models.mixins.llm_profiles import resolve_profile
+
+            return resolve_profile(conn, None) or {}
         from app.services import store
 
         return store.resolve_llm_profile(None) or {}
@@ -32,12 +36,14 @@ def embeddings_available() -> bool:
     return bool((p.get("api_key") or "").strip())
 
 
-def embed_texts(texts: list[str], *, model: str | None = None) -> list[list[float]] | None:
+def embed_texts(
+    texts: list[str], *, model: str | None = None, conn: Any = None
+) -> list[list[float]] | None:
     """Embed one or more texts. Returns None when embeddings are unavailable."""
     cleaned = [(t or "").strip() for t in texts]
     if not any(cleaned):
         return None
-    profile = _profile()
+    profile = _profile(conn) if conn is not None else _profile()
     api_key = (profile.get("api_key") or "").strip()
     if not api_key:
         return None
@@ -56,8 +62,10 @@ def embed_texts(texts: list[str], *, model: str | None = None) -> list[list[floa
         return None
 
 
-def embed_text(text: str, *, model: str | None = None) -> list[float] | None:
-    vectors = embed_texts([text], model=model)
+def embed_text(
+    text: str, *, model: str | None = None, conn: Any = None
+) -> list[float] | None:
+    vectors = embed_texts([text], model=model, conn=conn)
     if not vectors:
         return None
     return vectors[0]
@@ -104,7 +112,7 @@ def upsert_embedding(
         return True
     vec = vector
     if vec is None:
-        vec = embed_text(body, model=model)
+        vec = embed_text(body, model=model, conn=conn)
     if not vec:
         return False
     conn.execute(

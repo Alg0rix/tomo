@@ -6,13 +6,18 @@ import sys
 
 
 def cmd_skills_list() -> int:
-    from app.services import store
+    from cli.config_cmd import local_db
+    from app.models.mixins import skills as catalog
+    from app.extensions.skills import sync_skills_to_db
 
-    store.sync_skills()
-    skills = store.list_skills()
+    with local_db() as conn:
+        sync_skills_to_db(conn)
+        skills = catalog.list_skills(conn)
     if not skills:
         print("No skills found.")
-        print("  Install into ~/.tomo/library/skills or add packages under ~/.agents/skills / ~/.tomo/skills")
+        print(
+            "  Install into ~/.tomo/library/skills or add packages under ~/.agents/skills / ~/.tomo/skills"
+        )
         return 0
     for s in skills:
         flag = "on" if s.get("enabled") else "off"
@@ -22,18 +27,28 @@ def cmd_skills_list() -> int:
 
 
 def cmd_skills_sync() -> int:
-    from app.services import store
+    from cli.config_cmd import local_db
+    from app.extensions.skills import sync_skills_to_db
 
-    skills = store.sync_skills()
+    with local_db() as conn:
+        skills = sync_skills_to_db(conn)
     print(f"✓ Synced {len(skills)} skill(s)")
     return 0
 
 
 def cmd_skills_install(path: str, skill_id: str | None = None) -> int:
-    from app.services import store
+    from cli.config_cmd import local_db
+    from app.models.mixins import skills as catalog
+    from app.extensions.skills import sync_skills_to_db
 
     try:
-        skill = store.install_skill_from_path(path, skill_id=skill_id)
+        from app.extensions.skills import install_from_path
+        from pathlib import Path
+
+        with local_db() as conn:
+            installed = install_from_path(Path(path), skill_id=skill_id)
+            sync_skills_to_db(conn)
+            skill = catalog.get_skill(conn, installed.id)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"✗ Install failed: {exc}", file=sys.stderr)
         return 1
@@ -42,23 +57,25 @@ def cmd_skills_install(path: str, skill_id: str | None = None) -> int:
 
 
 def cmd_skills_uninstall(skill_id: str) -> int:
-    from app.services import store
+    from cli.config_cmd import local_db
+    from app.models.mixins import skills as catalog
+    from app.extensions.skills import uninstall_library_skill
 
-    if store.uninstall_library_skill(skill_id):
-        print(f"✓ Removed library skill {skill_id}")
-        return 0
-    # Fall back: drop catalog row only (external skills stay on disk)
-    skill = store.get_skill(skill_id)
-    if skill and skill.get("source") in {"agents", "agent", "external"}:
-        print(
-            f"✗ {skill_id} is an external skill ({skill.get('path')}). "
-            "Remove it from ~/.agents/skills (or your external dir); "
-            "use `tomo skills sync` after.",
-            file=sys.stderr,
-        )
-        return 1
-    if store.delete_skill(skill_id):
-        print(f"✓ Removed catalog entry {skill_id}")
-        return 0
+    with local_db() as conn:
+        skill = catalog.get_skill(conn, skill_id)
+        if uninstall_library_skill(skill_id):
+            catalog.delete_skill(conn, skill_id)
+            print(f"✓ Removed library skill {skill_id}")
+            return 0
+        if skill and skill.get("source") in {"agents", "agent", "external"}:
+            print(
+                f"✗ {skill_id} is an external skill ({skill.get('path')}). "
+                "Remove it from its external directory, then use `tomo skills sync`.",
+                file=sys.stderr,
+            )
+            return 1
+        if catalog.delete_skill(conn, skill_id):
+            print(f"✓ Removed catalog entry {skill_id}")
+            return 0
     print(f"✗ Skill not found: {skill_id}", file=sys.stderr)
     return 1

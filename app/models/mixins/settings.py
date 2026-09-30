@@ -1,7 +1,7 @@
 """Platform settings — key/value rows in the ``settings`` table.
 
 Values are JSON-encoded. The default settings shape comes from
-:func:`app.services.platform_data.seed_settings` (used to seed an empty DB and
+:func:`app.models.platform_data.seed_settings` (used to seed an empty DB and
 as a fallback when the table has no rows).
 
 Secret fields (``llm_api_key``, ``telegram_bot_token``) are UI-managed secrets:
@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.core.secrets import decrypt_secret, encrypt_secret
-from app.services.platform_data import seed_settings
+from app.models.platform_data import seed_settings
 
 _LLM_KEY = "llm_api_key"
 _TG_TOKEN_KEY = "telegram_bot_token"

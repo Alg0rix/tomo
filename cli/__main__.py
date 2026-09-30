@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     sk_inst.add_argument("--id", dest="skill_id", default=None, help="Override skill id")
     sk_rm = sk_sub.add_parser("uninstall", help="Remove a managed library skill")
     sk_rm.add_argument("skill_id", help="Skill id to remove from library")
+    from cli.workplaces_cmd import add_parser as add_workplaces_parser
+
+    add_workplaces_parser(sub)
+    from cli.config_cmd import add_parser as add_config_parser
+
+    add_config_parser(sub)
     return p
 
 
@@ -46,6 +52,14 @@ def _run(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.cmd == "config":
+        from cli.config_cmd import run
+
+        return run(args)
+    if args.cmd == "workplaces":
+        from cli.workplaces_cmd import run
+
+        return run(args)
     if args.cmd == "update":
         from cli.update_cmd import cmd_update
 
