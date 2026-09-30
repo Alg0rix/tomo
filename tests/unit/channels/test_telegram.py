@@ -31,6 +31,7 @@ def _inject_scripted_llm(monkeypatch) -> None:
 
 def _rebind(tmp_path) -> None:
     store.rebind(tmp_path / "tg-channel.db")
+    store.update_settings({"telegram_allowed_chat_ids": ["4242", "9", "1"]})
 
 
 def test_user_id_for_chat() -> None:
@@ -171,3 +172,49 @@ async def test_poll_once_processes_batch(tmp_path) -> None:
     assert sent  # reply delivered
     sid = store.get_or_create_session("main", "tg_9")
     assert any(e.get("type") == "user" for e in store.get_session_history(sid))
+
+
+async def test_denied_chat_never_creates_session_or_runs_model(tmp_path, monkeypatch):
+    _rebind(tmp_path)
+    async def forbidden(*args):
+        pytest.fail("Unapproved chat reached the model")
+    monkeypatch.setattr("app.channels.telegram.run_channel_turn", forbidden)
+    before = store.list_sessions()
+    result = await handle_inbound_text(999, "secret request", send_reply=False)
+    assert result["denied"] is True
+    assert store.list_sessions() == before
+    store.update_settings({"telegram_allowed_chat_ids": []})
+    assert (await handle_inbound_text(4242, "hi", send_reply=False))["denied"]
+
+
+async def test_id_and_help_do_not_call_model(tmp_path, monkeypatch):
+    _rebind(tmp_path)
+    async def forbidden(*args):
+        pytest.fail("Command reached the model")
+    monkeypatch.setattr("app.channels.telegram.run_channel_turn", forbidden)
+    before = store.list_sessions()
+    identity = await handle_inbound_text(-10099, "/id", send_reply=False)
+    assert "-10099" in identity["reply"]
+    assert store.list_sessions() == before
+    help_result = await handle_inbound_text(4242, "/help", send_reply=False)
+    assert "/new" in help_result["reply"]
+    fresh = await handle_inbound_text(4242, "/new", send_reply=False)
+    assert fresh["session_id"] != help_result["session_id"]
+    assert store.find_session("main", "tg_4242") == fresh["session_id"]
+
+
+async def test_long_unicode_reply_split_without_loss():
+    parts = []
+    def handler(request):
+        body = json.loads(request.content)
+        parts.append(body["text"])
+        assert len(body["text"].encode("utf-16-le")) // 2 <= 4096
+        return httpx.Response(200, json={"ok": True, "result": {}})
+    api = TelegramAPI("mock", transport=httpx.MockTransport(handler))
+    content = "😀" * 5000
+    try:
+        await api.send_message(1, content)
+    finally:
+        await api.aclose()
+    assert "".join(parts) == content
+    assert len(parts) > 1

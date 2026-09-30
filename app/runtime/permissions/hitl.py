@@ -228,6 +228,13 @@ def resolve_clarify(clarify_id: str, answer: str) -> None:
     pending.event.set()
 
 
+def get_pending_request(kind: str, request_id: str) -> dict[str, Any] | None:
+    """Look up request ownership without exposing mutable waiter internals."""
+    collection = _approvals if kind == "approval" else _clarifies if kind == "clarify" else {}
+    pending = collection.get(request_id)
+    return dict(pending.payload) if pending is not None else None
+
+
 def list_pending_for_session(session_id: str | None) -> dict[str, list[dict[str, Any]]]:
     """Return unresolved approval/clarify payloads for *session_id* (refresh rehydrate)."""
     sid = (session_id or "").strip()
@@ -296,6 +303,7 @@ __all__ = [
     "request_clarify",
     "resolve_clarify",
     "list_pending_for_session",
+    "get_pending_request",
     "cancel_session_pending",
     "clear_all_pending",
     "ApprovalChoice",

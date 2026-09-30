@@ -44,9 +44,7 @@ async def get_approval_mode(session_id: str, request: Request, _: AuthDep):
 
 
 @router.put("/sessions/{session_id}/approval-mode")
-async def put_approval_mode(
-    session_id: str, body: dict, request: Request, _: AuthDep
-):
+async def put_approval_mode(session_id: str, body: dict, request: Request, _: AuthDep):
     """Override approval mode for this session (works mid-turn).
 
     Switching to Auto (``off``) clears pending HITL cards so a stuck turn
@@ -62,11 +60,19 @@ async def put_approval_mode(
 
 
 @router.post("/approvals/{approval_id}")
-async def post_approval(approval_id: str, body: dict, _: AuthDep):
+async def post_approval(approval_id: str, body: dict, request: Request, _: AuthDep):
+    pending = hitl.get_pending_request("approval", approval_id)
+    if not pending or not pending.get("session_id"):
+        raise HTTPException(status_code=404, detail="unknown or expired approval")
+    require_owned_session(request, pending["session_id"])
     choice = body.get("choice") if isinstance(body, dict) else None
     reason = body.get("reason") if isinstance(body, dict) else None
     if not isinstance(choice, str) or not choice.strip():
         raise HTTPException(status_code=400, detail="choice required")
+    if choice.strip().lower() not in pending.get("choices", []):
+        raise HTTPException(
+            status_code=400, detail="choice unavailable for this approval"
+        )
     try:
         hitl.resolve_approval(
             approval_id,
@@ -83,7 +89,11 @@ async def post_approval(approval_id: str, body: dict, _: AuthDep):
 
 
 @router.post("/clarify/{clarify_id}")
-async def post_clarify(clarify_id: str, body: dict, _: AuthDep):
+async def post_clarify(clarify_id: str, body: dict, request: Request, _: AuthDep):
+    pending = hitl.get_pending_request("clarify", clarify_id)
+    if not pending or not pending.get("session_id"):
+        raise HTTPException(status_code=404, detail="unknown or expired clarify")
+    require_owned_session(request, pending["session_id"])
     answer = body.get("answer") if isinstance(body, dict) else None
     if answer is None:
         raise HTTPException(status_code=400, detail="answer required")

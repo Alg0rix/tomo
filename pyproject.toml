@@ -21,6 +21,7 @@ dependencies = [
     "apscheduler>=3.10.4,<4",
     "firecrawl-anydoc>=0.1.8",
     "mcp>=1.27,<2",
+    "markdown-it-py>=3,<5",
 ]
 
 [build-system]

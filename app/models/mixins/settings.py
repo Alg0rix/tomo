@@ -14,6 +14,7 @@ HTTP/HTML. A blank PUT keeps the existing ciphertext.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -61,6 +62,25 @@ def public_settings(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def normalize_telegram_chat_ids(value: Any) -> list[str]:
+    """Canonical numeric chat IDs; reject malformed lists instead of opening access."""
+    if isinstance(value, str):
+        values = re.split(r"[\s,]+", value.strip()) if value.strip() else []
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise ValueError("Allowed Telegram chat IDs must be a list or comma-separated IDs")
+    result: list[str] = []
+    for item in values:
+        raw = str(item).strip()
+        if not re.fullmatch(r"-?[0-9]+", raw) or int(raw) == 0:
+            raise ValueError("Each Telegram chat ID must be a non-zero integer")
+        canonical = str(int(raw))
+        if canonical not in result:
+            result.append(canonical)
+    return result
+
+
 def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     """Upsert settings. Empty/whitespace secret fields keep the existing value.
 
@@ -70,6 +90,8 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     should call :func:`get_settings` separately.
     """
     payload = dict(data)
+    if "telegram_allowed_chat_ids" in payload:
+        payload["telegram_allowed_chat_ids"] = normalize_telegram_chat_ids(payload["telegram_allowed_chat_ids"])
     for secret_key in _SECRET_KEYS:
         if secret_key not in payload:
             continue

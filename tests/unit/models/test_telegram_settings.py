@@ -79,3 +79,14 @@ def test_agent_and_shared_channels_reflect_status(tmp_path) -> None:
     assert next(c for c in store.list_shared_channels() if c["type"] == "telegram")[
         "status"
     ] == "connected"
+
+
+def test_allowed_chat_ids_validation_is_atomic(tmp_path):
+    import pytest
+    store.rebind(tmp_path / "allowlist.db")
+    store.update_settings({"telegram_allowed_chat_ids": "00123, -10099 123"})
+    assert store.get_settings()["telegram_allowed_chat_ids"] == ["123", "-10099"]
+    for bad in [None, True, [True], [0], "123, anyone", {"123": True}]:
+        with pytest.raises(ValueError):
+            store.update_settings({"telegram_allowed_chat_ids": bad})
+        assert store.get_settings()["telegram_allowed_chat_ids"] == ["123", "-10099"]

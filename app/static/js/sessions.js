@@ -155,7 +155,8 @@
 
   function sessionLabel(s) {
     const ids = s.agent_ids || (s.agent_id ? [s.agent_id] : []);
-    return agentName(ids[0] || s.agent_id) || 'Chat';
+    var name = agentName(ids[0] || s.agent_id) || 'Chat';
+    return s.channel === 'telegram' ? 'Telegram · ' + s.telegram_chat_id + ' · ' + name : name;
   }
 
   function workplaceFullPath(w) {
@@ -323,7 +324,7 @@
     var groups = {};
     var order = [];
     rows.forEach(function (s) {
-      var key = (s.workplace_id || '').trim() || '__none__';
+      var key = s.channel === 'telegram' ? '__telegram__' : ((s.workplace_id || '').trim() || '__none__');
       if (!groups[key]) {
         groups[key] = [];
         order.push(key);
@@ -332,6 +333,9 @@
     });
     // Local workplaces first, then tunnels, then none.
     order.sort(function (a, b) {
+      if (a === b) return 0;
+      if (a === '__telegram__') return -1;
+      if (b === '__telegram__') return 1;
       if (a === '__none__') return 1;
       if (b === '__none__') return -1;
       var wa = workplaces.find(function (w) { return w.id === a; }) || {};
@@ -345,6 +349,7 @@
 
     // "tomo · /home/me/Project/tomo" → "tomo"; bare paths → last folder.
     function shortGroupLabel(key, head) {
+      if (key === '__telegram__') return 'Telegram';
       if (key === '__none__') return 'Tomo workspace';
       var name = String(head || '').split(' \u00b7 ')[0].trim();
       var parts = name.split(/[\\/]+/).filter(Boolean);
@@ -367,7 +372,7 @@
       list.sort(function (a, b) {
         return (b.updated_at || 0) - (a.updated_at || 0);
       });
-      var head = key === '__none__' ? 'Tomo work dir (~/tomo/<agent>)' : workplaceLabel(key, { full: true });
+      var head = key === '__telegram__' ? 'Telegram' : (key === '__none__' ? 'Tomo work dir (~/tomo/<agent>)' : workplaceLabel(key, { full: true }));
       html += '<div class="session-group">' +
         '<div class="session-group-head" title="' + esc(head) + '">' + esc(shortGroupLabel(key, head)) +
         ' <span class="faint">' + list.length + '</span></div>' +
@@ -1759,6 +1764,24 @@
       }
     });
   }
+
+  // Discover inbound Telegram conversations and update an open history.
+  var channelRefreshBusy = false;
+  setInterval(async function () {
+    if (document.hidden || channelRefreshBusy) return;
+    channelRefreshBusy = true;
+    try {
+      var data = await Tomo.api('/api/sessions');
+      if (!data) return;
+      sessions = data.sessions || [];
+      renderList();
+      var current = sessions.find(function (s) { return s.id === activeId; });
+      if (current && current.channel === 'telegram') {
+        applyChatHeader(current);
+        refetchHistory(current.id);
+      }
+    } catch (_) {} finally { channelRefreshBusy = false; }
+  }, 5000);
 
   refreshSessions().then(function () {
     const wanted = params().get('s');

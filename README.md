@@ -478,7 +478,9 @@ Each agent will be able to designate a **primary** channel for proactive outboun
 
 ### Adding a channel
 
-**Today:** configure Telegram under **System → Channels** (encrypted token; blank PUT keeps existing). Agents → Channels shows per-agent status.
+**Today:** configure Telegram under **System → Channels** (encrypted token; blank PUT keeps existing). Enable long-poll, save, and send `/id` to the bot. Add the returned ID to **Allowed chat IDs** and save again. An empty list blocks all agent access; `/id` still works without running the model. Approving a group ID allows every member of that group to use Tomo.
+
+Approved chats can use `/help`, `/new`, `/stop`, `/status`, `/manual`, and `/smart`. Tasks show typing, an editable activity card with tool and plan progress, streamed formatted answers, and inline approval / clarification controls. Always allow requires a separate confirmation; controls are bound to the initiating person and prompt. New conversations retain approval mode and preserve old histories. See [Telegram interaction UX](docs/telegram-ux.md) for behavior and validation. Administrators see Telegram conversations in **Chat**, labeled with their chat ID, and can open and search their histories. The enabled badge describes configuration, not a verified connection. Existing installations must add their allowed chat IDs before using the bot.
 
 **Planned CLI** (not implemented):
 

@@ -2,7 +2,7 @@
 
 Token lives in settings (``telegram_bot_token``, Fernet at rest). Never log the
 token. Inbound text maps ``chat_id`` → ``user_id=tg_<chat_id>`` session via the
-coordinator agent, then reuses :func:`app.services.chat.run_session_turn`.
+coordinator agent, then reuses the web background turn manager and event stream.
 
 HTTP goes through :mod:`httpx` so tests inject ``MockTransport`` (no network).
 """
@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -22,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 API_ROOT = "https://api.telegram.org"
 
+if TYPE_CHECKING:
+    from app.channels.telegram_ui import TelegramTurnUI
+
 
 def telegram_status(settings: dict[str, Any] | None = None) -> str:
-    """Honest channel status: ``connected``, ``needs_token``, or ``off``."""
+    """Configuration status (``connected`` means enabled, not a network probe)."""
     s = settings if settings is not None else store.get_settings()
     token = str(s.get("telegram_bot_token") or "").strip()
     enabled = bool(s.get("telegram_enabled"))
@@ -61,8 +65,17 @@ def extract_text_message(update: dict[str, Any]) -> tuple[int, str] | None:
         return None
 
 
+class TelegramAPIError(RuntimeError):
+    """Bot API failure without a token-bearing URL in its exception text."""
+
+    def __init__(self, code: int, description: str) -> None:
+        self.code = code
+        self.description = description
+        super().__init__(f"Telegram API error ({code})")
+
+
 class TelegramAPI:
-    """Thin Telegram Bot API client (getUpdates / sendMessage)."""
+    """Bot API transport; bounded flood retries and safe formatting fallback."""
 
     def __init__(
         self,
@@ -77,66 +90,257 @@ class TelegramAPI:
             raise ValueError("Telegram bot token is required")
         self._token = raw
         self._owns_client = client is None
-        # Long-poll getUpdates uses timeout up to ~30s plus slack.
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0),
             transport=transport,
         )
 
     def _url(self, method: str) -> str:
-        # Token only in path — never log this URL.
         return f"{API_ROOT}/bot{self._token}/{method}"
 
+    async def _request(
+        self, method: str, payload: dict[str, Any], *, retry_flood: bool = True
+    ) -> Any:
+        for attempt in range(3):
+            try:
+                response = await self._client.post(
+                    self._url(method),
+                    json=payload,
+                    timeout=60.0 if method == "getUpdates" else 10.0,
+                )
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                raise RuntimeError("Telegram network request failed") from None
+            if body.get("ok"):
+                return body.get("result")
+            code = body.get("error_code") or response.status_code
+            if code == 429 and attempt < 2 and retry_flood:
+                delay = float((body.get("parameters") or {}).get("retry_after") or 1)
+                if 0 < delay <= 30:
+                    await asyncio.sleep(delay)
+                    continue
+            raise TelegramAPIError(int(code), str(body.get("description") or ""))
+        return None
+
     async def get_updates(
-        self,
-        *,
-        offset: int | None = None,
-        timeout: int = 25,
-        limit: int = 100,
+        self, *, offset: int | None = None, timeout: int = 25, limit: int = 100
     ) -> list[dict[str, Any]]:
-        payload: dict[str, Any] = {"timeout": timeout, "limit": limit}
+        payload: dict[str, Any] = {
+            "timeout": timeout,
+            "limit": limit,
+            "allowed_updates": ["message", "callback_query"],
+        }
         if offset is not None:
             payload["offset"] = offset
-        resp = await self._client.post(self._url("getUpdates"), json=payload)
-        resp.raise_for_status()
-        body = resp.json()
-        if not body.get("ok"):
-            raise RuntimeError(f"Telegram getUpdates failed: {body.get('description')}")
-        result = body.get("result") or []
-        return [u for u in result if isinstance(u, dict)]
+        result = await self._request("getUpdates", payload)
+        return [u for u in (result or []) if isinstance(u, dict)]
 
-    async def send_message(self, chat_id: int | str, text: str) -> dict[str, Any]:
-        payload = {"chat_id": chat_id, "text": text}
-        resp = await self._client.post(self._url("sendMessage"), json=payload)
-        resp.raise_for_status()
-        body = resp.json()
-        if not body.get("ok"):
-            raise RuntimeError(f"Telegram sendMessage failed: {body.get('description')}")
-        result = body.get("result")
-        return result if isinstance(result, dict) else {}
+    async def _formatted_request(self, method: str, payload: dict[str, Any]) -> Any:
+        from app.channels.telegram_format import plain_text
+
+        try:
+            return await self._request(method, payload)
+        except TelegramAPIError as exc:
+            if exc.code != 400 or "parse entities" not in exc.description.lower():
+                raise
+            fallback = dict(payload)
+            fallback.pop("parse_mode", None)
+            fallback["text"] = plain_text(str(payload["text"]))
+            return await self._request(method, fallback)
+
+    async def send_message(
+        self,
+        chat_id: int | str,
+        text: str,
+        *,
+        formatted: bool = False,
+        reply_markup: dict | None = None,
+        silent: bool = False,
+        reply_to: int | None = None,
+        thread_id: int | None = None,
+    ) -> dict[str, Any]:
+        from app.channels.telegram_format import render_markdown, split_html
+        import html
+
+        chunks = split_html(
+            render_markdown(text) if formatted else html.escape(text, quote=False)
+        )
+        result: dict[str, Any] = {}
+        for index, chunk in enumerate(chunks):
+            result = await self.send_html(
+                chat_id,
+                chunk,
+                silent=silent,
+                thread_id=thread_id,
+                reply_to=reply_to if index == 0 else None,
+                reply_markup=reply_markup if index == len(chunks) - 1 else None,
+            )
+        return result
+
+    async def edit_message(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        text: str,
+        *,
+        formatted: bool = False,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        from app.channels.telegram_format import render_markdown, split_html
+        import html
+
+        chunks = split_html(
+            render_markdown(text) if formatted else html.escape(text, quote=False)
+        )
+        return await self.edit_html(
+            chat_id,
+            message_id,
+            chunks[0] if chunks else "…",
+            reply_markup=reply_markup,
+        )
+
+    async def send_html(
+        self,
+        chat_id: int | str,
+        rendered: str,
+        *,
+        reply_markup: dict | None = None,
+        silent: bool = False,
+        thread_id: int | None = None,
+        reply_to: int | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": rendered,
+            "parse_mode": "HTML",
+            "disable_notification": silent,
+            "link_preview_options": {"is_disabled": True},
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
+        if reply_to is not None:
+            payload["reply_parameters"] = {
+                "message_id": reply_to,
+                "allow_sending_without_reply": True,
+            }
+        return await self._formatted_request("sendMessage", payload) or {}
+
+    async def edit_html(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        rendered: str,
+        *,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        try:
+            return (
+                await self._formatted_request(
+                    "editMessageText",
+                    {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "text": rendered,
+                        "parse_mode": "HTML",
+                        "reply_markup": reply_markup or {"inline_keyboard": []},
+                        "link_preview_options": {"is_disabled": True},
+                    },
+                )
+                or {}
+            )
+        except TelegramAPIError as exc:
+            if exc.code == 400 and "message is not modified" in exc.description.lower():
+                return {}
+            raise
+
+    async def remove_keyboard(self, chat_id: int | str, message_id: int) -> None:
+        await self._request(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": {"inline_keyboard": []},
+            },
+        )
+
+    async def answer_callback(
+        self, callback_id: str, text: str = "", *, alert: bool = False
+    ) -> None:
+        await self._request(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": callback_id,
+                "text": text[:180],
+                "show_alert": alert,
+            },
+        )
+
+    async def send_typing(
+        self, chat_id: int | str, *, thread_id: int | None = None
+    ) -> None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "action": "typing"}
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
+        await self._request("sendChatAction", payload, retry_flood=False)
+
+    async def set_commands(self) -> None:
+        await self._request(
+            "setMyCommands",
+            {
+                "commands": [
+                    {"command": "new", "description": "Start a fresh conversation"},
+                    {"command": "stop", "description": "Stop the current task"},
+                    {
+                        "command": "status",
+                        "description": "Show progress and approval mode",
+                    },
+                    {"command": "manual", "description": "Ask before risky tool calls"},
+                    {"command": "smart", "description": "Use smart tool approvals"},
+                    {"command": "help", "description": "Show commands and guidance"},
+                    {"command": "id", "description": "Show this chat ID"},
+                ]
+            },
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
 
-async def run_channel_turn(session_id: str, message: str) -> str:
+async def run_channel_turn(
+    session_id: str, message: str, *, ui: TelegramTurnUI | None = None
+) -> str:
     """Run the web turn pipeline; return the latest final (or error) text."""
     # Lazy import: chat → channels.web → channels package must not pull telegram
     # at import time (circular with this module).
-    from app.services.chat import run_session_turn
+    from app.services.chat import start_session_turn
 
-    async with contextlib.aclosing(
-        run_session_turn(session_id, message, "telegram")
-    ) as agen:
-        async for _chunk in agen:
-            pass
+    session = store.get_session(session_id)
+    if not session:
+        raise ValueError("Session not found")
+    history_start = len(store.get_session_history(session_id))
+    turn, queue = await start_session_turn(session_id, message, session["user_id"])
+    try:
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                break
+            if ui is not None:
+                await ui.consume(chunk)
+    finally:
+        turn.unsubscribe(queue)
+        if turn.task and not turn.task.done():
+            turn.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await turn.task
     history = store.get_session_history(session_id)
-    for entry in reversed(history):
+    for entry in reversed(history[history_start:]):
         kind = entry.get("type")
         if kind in ("final", "error") and entry.get("content"):
             return str(entry["content"])
-    return ""
+    return "I couldn't complete that message. Please try again."
 
 
 def _resolve_agent_id(agent_id: str | None = None) -> str | None:
@@ -146,6 +350,26 @@ def _resolve_agent_id(agent_id: str | None = None) -> str | None:
     return coord["id"] if coord else None
 
 
+def chat_is_allowed(chat_id: int | str) -> bool:
+    from app.models.mixins.settings import normalize_telegram_chat_ids
+
+    try:
+        allowed = normalize_telegram_chat_ids(
+            store.get_settings().get("telegram_allowed_chat_ids", [])
+        )
+        return str(int(chat_id)) in allowed
+    except (ValueError, TypeError):
+        return False
+
+
+async def _typing_loop(api: TelegramAPI, chat_id: int | str) -> None:
+    while True:
+        # Feedback is best effort; a failed typing request must not lose a turn.
+        with contextlib.suppress(Exception):
+            await api.send_typing(chat_id)
+        await asyncio.sleep(4)
+
+
 async def handle_inbound_text(
     chat_id: int | str,
     text: str,
@@ -153,16 +377,40 @@ async def handle_inbound_text(
     api: TelegramAPI | None = None,
     agent_id: str | None = None,
     send_reply: bool = True,
+    ui: TelegramTurnUI | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Map chat → session, run one turn, optionally reply on Telegram.
 
     Returns ``{"session_id", "reply", "agent_id"}``.
     """
+    command = text.split()[0].split("@")[0].lower() if text.strip() else ""
+    if command == "/id":
+        reply = f"Your Telegram chat ID: {chat_id}"
+        if api is not None and send_reply:
+            await api.send_message(chat_id, reply)
+        return {"session_id": None, "reply": reply, "agent_id": None}
+    if not chat_is_allowed(chat_id):
+        reply = (
+            f"This chat is not approved. Chat ID: {chat_id}\n"
+            "Ask your Tomo administrator to add it in System → Channels → Allowed chat IDs."
+        )
+        if api is not None and send_reply:
+            await api.send_message(chat_id, reply)
+        return {"session_id": None, "reply": reply, "agent_id": None, "denied": True}
     resolved = _resolve_agent_id(agent_id)
     if not resolved:
         raise ValueError("No agent available for Telegram turns")
     user_id = user_id_for_chat(chat_id)
-    session_id = store.get_or_create_session(resolved, user_id)
+    if command == "/new":
+        from app.runtime.permissions.modes import get_effective_mode, set_session_mode
+
+        previous = store.find_session(resolved, user_id)
+        mode = get_effective_mode(previous)
+        session_id = store.create_swarm_session([resolved], user_id=user_id)
+        set_session_mode(session_id, mode)
+    elif session_id is None:
+        session_id = store.get_or_create_session(resolved, user_id)
     logger.info(
         "telegram inbound chat_id=%s session_id=%s agent_id=%s chars=%s",
         chat_id,
@@ -170,9 +418,62 @@ async def handle_inbound_text(
         resolved,
         len(text or ""),
     )
-    reply = await run_channel_turn(session_id, text)
+    if command == "/new":
+        from app.runtime.permissions.modes import mode_payload
+
+        reply = (
+            "New conversation started. Send your next message.\nApprovals: "
+            + mode_payload(session_id)["label"]
+        )
+    elif command in {"/start", "/help"}:
+        reply = (
+            "Welcome to Tomo. Send a message to talk with your coordinator.\n"
+            "/new — start a fresh conversation\n/stop — stop the current task\n/status — show progress\n"
+            "/manual, /smart — set approval mode\n/help — show this guide\n/id — show this chat's ID\n"
+            "Use the approval buttons when asked. Reply to questions or tap a choice. "
+            "You can send extra guidance during a task. Your conversations also appear in Tomo's Chat page for administrators."
+        )
+    elif command == "/stop":
+        from app.services.chat import cancel_session_turn
+
+        reply = (
+            "Stopping the current task…"
+            if cancel_session_turn(session_id)
+            else "No task is running."
+        )
+    elif command == "/status":
+        from app.runtime.permissions.modes import mode_payload
+
+        mode = mode_payload(session_id)
+        reply = f"{'Working' if store.is_session_turn_active(session_id) else 'Ready'} · Approvals: {mode['label']}"
+    elif command in {"/manual", "/smart", "/auto"}:
+        from app.runtime.permissions.slash import handle_approval_slash
+
+        reply = handle_approval_slash(command, session_id) or "Approval mode unchanged."
+    elif command.startswith("/"):
+        reply = "Unknown command. Use /help to see available commands."
+    else:
+        typing = (
+            asyncio.create_task(_typing_loop(api, chat_id))
+            if api and send_reply and ui is None
+            else None
+        )
+        try:
+            reply = (
+                await run_channel_turn(session_id, text, ui=ui)
+                if ui is not None
+                else await run_channel_turn(session_id, text)
+            )
+        finally:
+            if typing:
+                typing.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await typing
     if send_reply and reply and api is not None:
-        await api.send_message(chat_id, reply)
+        if ui is not None:
+            await ui.finish(reply)
+        else:
+            await api.send_message(chat_id, reply, formatted=True)
     return {"session_id": session_id, "reply": reply, "agent_id": resolved}
 
 
@@ -197,12 +498,213 @@ async def process_update(
     )
 
 
+class TelegramDispatcher:
+    """Keep receiving controls while bounded per-chat turns run in background."""
+
+    MAX_ACTIVE_CHATS = 16
+
+    def __init__(self, api: TelegramAPI, *, agent_id: str | None = None) -> None:
+        self.api = api
+        self.agent_id = agent_id
+        self.tasks: dict[int, asyncio.Task] = {}
+        self.uis: dict[int, TelegramTurnUI] = {}
+        self.actors: dict[int, tuple[int | None, int | None]] = {}
+
+    async def dispatch(self, update: dict) -> None:
+        query = update.get("callback_query")
+        if isinstance(query, dict):
+            chat_id = ((query.get("message") or {}).get("chat") or {}).get("id")
+            ui = self.uis.get(chat_id)
+            handled = await ui.callback(query) if ui else False
+            if not handled:
+                await self.api.answer_callback(
+                    str(query.get("id") or ""),
+                    "This control expired. Send /status or start a new task.",
+                )
+            return
+        # Edited messages must not repeat tool side effects.
+        message = update.get("message")
+        if not isinstance(message, dict):
+            return
+        extracted = extract_text_message(update)
+        if not extracted:
+            return
+        chat_id, text = extracted
+        command = text.split()[0].split("@")[0].lower()
+        if command == "/id" or not chat_is_allowed(chat_id):
+            await handle_inbound_text(
+                chat_id, text, api=self.api, agent_id=self.agent_id
+            )
+            return
+        ui = self.uis.get(chat_id)
+        task = self.tasks.get(chat_id)
+        if task and task.done():
+            self.tasks.pop(chat_id, None)
+            self.uis.pop(chat_id, None)
+            self.actors.pop(chat_id, None)
+            ui = None
+        sender_id = (message.get("from") or {}).get("id")
+        thread_id = message.get("message_thread_id")
+        if command.startswith("/"):
+            if (
+                task
+                and not task.done()
+                and command
+                in {
+                    "/stop",
+                    "/new",
+                    "/auto",
+                    "/smart",
+                    "/manual",
+                }
+            ):
+                if (sender_id, thread_id) != self.actors.get(chat_id):
+                    await self.api.send_message(
+                        chat_id,
+                        "Only the person who started this task can change or stop it.",
+                        thread_id=thread_id,
+                    )
+                    return
+                if command == "/new":
+                    await self.api.send_message(
+                        chat_id,
+                        "Stop the current task with /stop before starting a new conversation.",
+                        thread_id=thread_id,
+                    )
+                    return
+                if command == "/stop":
+                    if ui is not None:
+                        ui.request_stop()
+                    else:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                        self.tasks.pop(chat_id, None)
+                        self.actors.pop(chat_id, None)
+                    await self.api.send_message(
+                        chat_id, "Stopping the current task…", thread_id=thread_id
+                    )
+                    return
+            if command == "/status" and ui is not None:
+                await self.api.send_message(
+                    chat_id, ui.status_text(), silent=True, thread_id=thread_id
+                )
+            else:
+                result = await handle_inbound_text(
+                    chat_id, text, api=None, agent_id=self.agent_id, send_reply=False
+                )
+                await self.api.send_message(
+                    chat_id, result["reply"], thread_id=thread_id
+                )
+            return
+        if task and not task.done():
+            if ui is not None and await ui.answer_text(message):
+                return
+            if (
+                ui is not None
+                and sender_id == ui.actor_id
+                and thread_id == ui.thread_id
+                and not ui.waiting
+            ):
+                from app.services.chat import push_session_steer
+
+                result = push_session_steer(ui.session_id, text)
+                if result.get("accepted"):
+                    await self.api.send_message(
+                        chat_id,
+                        "↳ Added your guidance to the current task.",
+                        silent=True,
+                        thread_id=thread_id,
+                    )
+                    return
+            await self.api.send_message(
+                chat_id,
+                "A task is running. Answer its question or approval buttons, or use /stop.",
+                silent=True,
+                thread_id=thread_id,
+            )
+            return
+        if len(self.tasks) >= self.MAX_ACTIVE_CHATS:
+            await self.api.send_message(
+                chat_id,
+                "Tomo is handling several chats. Please try again shortly.",
+                thread_id=thread_id,
+            )
+            return
+        self.actors[chat_id] = (sender_id, thread_id)
+        self.tasks[chat_id] = asyncio.create_task(self._run(chat_id, text, message))
+
+    async def _run(self, chat_id: int, text: str, message: dict) -> None:
+        from app.channels.telegram_ui import TelegramTurnUI
+
+        ui = None
+        try:
+            # Re-check after scheduling; revoking an ID must close agent access.
+            if not chat_is_allowed(chat_id):
+                return
+            resolved = _resolve_agent_id(self.agent_id)
+            if not resolved:
+                raise ValueError("No coordinator")
+            sid = store.get_or_create_session(resolved, user_id_for_chat(chat_id))
+            ui = TelegramTurnUI(
+                self.api,
+                chat_id,
+                sid,
+                actor_id=(message.get("from") or {}).get("id"),
+                reply_to=message.get("message_id"),
+                thread_id=message.get("message_thread_id"),
+            )
+            self.uis[chat_id] = ui
+            await ui.start()
+            if ui.stop_requested:
+                await ui.finish("Stopped.")
+                return
+            await handle_inbound_text(
+                chat_id, text, api=self.api, agent_id=resolved, ui=ui, session_id=sid
+            )
+        except asyncio.CancelledError:
+            if ui:
+                ui.outcome = "Stopped"
+            raise
+        except Exception:
+            logger.error("telegram turn or delivery failed chat_id=%s", chat_id)
+            if ui:
+                ui.outcome = "Failed"
+                with contextlib.suppress(Exception):
+                    if ui.finished:
+                        await self.api.send_message(
+                            chat_id,
+                            "I couldn't deliver the entire answer. The full response is saved in Tomo's Chat page.",
+                            thread_id=ui.thread_id,
+                        )
+                    else:
+                        await ui.finish(
+                            "I couldn't complete that message. Please check the session in Tomo or try again."
+                        )
+        finally:
+            if ui:
+                await ui.close()
+            self.uis.pop(chat_id, None)
+            self.tasks.pop(chat_id, None)
+            self.actors.pop(chat_id, None)
+
+    async def close(self) -> None:
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.tasks.clear()
+        self.uis.clear()
+        self.actors.clear()
+
+
 async def poll_once(
     api: TelegramAPI,
     *,
     offset: int = 0,
     timeout: int = 25,
     agent_id: str | None = None,
+    dispatcher: TelegramDispatcher | None = None,
 ) -> int:
     """Fetch and process one getUpdates batch. Returns next offset."""
     updates = await api.get_updates(offset=offset or None, timeout=timeout)
@@ -212,9 +714,21 @@ async def poll_once(
         if isinstance(uid, int):
             next_offset = max(next_offset, uid + 1)
         try:
-            await process_update(update, api=api, agent_id=agent_id, send_reply=True)
+            if dispatcher is not None:
+                await dispatcher.dispatch(update)
+            else:
+                await process_update(
+                    update, api=api, agent_id=agent_id, send_reply=True
+                )
         except Exception:
-            logger.exception("telegram update failed update_id=%s", uid)
+            logger.error("telegram update failed update_id=%s", uid)
+            extracted = extract_text_message(update)
+            if extracted and chat_is_allowed(extracted[0]):
+                with contextlib.suppress(Exception):
+                    await api.send_message(
+                        extracted[0],
+                        "I couldn't complete that message. Please try again.",
+                    )
     return next_offset
 
 
@@ -223,30 +737,82 @@ _supervisor_stop: asyncio.Event | None = None
 
 
 async def _supervisor_loop(stop: asyncio.Event) -> None:
-    """Background long-poll: idle when disabled / no token; poll when ready."""
+    """Keep the client and dispatcher alive across polls; controls never wait for a turn."""
     offset = 0
-    while not stop.is_set():
-        settings = store.get_settings()
-        token = str(settings.get("telegram_bot_token") or "").strip()
-        enabled = bool(settings.get("telegram_enabled"))
-        if not (enabled and token):
+    active_token = ""
+    api: TelegramAPI | None = None
+    dispatcher: TelegramDispatcher | None = None
+    try:
+        while not stop.is_set():
+            settings = store.get_settings()
+            token = str(settings.get("telegram_bot_token") or "").strip()
+            enabled = bool(settings.get("telegram_enabled"))
+            if not enabled or token != active_token:
+                if dispatcher:
+                    await dispatcher.close()
+                    dispatcher = None
+                if api:
+                    await api.aclose()
+                    api = None
+                active_token = ""
+                offset = 0
+            if not (enabled and token):
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=3)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            if api is None:
+                api = TelegramAPI(token)
+                active_token = token
+                dispatcher = TelegramDispatcher(api)
+                fingerprint = hashlib.sha256(token.encode()).hexdigest()
+                cursor = settings.get("telegram_update_cursor") or {}
+                if isinstance(cursor, dict) and cursor.get("bot") == fingerprint:
+                    saved_offset = cursor.get("offset")
+                    if (
+                        isinstance(saved_offset, int)
+                        and not isinstance(saved_offset, bool)
+                        and saved_offset >= 0
+                    ):
+                        offset = saved_offset
+                with contextlib.suppress(Exception):
+                    await api.set_commands()
+            # Cancel work for chats revoked while a turn or approval was in flight.
+            if dispatcher:
+                for chat_id, ui in list(dispatcher.uis.items()):
+                    if not chat_is_allowed(chat_id):
+                        from app.services.chat import cancel_session_turn
+
+                        cancel_session_turn(ui.session_id)
             try:
-                await asyncio.wait_for(stop.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                pass
-            continue
-        api = TelegramAPI(token)
-        try:
-            offset = await poll_once(api, offset=offset, timeout=25)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("telegram poll error")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                pass
-        finally:
+                next_offset = await poll_once(
+                    api, offset=offset, timeout=25, dispatcher=dispatcher
+                )
+                if next_offset != offset:
+                    store.update_settings(
+                        {
+                            "telegram_update_cursor": {
+                                "bot": hashlib.sha256(token.encode()).hexdigest(),
+                                "offset": next_offset,
+                            }
+                        }
+                    )
+                offset = next_offset
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "telegram poll error; check token and ensure only one poller is running"
+                )
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    pass
+    finally:
+        if dispatcher:
+            await dispatcher.close()
+        if api:
             await api.aclose()
 
 

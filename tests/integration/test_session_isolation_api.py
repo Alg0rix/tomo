@@ -108,3 +108,41 @@ def test_dashboard_recent_is_per_user(tmp_path) -> None:
         )
     finally:
         app.dependency_overrides.pop(require_auth, None)
+
+
+def test_telegram_sessions_visible_only_to_admins(tmp_path):
+    store.rebind(tmp_path / "telegram-visibility.db")
+    app.dependency_overrides.pop(require_auth, None)
+    admin = store.create_user({"username": "tgadmin", "password": "password1", "role": "admin"})
+    member = store.create_user({"username": "tgmember", "password": "password1", "role": "member"})
+    tg_sid = store.get_or_create_session("main", "tg_12345")
+    store.append_session_history(tg_sid, {"type": "user", "content": "telegram-only-secret", "ts": 1.0})
+    other_sid = store.create_swarm_session(["main"], user_id=member["id"])
+    with TestClient(app) as client:
+        _login(client, "tgadmin", "password1")
+        saved = client.put("/api/settings", json={"telegram_allowed_chat_ids": "12345, -10099"})
+        assert saved.status_code == 200
+        assert saved.json()["telegram_allowed_chat_ids"] == ["12345", "-10099"]
+        assert client.put("/api/settings", json={"telegram_allowed_chat_ids": "oops"}).status_code == 400
+        settings_page = client.get("/system")
+        assert settings_page.status_code == 200
+        assert 'id="setTgChatIds"' in settings_page.text
+        assert "12345, -10099" in settings_page.text
+        rows = client.get("/api/sessions").json()["sessions"]
+        row = next(s for s in rows if s["id"] == tg_sid)
+        assert row["channel"] == "telegram"
+        assert row["telegram_chat_id"] == "12345"
+        assert other_sid not in {s["id"] for s in rows}
+        assert client.get(f"/api/sessions/{tg_sid}/chat").status_code == 200
+        results = client.get("/api/sessions/search", params={"q": "telegram-only-secret"}).json()["results"]
+        assert tg_sid in {r["session_id"] for r in results}
+        _login(client, "tgmember", "password1")
+        assert client.put("/api/settings", json={"telegram_allowed_chat_ids": []}).status_code == 403
+        rows = client.get("/api/sessions").json()["sessions"]
+        assert tg_sid not in {s["id"] for s in rows}
+        assert client.get(f"/api/sessions/{tg_sid}").status_code == 404
+        assert client.get(f"/api/sessions/{tg_sid}/chat").status_code == 404
+        assert client.get("/api/sessions/search", params={"q": "telegram-only-secret"}).json()["results"] == []
+        assert client.delete(f"/api/sessions/{tg_sid}").status_code == 404
+        assert store.get_session(tg_sid) is not None
+    assert admin["id"] != member["id"]

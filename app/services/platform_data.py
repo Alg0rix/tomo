@@ -89,6 +89,7 @@ def seed_settings() -> dict[str, Any]:
         "llm_model": "gpt-4o-mini",
         "telegram_bot_token": "",
         "telegram_enabled": False,
+        "telegram_allowed_chat_ids": [],
         "max_tool_iterations": 12,
         "concurrency_limit": 4,
         "learning_enabled": True,

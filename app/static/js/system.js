@@ -152,6 +152,7 @@
         var enabledEl = document.getElementById('setTgEnabled');
         var body = {
           telegram_enabled: !!(enabledEl && enabledEl.checked),
+          telegram_allowed_chat_ids: (document.getElementById('setTgChatIds') || {}).value || '',
         };
         var token = tokenEl ? tokenEl.value : '';
         if (token && token.indexOf('•') === -1) body.telegram_bot_token = token;
@@ -168,6 +169,7 @@
             : 'Paste bot token from @BotFather';
         }
         Tomo.toast('Telegram settings saved', 'ok');
+        window.location.reload();
       } catch (e) {
         Tomo.toast((e && e.message) || 'Could not save', 'err');
       }

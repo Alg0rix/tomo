@@ -134,8 +134,26 @@ def session_username(request: Request) -> str:
     return str(request.session.get("user") or "")
 
 
+def can_manage_telegram(request: Request) -> bool:
+    from app.services import store
+
+    user = store.get_user(session_user_id(request))
+    return bool(user and user.get("enabled") and user.get("role") == "admin")
+
+
+def visible_sessions(request: Request) -> list[dict]:
+    """Personal web sessions plus shared Telegram sessions for administrators."""
+    from app.services import store
+
+    uid = session_user_id(request)
+    if not can_manage_telegram(request):
+        return store.list_sessions(user_id=uid)
+    return [s for s in store.list_sessions()
+            if s["user_id"] == uid or s.get("channel") == "telegram"]
+
+
 def require_owned_session(request: Request, session_id: str) -> dict:
-    """Load a chat session only if it belongs to the authenticated account.
+    """Load an owned web session or an administrator-accessible Telegram session.
 
     Missing or other-users' sessions both return 404 so existence is not leaked.
     """
@@ -143,6 +161,10 @@ def require_owned_session(request: Request, session_id: str) -> dict:
 
     uid = session_user_id(request)
     session = store.get_owned_session(session_id, uid)
+    if not session and can_manage_telegram(request):
+        candidate = store.get_session(session_id)
+        if candidate and candidate.get("channel") == "telegram":
+            session = candidate
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"

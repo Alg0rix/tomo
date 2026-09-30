@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse
 
 from app.core.config import TOMO_HOME
-from app.core.deps import AuthDep, require_owned_session, session_user_id
+from app.core.deps import AuthDep, require_owned_session, session_user_id, visible_sessions
 from app.schemas import (
     AgentCreate,
     AgentDraft,
@@ -272,9 +272,8 @@ async def delete_agent(agent_id: str, _: AuthDep):
 async def list_sessions_api(request: Request, _: AuthDep):
     agents = store.list_agents()
     agent_map = {a["id"]: a for a in agents}
-    uid = session_user_id(request)
     sessions = []
-    for s in store.list_sessions(user_id=uid):
+    for s in visible_sessions(request):
         row = dict(s)
         ids = row.get("agent_ids") or ([row["agent_id"]] if row.get("agent_id") else [])
         row["agent_ids"] = ids
@@ -301,8 +300,7 @@ async def search_sessions_api(
     if not text:
         return {"query": "", "results": []}
 
-    uid = session_user_id(request)
-    sessions = {s["id"]: s for s in store.list_sessions(user_id=uid)}
+    sessions = {s["id"]: s for s in visible_sessions(request)}
     seen: dict[str, dict] = {}
     needle = text.lower()
 

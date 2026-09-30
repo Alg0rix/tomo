@@ -134,6 +134,8 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "coordinator_id": coord,
         "is_swarm": is_swarm,
         "user_id": row["user_id"],
+        "channel": "telegram" if str(row["user_id"]).startswith("tg_") else "web",
+        "telegram_chat_id": str(row["user_id"])[3:] if str(row["user_id"]).startswith("tg_") else None,
         "title": row["title"],
         "message_count": row["message_count"],
         "workplace_id": workplace_id,

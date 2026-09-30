@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
-from app.core.deps import AuthDep, session_user_id
+from app.core.deps import AuthDep, can_manage_telegram, session_user_id
 from app.runtime.llm import codex_models, codex_oauth
 from app.schemas import (
     CodexLoginPoll,
@@ -984,7 +984,9 @@ async def get_settings(_: AuthDep):
 
 
 @router.put("/settings")
-async def update_settings(body: dict, _: AuthDep):
+async def update_settings(body: dict, request: Request, _: AuthDep):
+    if any(key.startswith("telegram_") for key in body) and not can_manage_telegram(request):
+        raise HTTPException(403, "Only administrators can configure Telegram")
     if "memory_consolidation_cron" in body:
         from apscheduler.triggers.cron import CronTrigger
 
@@ -992,7 +994,10 @@ async def update_settings(body: dict, _: AuthDep):
             CronTrigger.from_crontab(str(body["memory_consolidation_cron"]))
         except (ValueError, TypeError) as exc:
             raise HTTPException(400, f"Invalid consolidation cron: {exc}")
-    result = store.update_settings(body)
+    try:
+        result = store.update_settings(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if {"memory_consolidation_enabled", "memory_consolidation_cron"} & body.keys():
         from app.scheduler.engine import _register_builtins
 

@@ -18,8 +18,11 @@
 {% set users_on = users|selectattr('enabled')|list|length %}
 {% set tg_set = settings.telegram_bot_token_set if settings.telegram_bot_token_set is defined else false %}
 {% set tg_on = settings.telegram_enabled %}
-{% if tg_set and tg_on %}
-  {% set voice_label = 'Connected' %}
+{% if tg_set and tg_on and not settings.telegram_allowed_chat_ids %}
+  {% set voice_label = 'Needs chat IDs' %}
+  {% set voice_state = 'warn' %}
+{% elif tg_set and tg_on %}
+  {% set voice_label = 'Enabled' %}
   {% set voice_state = 'ok' %}
 {% elif tg_set %}
   {% set voice_label = 'Off' %}

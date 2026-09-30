@@ -6,8 +6,10 @@
       <h3>Telegram bot</h3>
       {% set tg_set = settings.telegram_bot_token_set if settings.telegram_bot_token_set is defined else false %}
       {% set tg_on = settings.telegram_enabled %}
-      {% if tg_set and tg_on %}
-      <span class="badge ok">connected</span>
+      {% if tg_set and tg_on and not settings.telegram_allowed_chat_ids %}
+      <span class="badge muted">needs chat IDs</span>
+      {% elif tg_set and tg_on %}
+      <span class="badge ok">enabled</span>
       {% elif tg_set %}
       <span class="badge muted">off</span>
       {% else %}
@@ -31,6 +33,17 @@
         {{ toggle(id='setTgEnabled', checked=settings.telegram_enabled) }}
       </div>
     </div>
+    <div class="machine-field">
+      <div class="machine-field-copy">
+        <div class="machine-field-name">Allowed chat IDs</div>
+        <p class="machine-field-hint">Only these chats can use Tomo. An empty list blocks all agent access. Send /id to your bot to find your chat ID. For a group, approving its ID gives every member access.</p>
+      </div>
+      <div class="machine-field-control machine-field-control-wide">
+        <input class="input" type="text" id="setTgChatIds" value="{{ (settings.telegram_allowed_chat_ids or []) | join(', ') }}" placeholder="123456789, -1001234567890" aria-label="Allowed Telegram chat IDs" spellcheck="false">
+      </div>
+    </div>
+    <p class="machine-field-hint">1. Save your bot token. 2. Enable long-poll and save. 3. Send /id in Telegram, add that ID above, and save again. Then send a message. No manual chat ID is needed for replies.</p>
+    <p class="machine-field-hint">Enabled means polling is configured; it does not verify the bot connection. Telegram conversations appear in <a href="/sessions">Chat</a> for administrators. Bot commands: /help, /new, /stop, /status, /manual, /smart, /id. Tasks show tool progress, formatted answers, and approval buttons.</p>
     <div class="machine-sheet-foot">
       <button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button>
     </div>
@@ -40,12 +53,14 @@
   <div class="machine-sheet">
     <div class="machine-sheet-head">
       <h3>{{ ch.name }}</h3>
-      {% if ch.status == 'connected' or ch.status == 'active' %}
-      <span class="badge ok">{{ ch.status }}</span>
+      {% if ch.type == 'telegram' and tg_on and tg_set and not settings.telegram_allowed_chat_ids %}
+      <span class="badge muted">needs chat IDs</span>
+      {% elif ch.status == 'connected' or ch.status == 'active' %}
+      <span class="badge ok">{{ 'enabled' if ch.type == 'telegram' and ch.status == 'connected' else ch.status }}</span>
       {% elif ch.status == 'needs_token' %}
       <span class="badge muted">needs token</span>
       {% else %}
-      <span class="badge muted">{{ ch.status }}</span>
+      <span class="badge muted">{{ 'enabled' if ch.type == 'telegram' and ch.status == 'connected' else ch.status }}</span>
       {% endif %}
     </div>
     <div class="machine-field">
