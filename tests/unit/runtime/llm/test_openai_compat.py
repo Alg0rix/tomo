@@ -191,7 +191,9 @@ async def test_plain_content_mapped_and_request_shape() -> None:
             200,
             json=_completion_body(
                 content="hello back",
-                usage={"prompt_tokens": 12, "completion_tokens": 4},
+                usage={"prompt_tokens": 12, "completion_tokens": 4,
+                       "prompt_tokens_details": {"cached_tokens": 8},
+                       "completion_tokens_details": {"reasoning_tokens": 2}},
             ),
         )
 
@@ -202,6 +204,8 @@ async def test_plain_content_mapped_and_request_shape() -> None:
     assert resp.tool_calls == []
     assert resp.prompt_tokens == 12
     assert resp.completion_tokens == 4
+    assert resp.cached_tokens == 8
+    assert resp.reasoning_tokens == 2
 
 
 async def test_reasoning_effort_is_forwarded_to_non_stream_request() -> None:
@@ -714,7 +718,8 @@ async def test_stream_include_usage_on_trailing_chunk() -> None:
         {"choices": [{"delta": {}}]},
         {
             "choices": [],
-            "usage": {"prompt_tokens": 40, "completion_tokens": 2},
+            "usage": {"prompt_tokens": 40, "completion_tokens": 2,
+                      "prompt_tokens_details": {"cached_tokens": 32}},
         },
     ]
     sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
@@ -732,6 +737,8 @@ async def test_stream_include_usage_on_trailing_chunk() -> None:
     resp = events[-1]["response"]
     assert resp.content == "hi"
     assert resp.prompt_tokens == 40
+    assert resp.cached_tokens == 32
+    assert resp.reasoning_tokens is None
     assert resp.completion_tokens == 2
     await client.aclose()
 

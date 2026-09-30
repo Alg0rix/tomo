@@ -46,6 +46,8 @@ class LLMResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     reasoning: str | None = None
+    cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
     @property
     def has_tool_calls(self) -> bool:

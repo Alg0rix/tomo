@@ -188,9 +188,13 @@ def _record_response_usage(
         return
     prompt = int(getattr(resp, "prompt_tokens", 0) or 0)
     completion = int(getattr(resp, "completion_tokens", 0) or 0)
-    if prompt <= 0 and completion <= 0:
+    estimated = prompt <= 0 and completion <= 0
+    if estimated:
         prompt, completion = _estimate_round_usage(messages, resp)
-    metrics.add_usage(prompt, completion)
+    metrics.add_usage(
+        prompt, completion, cached_tokens=getattr(resp, "cached_tokens", None),
+        reasoning_tokens=getattr(resp, "reasoning_tokens", None), estimated=estimated,
+    )
 
 
 def _stream_stale_seconds(client: LLMClient) -> float:
@@ -1304,6 +1308,7 @@ async def run_turn(
                 ),
             }
         )
+        metrics.mark_llm_round()
         try:
             resp_final: LLMResponse | None = None
             streamed_final = False

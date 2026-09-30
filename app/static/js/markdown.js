@@ -285,6 +285,17 @@
       text += "\n$$";
       pending.math = true;
     }
+    // Unclosed **bold** in the paragraph still streaming: close it so the
+    // heading renders bold now instead of flashing raw asterisks.
+    if (!pending.fence && !pending.math) {
+      var tail = text.slice(text.lastIndexOf("\n\n") + 1).replace(/`[^`\n]*`/g, "");
+      var stars = tail.match(/\*\*/g);
+      if (stars && stars.length % 2 === 1) {
+        var trimmed = text.replace(/\s+$/, "");
+        // A bare opener with nothing after it yet: drop it for now.
+        text = /\*\*$/.test(trimmed) ? trimmed.slice(0, -2) : trimmed + "**";
+      }
+    }
     return { text: text, pending: pending };
   }
 

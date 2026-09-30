@@ -713,6 +713,10 @@ def map_loop_event(
         # Meta-events: ATG tool/tool_result map normally; todos carry the plan UI.
         pass
 
+    if isinstance(ev.get("metrics"), dict):
+        for entry in entries:
+            if entry.get("type") in {"final", "subagent_final"}:
+                entry["metrics"] = ev["metrics"]
     return chunks, entries, seq
 
 

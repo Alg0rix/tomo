@@ -18,6 +18,11 @@
 /* ── Thread column ───────────────────────────────────────────────── */
 .chat-wrap .turn { width: min(100%, var(--wn-col)); margin: 0 auto 30px; }
 .chat-wrap .turn > .msg.user { margin: 0 0 18px; }
+/* The hover action row already reserves space under the bubble; don't stack
+   the full turn gap on top of it. */
+.chat-wrap .turn > .msg.user:has(.msg-actions) { margin-bottom: 4px; }
+.chat-wrap .msg.user .msg-actions { margin-top: 2px; }
+.chat-wrap .msg.user .msg-act { width: 24px; height: 24px; }
 .chat-wrap .chat-scroll { padding: 28px 24px 12px; }
 
 /* User: a quiet slab on the right — no accent border, no slip. */
@@ -117,7 +122,11 @@
 
 /* Reasoning note: plain readable text, clamps when long. */
 .chat-wrap .wn-note { margin: 0; }
-.chat-wrap .wn-note-text { font-size: 14px; line-height: 1.6; color: var(--text); }
+.chat-wrap .wn-note-text { font-size: 13.5px; line-height: 1.6; color: var(--text-dim); }
+/* Reasoning summaries arrive as "**Heading**" lines; keep them quieter than
+   the answer's bold. */
+.chat-wrap .wn-note-text strong,
+.chat-wrap .wn-note-text b { font-weight: 550; color: var(--text); }
 .chat-wrap .wn-note-text > :last-child { margin-bottom: 0; }
 .chat-wrap .wn-note-text p { margin: 0 0 6px; }
 .chat-wrap .wn-note.is-clamped { cursor: pointer; }
@@ -218,6 +227,8 @@
 .chat-wrap .turn-pending { width: auto; margin: 4px 0 10px; }
 .chat-wrap .turn-pending .av { width: 8px; height: 8px; border-radius: 50%; font-size: 0; }
 .chat-wrap .turn-pending .name { font: 500 13px var(--font-sans); letter-spacing: 0; color: var(--text-dim); }
+.chat-wrap .turn-pending .typing { gap: 3px; align-self: center; }
+.chat-wrap .turn-pending .typing i { width: 4px; height: 4px; }
 
 /* ── Swarm run: a live work board inside its turn ────────────────
  * Header (story + phases + clock) → per-task meter → agent lanes with a

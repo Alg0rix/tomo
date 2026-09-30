@@ -593,7 +593,9 @@ async def session_context_usage(session_id: str, request: Request, _: AuthDep):
         raise HTTPException(status_code=400, detail="Session has no coordinator")
     history = store.get_session_history(session_id)
     limit = await resolve_context_window(agent_id)
-    return compute_context_usage(agent_id, history, limit=limit)
+    from app.runtime.agent.metrics import session_usage
+
+    return {**compute_context_usage(agent_id, history, limit=limit), "usage": session_usage(history)}
 
 
 @router.post("/sessions/{session_id}/chat/clear")
@@ -622,7 +624,9 @@ async def agent_context_usage(agent_id: str, request: Request, _: AuthDep):
     user_id = _uid(request, request.query_params.get("user_id"))
     history = store.get_history(agent_id, user_id)
     limit = await resolve_context_window(agent_id)
-    return compute_context_usage(agent_id, history, limit=limit)
+    from app.runtime.agent.metrics import session_usage
+
+    return {**compute_context_usage(agent_id, history, limit=limit), "usage": session_usage(history)}
 
 
 @router.post("/agents/{agent_id}/chat")

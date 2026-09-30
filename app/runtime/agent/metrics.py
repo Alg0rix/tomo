@@ -30,14 +30,32 @@ class TurnMetrics:
     ended_kind: str | None = None  # final | error
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_tokens: int = 0
+    cache_prompt_tokens: int = 0
+    cache_reported_rounds: int = 0
+    reasoning_tokens: int = 0
+    reasoning_reported_rounds: int = 0
+    estimated_rounds: int = 0
 
     def mark_llm_round(self) -> None:
         self.llm_rounds += 1
 
-    def add_usage(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+    def add_usage(
+        self, prompt_tokens: int = 0, completion_tokens: int = 0, *,
+        cached_tokens: int | None = None, reasoning_tokens: int | None = None,
+        estimated: bool = False,
+    ) -> None:
         """Accumulate provider (or estimated) tokens from one LLM round."""
         self.prompt_tokens += max(0, int(prompt_tokens or 0))
         self.completion_tokens += max(0, int(completion_tokens or 0))
+        self.estimated_rounds += int(estimated)
+        if cached_tokens is not None and not estimated and prompt_tokens > 0:
+            self.cached_tokens += min(prompt_tokens, max(0, int(cached_tokens)))
+            self.cache_prompt_tokens += prompt_tokens
+            self.cache_reported_rounds += 1
+        if reasoning_tokens is not None and not estimated:
+            self.reasoning_tokens += max(0, int(reasoning_tokens))
+            self.reasoning_reported_rounds += 1
 
     def mark_tools(self, n: int, *, errors: int = 0, parallel: int = 0) -> None:
         self.tool_calls += n
@@ -69,6 +87,12 @@ class TurnMetrics:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "tokens": self.prompt_tokens + self.completion_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_prompt_tokens": self.cache_prompt_tokens,
+            "cache_reported_rounds": self.cache_reported_rounds,
+            "reasoning_tokens": self.reasoning_tokens,
+            "reasoning_reported_rounds": self.reasoning_reported_rounds,
+            "estimated_rounds": self.estimated_rounds,
         }
 
     def log_summary(self) -> None:
@@ -94,3 +118,37 @@ class TurnMetrics:
 
 
 __all__ = ["TurnMetrics"]
+
+
+def session_usage(history: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Summarize recorded turns, including delegates, from durable chat history.
+
+    Cache rate uses only input tokens whose provider reported cache details.
+    Older history and providers that omit usage cannot supply a cache rate.
+    """
+    keys = (
+        "prompt_tokens", "completion_tokens", "cached_tokens", "cache_prompt_tokens",
+        "cache_reported_rounds", "reasoning_tokens", "reasoning_reported_rounds",
+        "estimated_rounds", "llm_rounds", "tool_calls",
+    )
+    totals = dict.fromkeys(keys, 0)
+    recorded = 0
+    last_elapsed_ms = None
+    for entry in history or []:
+        if entry.get("type") not in {"final", "subagent_final"}:
+            continue
+        metrics = entry.get("metrics")
+        if not isinstance(metrics, dict):
+            continue
+        recorded += 1
+        for key in keys:
+            totals[key] += max(0, int(metrics.get(key) or 0))
+        if entry.get("type") == "final":
+            last_elapsed_ms = max(0, int(metrics.get("elapsed_ms") or 0))
+    denominator = totals["cache_prompt_tokens"]
+    return {
+        **totals,
+        "recorded_turns": recorded,
+        "last_elapsed_ms": last_elapsed_ms,
+        "cache_hit_rate": round(100 * totals["cached_tokens"] / denominator, 1) if denominator else None,
+    }

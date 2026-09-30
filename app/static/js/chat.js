@@ -1661,6 +1661,10 @@
         enqueueMessage(value, attachIds, attachMeta);
         return;
       }
+      // A finished plan belongs to the last turn; don't leave it on screen
+      // while the next one runs.
+      var donePlan = wrap.querySelector('.chat-todo-dock .todo-panel.is-complete');
+      if (donePlan && window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(wrap);
       sending = true;
       refreshSendBtn();
       setStatus('amber', busyStatusLabel());

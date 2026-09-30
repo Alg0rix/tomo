@@ -33,6 +33,7 @@ from app.runtime.llm.openai_compat import (
     format_llm_error,
     llm_http_timeout,
     parse_usage,
+    parse_usage_details,
 )
 
 _logger = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ def _extract_reasoning_text(item: Any) -> str:
         text = getattr(part, "text", None)
         if isinstance(text, str) and text:
             chunks.append(text)
-    return "\n".join(chunks)
+    return "\n\n".join(chunks)
 
 
 def _reasoning_text_from_items(items: list[Any]) -> str | None:
@@ -298,7 +299,11 @@ class CodexResponsesClient:
         output_items: list[Any] = []
         prompt_tok = 0
         completion_tok = 0
+        usage_details = parse_usage_details(None)
         completed = False
+        # Summary parts stream back to back; without a break "**A.**" and
+        # "**B.**" fuse into "**A.****B.**" and the markdown falls apart.
+        summary_key: tuple[Any, Any] | None = None
 
         try:
             stream = await self._client.responses.create(**payload)
@@ -309,6 +314,10 @@ class CodexResponsesClient:
                     if etype == "response.reasoning_summary_text.delta":
                         delta = getattr(event, "delta", "") or ""
                         if delta:
+                            key = (getattr(event, "item_id", None), getattr(event, "summary_index", None))
+                            if summary_key is not None and key != summary_key:
+                                yield {"type": "reasoning_delta", "content": "\n\n"}
+                            summary_key = key
                             yield {"type": "reasoning_delta", "content": delta}
                     elif etype == "response.output_text.delta":
                         delta = getattr(event, "delta", "") or ""
@@ -325,6 +334,7 @@ class CodexResponsesClient:
                         usage = getattr(resp_obj, "usage", None) if resp_obj is not None else None
                         if usage is not None:
                             prompt_tok, completion_tok = parse_usage(usage)
+                            usage_details = parse_usage_details(usage)
                     elif etype == "error":
                         raise LLMRequestError(
                             f"LLM request failed: {getattr(event, 'message', None) or 'Codex Responses stream error'}"
@@ -376,6 +386,7 @@ class CodexResponsesClient:
                 content=text, tool_calls=tool_calls,
                 prompt_tokens=prompt_tok, completion_tokens=completion_tok,
                 reasoning=_reasoning_text_from_items(output_items),
+                **usage_details,
             ),
         }
 

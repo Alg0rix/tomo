@@ -614,6 +614,27 @@ def parse_usage(usage: Any) -> tuple[int, int]:
     )
 
 
+def parse_usage_details(usage: Any) -> dict[str, int | None]:
+    """Read optional OpenAI Chat/Responses usage details without inventing zeros."""
+    def get(obj: Any, key: str) -> Any:
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    def count(detail_keys: tuple[str, ...], key: str) -> int | None:
+        for detail_key in detail_keys:
+            value = get(get(usage, detail_key), key)
+            if value is not None:
+                try:
+                    return max(0, int(value))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+        return None
+
+    return {
+        "cached_tokens": count(("prompt_tokens_details", "input_tokens_details"), "cached_tokens"),
+        "reasoning_tokens": count(("completion_tokens_details", "output_tokens_details"), "reasoning_tokens"),
+    }
+
+
 # ── Client ────────────────────────────────────────────────────────
 
 
@@ -757,6 +778,7 @@ class OpenAICompatClient:
             tool_calls=_parse_tool_calls(tool_calls or []),
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
+            **parse_usage_details(usage),
         )
 
     async def stream_complete(
@@ -796,6 +818,7 @@ class OpenAICompatClient:
         seen_ids: set[str] = set()
         prompt_tok = 0
         completion_tok = 0
+        usage_details = parse_usage_details(None)
 
         try:
             stream = await self._client.chat.completions.create(**payload)
@@ -805,6 +828,7 @@ class OpenAICompatClient:
                 u_prompt, u_completion = parse_usage(getattr(chunk, "usage", None))
                 if u_prompt or u_completion:
                     prompt_tok, completion_tok = u_prompt, u_completion
+                    usage_details = parse_usage_details(getattr(chunk, "usage", None))
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -901,6 +925,7 @@ class OpenAICompatClient:
                 prompt_tokens=prompt_tok,
                 completion_tokens=completion_tok,
                 reasoning="".join(reasoning_parts) or None,
+                **usage_details,
             ),
         }
 

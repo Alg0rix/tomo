@@ -4123,6 +4123,8 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   right: auto;
   bottom: calc(100% - 8px);
   width: min(320px, calc(100vw - 48px));
+  max-height: calc(100dvh - 180px);
+  overflow-y: auto;
   z-index: 80;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
@@ -4213,6 +4215,13 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 }
 .ctx-leg-label { color: var(--text-dim); min-width: 0; }
 .ctx-leg-val { color: var(--text-faint); font-size: 11px; }
+
+.ctx-pop-usage { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.ctx-usage-stats { margin: 8px 0 0; display: grid; gap: 6px; font-size: 12px; }
+.ctx-usage-stats > div { display: flex; justify-content: space-between; gap: 8px; }
+.ctx-usage-stats dt { color: var(--text-dim); }
+.ctx-usage-stats dd { margin: 0; color: var(--text); }
+.ctx-usage-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; color: var(--text-faint); }
 
 .chat-hint { max-width: 820px; margin: 6px auto 0; font-size: 11px; color: var(--text-faint); text-align: center; }
 .composer-shell.mention-host,

@@ -57,7 +57,8 @@
           '<span class="ctx-pop-tokens faint mono"></span>' +
         '</div>' +
         '<div class="ctx-pop-bar" aria-hidden="true"></div>' +
-        '<ul class="ctx-pop-legend"></ul>';
+        '<ul class="ctx-pop-legend"></ul>' +
+        '<div class="ctx-pop-usage"></div>';
       // Mount on the visible composer card so the popover sits over the ring.
       var host =
         trigger.closest(".composer-shell") ||
@@ -92,6 +93,38 @@
       }).join("");
     }
 
+    function renderUsage(usage) {
+      var el = popover.querySelector(".ctx-pop-usage");
+      var html = '<div class="ctx-pop-title">Recorded session usage</div>';
+      if (!usage || !usage.recorded_turns) {
+        el.innerHTML = html + '<p class="ctx-usage-note">Available after a new response completes.</p>';
+        return;
+      }
+      var estimated = usage.estimated_rounds > 0 ? "~" : "";
+      var hasCache = usage.cache_hit_rate != null;
+      var rows = [
+        ["Input tokens", estimated + fmtTokens(usage.prompt_tokens)],
+        ["Output tokens", estimated + fmtTokens(usage.completion_tokens)],
+        ["Cached input", hasCache ? fmtTokens(usage.cached_tokens) : "N/A"],
+        ["Cache hit rate", hasCache ? usage.cache_hit_rate + "%" : "N/A"],
+      ];
+      if (usage.reasoning_reported_rounds) rows.push(["Reasoning tokens", fmtTokens(usage.reasoning_tokens)]);
+      rows.push(["LLM calls", fmtTokens(usage.llm_rounds)]);
+      rows.push(["Tool calls", fmtTokens(usage.tool_calls)]);
+      if (usage.last_elapsed_ms != null) {
+        rows.push(["Last turn duration", (usage.last_elapsed_ms / 1000).toFixed(1) + "s"]);
+      }
+      html += '<dl class="ctx-usage-stats">' + rows.map(function (row) {
+        return '<div><dt>' + esc(row[0]) + '</dt><dd class="mono">' + esc(row[1]) + '</dd></div>';
+      }).join("") + '</dl>';
+      var note = hasCache
+        ? "Cached / input tokens for " + usage.cache_reported_rounds + " LLM calls with cache details."
+        : "Provider did not report cache details.";
+      if (usage.estimated_rounds) note += " ~ includes estimated token usage.";
+      html += '<p class="ctx-usage-note">' + esc(note) + ' Totals include recorded delegate responses. Reasoning is part of output tokens.</p>';
+      el.innerHTML = html;
+    }
+
     function updateTrigger(data) {
       var pct = data.percent || 0;
       var pctEl = trigger.querySelector(".ctx-usage-pct");
@@ -113,6 +146,7 @@
         "~" + fmtTokens(data.used) + " / " + fmtTokens(data.limit) + " Tokens";
       renderBar(data.sections || [], data.used || 0, data.limit || 0);
       renderLegend(data.sections || []);
+      renderUsage(data.usage);
       updateTrigger(data);
     }
 

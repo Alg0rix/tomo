@@ -921,8 +921,19 @@
     var body = note.querySelector('.wn-note-text') || note.querySelector('pre');
     if (!body) return;
     note.classList.add('is-streaming');
-    // Plain text while streaming; markdown re-render per delta is too costly.
-    body.textContent = String(content || '');
+    note._pendingText = String(content || '');
+    if (!(window.TomoMarkdown && TomoMarkdown.renderInto)) {
+      body.textContent = note._pendingText;
+      return;
+    }
+    // Render markdown live — partial mode closes a half-streamed "**" so bold
+    // headings don't flash as raw asterisks — but coalesce delta bursts.
+    if (note._mdTimer) return;
+    note._mdTimer = setTimeout(function () {
+      note._mdTimer = null;
+      if (!note.isConnected) return;
+      TomoMarkdown.renderInto(body, note._pendingText, { partial: true });
+    }, 80);
   };
 
   // ── Subagent lanes (delegate / swarm rows) ─────────────────────────

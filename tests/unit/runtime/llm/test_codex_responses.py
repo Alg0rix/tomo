@@ -309,6 +309,29 @@ async def test_stream_complete_exposes_reasoning_before_answer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_complete_separates_reasoning_summary_parts() -> None:
+    events = [
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "summary_index": 0, "delta": "**Checking "},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "summary_index": 0, "delta": "memory.**"},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "summary_index": 1, "delta": "**Listing it.**"},
+        {"type": "response.output_item.done", "item": {"type": "reasoning", "id": "rs_1", "summary": [
+            {"type": "summary_text", "text": "**Checking memory.**"},
+            {"type": "summary_text", "text": "**Listing it.**"}]}},
+        {"type": "response.output_text.delta", "delta": "answer"},
+        {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
+    ]
+    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+        200, content=_sse(events), headers={"content-type": "text/event-stream"})))
+    try:
+        output = [ev async for ev in client.stream_complete([{"role": "user", "content": "hi"}])]
+        streamed = "".join(ev["content"] for ev in output if ev["type"] == "reasoning_delta")
+        assert streamed == "**Checking memory.**\n\n**Listing it.**"
+        assert output[-1]["response"].reasoning == streamed
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_stream_complete_extracts_reasoning_summary() -> None:
     events = [
         {
@@ -345,7 +368,9 @@ async def test_complete_collects_deltas_reasoning_tools_and_usage() -> None:
         {"type": "response.output_item.done", "item": {
             "type": "function_call", "call_id": "call_1", "name": "bash", "arguments": '{"cmd":"ls"}'}},
         {"type": "response.completed", "response": {
-            "id": "resp_1", "status": "completed", "usage": {"input_tokens": 12, "output_tokens": 7}}},
+            "id": "resp_1", "status": "completed", "usage": {"input_tokens": 12, "output_tokens": 7,
+                        "input_tokens_details": {"cached_tokens": 9},
+                        "output_tokens_details": {"reasoning_tokens": 3}}}},
     ]
 
     def handler(request):
@@ -363,6 +388,8 @@ async def test_complete_collects_deltas_reasoning_tools_and_usage() -> None:
         assert resp.tool_calls[0].id == "call_1"
         assert resp.tool_calls[0].arguments == {"cmd": "ls"}
         assert (resp.prompt_tokens, resp.completion_tokens) == (12, 7)
+        assert resp.cached_tokens == 9
+        assert resp.reasoning_tokens == 3
     finally:
         await client.aclose()
 

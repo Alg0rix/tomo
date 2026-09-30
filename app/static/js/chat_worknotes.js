@@ -138,6 +138,17 @@
     return t.length > n ? t.slice(0, n) + '…' : t;
   }
 
+  // textContent glues block elements together ("<p>A.</p><p>B.</p>" → "A.B."),
+  // which breaks sentence detection. Pad blocks with a space first.
+  function noteText(el) {
+    if (!el) return '';
+    var c = el.cloneNode(true);
+    c.querySelectorAll('p, li, br, div, pre, blockquote, h1, h2, h3, h4, h5, h6').forEach(function (b) {
+      b.after(' ');
+    });
+    return c.textContent;
+  }
+
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
   function summarize(group) {
@@ -166,7 +177,7 @@
     var html;
     if (live) {
       var notes = group.querySelectorAll('.si-think');
-      var lastNote = notes.length ? notes[notes.length - 1].textContent : '';
+      var lastNote = notes.length ? noteText(notes[notes.length - 1]) : '';
       var runningTool = group.querySelector('.tool.loading .tname, .tool.running .tname');
       var status = freshStatus(group);
       // Open block already shows the notes; the title only adds what isn't
@@ -182,7 +193,7 @@
       if (tools.length) parts.push((parts.length ? '' : 'Used ') + plural(tools.length, 'tool', 'tools'));
       if (!parts.length) {
         var onlyNote = group.querySelector('.si-think');
-        parts.push(onlyNote ? firstLine(onlyNote.textContent, 110) : 'Thought it through');
+        parts.push(onlyNote ? firstLine(noteText(onlyNote), 110) : 'Thought it through');
       }
       html = escapeHtml(parts.join(' · ')) +
         (failed ? ' · <span class="work-fail">' + plural(failed, 'failed', 'failed') + '</span>' : '');
