@@ -7,10 +7,13 @@ import pytest
 from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
+from app.services import store
 
 
 @pytest.fixture(autouse=True)
-def _reset() -> None:
+def _reset(tmp_path) -> None:
+    # Own DB: another file may leave "ops" bound to a tunnel workplace.
+    store.rebind(tmp_path / "files.db")
     reset_registry()
     sandbox.reset_agent()
     yield

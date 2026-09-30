@@ -16,6 +16,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
+
 _TEST_HOME = tempfile.mkdtemp(prefix="tomo-home-pytest-")
 _TEST_WORK = tempfile.mkdtemp(prefix="tomo-work-pytest-")
 os.environ["TOMO_HOME"] = _TEST_HOME
@@ -49,6 +51,19 @@ def pytest_configure(config) -> None:
     Store.rebind = _rebind_from_template
     # Keep a handle so xdist workers / debugging can find the snapshot.
     config._tomo_db_template = template
+
+
+@pytest.fixture(autouse=True)
+def _clear_chat_shutdown_flag():
+    """App lifespan shutdown marks chat as shutting down process-wide.
+
+    Production restarts clear it on the next startup; in one pytest process
+    it would otherwise reject every later turn with "Tomo is shutting down".
+    """
+    yield
+    from app.services import chat
+
+    chat._shutting_down = False
 
 
 def pytest_collection_modifyitems(items) -> None:
