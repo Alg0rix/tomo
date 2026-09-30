@@ -164,7 +164,9 @@
 .mem-correction .input { display: block; width: 100%; margin-top: 6px; }
 .mem-correction-actions { display: flex; align-items: center; gap: 8px; }
 .mem-correction-actions [role="status"] { flex: 1; color: var(--danger); }
-.mem-fact.is-confirm > .mem-fact-foot > button { display: none; }
+.mem-fact.is-confirm > .mem-fact-foot > button[data-edit],
+.mem-fact.is-confirm > .mem-fact-foot > button[data-move],
+.mem-fact.is-confirm > .mem-fact-foot > button[data-forget] { display: none; }
 .mem-fact .forget:hover, .mem-fact .forget:focus-visible { opacity: 1; }
 
 .mem-fact button[data-edit]:hover, .mem-fact button[data-move]:hover { color: var(--accent); background: var(--surface-2); }
