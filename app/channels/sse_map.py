@@ -664,6 +664,9 @@ def map_loop_event(
         chunks.append(
             fmt_sse({"event": "clarify_required", "data": data, "seq": seq})
         )
+    elif kind == "assistant_progress":
+        seq += 1
+        chunks.append(fmt_sse({"event": "assistant_progress", "data": _stamp_dcid({"content": ev.get("content") or ""}, ev), "seq": seq}))
     elif kind == "steer":
         # Mid-turn user injection — persist + broadcast so reconnect/history see it.
         content = ev.get("content") or ""
@@ -673,6 +676,7 @@ def map_loop_event(
         data = {
             "content": content,
             "steered": True,
+            "steer_id": ev.get("steer_id"),
             "session_id": ev.get("session_id") or "",
         }
         if att_ids:
@@ -684,6 +688,7 @@ def map_loop_event(
             "content": content,
             "ts": now(),
             "steered": True,
+            "steer_id": ev.get("steer_id"),
         }
         if att_ids:
             entry["attachment_ids"] = att_ids

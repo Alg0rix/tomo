@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import threading
 from pathlib import Path
 from typing import Any, AsyncIterator
+from uuid import uuid4
 
 import re
 
@@ -810,8 +811,11 @@ def push_session_steer(
     ids = [a for a in (attachment_ids or []) if isinstance(a, str) and a.strip()]
     if not clean and not ids:
         return {"ok": False, "accepted": False, "reason": "empty", "session_id": sid}
-    item = {"content": clean, "attachment_ids": ids}
+    steer_id = uuid4().hex[:16]
+    item = {"content": clean, "attachment_ids": ids, "steer_id": steer_id}
     with turn._steer_lock:
+        if len(turn.steer_inbox) >= 20:
+            return {"ok": False, "accepted": False, "reason": "inbox_full", "session_id": sid}
         turn.steer_inbox.append(item)
     logger.info(
         "steer accepted session_id=%s chars=%d attachments=%d inbox=%d",
@@ -825,6 +829,7 @@ def push_session_steer(
         "accepted": True,
         "session_id": sid,
         "pending": len(turn.steer_inbox),
+        "steer_id": steer_id,
     }
 
 

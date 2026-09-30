@@ -336,6 +336,7 @@ async def _emit_drained_steers(
         messages.append({"role": "user", "content": llm_text or clean or "(attachment)"})
         yield {
             "kind": "steer",
+            "steer_id": item.get("steer_id"),
             "content": clean,
             "attachment_ids": ids,
             "attachments": attachment_meta_for_ids(ids),
@@ -935,6 +936,9 @@ async def run_turn(
                 yield thinking
             elif resp.has_tool_calls and resp.content:
                 yield {"kind": "thinking", "content": resp.content}
+
+            if resp.has_tool_calls and resp.content:
+                yield {"kind": "assistant_progress", "content": resp.content}
 
             if not resp.has_tool_calls:
                 # Late steer during the LLM round — keep going instead of ending.

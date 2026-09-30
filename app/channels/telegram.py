@@ -448,6 +448,22 @@ class TelegramAPI:
                     {"command": "new", "description": "Start a fresh conversation"},
                     {"command": "stop", "description": "Stop the current task"},
                     {
+                        "command": "steer",
+                        "description": "Guide the current task without stopping it",
+                    },
+                    {
+                        "command": "queue",
+                        "description": "Queue a separate task; list or clear the queue",
+                    },
+                    {
+                        "command": "interrupt",
+                        "description": "Replace the current task with a new instruction",
+                    },
+                    {
+                        "command": "mode",
+                        "description": "Choose steer, queue, or interrupt for new messages",
+                    },
+                    {
                         "command": "status",
                         "description": "Show progress and approval mode",
                     },
@@ -541,6 +557,7 @@ async def handle_inbound_text(
     ui: TelegramTurnUI | None = None,
     session_id: str | None = None,
     attachment_ids: list[str] | None = None,
+    as_content: bool = False,
 ) -> dict[str, Any]:
     """Map chat → session, run one turn, optionally reply on Telegram.
 
@@ -548,7 +565,7 @@ async def handle_inbound_text(
     """
     command = (
         text.split()[0].split("@")[0].lower()
-        if text.strip() and not attachment_ids
+        if text.strip() and not attachment_ids and not as_content
         else ""
     )
     if command == "/id":
@@ -596,6 +613,9 @@ async def handle_inbound_text(
             "Welcome to Tomo. Send a message to talk with your coordinator.\n"
             "/new — start a fresh conversation\n/stop — stop the current task\n/status — show progress\n"
             "/manual, /smart — set approval mode\n/help — show this guide\n/id — show this chat's ID\n"
+            "/steer <text> — guide the current task\n/queue <text> — run another task afterwards\n"
+            "/queue list, /queue clear — manage waiting tasks\n/interrupt <text> — replace current and waiting tasks\n"
+            "/mode steer|queue|interrupt — choose how extra messages behave\n"
             "Use the approval buttons when asked. Reply to questions or tap a choice. "
             "You can send extra guidance during a task. Your conversations also appear in Tomo's Chat page for administrators."
         )
@@ -700,6 +720,220 @@ class TelegramDispatcher:
         self.uis: dict[int, TelegramTurnUI] = {}
         self.actors: dict[int, tuple[int | None, int | None]] = {}
         self.albums: dict[int, list[dict]] = {}
+        self.pending: dict[int, list[dict]] = {}
+        self.steers: dict[int, dict[str, dict]] = {}
+        self.modes: dict[int, str] = {}
+        self.stopped: set[int] = set()
+        self.replacements: dict[int, dict] = {}
+        self.closing = False
+        self.running: set[int] = set()
+
+    MAX_PENDING = 10
+
+    async def _feedback(self, chat_id: int, item: dict, text: str) -> None:
+        if item.get("feedback_id"):
+            with contextlib.suppress(Exception):
+                await self.api.edit_message(chat_id, item["feedback_id"], text)
+
+    async def _receipt_state(self, chat_id: int, item: dict) -> None:
+        if item.get("cancelled"):
+            text = "Cancelled. This instruction will not run."
+        elif item.get("consumed"):
+            text = "✓ Agent read your guidance and will use it in the next model round."
+        elif item.get("finished"):
+            text = f"{item['outcome']}. See the conversation for the response."
+        elif item.get("started"):
+            text = "▶ Starting this task."
+        else:
+            return
+        await self._feedback(chat_id, item, text)
+
+    async def _discard_pending(self, chat_id: int) -> None:
+        items = self.pending.pop(chat_id, []) + list(
+            self.steers.pop(chat_id, {}).values()
+        )
+        for item in items:
+            if not item.get("consumed"):
+                item["cancelled"] = True
+                await self._feedback(
+                    chat_id, item, "Cancelled. This instruction will not run."
+                )
+
+    async def _enqueue(
+        self, chat_id: int, text: str, message: dict, *, reason: str = "Queued"
+    ) -> None:
+        items = self.pending.setdefault(chat_id, [])
+        album_id = message.get("media_group_id")
+        if (
+            album_id
+            and items
+            and album_id == items[-1]["message"].get("media_group_id")
+        ):
+            messages = items[-1].setdefault("messages", [items[-1]["message"]])
+            if len(messages) < 10 and all(
+                m.get("message_id") != message.get("message_id") for m in messages
+            ):
+                messages.append(message)
+            return
+        if len(items) >= self.MAX_PENDING:
+            await self.api.send_message(
+                chat_id,
+                "The queue is full (10 tasks). Use /queue list or /queue clear.",
+                thread_id=message.get("message_thread_id"),
+            )
+            return
+        item = {"text": text, "message": {**message, "_tomo_content": True}}
+        items.append(item)
+        ui = self.uis.get(chat_id)
+        if ui:
+            ui.queue_depth = len(items)
+        sent = await self.api.send_message(
+            chat_id,
+            f"↳ {reason} · position {len(items)}. Runs after the current task. Use /queue list or /queue clear.",
+            silent=True,
+            thread_id=message.get("message_thread_id"),
+        )
+        item["feedback_id"] = sent.get("message_id")
+        # The runner can start while the acknowledgement request is in flight.
+        await self._receipt_state(chat_id, item)
+
+    async def _busy_input(
+        self, chat_id: int, text: str, message: dict, mode: str, *, has_media: bool
+    ) -> None:
+        ui = self.uis.get(chat_id)
+        if mode == "interrupt":
+            self.replacements[chat_id] = {
+                "text": text,
+                "message": {**message, "_tomo_content": True},
+            }
+            self.stopped.add(chat_id)
+            if ui:
+                ui.request_stop()
+            elif chat_id not in self.running:
+                previous = self.tasks[chat_id]
+                previous.cancel()
+                await asyncio.gather(previous, return_exceptions=True)
+                if self.tasks.get(chat_id) is previous:
+                    # Cancellation before a task's first step skips its finally block.
+                    replacement = self.replacements.pop(chat_id)
+                    await self._discard_pending(chat_id)
+                    self.stopped.discard(chat_id)
+                    self.tasks[chat_id] = asyncio.create_task(
+                        self._drive(chat_id, replacement)
+                    )
+            await self.api.send_message(
+                chat_id,
+                "↳ Interrupting. Replacing the current task and clearing waiting instructions. A tool already dispatched may still finish.",
+                thread_id=message.get("message_thread_id"),
+            )
+            return
+        if mode == "steer" and not has_media and ui and not ui.waiting:
+            from app.services.chat import push_session_steer
+
+            result = push_session_steer(ui.session_id, text)
+            if result.get("accepted"):
+                item = {
+                    "text": text,
+                    "message": {**message, "_tomo_content": True},
+                    "consumed": False,
+                }
+                self.steers.setdefault(chat_id, {})[result["steer_id"]] = item
+                ui.steer_receipts = self.steers[chat_id]
+                sent = await self.api.send_message(
+                    chat_id,
+                    "↳ Guidance received. Waiting for the agent's next model round.",
+                    silent=True,
+                    thread_id=message.get("message_thread_id"),
+                )
+                item["feedback_id"] = sent.get("message_id")
+                await self._receipt_state(chat_id, item)
+                return
+            if result.get("reason") == "inbox_full":
+                await self.api.send_message(
+                    chat_id,
+                    "Too much unread guidance (20 messages). Use /queue instead.",
+                    thread_id=message.get("message_thread_id"),
+                )
+                return
+        reason = (
+            "Queued"
+            if mode == "queue"
+            else "Queued as a separate turn; the current task cannot read this guidance yet"
+        )
+        await self._enqueue(chat_id, text, message, reason=reason)
+
+    async def _drive(self, chat_id: int, item: dict) -> None:
+        """Own the chat slot through all FIFO turns and interrupt cleanup."""
+        self.running.add(chat_id)
+        try:
+            while not self.closing and chat_is_allowed(chat_id):
+                item["started"] = True
+                await self._feedback(chat_id, item, "▶ Agent started this task.")
+                if item["message"].get("media_group_id"):
+                    self.albums.setdefault(
+                        chat_id, item.get("messages", [item["message"]])
+                    )
+                try:
+                    result = (
+                        None
+                        if chat_id in self.stopped
+                        else await self._run(chat_id, item["text"], item["message"])
+                    )
+                except asyncio.CancelledError:
+                    result = None
+                    if self.closing or chat_id not in self.stopped:
+                        raise
+                if chat_id in self.stopped:
+                    item["finished"] = True
+                    item["outcome"] = "Stopped"
+                    await self._feedback(
+                        chat_id, item, "Stopped. This task was interrupted."
+                    )
+                    await self._discard_pending(chat_id)
+                    self.stopped.discard(chat_id)
+                    replacement = self.replacements.pop(chat_id, None)
+                    if replacement is None:
+                        break
+                    item = replacement
+                    continue
+                item["finished"] = True
+                item["outcome"] = (
+                    "Completed"
+                    if result and result.get("outcome") == "Done"
+                    else "Failed"
+                )
+                await self._feedback(
+                    chat_id,
+                    item,
+                    f"{'✓' if item['outcome'] == 'Completed' else '✗'} {item['outcome']}. See the conversation for the response.",
+                )
+                # A late accepted steer can miss the final drain. Keep it as a follow-up.
+                for receipt in self.steers.pop(chat_id, {}).values():
+                    if not receipt.get("consumed"):
+                        self.pending.setdefault(chat_id, []).append(receipt)
+                        await self._feedback(
+                            chat_id,
+                            receipt,
+                            "↳ The task finished before reading this guidance. Queued as a follow-up.",
+                        )
+                waiting = self.pending.get(chat_id, [])
+                if not waiting:
+                    break
+                item = waiting.pop(0)
+                self.actors[chat_id] = (
+                    (item["message"].get("from") or {}).get("id"),
+                    item["message"].get("message_thread_id"),
+                )
+        finally:
+            if not item.get("finished") and not item.get("consumed"):
+                item["cancelled"] = True
+                await self._receipt_state(chat_id, item)
+            await self._discard_pending(chat_id)
+            self.tasks.pop(chat_id, None)
+            self.actors.pop(chat_id, None)
+            self.replacements.pop(chat_id, None)
+            self.stopped.discard(chat_id)
+            self.running.discard(chat_id)
 
     async def dispatch(self, update: dict) -> None:
         query = update.get("callback_query")
@@ -752,6 +986,84 @@ class TelegramDispatcher:
             ui = None
         sender_id = (message.get("from") or {}).get("id")
         thread_id = message.get("message_thread_id")
+        busy = task is not None and not task.done()
+        if busy and chat_id in self.stopped and command not in {"/status", "/stop"}:
+            await self.api.send_message(
+                chat_id,
+                "The task is stopping. Please send your next instruction after cleanup finishes.",
+                thread_id=thread_id,
+            )
+            return
+        if (
+            busy
+            and (sender_id, thread_id) != self.actors.get(chat_id)
+            and (command in {"/steer", "/queue", "/interrupt", "/mode"} or not command)
+        ):
+            await self.api.send_message(
+                chat_id,
+                "Only the person who started this task can steer, queue, or interrupt it in this topic.",
+                thread_id=thread_id,
+            )
+            return
+        parts = text.split(maxsplit=1)
+        args = parts[1].strip() if len(parts) == 2 else ""
+        if command == "/mode":
+            if args in {"steer", "queue", "interrupt"}:
+                self.modes[chat_id] = args
+                if ui:
+                    ui.input_mode = args
+            elif args:
+                await self.api.send_message(
+                    chat_id,
+                    "Use /mode steer, /mode queue, or /mode interrupt.",
+                    thread_id=thread_id,
+                )
+                return
+            await self.api.send_message(
+                chat_id,
+                f"New messages while busy: {self.modes.get(chat_id, 'steer')}. This setting lasts until the bot restarts. Explicit /steer, /queue, and /interrupt override it.",
+                thread_id=thread_id,
+            )
+            return
+        if command == "/queue" and args in {"list", "clear"}:
+            waiting = self.pending.get(chat_id, [])
+            if args == "clear":
+                for item in self.pending.pop(chat_id, []):
+                    item["cancelled"] = True
+                    await self._feedback(
+                        chat_id, item, "Cancelled. Removed from the queue."
+                    )
+                if ui:
+                    ui.queue_depth = 0
+                reply = f"Cleared {len(waiting)} waiting task(s). The current task continues."
+            else:
+                reply = (
+                    "No waiting tasks."
+                    if not waiting
+                    else "Waiting tasks:\n"
+                    + "\n".join(
+                        f"{i}. {item['text'][:120] or '[Media attachment]'}"
+                        for i, item in enumerate(waiting, 1)
+                    )
+                )
+            await self.api.send_message(
+                chat_id, reply, silent=True, thread_id=thread_id
+            )
+            return
+        if command in {"/steer", "/queue", "/interrupt"}:
+            if not args:
+                await self.api.send_message(
+                    chat_id, f"Use {command} <instruction>.", thread_id=thread_id
+                )
+                return
+            if busy:
+                await self._busy_input(
+                    chat_id, args, message, command[1:], has_media=False
+                )
+                return
+            # Idle explicit inputs are ordinary turns; nested slashes are content.
+            text, message = args, {**message, "text": args, "_tomo_content": True}
+            command = ""
         if command.startswith("/"):
             if (
                 task
@@ -780,6 +1092,7 @@ class TelegramDispatcher:
                     )
                     return
                 if command == "/stop":
+                    self.stopped.add(chat_id)
                     if ui is not None:
                         ui.request_stop()
                     else:
@@ -787,6 +1100,7 @@ class TelegramDispatcher:
                         await asyncio.gather(task, return_exceptions=True)
                         self.tasks.pop(chat_id, None)
                         self.actors.pop(chat_id, None)
+                        await self._discard_pending(chat_id)
                     await self.api.send_message(
                         chat_id, "Stopping the current task…", thread_id=thread_id
                     )
@@ -816,37 +1130,14 @@ class TelegramDispatcher:
                 ):
                     album.append(message)
                 return
-            if has_media:
-                await self.api.send_message(
-                    chat_id,
-                    "A task is running. Send this attachment again when it finishes, or use /stop first.",
-                    thread_id=thread_id,
-                )
+            if not has_media and ui is not None and await ui.answer_text(message):
                 return
-            if ui is not None and await ui.answer_text(message):
-                return
-            if (
-                ui is not None
-                and sender_id == ui.actor_id
-                and thread_id == ui.thread_id
-                and not ui.waiting
-            ):
-                from app.services.chat import push_session_steer
-
-                result = push_session_steer(ui.session_id, text)
-                if result.get("accepted"):
-                    await self.api.send_message(
-                        chat_id,
-                        "↳ Added your guidance to the current task.",
-                        silent=True,
-                        thread_id=thread_id,
-                    )
-                    return
-            await self.api.send_message(
+            await self._busy_input(
                 chat_id,
-                "A task is running. Answer its question or approval buttons, or use /stop.",
-                silent=True,
-                thread_id=thread_id,
+                text,
+                message,
+                self.modes.get(chat_id, "steer"),
+                has_media=has_media,
             )
             return
         if len(self.tasks) >= self.MAX_ACTIVE_CHATS:
@@ -859,7 +1150,10 @@ class TelegramDispatcher:
         self.actors[chat_id] = (sender_id, thread_id)
         if has_media and message.get("media_group_id"):
             self.albums[chat_id] = [message]
-        self.tasks[chat_id] = asyncio.create_task(self._run(chat_id, text, message))
+        self.stopped.discard(chat_id)
+        self.tasks[chat_id] = asyncio.create_task(
+            self._drive(chat_id, {"text": text, "message": message})
+        )
 
     async def _run(
         self, chat_id: int, text: str, message: dict, *, send_reply: bool = True
@@ -884,6 +1178,11 @@ class TelegramDispatcher:
                 thread_id=message.get("message_thread_id"),
             )
             self.uis[chat_id] = ui
+            ui.input_mode = self.modes.get(chat_id, "steer")
+            ui.queue_depth = len(self.pending.get(chat_id, []))
+            ui.steer_receipts = self.steers.setdefault(chat_id, {})
+            ui.on_stop = lambda: self.stopped.add(chat_id)
+            ui.on_mode = lambda mode: self.modes.__setitem__(chat_id, mode)
             if send_reply:
                 await ui.start()
             if ui.stop_requested:
@@ -974,7 +1273,7 @@ class TelegramDispatcher:
                 ui.phase = "Thinking"
                 if ui.stop_requested or not chat_is_allowed(chat_id):
                     return
-            return await handle_inbound_text(
+            result = await handle_inbound_text(
                 chat_id,
                 text,
                 api=self.api,
@@ -983,7 +1282,9 @@ class TelegramDispatcher:
                 session_id=sid,
                 attachment_ids=attachment_ids or None,
                 send_reply=send_reply,
+                as_content=bool(message.get("_tomo_content")),
             )
+            return {**result, "outcome": ui.outcome}
         except asyncio.CancelledError:
             if ui:
                 ui.outcome = "Stopped"
@@ -1010,11 +1311,10 @@ class TelegramDispatcher:
             if ui:
                 await ui.close()
             self.uis.pop(chat_id, None)
-            self.tasks.pop(chat_id, None)
-            self.actors.pop(chat_id, None)
             self.albums.pop(chat_id, None)
 
     async def close(self) -> None:
+        self.closing = True
         tasks = list(self.tasks.values())
         for task in tasks:
             task.cancel()
@@ -1023,6 +1323,11 @@ class TelegramDispatcher:
         self.tasks.clear()
         self.uis.clear()
         self.actors.clear()
+        for chat_id in list(self.pending.keys() | self.steers.keys()):
+            await self._discard_pending(chat_id)
+        self.albums.clear()
+        self.replacements.clear()
+        self.stopped.clear()
 
 
 async def poll_once(

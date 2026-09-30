@@ -36,19 +36,50 @@ their buttons, including when resolved through the web UI.
 | `/id` | Show the current chat ID without running the model |
 | `/help`, `/start` | Show guidance |
 | `/new` | Fresh history, retained approval mode; stop active work first |
-| `/stop` | Cancel the current turn and wake pending waiters |
-| `/status` | Show activity and approval mode |
+| `/stop` | Cancel the current turn, clear waiting inputs, and wake pending waiters |
+| `/status` | Show activity, approval mode, input mode, and queue depth |
+| `/steer <text>` | Inject guidance into the current run at its next model round |
+| `/queue <text>` | Run a separate turn after the current one, in FIFO order |
+| `/queue list`, `/queue clear` | Inspect or cancel waiting tasks; clear keeps the current run |
+| `/interrupt <text>` | Stop current work, clear waiting inputs, then run the replacement |
+| `/mode steer\|queue\|interrupt` | Choose how ordinary messages behave while busy |
 | `/manual`, `/smart` | Change approval mode for this conversation |
 | `/auto` | Toggle automatic approvals; existing hardline restrictions remain |
 
-During a task, extra text from its initiating person becomes guidance through
-Tomo's existing steer inbox. It is not silently dropped or run as another
-concurrent turn. Pending questions take precedence over steering. Other chats
-continue independently; the dispatcher limits concurrent chats to 16.
+The activity card also provides Steer / Queue / Interrupt buttons, bound to the
+initiating person and topic. Ordinary messages default to **steer**. An explicit
+command overrides the mode for that message. Modes last for the current bot
+process; `/new` keeps the selected mode. Idle commands run their payload as an
+ordinary turn, even when the payload starts with another slash command.
+
+Steer feedback starts as “received” and changes only when the loop emits the
+correlated steer receipt: the agent has read it into the next model round. This
+confirms consumption, not that the requested change has already succeeded. If
+guidance arrives during startup, after the final drain, while receiving media,
+or during an approval wait, it becomes a separate follow-up instead of being
+lost. Unread guidance is bounded to 20 messages; explicit waiting tasks to 10.
+Queued messages receive position, starting, and completed/failed feedback.
+Interrupt waits for the previous turn's cleanup before starting its replacement.
+Stop and interrupt clear waiting tasks and unread guidance; dispatched tool
+effects cannot be undone by cancellation.
+
+Pending questions take precedence over ordinary text steering; explicit commands
+remain controls. Media sent during busy work queues as a separate turn, or
+replaces work in interrupt mode. Waiting albums preserve their files and original
+reply/topic context. Only the initiating person in the same topic can inject or
+change busy work. Other chats continue independently; the dispatcher limits
+concurrent chats to 16. Queue and receipt state are in memory and do not survive
+a bot restart; shutdown cancels the waiting tasks.
+
+Public assistant commentary accompanying tool calls appears as quiet progress
+messages (at most 10 per turn). Subagent completion/failure updates the activity
+card. Private reasoning and raw tool results remain excluded from Telegram.
 
 ## Comparison with the local Hermes checkout
 
-The reference inspected is `tmp/hermes-agent/plugins/platforms/telegram/adapter.py`,
+The references inspected include `tmp/hermes-agent/gateway/run_busy.py` and
+`run_inbound.py` for steer, FIFO queue, busy modes, and feedback, plus
+`tmp/hermes-agent/plugins/platforms/telegram/adapter.py`,
 plus its approval, clarify, status, formatting, and typing regression tests. This
 is a comparison of the requested interaction flow, not a claim of complete
 Hermes feature parity.
@@ -88,10 +119,10 @@ Telegram's hosted API also has a [20 MB download limit](https://core.telegram.or
 
 Albums arriving within a fixed 800 ms collection window share one turn, up to
 10 files. Rich-message media blocks use the same ingestion path, up to 10 files.
-An album arriving late is treated as another inbound attachment and gets the
-busy notice if a turn is already running. Captions and speech are user content,
+An album arriving late is treated as another inbound attachment and queues if
+a turn is already running. Captions and speech are user content,
 so a caption like `/new` does not execute a bot command. Media received during
-an existing task gets a resend notice instead of being silently discarded or
+an existing task becomes a separate queued turn instead of being silently discarded or
 used as an approval answer. Stop cancels collection, download, and transcription;
 other chats and callbacks remain responsive during those operations.
 

@@ -70,7 +70,7 @@
       <div class="machine-field-copy"><label class="machine-field-name" for="setTgTranscriptionKey">Transcription API key</label><p class="machine-field-hint">Encrypted at rest. Blank keeps the existing key. This is separate from a ChatGPT subscription.</p></div>
       <div class="machine-field-control machine-field-control-wide"><input class="input" type="password" id="setTgTranscriptionKey" value="{{ settings.telegram_transcription_api_key or '' }}" autocomplete="new-password"></div>
     </div>
-    <p class="machine-field-hint">Send photos, documents, video, voice, audio, animations, or stickers up to 20 MB. Albums received together are processed in one turn. Images use your model's vision support; other files use Tomo's attachment tools. Send attachments after the current task finishes.</p>
+    <p class="machine-field-hint">Send photos, documents, video, voice, audio, animations, or stickers up to 20 MB. Albums received together are processed in one turn. Images use your model's vision support; other files use Tomo's attachment tools. During a task, attachments queue for the next turn. Use /mode to choose steer, queue, or interrupt; the activity card also offers these buttons.</p>
     <div class="machine-sheet-foot">
       <button class="btn primary sm" type="button" id="saveTelegram">Save Telegram</button>
     </div>

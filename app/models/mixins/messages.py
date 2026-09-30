@@ -20,7 +20,7 @@ from typing import Any
 
 _NEW_SESSION_TITLES = ("New conversation", "New swarm chat")
 _TITLE_MAX_LEN = 60
-_META_KEYS = ("call_id", "delegate_call_id", "execution_mode", "metrics")
+_META_KEYS = ("call_id", "delegate_call_id", "execution_mode", "metrics", "steered", "steer_id")
 
 
 def _now() -> float:

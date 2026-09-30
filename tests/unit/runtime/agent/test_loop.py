@@ -401,7 +401,7 @@ async def test_thinking_emitted_when_content_accompanies_tool_calls() -> None:
         ]
     )
     events = await _collect("plan then run", llm=llm, tools=_bash_tools())
-    assert _kinds(events, drop_delta=True) == ["thinking", "tool", "tool_result", "final"]
+    assert _kinds(events, drop_delta=True) == ["thinking", "assistant_progress", "tool", "tool_result", "final"]
     assert events[0] == {"kind": "thinking", "content": "Let me run that."}
     assert next(e for e in events if e["kind"] == "tool")["args"] == {"command": "echo 4"}
     assert _final(events)["content"] == "Done: 4"

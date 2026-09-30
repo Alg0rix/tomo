@@ -63,6 +63,11 @@ async def test_push_and_drain_steer_mid_turn() -> None:
         assert items[0]["content"] == "also do X"
         assert items[0]["attachment_ids"] == ["att1"]
         assert drain_session_steers("ses_steer") == []
+        receipts = [push_session_steer("ses_steer", f"guidance {i}") for i in range(20)]
+        assert all(r["accepted"] for r in receipts)
+        assert len({r["steer_id"] for r in receipts}) == 20
+        assert push_session_steer("ses_steer", "overflow")["reason"] == "inbox_full"
+        assert len(drain_session_steers("ses_steer")) == 20
 
         turn.task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -68,12 +68,27 @@ class TelegramTurnUI:
         self.outcome = "Done"
         self._ticker: asyncio.Task | None = None
         self.receiving_task: asyncio.Task | None = None
+        self.on_stop = None
+        self.on_mode = None
+        self.steer_receipts: dict[str, dict] = {}
+        self.input_mode = "steer"
+        self.queue_depth = 0
+        self.progress_count = 0
+        self.last_progress = ""
         self._io_lock = asyncio.Lock()
 
     def stop_keyboard(self) -> dict:
         return {
             "inline_keyboard": [
-                [{"text": "■ Stop", "callback_data": f"ts:{self.token}"}]
+                [{"text": "■ Stop", "callback_data": f"ts:{self.token}"}],
+                [
+                    {
+                        "text": ("✓ " if self.input_mode == mode else "")
+                        + mode.capitalize(),
+                        "callback_data": f"tm:{self.token}:{mode}",
+                    }
+                    for mode in ("steer", "queue", "interrupt")
+                ],
             ]
         }
 
@@ -113,6 +128,7 @@ class TelegramTurnUI:
         from app.runtime.permissions.modes import mode_payload
 
         lines.append("Approvals: " + mode_payload(self.session_id)["label"])
+        lines.append(f"New messages: {self.input_mode} · Queued: {self.queue_depth}")
         return "\n".join(lines)
 
     async def start(self) -> None:
@@ -243,7 +259,37 @@ class TelegramTurnUI:
                 continue
             if not isinstance(data, dict):
                 continue
-            if event in {"approval_required", "clarify_required"}:
+            if event == "user" and data.get("steered"):
+                receipt = self.steer_receipts.pop(data.get("steer_id"), None)
+                if receipt is not None:
+                    receipt["consumed"] = True
+                    if receipt.get("feedback_id"):
+                        with contextlib.suppress(Exception):
+                            await self.api.edit_message(
+                                self.chat_id,
+                                receipt["feedback_id"],
+                                "✓ Agent read your guidance and will use it in the next model round.",
+                            )
+                    self.recent.append("↳ Guidance read by agent")
+                    self.recent = self.recent[-3:]
+            elif event == "assistant_progress" and not data.get("delegate_call_id"):
+                content = str(data.get("content") or "").strip()[:1000]
+                if (
+                    content
+                    and content != self.last_progress
+                    and self.progress_count < 10
+                ):
+                    self.last_progress = content
+                    self.progress_count += 1
+                    with contextlib.suppress(Exception):
+                        await self.api.send_message(
+                            self.chat_id,
+                            "↳ " + content,
+                            formatted=True,
+                            silent=True,
+                            thread_id=self.thread_id,
+                        )
+            elif event in {"approval_required", "clarify_required"}:
                 await self.show_prompt(
                     "approval" if event == "approval_required" else "clarify", data
                 )
@@ -274,6 +320,15 @@ class TelegramTurnUI:
                 self.phase = "Delegating"
                 self.recent.append(
                     "↗ " + str(data.get("agent") or data.get("to") or "Agent")[:80]
+                )
+                self.recent = self.recent[-3:]
+            elif event == "subagent_done" or (
+                event == "error" and data.get("delegate_call_id")
+            ):
+                failed = event == "error" or data.get("status") in {"error", "failed"}
+                agent = str(data.get("agent") or data.get("agent_id") or "Agent")[:80]
+                self.recent.append(
+                    f"{'✗' if failed else '✓'} {agent} {'failed' if failed else 'finished'}"
                 )
                 self.recent = self.recent[-3:]
             elif event in {"thinking", "thinking_delta", "status"}:
@@ -418,6 +473,8 @@ class TelegramTurnUI:
 
         self.stop_requested = True
         self.outcome = "Stopped"
+        if self.on_stop is not None:
+            self.on_stop()
         if self.receiving_task is not None:
             self.receiving_task.cancel()
         cancel_session_turn(self.session_id)
@@ -441,6 +498,31 @@ class TelegramTurnUI:
                 )
             return True
         parts = data.split(":")
+        if (
+            len(parts) == 3
+            and parts[:2] == ["tm", self.token]
+            and parts[2] in {"steer", "queue", "interrupt"}
+        ):
+            if (
+                self.finished
+                or self.stop_requested
+                or self.status_id is None
+                or not self.authorized(query, self.status_id)
+            ):
+                await self.api.answer_callback(
+                    callback_id,
+                    "This control belongs to another person or has expired.",
+                    alert=True,
+                )
+                return True
+            self.input_mode = parts[2]
+            if self.on_mode is not None:
+                self.on_mode(self.input_mode)
+            await self.api.answer_callback(
+                callback_id, f"New messages: {self.input_mode}"
+            )
+            await self.refresh()
+            return True
         if len(parts) != 3 or parts[0] not in {"ta", "tc"}:
             return False
         prompt = self.prompts.get(parts[1])
