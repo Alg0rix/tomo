@@ -72,12 +72,15 @@ async def _lifespan(_app: FastAPI):
     # Chat turns, learning distill, portal copies stay request/task-local.
     from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
     from app.scheduler import start_scheduler, stop_scheduler
+    from app.services.chat import recover_web_turns, suspend_session_turns
 
+    await recover_web_turns()
     start_telegram_supervisor()
     start_scheduler()
     try:
         yield
     finally:
+        await suspend_session_turns()
         await stop_scheduler()
         await stop_telegram_supervisor()
         try:

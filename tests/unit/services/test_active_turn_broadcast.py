@@ -124,6 +124,7 @@ async def test_start_session_turn_rejects_when_already_active() -> None:
 
     with (
         patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod.turn_recovery, "save_request", side_effect=lambda sid, payload: {**payload, "session_id": sid, "token": "test", "history_start": 0}),
         patch.object(chat_mod, "stream_turn_sse", _empty_sse),
     ):
         turn, _q = await chat_mod.start_session_turn("ses_busy", "hi", "web")
@@ -156,6 +157,7 @@ async def test_cancel_session_turn_cancels_running_task() -> None:
 
     with (
         patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod.turn_recovery, "save_request", side_effect=lambda sid, payload: {**payload, "session_id": sid, "token": "test", "history_start": 0}),
         patch.object(chat_mod.store, "try_begin_session_turn", return_value=True),
         patch.object(chat_mod.store, "end_session_turn"),
         patch.object(chat_mod, "stream_turn_sse", _blocking_sse),
@@ -199,6 +201,7 @@ async def test_start_session_turn_finally_keeps_newer_registry_slot() -> None:
 
     with (
         patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod.turn_recovery, "save_request", side_effect=lambda sid, payload: {**payload, "session_id": sid, "token": "test", "history_start": 0}),
         patch.object(chat_mod, "stream_turn_sse", _blocking_sse),
     ):
         old, _ = await chat_mod.start_session_turn("ses_x", "one", "web")

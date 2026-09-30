@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS session_agents (
     PRIMARY KEY (session_id, agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS session_turns (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    history_start INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    reply TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

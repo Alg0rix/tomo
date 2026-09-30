@@ -411,6 +411,7 @@ async def stream_turn_sse(
     execution_mode: str = "solo",
     acquire_lock: bool = True,
     origin: str | None = None,
+    resume: bool = False,
 ) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
@@ -463,7 +464,7 @@ async def stream_turn_sse(
     try:
         from app.runtime.permissions.slash import handle_approval_slash
 
-        slash_notice = handle_approval_slash(message or "", session_id)
+        slash_notice = None if resume else handle_approval_slash(message or "", session_id)
         if slash_notice is not None:
             store.append_session_history(
                 session_id,
@@ -548,7 +549,7 @@ async def stream_turn_sse(
         approved_plan: dict[str, Any] | None = None
         from app.models.mixins import swarm as swarm_store
 
-        pending = store.with_db(lambda conn: swarm_store.get_proposal(conn, session_id))
+        pending = None if resume else store.with_db(lambda conn: swarm_store.get_proposal(conn, session_id))
         answer = (message or "").strip().casefold().strip(".! ")
         if pending and answer in {"gas", "ya", "iya", "yes", "go", "go ahead", "lanjut", "setuju"}:
             use_swarm = True
@@ -561,6 +562,10 @@ async def stream_turn_sse(
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
         elif pending:
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
+        if resume:
+            # Let the agent reconcile interrupted swarm work from history; do
+            # not blindly submit the original team request a second time.
+            use_swarm = False
         # Chat membership controls direct mentions, not the coordinator's
         # ability to delegate. Resolve enabled destinations on every turn so
         # existing single-agent chats can hand work to configured specialists.
@@ -686,7 +691,7 @@ async def stream_turn_sse(
                 if not clean and meta:
                     # Empty caption — keep content blank; UI shows chips only.
                     user_entry["content"] = ""
-            new_title = store.append_session_history(session_id, user_entry)
+            new_title = None if resume else store.append_session_history(session_id, user_entry)
             if new_title:
                 logger.info(
                     "session title provisional session_id=%s title=%r",
@@ -725,7 +730,7 @@ async def stream_turn_sse(
                 # Persist full ``@ops …`` user row; feed the member the stripped
                 # prompt without the user row or the just-written handoff row.
                 hist = store.get_session_history(session_id)
-                hist_for_member = _history_before_last_user(hist)
+                hist_for_member = hist if resume else _history_before_last_user(hist)
                 from app.services.chat import expand_slash_skill, prepend_attachment_info
 
                 # Caption for the member (no @mention); expand slash skills +
@@ -733,6 +738,10 @@ async def stream_turn_sse(
                 member_prompt = prepend_attachment_info(
                     expand_slash_skill(mention_rest.strip() or message), attachment_ids
                 )
+                if resume:
+                    from app.services.turn_recovery import RESUME_PROMPT
+
+                    member_prompt = RESUME_PROMPT + member_prompt
                 async for chunk, seq in _emit_member_turn_start(
                     to_id=force_target, turn_id=turn_id, seq=seq
                 ):
@@ -750,12 +759,16 @@ async def stream_turn_sse(
                 ):
                     yield chunk
             else:
+                if resume:
+                    from app.services.turn_recovery import RESUME_PROMPT
+
+                    solo_request = RESUME_PROMPT + (message or "")
                 async for chunk, seq in _drain_agent_turn(
                     session_id,
                     coordinator_id,
                     user_message=solo_request,
                     history=(_history_before_last_user(store.get_session_history(session_id))
-                             if solo_request else store.get_session_history(session_id)),
+                             if solo_request and not resume else store.get_session_history(session_id)),
                     seq=seq,
                     turn_id=turn_id,
                     busy_ids=busy_ids,

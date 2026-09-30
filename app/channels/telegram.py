@@ -486,6 +486,7 @@ async def run_channel_turn(
     *,
     ui: TelegramTurnUI | None = None,
     attachment_ids: list[str] | None = None,
+    recovery: dict[str, Any] | None = None,
 ) -> str:
     """Run the web turn pipeline; return the latest final (or error) text."""
     # Lazy import: chat → channels.web → channels package must not pull telegram
@@ -496,8 +497,17 @@ async def run_channel_turn(
     if not session:
         raise ValueError("Session not found")
     history_start = len(store.get_session_history(session_id))
+    delivery = recovery.get("delivery") if recovery else None
+    if ui is not None and delivery is None:
+        delivery = {
+            "channel": "telegram", "chat_id": ui.chat_id,
+            "actor_id": ui.actor_id, "reply_to": ui.reply_to,
+            "thread_id": ui.thread_id,
+            "bot": hashlib.sha256(ui.api._token.encode()).hexdigest(),
+        }
     turn, queue = await start_session_turn(
-        session_id, message, session["user_id"], attachment_ids=attachment_ids
+        session_id, message, session["user_id"], attachment_ids=attachment_ids,
+        delivery=delivery, recovery=recovery,
     )
     try:
         while True:
@@ -513,6 +523,12 @@ async def run_channel_turn(
             with contextlib.suppress(asyncio.CancelledError):
                 await turn.task
     history = store.get_session_history(session_id)
+    if turn.suspended:
+        if ui is not None:
+            ui.outcome = "Restarting"
+        raise asyncio.CancelledError
+    if turn.reply:
+        return turn.reply
     for entry in reversed(history[history_start:]):
         kind = entry.get("type")
         if kind in ("final", "error") and entry.get("content"):
@@ -666,6 +682,9 @@ async def handle_inbound_text(
             await ui.finish(reply)
         else:
             await api.send_answer(chat_id, reply)
+        from app.services.turn_recovery import acknowledge_delivery
+
+        acknowledge_delivery(session_id)
     return {"session_id": session_id, "reply": reply, "agent_id": resolved}
 
 
@@ -729,6 +748,41 @@ class TelegramDispatcher:
         self.running: set[int] = set()
 
     MAX_PENDING = 10
+
+    def recover_pending(self) -> None:
+        """Restore chat slots before polling, keeping sender/topic controls."""
+        from app.services import chat
+        from app.services.turn_recovery import finish_request, pending_requests
+
+        fingerprint = hashlib.sha256(self.api._token.encode()).hexdigest()
+        for request in pending_requests():
+            delivery = request.get("delivery") or {}
+            if delivery.get("channel") != "telegram" or delivery.get("bot") != fingerprint:
+                continue
+            chat_id = delivery["chat_id"]
+            session = store.get_session(request["session_id"])
+            if not chat_is_allowed(chat_id) or not session or session["user_id"] != user_id_for_chat(chat_id):
+                finish_request(request)
+                continue
+            if chat_id in self.tasks or len(self.tasks) >= self.MAX_ACTIVE_CHATS:
+                continue
+            self.actors[chat_id] = (delivery.get("actor_id"), delivery.get("thread_id"))
+            message = {
+                "from": {"id": delivery.get("actor_id")},
+                "message_id": delivery.get("reply_to"),
+                "message_thread_id": delivery.get("thread_id"),
+                "_tomo_recovery": request,
+            }
+            self.tasks[chat_id] = asyncio.create_task(self._drive(chat_id, {
+                "text": request["message"], "message": message,
+            }))
+
+            def discard_cancelled(task, request=request):
+                # Stop can arrive before _drive creates its UI/turn registry.
+                if task.cancelled() and not self.closing and not chat._shutting_down:
+                    finish_request(request)
+
+            self.tasks[chat_id].add_done_callback(discard_cancelled)
 
     async def _feedback(self, chat_id: int, item: dict, text: str) -> None:
         if item.get("feedback_id"):
@@ -1165,10 +1219,14 @@ class TelegramDispatcher:
             # Re-check after scheduling; revoking an ID must close agent access.
             if not chat_is_allowed(chat_id):
                 return
-            resolved = _resolve_agent_id(self.agent_id)
+            recovery = message.get("_tomo_recovery")
+            recovered_session = store.get_session(recovery["session_id"]) if recovery else None
+            resolved = _resolve_agent_id(
+                recovered_session["coordinator_id"] if recovered_session else self.agent_id
+            )
             if not resolved:
                 raise ValueError("No coordinator")
-            sid = store.get_or_create_session(resolved, user_id_for_chat(chat_id))
+            sid = recovery["session_id"] if recovery else store.get_or_create_session(resolved, user_id_for_chat(chat_id))
             ui = TelegramTurnUI(
                 self.api,
                 chat_id,
@@ -1183,11 +1241,25 @@ class TelegramDispatcher:
             ui.steer_receipts = self.steers.setdefault(chat_id, {})
             ui.on_stop = lambda: self.stopped.add(chat_id)
             ui.on_mode = lambda mode: self.modes.__setitem__(chat_id, mode)
+            if recovery:
+                ui.phase = "Continuing after restart"
             if send_reply:
                 await ui.start()
             if ui.stop_requested:
                 await ui.finish("Stopped.")
                 return
+            if recovery:
+                from app.services.turn_recovery import acknowledge_delivery
+
+                reply = await run_channel_turn(
+                    sid, text, ui=ui, attachment_ids=recovery.get("attachment_ids"),
+                    recovery=recovery,
+                )
+                if send_reply and chat_is_allowed(chat_id):
+                    await ui.finish(reply)
+                    acknowledge_delivery(sid)
+                return {"session_id": sid, "reply": reply, "agent_id": resolved,
+                        "outcome": ui.outcome}
             from app.channels.telegram_media import (
                 MediaError,
                 ingest_media,
@@ -1287,8 +1359,9 @@ class TelegramDispatcher:
             return {**result, "outcome": ui.outcome}
         except asyncio.CancelledError:
             if ui:
-                ui.outcome = "Stopped"
-                if send_reply and chat_is_allowed(chat_id):
+                restarting = ui.outcome == "Restarting"
+                ui.outcome = "Restarting" if restarting else "Stopped"
+                if send_reply and chat_is_allowed(chat_id) and not restarting and not self.closing:
                     with contextlib.suppress(Exception):
                         await ui.finish("Stopped.")
             raise
@@ -1398,6 +1471,7 @@ async def _supervisor_loop(stop: asyncio.Event) -> None:
                 api = TelegramAPI(token)
                 active_token = token
                 dispatcher = TelegramDispatcher(api)
+                dispatcher.recover_pending()
                 fingerprint = hashlib.sha256(token.encode()).hexdigest()
                 cursor = settings.get("telegram_update_cursor") or {}
                 if isinstance(cursor, dict) and cursor.get("bot") == fingerprint:

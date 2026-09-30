@@ -31,6 +31,15 @@ Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegatio
 
 Chats start with one agent. To use a team in a new or existing chat, turn on **Team** for the next message or ask for multiple agents in the message itself. Tomo may suggest a task split for an ordinary request; reply **gas** or **ya** to approve it. The bundled policy is the [Tomo skill](skills/internal/tomo/SKILL.md) (`references/swarm.md`), alongside skills from `~/.agents/skills`. A team run can mix configured agents with specialists that exist only in that chat. The coordinator selects enabled tools for each task, including `bash` and `portal` where appropriate. The chat shows actual task progress instead of a generic swarm label.
 
+Active web and Telegram tasks automatically continue after Tomo restarts, using
+the saved conversation and tool results. Telegram replies return to the original
+chat/topic, with the original sender retaining control. Stopped and finished tasks
+are not rerun. Pending approvals must be requested again; a tool interrupted before
+its result was saved has an unknown outcome, so the agent must check its effects
+before retrying it. Recovery requires the same Tomo database and, for Telegram,
+the same bot token with the chat still allowed. Waiting Telegram queue items are currently
+kept in memory and do not survive a restart.
+
 ### Install (Linux, systemd user)
 
 Recommended for a lasting install. Requires `git`; installs `uv` if missing.

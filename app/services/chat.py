@@ -24,6 +24,7 @@ import re
 from app.channels.web import _fmt_sse, stream_turn_sse
 
 from .store import store
+from . import turn_recovery
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ def _caught_up_chunk() -> str:
 @dataclass
 class _ActiveTurn:
     session_id: str
+    suspended: bool = False
+    request: dict[str, Any] | None = None
+    reply: str = ""
     _consumers: list[asyncio.Queue] = field(default_factory=list)
     _replay: list[tuple[int | None, str]] = field(default_factory=list)
     task: asyncio.Task | None = None
@@ -160,6 +164,7 @@ class _ActiveTurn:
 
 
 _active_turns: dict[str, _ActiveTurn] = {}
+_shutting_down = False
 
 
 def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
@@ -189,7 +194,12 @@ def cancel_session_turn(session_id: str) -> bool:
         return False
     turn = get_active_session_turn(sid)
     if turn is None:
-        return False
+        return turn_recovery.cancel_request(sid)
+
+    # Persist Stop before cancellation, including cancellation before the
+    # background coroutine's first step. A subsequent restart must not revive it.
+    if turn.request:
+        turn_recovery.finish_request(turn.request)
 
     with turn._steer_lock:
         turn.steer_inbox.clear()
@@ -228,6 +238,8 @@ def cancel_session_turn(session_id: str) -> bool:
 async def start_session_turn(
     session_id: str, message: str, user_id: str, start_seq: int = 0,
     attachment_ids: list[str] | None = None, execution_mode: str = "solo",
+    *, delivery: dict[str, Any] | None = None,
+    recovery: dict[str, Any] | None = None,
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
     """Start a background agent turn and return ``(turn, subscription_queue)``.
 
@@ -237,6 +249,8 @@ async def start_session_turn(
 
     Raises :class:`SessionTurnBusy` if this session already has a live turn.
     """
+    if _shutting_down:
+        raise RuntimeError("Tomo is shutting down")
     session = store.get_session(session_id)
     if not session:
         raise ValueError(f"Session not found: {session_id}")
@@ -249,11 +263,45 @@ async def start_session_turn(
     if not store.try_begin_session_turn(session_id):
         raise SessionTurnBusy(session_id)
 
-    turn = _ActiveTurn(session_id=session_id)
+    try:
+        request = recovery or turn_recovery.save_request(session_id, {
+            "message": message, "user_id": user_id, "start_seq": start_seq,
+            "attachment_ids": attachment_ids, "execution_mode": execution_mode,
+            "delivery": delivery,
+        })
+    except Exception:
+        store.end_session_turn(session_id)
+        raise
+    turn = _ActiveTurn(session_id=session_id, request=request)
     _active_turns[session_id] = turn
+    started = False
+
+    def cleanup() -> None:
+        try:
+            if not turn.suspended:
+                if delivery and turn.reply:
+                    turn_recovery.complete_request(request, turn.reply)
+                else:
+                    turn_recovery.finish_request(request)
+        finally:
+            turn.finish()
+            store.end_session_turn(session_id)
+            if _active_turns.get(session_id) is turn:
+                _active_turns.pop(session_id, None)
 
     async def _runner() -> None:
+        nonlocal started
+        started = True
         try:
+            # A crash may occur after a final was committed but before cleanup.
+            # Deliver that answer rather than invoking the model again.
+            entries = turn_recovery.history_since(request)
+            if recovery and (recovery.get("completed") or (
+                entries and entries[-1]["type"] in {"final", "error"}
+            )):
+                turn.reply = recovery.get("reply") or entries[-1]["content"]
+                return
+            resume = bool(recovery and any(e["type"] == "user" for e in entries))
             async with contextlib.aclosing(
                 stream_turn_sse(
                     session_id,
@@ -263,12 +311,17 @@ async def start_session_turn(
                     attachment_ids=attachment_ids,
                     execution_mode=execution_mode,
                     acquire_lock=False,
+                    resume=resume,
                 )
             ) as agen:
                 async for chunk in agen:
                     turn._broadcast(chunk)
+            entries = turn_recovery.history_since(request)
+            turn.reply = next((str(e["content"]) for e in reversed(entries)
+                               if e["type"] in {"final", "error"} and e["content"]), "")
         except Exception as exc:
             logger.exception("background turn failed session_id=%s", session_id)
+            turn.reply = f"Turn failed: {exc}"
             turn._broadcast(
                 _fmt_sse(
                     {
@@ -279,15 +332,44 @@ async def start_session_turn(
                 )
             )
         finally:
-            turn.finish()
-            store.end_session_turn(session_id)
-            # Only clear registry if we still own this slot (never clobber a newer turn).
-            if _active_turns.get(session_id) is turn:
-                _active_turns.pop(session_id, None)
+            cleanup()
             logger.info("background turn done session_id=%s", session_id)
 
     turn.task = asyncio.create_task(_runner())
+    # asyncio skips coroutine finally blocks when cancelled before first run.
+    turn.task.add_done_callback(lambda _task: cleanup() if not started else None)
     return turn, turn.subscribe()
+
+
+async def suspend_session_turns() -> None:
+    """Stop process-local work for shutdown, preserving restart checkpoints."""
+    global _shutting_down
+    _shutting_down = True
+    turns = list(_active_turns.values())
+    for turn in turns:
+        turn.suspended = True
+        if turn.task and not turn.task.done():
+            turn.task.cancel()
+    await asyncio.gather(*(t.task for t in turns if t.task), return_exceptions=True)
+
+
+async def recover_web_turns() -> None:
+    global _shutting_down
+    _shutting_down = False
+    for request in turn_recovery.pending_requests():
+        if request.get("delivery"):
+            continue  # Telegram dispatcher owns both execution and delivery.
+        try:
+            turn, queue = await start_session_turn(
+                request["session_id"], request["message"], request["user_id"],
+                request.get("start_seq", 0), request.get("attachment_ids"),
+                request.get("execution_mode", "solo"), recovery=request,
+            )
+            turn.unsubscribe(queue)
+        except SessionTurnBusy:
+            continue
+        except Exception:
+            logger.exception("turn recovery failed session_id=%s", request["session_id"])
 
 
 def _coordinator_for(session: dict[str, Any]) -> str | None:

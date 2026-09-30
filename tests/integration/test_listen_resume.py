@@ -136,6 +136,7 @@ async def test_get_active_session_turn_survives_without_subscribers() -> None:
     }
     with (
         patch.object(chat_mod.store, "get_session", return_value=fake_session),
+        patch.object(chat_mod.turn_recovery, "save_request", side_effect=lambda sid, payload: {**payload, "session_id": sid, "token": "test", "history_start": 0}),
         patch.object(chat_mod.store, "try_begin_session_turn", return_value=True),
         patch.object(chat_mod.store, "end_session_turn"),
         patch.object(chat_mod, "stream_turn_sse", _blocking_sse),
