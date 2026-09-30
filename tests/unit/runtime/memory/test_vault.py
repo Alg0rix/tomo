@@ -49,6 +49,23 @@ def test_writer_dedup_and_scoping(tmp_path, db):
         paths.entity_path('alice', 'project/../secret', home_root=tmp_path)
 
 
+@pytest.mark.parametrize('goal', ['question\nwith details', None])
+def test_record_turn_preserves_goal_with_multiline_outcome(tmp_path, monkeypatch, goal):
+    from app.core import config
+    from app.services import store
+
+    monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
+    store.rebind(tmp_path / 'timeline.db')
+    store.update_settings({'memory_vault_enabled': True})
+    sid = store.create_swarm_session(['main'], user_id='web')
+    monkeypatch.setattr('app.runtime.memory.vault.extract.schedule_extraction', lambda *args: None)
+    write.record_turn(sid, 'main', goal, 'answer\n\n- one\n- two\n- three\n- four\n- five')
+    raw = paths.timeline_path('web', date.today().isoformat()).read_text()
+    bullets = [line for line in raw.splitlines() if line.startswith('- ')]
+    expected = ['- Goal: question with details'] if goal else []
+    assert bullets == [*expected, '- Outcome: answer - one - two - three - four - five']
+
+
 def test_alias_retrieval_expands_neighbor_with_budget(tmp_path, db):
     uid = 'alice'
     write.add_entity(uid, 'project/tomo', 'Tomo uses [[tool/python]] for its runtime.', home_root=tmp_path, conn=db)

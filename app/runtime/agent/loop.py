@@ -341,7 +341,7 @@ async def _emit_drained_steers(
 def _last_user_text(
     user_message: str | None, history: list[dict[str, Any]] | None
 ) -> str:
-    """Extract the originating user request for subagent task prompts."""
+    """Extract the originating request for worker prompts and turn recording."""
     if user_message:
         return user_message
     if history:
@@ -951,7 +951,7 @@ async def run_turn(
                 final_content = resp.content or ""
                 from app.runtime.memory.vault.write import record_turn
 
-                record_turn(session_id, agent_id, user_message, final_content)
+                record_turn(session_id, agent_id, user_request, final_content)
                 yield {
                     "kind": "final",
                     "content": final_content,
@@ -964,7 +964,7 @@ async def run_turn(
                     client=client,
                     messages=messages,
                     metrics=metrics,
-                    user_message=user_message,
+                    user_message=user_request,
                     final_content=final_content,
                     skills_touched=skills_touched,
                     nested=current_depth() > 0,
@@ -1329,7 +1329,7 @@ async def run_turn(
                 metrics.log_summary()
                 from app.runtime.memory.vault.write import record_turn
 
-                record_turn(session_id, agent_id, user_message, content)
+                record_turn(session_id, agent_id, user_request, content)
                 yield {
                     "kind": "final",
                     "content": content,
@@ -1342,7 +1342,7 @@ async def run_turn(
                     client=client,
                     messages=messages,
                     metrics=metrics,
-                    user_message=user_message,
+                    user_message=user_request,
                     final_content=content,
                     skills_touched=skills_touched,
                     nested=current_depth() > 0,

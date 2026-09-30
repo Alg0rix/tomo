@@ -183,7 +183,10 @@ def record_turn(session_id: str | None, agent_id: str | None, user_message: str 
         session = store.get_session(session_id)
         if not session:
             return
-        summary = f"Goal: {(user_message or '').strip()[:240]}\nOutcome: {final_content.strip()[:480]}"
+        # Keep each field on one bullet: append_timeline limits physical lines.
+        goal = ' '.join((user_message or '').split())[:240]
+        outcome = ' '.join(final_content.split())[:480]
+        summary = '\n'.join([*([f'Goal: {goal}'] if goal else []), f'Outcome: {outcome}'])
         uid = session.get('user_id') or 'web'
         append_timeline(uid, session_id, agent_id or 'main', summary)
         from .extract import schedule_extraction

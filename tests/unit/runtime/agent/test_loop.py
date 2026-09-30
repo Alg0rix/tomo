@@ -19,6 +19,8 @@ import asyncio
 import threading
 from typing import Any
 
+import pytest
+
 from app.runtime.agent.loop import _truncate_result, run_turn
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
@@ -520,6 +522,47 @@ async def test_user_message_none_does_not_duplicate_history_user(tmp_path) -> No
     msgs = recorder.captured[-1]
     users = [m for m in msgs if m["role"] == "user"]
     assert users == [{"role": "user", "content": "the new question"}]
+
+
+@pytest.mark.parametrize("at_limit", [False, True])
+@pytest.mark.parametrize("direct_request", [None, "explicit worker task"])
+async def test_turn_records_goal_from_input_or_history(
+    tmp_path, monkeypatch, at_limit, direct_request
+) -> None:
+    from datetime import date
+    from app.core import config
+    from app.runtime.memory.vault.paths import timeline_path
+
+    monkeypatch.setattr(config, "TOMO_HOME", tmp_path)
+    store.rebind(tmp_path / "goal.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    store.update_settings({"memory_vault_enabled": True})
+    store.append_session_history(sid, {"type": "user", "content": "old question"})
+    store.append_session_history(sid, {"type": "assistant", "content": "old answer"})
+    store.append_session_history(sid, {"type": "user", "content": "current question"})
+    extraction = []
+    reviews = []
+    monkeypatch.setattr(
+        "app.runtime.memory.vault.extract.schedule_extraction",
+        lambda *args: extraction.append(args),
+    )
+    monkeypatch.setattr(
+        "app.runtime.agent.learning.schedule_learning_review",
+        lambda **kwargs: reviews.append(kwargs),
+    )
+    llm = _RecordingScripted([text_reply("done")])
+    events = await _collect(
+        direct_request, llm=llm, tools=[], session_id=sid, agent_id="main",
+        history=store.get_session_history(sid), max_iterations=0 if at_limit else 2,
+    )
+    assert _final(events)["content"] == "done"
+    expected = direct_request or "current question"
+    raw = timeline_path("web", date.today().isoformat()).read_text()
+    assert f"- Goal: {expected}\n" in raw
+    assert extraction[0][2] == expected
+    assert reviews[0]["user_message"] == expected
+    users = [m for m in llm.captured[-1] if m["role"] == "user"]
+    assert len(users) == (3 if direct_request else 2) + int(at_limit)
 
 
 async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:
