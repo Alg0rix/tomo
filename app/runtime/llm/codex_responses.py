@@ -15,6 +15,7 @@ answer salvage (see the design spec's "Out of scope").
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any, AsyncIterator
@@ -257,7 +258,16 @@ class CodexResponsesClient:
             "instructions": instructions,
             "input": input_items,
             "store": False,
+            # Keep the routing key stable across calls and client recreation;
+            # live context and growing history must not change it.
+            "prompt_cache_key": hashlib.sha256(
+                f"{self._model}\0{instructions}".encode("utf-8")
+            ).hexdigest(),
         }
+        endpoint = urlparse(self._base_url)
+        if endpoint.hostname == "chatgpt.com" and endpoint.path.startswith("/backend-api/codex"):
+            # ChatGPT derives cache affinity from this header (Codex client.rs).
+            payload["extra_headers"] = {"session-id": payload["prompt_cache_key"]}
         responses_tools = stable_tools(_responses_tools(tools))
         if responses_tools:
             payload["tools"] = responses_tools

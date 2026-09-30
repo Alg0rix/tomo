@@ -57,6 +57,27 @@ def test_turn_context_stays_in_input_even_without_history() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_cache_key_survives_live_changes_and_client_recreation() -> None:
+    client = _client(httpx.MockTransport(lambda req: httpx.Response(200)))
+    other = _client(httpx.MockTransport(lambda req: httpx.Response(200)))
+    try:
+        first = [{"role": "system", "content": "stable instructions"},
+                 {"role": "user", "content": "previous request"},
+                 {"role": "system", "content": "clock one"}]
+        second = [*first[:2], {"role": "assistant", "content": "previous answer"},
+                  {"role": "system", "content": "clock two"}]
+        key = client._payload(first, None)["prompt_cache_key"]
+        assert client._payload(first, None)["extra_headers"] == {"session-id": key}
+        assert key == other._payload(second, None)["prompt_cache_key"]
+        assert len(key) == 64
+        changed = [{"role": "system", "content": "different instructions"}]
+        assert key != client._payload(changed, None)["prompt_cache_key"]
+    finally:
+        await client.aclose()
+        await other.aclose()
+
+
 def test_messages_to_responses_input_converts_tool_calls_and_results() -> None:
     messages = [
         {"role": "system", "content": "sys"},
@@ -102,6 +123,7 @@ async def test_public_api_key_uses_responses_wire_format() -> None:
         assert body["stream"] is True
         assert body["store"] is False
         assert body["reasoning"]["summary"] == "auto"
+        assert "session-id" not in request.headers
         return _completed_sse({"id": "resp_1", "output": [
             {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}
         ]})
@@ -122,6 +144,7 @@ async def test_complete_returns_text() -> None:
         assert body["stream"] is True
         assert body["store"] is False
         assert body["instructions"] == "sys"
+        assert request.headers["session-id"] == body["prompt_cache_key"]
         return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
