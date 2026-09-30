@@ -2,15 +2,11 @@
 
 ## Enter the runtime
 
-In the root chat turn, an explicitly requested or clearly useful swarm goes through `start_swarm`. For example, with the current user message `Bikin swarm buat review hasil riset ini`, call:
+Create the worker plan in the current main chat, using its selected model, context, and reasoning settings. Read the enabled worker/template catalog in the current system prompt; use `agent_info` when available for further capabilities. A request like “Test swarm lagi” can use a small, tool-free plan to check real worker execution.
 
-```text
-start_swarm(
-  request="Review the supplied research with independent evidence and coverage checks. Include the supplied material and relevant prior context here."
-)
-```
+Call `start_swarm(request=<complete task>, plan=<worker plan below>)`. The runtime validates and executes this plan; there is no separate planning model call. Validation errors return to the current model so it can correct the actual rejected fields. Results return as a tool result for verification and synthesis in the same main chat loop.
 
-Use the actual task and relevant context. No separate chat consent or quote is required; include answers obtained through `clarify` if material scope was missing. A question about swarms does not itself request worker execution. The tool transfers the turn; the coordinator creates the worker plan below. This JSON is coordinator output, not an argument to `start_swarm`, a tool named `create_worker`, or a command the chat agent executes directly.
+No separate chat consent or quote is required; include relevant answers obtained through `clarify`. A question about swarms does not itself request execution.
 
 ## Choose existing or temporary workers
 
@@ -20,7 +16,7 @@ Use the actual task and relevant context. No separate chat consent or quote is r
 
 For each new worker, supply `name`, `purpose`, `instructions`, and `base_agent_id`. Use distinct names. The base must be an enabled configured agent; it defaults to the coordinator if omitted. Its model, base prompt, workplace, and available tools provide the template for execution. Role instructions specialize the worker; they do not grant capabilities or replace task boundaries. The coordinator can be a template but cannot itself be assigned a worker task.
 
-## Example coordinator plan
+## Example plan for the start_swarm tool
 
 Assume `main` is the actual enabled coordinator/template ID in this example. Replace it with a real roster ID in use. These workers inspect supplied material without tool calls, so `tools` and `write_scope` are empty.
 
@@ -57,8 +53,7 @@ Assume `main` is the actual enabled coordinator/template ID in this example. Rep
       "write_scope": [],
       "tools": []
     }
-  ],
-  "messages": []
+  ]
 }
 ```
 
@@ -70,10 +65,8 @@ Select tool names from the configured agent or base template's enabled catalog. 
 
 For an editor, assign relative file or directory paths in `write_scope`, the required enabled editing tools, and a brief with ownership boundaries. For shell edits, also state the boundary in the brief; `write_scope` enforces file-edit tools only. Give an integration/check task `depends_on` containing the prerequisite task keys. Keys must be unique, prerequisites must exist, and the graph must have no cycles.
 
-## Steer and add follow-up work
+## Add follow-up work in the main chat
 
-To steer a running worker, the coordinator returns `messages` entries with its actual `to_agent_id` and a concise `content`. Workers communicate using the [board](coordination.md). Names in a new plan are resolved to IDs by the runtime; use actual IDs for messages.
-
-Add a task with a fresh key for a specific remaining gap, reusing an appropriate worker. Completed dependency results are passed to dependent workers. A failed prerequisite blocks dependent tasks, so resolve or replan the missing work rather than assuming its result exists. Finish with supported findings and disclose remaining failures.
+Read the returned worker results, including task status, worker IDs, and evidence. For a specific remaining gap, call `start_swarm` again with a fresh task plan and relevant findings. Reuse existing session worker IDs when appropriate. Dependencies apply within each submitted run; include earlier results directly in a follow-up brief instead of referencing a task key from another run. Workers share findings through the [board](coordination.md) while running. Failed prerequisites block dependent tasks; report or resolve failures using evidence.
 
 The authoritative implementation is `app/runtime/coordinator/swarm.py`; session worker records are in `app/models/mixins/swarm.py`. These examples describe that runtime, not OpenAI SDK worker-creation calls.

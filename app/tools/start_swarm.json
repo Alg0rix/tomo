@@ -1,20 +1,108 @@
 {
   "id": "start_swarm",
   "name": "Start swarm",
-  "description": "Transfer this chat turn to Tomo's swarm coordinator for real worker execution.",
+  "description": "Execute the main chat model's worker plan and return real worker results.",
   "backend": "app.runtime.tools.start_swarm",
   "schema": {
     "type": "function",
     "function": {
       "name": "start_swarm",
-      "description": "Start a real session-scoped swarm and transfer this turn to its coordinator. Read the swarm skill. Call this when the user requests a team or independent workers clearly improve the requested task. No separate chat consent is required. Use clarify only for material missing scope or preferences; its answer can inform the request. Respect requests to work solo. Do not claim dispatch tools are unavailable or simulate worker output. Do not call other work tools in the same batch.",
+      "description": "Execute a worker plan you create in this main chat, using the current chat model and context. No separate planner or chat consent is required. Read the swarm skill, select enabled configured workers or declare session-local workers, and submit concrete agents/tasks in plan. Validation errors return here for you to correct. Real worker results return here for verification, follow-up and synthesis. Use clarify only for material missing scope; respect requests to work solo. Call this alone in its batch.",
       "parameters": {
         "type": "object",
         "properties": {
-          "request": {"type": "string", "description": "Complete user task, including relevant prior context, boundaries and proposed independent work."},
-          "consent_quote": {"type": "string", "description": "Optional user wording from chat or a clarify answer, kept for compatibility. Not required for dispatch."}
+          "request": {
+            "type": "string",
+            "description": "Complete user task, including relevant prior context, boundaries and proposed independent work."
+          },
+          "consent_quote": {
+            "type": "string",
+            "description": "Optional user wording from chat or a clarify answer, kept for compatibility. Not required for dispatch."
+          },
+          "plan": {
+            "type": "object",
+            "description": "The concrete worker plan made in this main chat. Use enabled roster IDs or declared new names.",
+            "properties": {
+              "agents": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "purpose": {
+                      "type": "string"
+                    },
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "base_agent_id": {
+                      "type": "string",
+                      "description": "Enabled template ID; defaults to the current chat agent."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "purpose"
+                  ]
+                }
+              },
+              "tasks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 12,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "agent_id": {
+                      "type": "string",
+                      "description": "Enabled worker ID or a new agent name; do not assign the coordinator itself."
+                    },
+                    "brief": {
+                      "type": "string"
+                    },
+                    "depends_on": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write_scope": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Actual enabled tool names, [] for no work tools. swarm_board is automatic."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "agent_id",
+                    "brief"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "tasks"
+            ]
+          }
         },
-        "required": ["request"]
+        "required": [
+          "request",
+          "plan"
+        ]
       }
     }
   }

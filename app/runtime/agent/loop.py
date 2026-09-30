@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+from contextlib import aclosing
 import itertools
 import json
 import logging
@@ -769,18 +770,34 @@ async def run_turn(
                     "The peer's result returns to you for synthesis."
                 )
             if any(s.get("function", {}).get("name") == "start_swarm" for s in tool_schemas):
+                from app.services import store
+
+                worker_catalog = [
+                    {"id": a["id"], "name": a["name"],
+                     "tools": [s["function"]["name"] for s in store.get_agent_openai_tools(a["id"])
+                               if s.get("function", {}).get("name")
+                               not in {"delegate", "create_agent", "start_swarm"}]}
+                    for a in store.list_agents() if a.get("enabled")
+                ]
                 prompt += (
                     "\n\n## Swarm execution for this turn\n"
                     "The start_swarm tool is available. Read the swarm skill. "
-                    "If the user requests a swarm/team, or independent workers clearly "
-                    "improve the requested task, call start_swarm with the full task. "
-                    "It transfers execution to the runtime, which starts real workers. "
+                    "Plan workers here using this main chat model, its context and reasoning "
+                    "settings. If the user requests a swarm/team, or independent workers "
+                    "clearly improve the requested task, call start_swarm with the full "
+                    "request and a concrete plan containing agents and tasks. The runtime "
+                    "only validates and executes your plan; it never calls another planner. "
+                    "Worker results return as this tool's result so you can verify, add "
+                    "focused follow-up work, and synthesize in this same chat loop. "
                     "Use this even if older instructions describe swarm as delegate calls; "
                     "do not claim dispatch is unavailable or silently do the task solo. "
                     "No separate chat approval or consent_quote is required. Use clarify "
                     "only for material missing scope or preferences, and include its answer "
                     "in the task. Respect a request to work solo. A question about swarms "
                     "does not itself request a worker run."
+                    "\nEnabled worker/template catalog: " + json.dumps(worker_catalog, ensure_ascii=False)
+                    + f"\nCurrent coordinator/template ID: {agent_id}. Create session-local "
+                    "agents based on this ID if needed; do not assign it directly as a worker."
                 )
             from app.runtime.llm.vision import agent_supports_vision
 
@@ -1103,6 +1120,24 @@ async def run_turn(
             errors_this_round = 0
             for cid, call in other_calls:
                 text_res, err = result_by_cid.get(cid, ("Error: no tool result", True))
+                if call.name == "start_swarm" and not err:
+                    from app.runtime.tools.start_swarm import ACCEPTED
+
+                    if text_res == ACCEPTED:
+                        from app.runtime.coordinator.swarm import run_swarm_turn
+
+                        text_res, err = "Error: swarm returned no worker results", True
+                        async with aclosing(run_swarm_turn(
+                            call.arguments["request"].strip(), session_id=session_id,
+                            coordinator_id=agent_id, history=None,
+                            initial_plan=call.arguments["plan"], origin=origin,
+                        )) as swarm_events:
+                            async for swarm_event in swarm_events:
+                                if swarm_event.get("kind") == "swarm_result":
+                                    text_res = swarm_event["result"]
+                                    err = bool(swarm_event.get("error"))
+                                else:
+                                    yield swarm_event
                 if cid not in already_yielded:
                     payload = {
                         "kind": "tool_result",
@@ -1122,12 +1157,6 @@ async def run_turn(
                                 "agent_id": agent_id or "",
                             }
                     yield payload
-                    if call.name == "start_swarm" and not err:
-                        from app.runtime.tools.start_swarm import ACCEPTED
-
-                        if text_res == ACCEPTED:
-                            yield {"kind": "swarm_requested", "request": call.arguments["request"].strip()}
-                            return
                     if call.name == "render_ui" and not err:
                         from app.runtime.tools.render_ui import parse_result
 

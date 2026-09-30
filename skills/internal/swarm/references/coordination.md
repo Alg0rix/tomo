@@ -42,7 +42,7 @@ In its task plan, set `depends_on=["contract-review"]`, `write_scope=["app/servi
 
 ## Coordinate shared work
 
-Tomo starts tasks after their prerequisites finish successfully and serializes overlapping file-edit scopes. Set scopes narrowly enough to allow useful concurrency. The scheduler currently permits four active workers, twelve tasks per run, and four planning calls; these are ceilings, not targets. The implementation in `app/runtime/coordinator/swarm.py` is authoritative if limits change.
+Tomo starts tasks after their prerequisites finish successfully and serializes overlapping file-edit scopes. Set scopes narrowly enough to allow useful concurrency. The scheduler currently permits four active workers and twelve tasks per run; these are ceilings, not targets. The implementation in `app/runtime/coordinator/swarm.py` is authoritative if limits change.
 
 Shell and portal actions have separate permission checks: a file-edit scope does not isolate those operations. Include ownership boundaries in briefs even when using shell tools. Resolve shared interface decisions before concurrent edits and assign integration to one owner.
 

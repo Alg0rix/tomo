@@ -20,8 +20,6 @@ from typing import Any, AsyncIterator
 from app.channels.sse_map import fmt_sse, map_loop_event, now, session_busy_sse
 from app.runtime.agent.loop import run_turn as _agent_run_turn
 from app.runtime.coordinator.router import parse_leading_mention, resolve_target
-from app.runtime.coordinator.swarm import run_swarm_turn
-from app.runtime.coordinator.swarm import advise_swarm
 from app.runtime.session_title import (
     first_user_and_final,
     generate_session_title,
@@ -281,48 +279,35 @@ async def _drain_agent_turn(
     if history is None:
         history = store.get_session_history(session_id)
 
-    if swarm_request is not None:
-        source = run_swarm_turn(
-            swarm_request, history=history, session_id=session_id,
-            coordinator_id=agent_id, origin=origin, initial_plan=swarm_plan,
-        )
-    else:
-        from app.runtime.tools import start_swarm
-        from app.runtime.tools.registry import get_openai_tools
+    from app.runtime.tools import start_swarm
+    from app.runtime.tools.registry import get_openai_tools
 
-        solo_tools = [
-            schema for schema in store.get_agent_openai_tools(agent_id)
-            if schema.get("function", {}).get("name") != "start_swarm"
-        ]
-        if origin is None:
-            solo_tools += get_openai_tools(["start_swarm"])
+    chat_tools = [schema for schema in store.get_agent_openai_tools(agent_id)
+                  if schema.get("function", {}).get("name") != "start_swarm"]
+    if origin is None:
+        chat_tools += get_openai_tools(["start_swarm"])
 
-        async def chat_events():
-            current_request = user_message or _last_user_content(history)
-            token = start_swarm.bind_context(current_request) if origin is None else None
-            solo = _agent_run_turn(
-                user_message, history=history, agent_id=agent_id,
-                session_id=session_id, origin=origin, tools=solo_tools,
-            )
-            handoff = None
-            try:
-                async for event in solo:
-                    if event.get("kind") == "swarm_requested":
-                        handoff = event["request"]
-                        break
-                    yield event
-            finally:
-                await solo.aclose()
-                if token is not None:
-                    start_swarm.reset_context(token)
-            if handoff:
-                async for event in run_swarm_turn(
-                    handoff, history=history, session_id=session_id,
-                    coordinator_id=agent_id, origin=origin,
-                ):
-                    yield event
+    async def chat_events():
+        current_request = user_message or _last_user_content(history)
+        token = start_swarm.bind_context(current_request, session_id=session_id,
+                                        coordinator_id=agent_id) if origin is None else None
+        message = user_message
+        if swarm_request is not None:
+            message = "Run a real swarm for this task. Plan workers in this main chat and call start_swarm. Task: " + swarm_request
+            if swarm_plan:
+                import json
+                message += "\nPrevious proposed plan: " + json.dumps(swarm_plan, ensure_ascii=False)
+        source = _agent_run_turn(message, history=history, agent_id=agent_id,
+                                 session_id=session_id, origin=origin, tools=chat_tools)
+        try:
+            async for event in source:
+                yield event
+        finally:
+            await source.aclose()
+            if token is not None:
+                start_swarm.reset_context(token)
 
-        source = chat_events()
+    source = chat_events()
     async for ev in source:
         _accumulate_turn_tokens(token_acc, ev)
         # Nested subagent events carry their own agent_id for attribution.
@@ -691,17 +676,6 @@ async def stream_turn_sse(
             # ChatGPT-style: store clean user text + attachment chips metadata.
             # File contents are expanded only when building the LLM prompt.
             clean = (message or "").strip()
-            advice = None
-            if not use_swarm and not force_target and not solo_request and origin is None and not clean.startswith("/"):
-                advice = await advise_swarm(
-                    clean, session_id=session_id, coordinator_id=coordinator_id,
-                    history=store.get_session_history(session_id),
-                )
-                if advice and advice[0] == "run":
-                    use_swarm, swarm_request = True, clean
-                    # Automatic selection already supplied a split; explicit
-                    # requests can route first and plan inside the runtime.
-                    approved_plan = advice[1] or None
             user_entry: dict = {"type": "user", "content": clean, "ts": now()}
             if use_swarm:
                 user_entry["execution_mode"] = "swarm"
@@ -730,21 +704,6 @@ async def stream_turn_sse(
                         "seq": seq,
                     }
                 )
-
-            if advice and advice[0] == "propose":
-                _, plan, summary = advice
-                store.with_db(lambda conn: swarm_store.set_proposal(
-                    conn, session_id, clean, plan, summary,
-                ))
-                chunks, entries, seq = map_loop_event(
-                    {"kind": "final", "content": summary}, coordinator_id,
-                    _agent_label(coordinator_id), seq, turn_id,
-                )
-                for entry in entries:
-                    store.append_session_history(session_id, entry)
-                for chunk in chunks:
-                    yield chunk
-                return
 
             if force_target:
                 logger.info(

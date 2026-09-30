@@ -10,15 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from collections.abc import AsyncIterator
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any
 
 from app.models.mixins import swarm as db
 from app.runtime.agent.context import build_system_prompt
 from app.runtime.agent.loop import run_turn
-from app.runtime.llm import get_llm
 from app.runtime.tools import swarm_board
 from app.runtime.tools.registry import get_openai_tools
 from app.services.store import store
@@ -26,22 +24,9 @@ from app.services.store import store
 log = logging.getLogger(__name__)
 MAX_ACTIVE = 4
 MAX_TASKS = 12
-MAX_PLAN_CALLS = 4
-_SKILL_PATH = Path(__file__).resolve().parents[3] / "skills" / "internal" / "swarm" / "SKILL.md"
 # Worker creation belongs to the coordinator's bounded scheduler. Other
 # capabilities are selected per task from the agent's enabled tool catalog.
 _ORCHESTRATION_TOOLS = {"delegate", "create_agent", "start_swarm"}
-
-
-def _json(content: str | None) -> dict[str, Any]:
-    raw = (content or "").strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
-    try:
-        value = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 def _event(run_id: str, kind: str, payload: dict[str, Any], task_id: str = "") -> dict[str, Any]:
@@ -64,144 +49,27 @@ def _overlap(a: list[str], b: list[str]) -> bool:
     )
 
 
-async def _plan(
-    coordinator_id: str, request: str, session_id: str, run_id: str,
-    tasks: dict[str, dict[str, Any]], active: set[str],
-    planner: Any = None,
-    advisory: bool = False,
-    history: list[dict[str, Any]] | None = None,
-    planning_feedback: str = "",
-) -> dict[str, Any]:
-    configured = [
-        {"id": a["id"], "name": a["name"], "role": a.get("role") or "",
-         "description": a.get("description") or "", "workplace_id": a.get("workplace_id") or "",
-         "tools": [s.get("function", {}).get("name") for s in store.get_agent_openai_tools(a["id"])
-                   if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS]}
-        for a in store.list_agents() if a.get("enabled")
-    ]
-    local = store.with_db(lambda conn: db.list_agents(conn, session_id))
-    board = [
-        {"key": key, "agent_id": t["agent_id"], "status": t["status"],
-         "brief": t["brief"], "tools": t.get("tools") or [],
-         "result": str(t.get("result") or "")[:3000]}
-        for key, t in tasks.items()
-    ]
-    instruction = (
-        _SKILL_PATH.read_text(encoding="utf-8") + "\n\n"
-        + ("Decide whether the user explicitly asked for a team or independent workers "
-         "clearly improve the requested task (decision=run), or a single agent should "
-         "answer (decision=solo). No separate approval is required. Respect a request "
-         "to work solo; questions about swarms, quotations, and negations do not "
-         "themselves request a team. Return empty tasks for solo. "
-         "A bounded handoff to one configured peer belongs in the normal chat's "
-         "delegate tool loop; choose solo for that unless a team was also requested. "
-         "For an explicit team request, return decision=run and an exact consent_quote "
-         "from the request; worker planning happens later. For automatic selection, "
-         "return at least two genuinely useful independent tasks and their agents. "
-         "Missing worker assignments, audit scope questions, or unavailable specialists "
-         "must not turn an explicit team request into solo. "
-         if advisory else
-         "You coordinate an already authorized agent swarm. Consent and routing are "
-         "complete; create actual worker tasks, not another consent decision. Before any "
-         "worker has been assigned, return at least one concrete task. Use session-local "
-         "workers based on an enabled template if no configured specialist fits. An empty "
-         "or invalid initial plan is a dispatch failure, not permission to answer solo. ")
-        + "Return one JSON object only. "
-        + ('Shape: {"decision":"solo|run","consent_quote":"optional explicit request quote",'
-           if advisory else 'Shape: {')
-        + '"agents":[{"name":"...","purpose":"...","instructions":"...",'
-        '"base_agent_id":"..."}],"tasks":[{"key":"unique",'
-        '"agent_id":"configured id OR session agent id OR new agent name",'
-        '"brief":"precise objective, output format and boundary",'
-        '"depends_on":["task key"],"write_scope":["relative/path"],'
-        '"tools":["enabled tool name"]}],'
-        '"messages":[{"to_agent_id":"id","content":"steering"}]}. '
-        "Choose a configured agent directly when the user named it or its tools, model, "
-        "memory, or workplace help. Create session-only agents for missing specialties, "
-        "independent perspectives, or multiple copies of a role. Mix both if useful. "
-        "The coordinator is listed as a template but cannot be assigned a worker task. "
-        "Do not duplicate work. Independent tasks should run concurrently. Dependent tasks "
-        "must name prerequisites. Choose the few enabled tools each task needs, including "
-        "bash or portal when appropriate. Tool use still follows the user's permission settings. "
-        "Every worker also receives swarm_board automatically for publishing findings, "
-        "reading messages, and communicating with other workers. "
-        "write_scope applies to file-edit tools; give relative paths for those tools. "
-        "Use messages to steer running workers. "
-        "Return empty tasks when existing worker results suffice to complete the work. "
-        "Never invent an agent id outside the listed roster or new names."
-    )
-    payload = {
-        "request": request, "configured_agents": configured,
-        "recent_chat": [
-            {"role": entry.get("type"), "content": str(entry.get("content") or "")[:3000]}
-            for entry in (history or [])[-10:]
-            if entry.get("type") in {"user", "final"}
-        ],
-        "session_agents": [{"id": a["id"], "name": a["name"], "purpose": a["purpose"]} for a in local],
-        "tasks": board, "active_task_keys": sorted(active),
-        "findings": [e["payload"] for e in store.with_db(
-            lambda conn: db.list_events(conn, run_id)
-        ) if e["kind"] in {"finding", "message"}][-20:] if run_id else [],
-        "remaining_task_budget": MAX_TASKS - len(tasks),
-        "planning_feedback": planning_feedback,
-    }
-    try:
-        model = planner or get_llm(coordinator_id)
-        response = await model.complete(
-            [{"role": "system", "content": instruction},
-             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], []
-        )
-        return _json(response.content)
-    except Exception:
-        log.exception("swarm planner failed")
-        return {}
-
-
-async def advise_swarm(request: str, *, session_id: str, coordinator_id: str,
-                       planner: Any = None,
-                       history: list[dict[str, Any]] | None = None) -> tuple[str, dict[str, Any], str] | None:
-    """Select a team for explicit requests or a useful independent task split."""
-    if not request.strip():
-        return None
-    plan = await _plan(coordinator_id, request, session_id, "", {}, set(),
-                       planner=planner, advisory=True, history=history)
-    decision = str(plan.get("decision") or "solo")
-    if decision not in {"run", "propose"}:
-        return None
-    # An explicit request routes before worker-plan validation. Automatic
-    # selection needs a concrete independent split, not just a run label.
-    quote = str(plan.get("consent_quote") or "").strip()
-    if decision == "run" and quote and quote.casefold() in request.casefold():
-        # Routing consent is independent of worker-plan validity. Planning is
-        # done inside run_swarm_turn, where invalid assignments are rejected.
-        return "run", {}, ""
-    proposed = plan.get("tasks")
-    if not isinstance(proposed, list) or len(proposed) < 2:
-        return None
-    names = {a.get("name") for a in plan.get("agents", []) if isinstance(a, dict)}
-    known = {a["id"] for a in store.list_agents() if a.get("enabled")}
-    known.update(a["id"] for a in store.with_db(lambda conn: db.list_agents(conn, session_id)))
-    if any(not isinstance(t, dict) or t.get("agent_id") not in known | names
-           or not str(t.get("brief") or "").strip() for t in proposed):
-        return None
-    return "run", plan, ""
-
-
 def _accept_plan(
     plan: dict[str, Any], *, session_id: str, run_id: str,
     coordinator_id: str, tasks: dict[str, dict[str, Any]],
+    validate_only: bool = False, errors: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Validate proposed agents/tasks and persist only safe, new work."""
+    def reject(reason: str) -> list[dict[str, Any]]:
+        if errors is not None:
+            errors.append(reason)
+        return []
+
     raw_agents = plan.get("agents") or []
     raw_tasks = plan.get("tasks") or []
     if not isinstance(raw_agents, list) or len(raw_agents) > MAX_ACTIVE:
-        return []
+        return reject('Too many agents or agents is not an array.')
     if not isinstance(raw_tasks, list) or not raw_tasks or len(raw_tasks) > MAX_TASKS - len(tasks):
-        return []
+        return reject('Provide a non-empty tasks array within the remaining task budget.')
     # Validate the dependency graph before creating session-local agents.
     raw_keys = [str(t.get("key") or "").strip()[:80] for t in raw_tasks if isinstance(t, dict)]
     if len(raw_keys) != len(raw_tasks) or len(set(raw_keys)) != len(raw_keys) or not all(raw_keys):
-        return []
+        return reject('Each task needs a unique non-empty key.')
     valid_keys = set(tasks) | set(raw_keys)
     if any(
         not isinstance(t.get("depends_on") or [], list)
@@ -210,7 +78,7 @@ def _accept_plan(
         or not _scope_valid(t.get("write_scope") or [])
         for t in raw_tasks
     ):
-        return []
+        return reject('Task dependencies must exist and scopes must be relative paths.')
     unresolved_keys = {
         key: set(raw.get("depends_on") or []) - set(tasks)
         for key, raw in zip(raw_keys, raw_tasks)
@@ -219,7 +87,7 @@ def _accept_plan(
     while unresolved_keys:
         ready_keys = {key for key, deps in unresolved_keys.items() if deps <= resolved_keys}
         if not ready_keys:
-            return []
+            return reject('Task dependencies contain a cycle.')
         resolved_keys.update(ready_keys)
         for key in ready_keys:
             unresolved_keys.pop(key)
@@ -230,12 +98,12 @@ def _accept_plan(
     new_agent_bases: dict[str, str] = {}
     for raw in raw_agents:
         if not isinstance(raw, dict):
-            return []
+            return reject('Each agent must be an object.')
         name = str(raw.get("name") or "").strip()[:80]
         purpose = str(raw.get("purpose") or "").strip()
         base = str(raw.get("base_agent_id") or coordinator_id).strip()
         if not name or not purpose or base not in configured:
-            return []
+            return reject('Each new agent needs a name, purpose, and enabled base_agent_id.')
         candidate_names.add(name)
         new_agent_bases[name] = base
     enabled_tool_cache: dict[str, set[str]] = {}
@@ -253,7 +121,7 @@ def _accept_plan(
         aid = str(raw.get("agent_id") or "").strip()
         if (not str(raw.get("brief") or "").strip() or aid == coordinator_id
                 or aid not in configured and aid not in local and aid not in candidate_names):
-            return []
+            return reject('Each task needs a brief and a valid worker ID or declared name; the coordinator itself cannot be a worker.')
         base = new_agent_bases.get(aid) or (
             local[names[aid]]["base_agent_id"] if aid in names else
             local[aid]["base_agent_id"] if aid in local else aid
@@ -265,7 +133,9 @@ def _accept_plan(
             or any(not isinstance(tool, str) or tool not in enabled_tools(base)
                    for tool in selected)
         ):
-            return []
+            return reject('Selected tools must belong to the worker template enabled catalog.')
+    if validate_only:
+        return [{"validated": True}]
     for raw in raw_agents:
         if not isinstance(raw, dict):
             continue
@@ -404,66 +274,42 @@ async def _worker(
 async def run_swarm_turn(
     request: str, *, session_id: str, coordinator_id: str,
     history: list[dict[str, Any]] | None, origin: str | None = None,
-    planner: Any = None,
     initial_plan: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Plan, schedule, revise and synthesize a user-authorized swarm turn."""
+    """Execute the main chat model's submitted plan and return worker results."""
     run_id = store.with_db(lambda conn: db.create_run(conn, session_id, request))
     tasks: dict[str, dict[str, Any]] = {}
     active: dict[str, asyncio.Task] = {}
     events: asyncio.Queue = asyncio.Queue()
-    plan_calls = 0
-    need_plan = True
     finished = False
     final_status = "done"
     board_cursor = 0
-    planning_feedback = ""
     coordinator = store.get_agent(coordinator_id) or {}
     yield _event(run_id, "run_started", {
         "request": request, "coordinator_id": coordinator_id,
         "coordinator_name": coordinator.get("name") or coordinator_id,
     })
     try:
+        errors: list[str] = []
+        accepted = _accept_plan(initial_plan or {}, session_id=session_id, run_id=run_id,
+                                coordinator_id=coordinator_id, tasks=tasks, errors=errors)
+        if not accepted:
+            message = "Error: invalid swarm plan: " + "; ".join(errors)
+            store.with_db(lambda conn: db.update_run(conn, run_id, "failed", message))
+            finished = True
+            yield {"kind": "swarm_result", "result": message, "error": True}
+            yield _event(run_id, "run_done", {"status": "failed"})
+            return
+        for task in accepted:
+            tasks[task["key"]] = task
+            yield _event(run_id, "task_created", {
+                "task_id": task["id"], "key": task["key"], "agent_id": task["agent_id"],
+                "agent_name": task["agent_name"], "brief": task["brief"],
+                "depends_on": task["depends_on"], "tools": task["tools"],
+                "purpose": task["purpose"], "dynamic": task["dynamic"],
+            }, task["id"])
+        yield _event(run_id, "phase", {"phase": "running"})
         while True:
-            if need_plan and plan_calls < MAX_PLAN_CALLS and len(tasks) < MAX_TASKS:
-                if not plan_calls:
-                    yield _event(run_id, "phase", {"phase": "planning"})
-                plan_calls += 1
-                need_plan = False
-                if initial_plan is not None:
-                    proposal, initial_plan = initial_plan, None
-                else:
-                    proposal = await _plan(coordinator_id, request, session_id, run_id,
-                                           tasks, set(active), planner=planner,
-                                           history=history, planning_feedback=planning_feedback)
-                accepted = _accept_plan(proposal, session_id=session_id, run_id=run_id,
-                                        coordinator_id=coordinator_id, tasks=tasks)
-                if not tasks and not accepted:
-                    planning_feedback = (
-                        "No worker tasks were accepted. Return a non-empty worker plan. "
-                        "Use enabled roster IDs or declare session-local agents with valid "
-                        "base_agent_id values. Tasks need unique keys, non-empty briefs, "
-                        "valid acyclic dependencies, relative write scopes, and tools from "
-                        "the assigned template's enabled catalog. Do not choose solo."
-                    )
-                    need_plan = True
-                else:
-                    planning_feedback = ""
-                for task in accepted:
-                    tasks[task["key"]] = task
-                    yield _event(run_id, "task_created", {
-                        "task_id": task["id"], "key": task["key"],
-                        "agent_id": task["agent_id"], "agent_name": task["agent_name"],
-                        "brief": task["brief"], "depends_on": task["depends_on"],
-                        "tools": task["tools"], "purpose": task["purpose"],
-                        "dynamic": task["dynamic"],
-                    }, task["id"])
-                for msg in proposal.get("messages") or []:
-                    if isinstance(msg, dict) and msg.get("to_agent_id") and msg.get("content"):
-                        yield _event(run_id, "message", {
-                            "agent_id": coordinator_id, "to_agent_id": str(msg["to_agent_id"]),
-                            "content": str(msg["content"])[:4000],
-                        })
             # Ready work starts as soon as its dependencies succeed and write
             # scopes do not overlap another active task.
             for key, task in tasks.items():
@@ -483,8 +329,6 @@ async def run_swarm_turn(
                     run_id=run_id, dependencies=deps, events=events,
                 ))
             if not active:
-                if not tasks and need_plan and plan_calls < MAX_PLAN_CALLS:
-                    continue
                 if not any(t["status"] == "queued" for t in tasks.values()):
                     break
                 for task in tasks.values():
@@ -513,7 +357,6 @@ async def run_swarm_turn(
                         if post["kind"] in {"finding", "message"} and post["task_id"]:
                             yield {"kind": "swarm_event", "run_id": run_id, "event_id": post["id"],
                                    "event": post["kind"], "task_id": post["task_id"], **post["payload"]}
-                    need_plan = True
             elif kind == "task_done":
                 task["status"] = payload["status"]
                 task["result"] = payload["result"]
@@ -526,52 +369,19 @@ async def run_swarm_turn(
                        "agent_name": task["agent_name"], "content": payload["result"],
                        "status": "ok" if payload["status"] == "done" else "error",
                        "delegate_call_id": task["id"]}
-                # Replan while siblings still work; don't wait for a batch barrier.
-                need_plan = True
                 continue
-        if not tasks:
-            message = (
-                "Swarm dispatch failed: the coordinator could not produce a valid worker "
-                f"plan after {plan_calls} planning attempts. No workers were started."
-            )
-            store.with_db(lambda conn: db.update_run(conn, run_id, "failed", message))
-            yield {"kind": "error", "message": message}
-            finished = True
-            yield _event(run_id, "run_done", {"status": "failed"})
-            return
-        else:
-            yield _event(run_id, "phase", {"phase": "synthesizing"})
-            board = [
-                {"task": t["brief"], "agent": t["agent_name"],
-                 "status": t["status"], "result": str(t["result"])[:6000]}
-                for t in tasks.values()
-            ]
-            findings = [
-                {**event["payload"], "content": str(event["payload"].get("content") or "")[:2000]}
-                for event in store.with_db(
-                    lambda conn: db.list_events(conn, run_id)
-                ) if event["kind"] in {"finding", "message"}
-            ][-40:]
-            synthesis = (
-                "Synthesize the completed multi-agent work for the user's request. "
-                "Check each result against the request. State failed or blocked work honestly. "
-                "Do not launch more workers.\n\n"
-                f"Original request: {request}\n\nTask board:\n{json.dumps(board, ensure_ascii=False)}"
-                f"\n\nShared findings and messages:\n{json.dumps(findings, ensure_ascii=False)}"
-            )
-            coordinator_tools = [s for s in store.get_agent_openai_tools(coordinator_id)
-                                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS]
-            async for ev in run_turn(synthesis, history=history, agent_id=coordinator_id,
-                                     session_id=session_id, origin=origin,
-                                     tools=coordinator_tools):
-                if ev.get("kind") == "final":
-                    store.with_db(lambda conn: db.update_run(conn, run_id, "done", ev.get("content") or ""))
-                elif ev.get("kind") == "error":
-                    final_status = "failed"
-                yield ev
-        if final_status != "done":
-            store.with_db(lambda conn: db.update_run(conn, run_id, final_status))
+        final_status = "done" if all(t["status"] == "done" for t in tasks.values()) else "failed"
+        result = json.dumps({
+            "run_id": run_id, "request": request, "status": final_status,
+            "tasks": [{"key": t["key"], "agent": t["agent_name"], "agent_id": t["agent_id"], "status": t["status"],
+                       "result": str(t["result"])[:6000]} for t in tasks.values()],
+            "findings": [{**e["payload"], "content": str(e["payload"].get("content") or "")[:2000]} for e in store.with_db(lambda conn: db.list_events(conn, run_id))
+                         if e["kind"] in {"finding", "message"}][-40:],
+        }, ensure_ascii=False)
+        store.with_db(lambda conn: db.update_run(conn, run_id, final_status, result))
         finished = True
+        yield _event(run_id, "phase", {"phase": "synthesizing"})
+        yield {"kind": "swarm_result", "result": result, "error": final_status != "done"}
         yield _event(run_id, "run_done", {"status": final_status})
     finally:
         for task in active.values():
