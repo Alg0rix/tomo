@@ -26,6 +26,7 @@ One package: [Tomo](internal/tomo/SKILL.md). Agents load a topic with
 |------|--------|
 | `references/swarm.md` | Worker teams |
 | `references/connector.md` | Tunnel workplaces and MCP |
+| `references/workplaces.md` | Targeting a tunnel/SSH host in tool calls (`workplace=`, resolution order) |
 | `references/config.md` | Home, env, secrets, models |
 | `references/cli.md` | CLI lifecycle and skill packages |
 | `references/configuration-cli.md` | Local configuration syntax, action support, schemas, reloads |

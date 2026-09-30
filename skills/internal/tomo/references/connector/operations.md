@@ -25,12 +25,11 @@ as if it were the requested remote machine.
 | `portal` | Binary file reads/writes through the bridge | Copies across workplaces/coordinator staging |
 
 These RPC names are implementation details, not additional callable agent tools.
-Use only the tools actually provided. `bash` declares a `workplace` parameter;
-other tools may rely on runtime-injected selection or the bound workplace.
-`runpy`, `read_file`, and `process` static schemas do not declare that parameter.
-Inspect the available schema; do not invent arguments. Select the intended
-workplace in the session when a tool has no explicit selector. Do not create
-a duplicate record merely to change the active target.
+Use only the tools actually provided. Only `bash` declares a `workplace`
+parameter; the other tools follow the turn's bound workplace. Load
+`references/workplaces.md` for the resolution order and recipes for file edits
+and background jobs on a non-default host. Do not create a duplicate record
+merely to change the active target.
 
 Verify remote `pwd` and file-tool root before using paths. Shell scripts execute
 with `bash -s` on the connector, while local tool behavior can differ. Shell

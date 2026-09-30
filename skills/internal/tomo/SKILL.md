@@ -16,8 +16,9 @@ language and carry the requested task through its verification.
 - For configuration on the coordinator, use the local `tomo` CLI. It uses the
   existing database and needs no HTTP request, API key, or interactive UI.
 - For work on a connected machine, discover it with `list_workplaces` and use
-  the available runtime tools on its actual workplace ID. The CLI registry does
-  not observe the server's live tunnel connection.
+  the available runtime tools on its actual workplace ID. Only `bash` takes a
+  per-call `workplace` argument; load `references/workplaces.md` for the other
+  tools. The CLI registry does not observe the server's live tunnel connection.
 - For connector installation, create/reuse the tunnel on the coordinator, then
   SSH and install/pair on the target with ordinary terminal commands. SSH does
   not need a separate Tomo installer abstraction.
@@ -46,6 +47,7 @@ support files needed for the task.
 | Accounts/passwords, API keys, sessions/history, approvals, saved/shared artifacts | [Accounts and sessions](references/accounts-sessions.md) |
 | Update Tomo, control its service, manage skill packages, or uninstall | [CLI lifecycle](references/cli.md) |
 | Install, pair, repair, or use a connector; configure/discover MCP | [Connections](references/connector.md) |
+| Run tools on a specific tunnel/SSH host, `workplace=` arguments, wrong-host results | [Workplace targeting](references/workplaces.md) |
 | Resolve config roots, environment, encryption, personas, or server bind | [Config and secrets](references/config.md) |
 | Locate managed/source/container installs and connector binaries | [Install paths](references/install.md) |
 | Choose a peer or plan and run workers | [Swarm](references/swarm.md) |

@@ -34,7 +34,7 @@ Pairing saves credentials; only a running, authenticated WebSocket makes a tunne
 
 ## Use a connected machine
 
-Load `references/connector/operations.md` before choosing remote tools, background jobs, or portal locations. Select the target explicitly on tools that accept `workplace`; otherwise use the session's selected workplace or the available binding mechanism. Verify host and working directory before mutations. Do not switch to a different host because the intended one is offline.
+Load `references/connector/operations.md` before choosing remote tools, background jobs, or portal locations, and `references/workplaces.md` for how each tool call picks its host. Select the target explicitly on tools that accept `workplace`; otherwise use the session's selected workplace or the available binding mechanism. Verify host and working directory before mutations. Do not switch to a different host because the intended one is offline.
 
 The connector root is the default working directory and a lexical boundary for file tools, **not OS isolation**. Shell and Python execute with the connector user's permissions. Keep commands within the authorized task and use an appropriate OS account; do not promise that the root prevents shell or symlink access outside it.
 
