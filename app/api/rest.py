@@ -696,7 +696,7 @@ async def get_session_artifact(
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     headers: dict[str, str] = {"X-Content-Type-Options": "nosniff"}
     # Never serve agent-authored HTML as an active document on Tomo origin.
-    # UI previews load via sandboxed srcdoc instead.
+    # UI previews load on an isolated data origin inside a sandboxed iframe.
     lower = filename.lower()
     if lower.endswith((".html", ".htm")):
         return FileResponse(

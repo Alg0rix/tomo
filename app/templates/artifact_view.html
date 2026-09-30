@@ -83,6 +83,7 @@
   </main>
 </div>
 {% if category == 'html' %}
+<script src="{{ url_for('static', path='js/artifact_preview.js') }}?v=opaque1"></script>
 <script>
 (function () {
   var stage = document.getElementById('artifactViewStage');
@@ -95,11 +96,13 @@
       return r.text();
     })
     .then(function (text) {
-      frame.srcdoc = text;
+      TomoArtifactPreview.setContent(frame, text);
     })
     .catch(function (err) {
-      frame.srcdoc = '<pre style="padding:16px;font:13px monospace">Could not load HTML: '
-        + String(err && err.message ? err.message : err) + '</pre>';
+      var message = document.createElement('pre');
+      message.style.cssText = 'padding:16px;font:13px monospace';
+      message.textContent = 'Could not load HTML: ' + String(err && err.message ? err.message : err);
+      TomoArtifactPreview.setContent(frame, message.outerHTML);
     });
 })();
 </script>

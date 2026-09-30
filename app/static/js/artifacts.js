@@ -153,7 +153,7 @@
     );
   }
 
-  /** Load HTML into a sandboxed iframe via srcdoc (never Tomo-origin src). */
+  /** Load HTML into a sandboxed iframe on an isolated data origin. */
   function fillHtmlFrame(iframe, url, textOpt) {
     if (!iframe) return;
     var nudgeChat = function () {
@@ -164,9 +164,8 @@
       }
     };
     var apply = function (text) {
-      iframe.removeAttribute("src");
-      iframe.srcdoc = text;
-      // srcdoc paint can arrive after history stick — re-pin if still active.
+      global.TomoArtifactPreview.setContent(iframe, text);
+      // Frame paint can arrive after history stick — re-pin if still active.
       requestAnimationFrame(nudgeChat);
     };
     if (typeof textOpt === "string") {
