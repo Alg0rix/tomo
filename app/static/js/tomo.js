@@ -664,6 +664,7 @@
     if (!head) return card;
     head.addEventListener('click', function (e) {
       if (e.target.closest('.diff-code-block') || e.target.closest('.tool-code-block')) return;
+      card._userToggled = true;
       card.classList.toggle('expanded');
       head.setAttribute('aria-expanded', card.classList.contains('expanded') ? 'true' : 'false');
     });
@@ -848,9 +849,38 @@
     return firstLoadingName || firstLoading || null;
   };
 
+  var LIVE_OUTPUT_MAX = 200000;
+
+  /** Append a live output chunk (bash stream) to a still-running tool card. */
+  Tomo.appendToolOutput = function (card, chunk) {
+    if (!card || !card._res || !chunk) return;
+    if (!card.classList.contains('loading') && !card.classList.contains('running')) return;
+    var live = (card._live || '') + String(chunk);
+    if (live.length > LIVE_OUTPUT_MAX) live = live.slice(live.length - LIVE_OUTPUT_MAX);
+    card._live = live;
+    var pre = card._res;
+    var pinned = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    // Carriage returns redraw the current line (progress bars), like a terminal.
+    pre.textContent = live.replace(/\r\n/g, '\n').split('\n').map(function (line) {
+      return line.slice(line.lastIndexOf('\r') + 1);
+    }).join('\n');
+    if (!card.classList.contains('expanded') && !card._userToggled) {
+      card.classList.add('expanded');
+      card._liveExpanded = true;
+      if (card._head) card._head.setAttribute('aria-expanded', 'true');
+    }
+    if (pinned) pre.scrollTop = pre.scrollHeight;
+  };
+
   /** Attach tool output to a card and flip status to ok/error. */
   Tomo.finishToolCard = function (card, result, isError) {
     if (!card) return;
+    if (card._liveExpanded && !card._userToggled) {
+      card.classList.remove('expanded');
+      if (card._head) card._head.setAttribute('aria-expanded', 'false');
+    }
+    card._live = null;
+    card._liveExpanded = false;
     var resultText = typeof result === 'string' ? result : JSON.stringify(result == null ? '' : result);
     if (card._res) card._res.textContent = resultText;
     card.classList.remove('loading');

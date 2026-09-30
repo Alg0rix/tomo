@@ -9,6 +9,7 @@ onto SSE:
 * ``{"kind": "thinking", "content": str}``          # optional reasoning
 * ``{"kind": "delta", "content": str}``             # streamed text token/chunk
 * ``{"kind": "tool", "tool": str, "args": dict, "call_id": str}``
+* ``{"kind": "tool_output_delta", "tool": str, "call_id": str, "content": str}``  # live bash output
 * ``{"kind": "tool_result", "tool": str, "result": str, "error": bool, "call_id": str}``
 * ``{"kind": "ui", "ui_id": str, "mode": str, "tree": dict}``
 * ``{"kind": "delegate", "from": str, "to": str, "reason": str,
@@ -80,7 +81,7 @@ from app.runtime.permissions.grants import reset_outside_grant, set_outside_gran
 from app.runtime.permissions import hitl as hitl_mod
 from app.runtime.permissions.modes import get_effective_mode
 from app.runtime.permissions.smart import command_from_args, smart_approve
-from app.runtime.tools import sandbox
+from app.runtime.tools import progress as tool_progress, sandbox
 from app.runtime.tools.delegate import parse_delegated_id
 from app.runtime.tools.registry import execute_async, get_openai_tools
 
@@ -123,6 +124,11 @@ _READ_ONLY_TOOLS = frozenset(
         "recall",
     }
 )
+
+
+# Tools whose output is streamed to the UI while they run.
+_STREAMING_TOOLS = frozenset({"bash"})
+_STREAM_FLUSH_SECONDS = 0.1
 
 
 def _max_tool_iterations() -> int:
@@ -501,6 +507,46 @@ async def _execute_authorized(call: ToolCall, decision: Decision) -> str:
         return f"Error: {exc}"
     finally:
         reset_outside_grant(grant_tok)
+
+
+async def _execute_streaming(
+    call: ToolCall, decision: Decision, call_id: str, box: list[str]
+) -> AsyncIterator[dict[str, Any]]:
+    """Run a streamable tool, yielding ``tool_output_delta`` events while it runs.
+
+    The final result string is appended to ``box``.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    token = tool_progress.bind(lambda chunk: loop.call_soon_threadsafe(queue.put_nowait, chunk))
+    try:
+        task = asyncio.ensure_future(_execute_authorized(call, decision))
+    finally:
+        tool_progress.reset(token)
+
+    def _drain() -> str:
+        parts: list[str] = []
+        while not queue.empty():
+            parts.append(queue.get_nowait())
+        return "".join(parts)
+
+    try:
+        while True:
+            await asyncio.wait({task}, timeout=_STREAM_FLUSH_SECONDS)
+            text = _drain()
+            if text:
+                yield {
+                    "kind": "tool_output_delta",
+                    "tool": call.name,
+                    "call_id": call_id,
+                    "content": text,
+                }
+            if task.done():
+                break
+        box.append(task.result())
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 async def _run_one_gated_tool(
@@ -1126,12 +1172,16 @@ async def run_turn(
                     )
                     result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
 
-            # Mutating tools stay serial.
+            # Mutating tools stay serial; terminal-like ones stream live output.
             for cid, call, decision in pending_mut:
-                text_res = _truncate_result(
-                    await _execute_authorized(call, decision),
-                    tool_name=call.name,
-                )
+                if call.name in _STREAMING_TOOLS:
+                    box: list[str] = []
+                    async for ev in _execute_streaming(call, decision, cid, box):
+                        yield ev
+                    raw_res = box[0] if box else "Error: no tool result"
+                else:
+                    raw_res = await _execute_authorized(call, decision)
+                text_res = _truncate_result(raw_res, tool_name=call.name)
                 result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
 
             # Emit remaining tool_results in original call order; append all.

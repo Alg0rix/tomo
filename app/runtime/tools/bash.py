@@ -10,10 +10,15 @@ registered in :mod:`app.runtime.tools.process_registry`.
 
 from __future__ import annotations
 
+import codecs
+import os
+import signal
 import subprocess
+import threading
+import time
 from typing import Any
 
-from app.runtime.tools import process_registry
+from app.runtime.tools import process_registry, progress
 from app.runtime.tools.sandbox import current_agent_id, resolve_work_root
 from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
@@ -48,6 +53,76 @@ def _truthy(raw: Any) -> bool:
     if isinstance(raw, str):
         return raw.strip().lower() in {"1", "true", "yes", "on"}
     return False
+
+
+def _pump(fd: int, buf: list[str], sink: progress.Sink | None, budget: list[int]) -> None:
+    """Read ``fd`` until EOF, keeping text in ``buf`` and forwarding it to ``sink``."""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    while True:
+        try:
+            data = os.read(fd, 4096)
+        except OSError:
+            data = b""
+        text = decoder.decode(data, final=not data)
+        if text:
+            buf.append(text)
+            if sink is not None and budget[0] > 0:
+                piece = text[: budget[0]]
+                budget[0] -= len(piece)
+                try:
+                    sink(piece if budget[0] > 0 else piece + "\n…[live output truncated]\n")
+                except Exception:
+                    pass
+        if not data:
+            return
+
+
+def _normalize(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _run_streaming(command: str, cwd: str, timeout: float) -> tuple[int, str, str]:
+    """Run ``command`` like ``subprocess.run(capture_output=True)`` but stream live.
+
+    Chunks from stdout and stderr go to the bound :mod:`progress` sink as they
+    arrive. Raises :class:`subprocess.TimeoutExpired` after killing the whole
+    process group.
+    """
+    sink = progress.current()
+    proc = subprocess.Popen(
+        ["bash", "-lc", command],
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    out: list[str] = []
+    err: list[str] = []
+    budget = [_MAX_OUTPUT]
+    readers = [
+        threading.Thread(target=_pump, args=(proc.stdout.fileno(), out, sink, budget), daemon=True),
+        threading.Thread(target=_pump, args=(proc.stderr.fileno(), err, sink, budget), daemon=True),
+    ]
+    for t in readers:
+        t.start()
+    deadline = time.monotonic() + timeout
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        proc.wait()
+        raise
+    finally:
+        # Background grandchildren may hold the pipes open; don't wait on them forever.
+        for t in readers:
+            t.join(max(0.5, deadline - time.monotonic()))
+        proc.stdout.close()
+        proc.stderr.close()
+    return proc.returncode, _normalize("".join(out)), _normalize("".join(err))
 
 
 def run(arguments: dict[str, Any]) -> str:
@@ -121,14 +196,7 @@ def run(arguments: dict[str, Any]) -> str:
         root = resolve_work_root()
         timeout = _timeout_seconds(arguments.get("timeout"))
         try:
-            completed = subprocess.run(
-                ["bash", "-lc", command],
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
+            returncode, stdout, stderr = _run_streaming(command, str(root), timeout)
         except subprocess.TimeoutExpired:
             return f"Error: command timed out after {timeout:g}s"
         except OSError as exc:
@@ -142,15 +210,15 @@ def run(arguments: dict[str, Any]) -> str:
             except Exception:
                 pass
 
-    stdout = _clip(completed.stdout or "")
-    stderr = _clip(completed.stderr or "")
+    stdout = _clip(stdout)
+    stderr = _clip(stderr)
     parts: list[str] = []
     if stdout:
         parts.append(stdout.rstrip("\n"))
     if stderr:
         parts.append(f"stderr:\n{stderr.rstrip(chr(10))}")
-    if completed.returncode != 0:
-        parts.append(f"exit code: {completed.returncode}")
+    if returncode != 0:
+        parts.append(f"exit code: {returncode}")
     if not parts:
         return "(no output)"
     return "\n".join(parts)

@@ -32,6 +32,8 @@ def sse_summary(name: str, data: dict[str, Any]) -> str:
         return f"chars={len(content)} preview={content[:_PREVIEW]!r}"
     if name == "tool":
         return f"tool={data.get('tool')!r} args={data.get('args')!r}"
+    if name == "tool_output_delta":
+        return f"tool={data.get('tool')!r} call_id={data.get('call_id')} chars={len(data.get('content') or '')}"
     if name == "tool_result":
         result = data.get("result")
         preview = result if isinstance(result, str) else repr(result)
@@ -182,6 +184,17 @@ def map_loop_event(
             data["content"] = ev["content"]
         else:
             data["message"] = ev["message"]
+        chunks.append(fmt_sse({"event": kind, "data": _stamp_dcid(data, ev), "seq": seq}))
+    elif kind == "tool_output_delta":
+        # Live tool output; not persisted — the final tool_result carries it all.
+        seq += 1
+        data = {
+            "tool": ev.get("tool") or "",
+            "call_id": ev.get("call_id") or "",
+            "content": ev.get("content") or "",
+            "agent_id": agent_id,
+            "agent": agent_name,
+        }
         chunks.append(fmt_sse({"event": kind, "data": _stamp_dcid(data, ev), "seq": seq}))
     elif kind == "thinking":
         seq += 1

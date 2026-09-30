@@ -1043,6 +1043,14 @@
       ctx.atBottom();
     });
 
+    on('tool_output_delta', function (e) {
+      bumpActivity();
+      var d = JSON.parse(e.data || '{}');
+      if (isSubagentEvent(d) || !window.Tomo || !Tomo.appendToolOutput) return;
+      Tomo.appendToolOutput(Tomo.findToolCard(ctx.turn, d), d.content || '');
+      ctx.atBottom();
+    });
+
     on('tool_result', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');

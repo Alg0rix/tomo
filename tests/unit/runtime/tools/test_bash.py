@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
 
 from app.core import home
-from app.runtime.tools import bash, sandbox
+from app.runtime.tools import bash, progress, sandbox
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
 from app.services import store
 from app.workplaces.hub import hub
@@ -53,6 +54,22 @@ def test_bash_timeout_is_error_string() -> None:
     result = bash.run({"command": "sleep 5", "timeout": 0.2})
     assert result.startswith("Error")
     assert "timed out" in result.lower()
+
+
+def test_bash_streams_output_before_exit() -> None:
+    sandbox.bind_agent("ops")
+    seen: list[tuple[float, str]] = []
+    token = progress.bind(lambda chunk: seen.append((time.monotonic(), chunk)))
+    try:
+        started = time.monotonic()
+        result = bash.run({"command": "echo first; sleep 0.6; echo second >&2"})
+        finished = time.monotonic()
+    finally:
+        progress.reset(token)
+    assert result == "first\nstderr:\nsecond"
+    assert "".join(c for _, c in seen) == "first\nsecond\n"
+    first_at = next(ts for ts, c in seen if "first" in c)
+    assert first_at - started < 0.4 < finished - started
 
 
 def test_bash_nonzero_exit_includes_code() -> None:

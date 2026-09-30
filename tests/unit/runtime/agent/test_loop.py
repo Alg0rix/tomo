@@ -66,7 +66,7 @@ async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
 def _kinds(events: list[dict[str, Any]], *, drop_delta: bool = False) -> list[str]:
     kinds = [e["kind"] for e in events]
     if drop_delta:
-        return [k for k in kinds if k != "delta"]
+        return [k for k in kinds if k not in {"delta", "tool_output_delta"}]
     return kinds
 
 
@@ -253,6 +253,10 @@ async def test_bash_path_emits_tool_then_result_then_final() -> None:
     assert result_ev["tool"] == "bash"
     assert result_ev["result"].strip() == "4"
     assert result_ev["error"] is False
+    live = [e for e in events if e["kind"] == "tool_output_delta"]
+    assert "".join(e["content"] for e in live) == "4\n"
+    assert all(e["call_id"] == tool_ev["call_id"] for e in live)
+    assert events.index(live[-1]) < events.index(result_ev)
     assert result_ev.get("call_id") == tool_ev["call_id"]
     assert final_ev["content"] == _BASH_FINAL
     assert final_ev.get("already_streamed") is True
