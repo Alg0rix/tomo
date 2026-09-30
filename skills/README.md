@@ -34,7 +34,7 @@ One package: [Tomo](internal/tomo/SKILL.md). Agents load a topic with
 | `references/skills-modules.md` | Packages, tool/skill assignments, reusable playbooks, modules |
 | `references/schedules.md` | Scheduled prompts, recurrence, pause/resume, run verification |
 | `references/channels-settings.md` | Telegram, transcription, approvals, learning, general limits |
-| `references/memory-knowledge.md` | Memory/knowledge/episode selection, recall, corrections |
+| `references/memory-knowledge.md` | Full memory lifecycle: scopes, capture, wikilinks/aliases, recall, edit/move/forget, extraction/consolidation, retention, backup/restore |
 | `references/accounts-sessions.md` | Login accounts, API keys, sessions/history, saved/shared artifacts |
 | `references/install.md` | Install paths: systemd, Docker, source, connector binary |
 

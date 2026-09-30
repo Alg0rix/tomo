@@ -43,7 +43,7 @@ support files needed for the task.
 | Skill packages, per-agent tools/skills, reusable procedures, registered modules | [Skills and modules](references/skills-modules.md) |
 | Future/recurring jobs, pause/resume, run history, background-work diagnosis | [Schedules](references/schedules.md) |
 | Telegram, transcription, settings, approval defaults, limits, learning controls | [Channels and settings](references/channels-settings.md) |
-| Recall, curated facts, knowledge, episodes, memory correction/consolidation | [Memory and knowledge](references/memory-knowledge.md) |
+| Full memory lifecycle: storage/scope, capture, wikilinks/aliases, recall, correction/move/forget, learning/consolidation, backup/restore | [Memory lifecycle and knowledge](references/memory-knowledge.md) |
 | Accounts/passwords, API keys, sessions/history, approvals, saved/shared artifacts | [Accounts and sessions](references/accounts-sessions.md) |
 | Update Tomo, control its service, manage skill packages, or uninstall | [CLI lifecycle](references/cli.md) |
 | Install, pair, repair, or use a connector; configure/discover MCP | [Connections](references/connector.md) |
@@ -61,7 +61,7 @@ support files needed for the task.
 | “Enable this tool/skill/MCP service” | Check installation/catalog/global state and per-agent selection; preserve the complete existing selection; discover exact runtime IDs and verify the capability. |
 | “Run this every day/remind me later” | Establish agent, timezone, recurrence, and a self-contained job prompt; reuse the job ID, read its next run, apply runtime scheduling if needed, and inspect runs when execution is in scope. |
 | “Connect Telegram/change voice handling” | Inspect supported channel settings, keep the intended allowlist, store credentials privately, apply connection changes, and verify in the intended chat without unsolicited messaging. |
-| “Remember/correct what you know” | Retrieve current relevant memory, choose user/entity/project/knowledge/episode/skill storage, correct only the intended fact, and verify the stored result. |
+| “Remember/link/correct/forget what you know” | Retrieve relevant memory; choose the store and scope; use entity wikilinks, exact supersession, or the supported correction/removal path; verify live facts, related pages, and any retained history. |
 | “Change account/password/API access” | Inspect the actual account/key IDs, use supported account fields and protected input, preserve remaining account access, and verify the requested change. |
 | “Delegate/use a swarm” | Discover capable enabled peers/templates; use one bounded handoff or an actual worker plan with ownership/dependencies, then synthesize verified evidence. |
 | “Give me a report/export” | Complete the work on the actual workplace, register the deliverable in the current session, verify its artifact location, and provide the result without publishing it implicitly. |
