@@ -84,6 +84,26 @@ def test_all_tunnels_hint_picks_host(tmp_path: Path) -> None:
         reset_workplace(toks)
 
 
+def test_workplace_arg_beats_session_folder(tmp_path: Path) -> None:
+    _rebind(tmp_path)
+    root = tmp_path / "r"
+    root.mkdir()
+    store.create_workplace(
+        {"id": "wp_l", "name": "L", "kind": "local", "root_path": str(root)}
+    )
+    store.create_workplace({"id": "wp_aio", "name": "aio-serv", "kind": "tunnel"})
+    store.update_agent("ops", {"workplace_ids": ["wp_l", "wp_aio"]})
+    sandbox.bind_agent("ops")
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    toks = bind_workplace(workplace_id="wp_l")
+    try:
+        out = try_remote("exec_bash", {"script": "true"}, workplace_hint="aio-serv")
+    finally:
+        reset_workplace(toks)
+    assert out is not None and "offline" in out.lower()
+
+
 def test_ssh_routes_to_ssh_exec(tmp_path: Path) -> None:
     _rebind(tmp_path)
     store.create_workplace(

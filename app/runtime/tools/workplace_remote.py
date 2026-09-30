@@ -67,7 +67,16 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
     if not agent:
         return None
 
-    # Explicit per-turn bind (register_workplace / tool arg / session folder).
+    allowed = _agent_allowed_workplaces(agent)
+    # Host named for this call/turn (bash workplace= / "on <host>") beats the
+    # session folder, otherwise workplace= silently runs on the session default.
+    hint = current_workplace_hint()
+    if hint and allowed:
+        hit = match_workplace(allowed, hint)
+        if hit:
+            return hit
+
+    # Explicit per-turn bind (register_workplace / session folder).
     override = current_workplace_id()
     if override:
         try:
@@ -78,13 +87,6 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
                 return wp
         except Exception:
             pass
-
-    allowed = _agent_allowed_workplaces(agent)
-    hint = current_workplace_hint()
-    if hint and allowed:
-        hit = match_workplace(allowed, hint)
-        if hit:
-            return hit
 
     # Chat chose "Tomo work dir": do not auto-bind the agent's permanent local
     # workplace (e.g. main → tmp-work → /tmp). Still allow tunnels/SSH via
