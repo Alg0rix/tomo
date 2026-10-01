@@ -818,3 +818,47 @@ async def test_failed_delegate_continues_tool_loop(monkeypatch) -> None:
     assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
     assert not any(e["kind"] == "delegate" for e in events)
     assert _final(events)["content"] == "I'll handle it myself."
+
+
+async def test_nested_worker_leaves_composer_steer_for_parent(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.runtime.agent.subagent import drain_subagent_turn
+    from app.services import chat
+
+    inbox = [{"content": "Keep production safe", "steer_id": "parent-guidance"}]
+    active = SimpleNamespace(steer_inbox=inbox, _steer_lock=threading.Lock())
+    monkeypatch.setattr(chat, "get_active_session_turn", lambda sid: active)
+
+    def drain(sid):
+        items = list(inbox)
+        inbox.clear()
+        return items
+
+    monkeypatch.setattr(chat, "drain_session_steers", drain)
+
+    def child_run(prompt, **kwargs):
+        return run_turn(prompt, system_prompt="Test worker.", enable_atg=False, **kwargs)
+
+    child_events = [
+        event
+        async for event, _ in drain_subagent_turn(
+            "ops", from_agent_id="main", reason="Check nodes",
+            user_request="Inspect the cluster", session_id="fixture",
+            llm=ScriptedLLM([text_reply("Worker finished")]), tools=[],
+            run_turn_fn=child_run,
+        )
+    ]
+    assert len(inbox) == 1
+    assert not any(event["kind"] == "steer" for event in child_events)
+    assert child_events[-1]["kind"] == "subagent_final"
+
+    parent_events = await _collect(
+        "Review worker results", session_id="fixture", agent_id="main",
+        llm=ScriptedLLM([text_reply("Parent applied the guidance")]), tools=[],
+    )
+    assert inbox == []
+    steers = [event for event in parent_events if event["kind"] == "steer"]
+    assert len(steers) == 1
+    assert steers[0]["content"] == "Keep production safe"
+    assert _final(parent_events)["content"] == "Parent applied the guidance"

@@ -303,7 +303,7 @@ async def _llm_round_with_retry(
 
 
 def _peek_has_steers(session_id: str | None) -> bool:
-    if not session_id:
+    if not session_id or current_depth() > 0:
         return False
     try:
         from app.services.chat import get_active_session_turn
@@ -321,7 +321,9 @@ async def _emit_drained_steers(
     messages: list[dict[str, Any]], session_id: str | None
 ) -> AsyncIterator[dict[str, Any]]:
     """Drain mid-turn steers into *messages* and yield ``steer`` events."""
-    if not session_id:
+    # Nested workers share the session for permissions, but composer guidance
+    # belongs to the top-level agent, which owns delegation decisions.
+    if not session_id or current_depth() > 0:
         return
     try:
         from app.services.chat import (

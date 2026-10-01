@@ -903,7 +903,7 @@
       return agentToKey[aid] || aid;
     }
 
-    function startTurn(record) {
+    function startTurn(record, steered) {
       turnId++;
       turn = document.createElement('div');
       turn.className = 'turn';
@@ -911,12 +911,16 @@
         turn.dataset.queryId = record.id;
         turn.dataset.queryIndex = String(record.index);
       }
+      if (steered) turn.dataset.steered = '1';
       scroll.appendChild(turn);
       swarmCard = null;
-      subagentSet = new Set();
-      turnBuffers = new Map();
-      agentToKey = {};
-      delegateCounter = 0;
+      // A steer splits the visible conversation, not the running delegation.
+      if (!steered) {
+        subagentSet = new Set();
+        turnBuffers = new Map();
+        agentToKey = {};
+        delegateCounter = 0;
+      }
       var oldPanel = chatWrap.querySelector('.subagent-inspector, .detail-panel');
       if (oldPanel) oldPanel.remove();
       detailPanel = null;
@@ -1000,7 +1004,9 @@
         key: key, aid: aid, name: name, task: task, idx: idx || 1, total: total || 1,
         historic: true,
       });
-      row.addEventListener('click', function () { openDetailPanel(row); });
+      row._openTrace = function () { openDetailPanel(row); };
+      row._wired = true;
+      row.addEventListener('click', function () { row._openTrace(); });
       (window.TomoSwarm ? TomoSwarm.lanes(card) : card).appendChild(row);
       var buf = getBuffer(key);
       buf.row = row;
@@ -1225,7 +1231,7 @@
           context: '',
         };
         queryCursor++;
-        startTurn(queryRecord);
+        startTurn(queryRecord, !!(e.steered || (e.params && e.params.steered)));
         var row = document.createElement('div');
         row.className = 'msg user';
         var chips = '';

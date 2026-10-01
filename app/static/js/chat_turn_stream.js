@@ -27,6 +27,15 @@
     var reconnectTimer = null;
     var reconnectAttempts = 0;
     var streamTurns = [ctx.turn];
+    if (!isLive) {
+      var firstSegment = ctx.turn;
+      while (firstSegment.dataset.steered === '1') {
+        var previousSegment = firstSegment.previousElementSibling;
+        if (!previousSegment || !previousSegment.classList.contains('turn')) break;
+        streamTurns.unshift(previousSegment);
+        firstSegment = previousSegment;
+      }
+    }
 
     function continueAfterUser(bubble) {
       if (closed || !bubble) return;
@@ -39,6 +48,7 @@
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
       streamedReasoning = null;
       reasoningText = '';
+      turn.dataset.steered = '1';
       ctx.turn = turn;
       streamTurns.push(turn);
       ctx.atBottom();
@@ -117,9 +127,33 @@
     var parallelSlotKey = {};         // agent_id + ':' + parallel_index → key
 
     if (!isLive) {
-      ctx.turn.querySelectorAll('.swarm-row[data-agent-id]').forEach(function (row) {
-        if (row.dataset.agentId) subagentSet.add(row.dataset.agentId);
+      streamTurns.forEach(function (segment) {
+        segment.querySelectorAll('.swarm-row[data-agent-id]').forEach(function (row) {
+          var aid = row.dataset.agentId;
+          var key = row.dataset.instanceKey || aid;
+          if (aid) { subagentSet.add(aid); agentToInstanceKey[aid] = key; }
+          var buf = row._buffer || getBuffer(key);
+          buf.key = key;
+          buf.row = row;
+          buf.agentId = aid;
+          buf.name = buf.name || (row.querySelector('.name') || {}).textContent || aid;
+          buf.task = buf.task || (row.querySelector('.task') || {}).textContent || '';
+          buf.events = buf.events || [];
+          buf.status = row.classList.contains('error') ? 'error' : row.classList.contains('done') ? 'done' : 'running';
+          buf.replayEvents = new Map();
+          buf.events.forEach(function (event) {
+            var signature = subagentEventSignature(event.kind, event.data);
+            buf.replayEvents.set(signature, (buf.replayEvents.get(signature) || 0) + 1);
+          });
+          subagentBuffers.set(key, buf);
+          row._buffer = buf;
+          wireRow(key, row);
+        });
       });
+      var selected = ctx.wrap.querySelector('.swarm-row.selected');
+      if (selected && ctx.wrap.querySelector('.subagent-inspector')) {
+        openDetailPanel(selected.dataset.instanceKey || selected.dataset.agentId);
+      }
     }
 
     function clearWatchdogs() {
@@ -146,6 +180,10 @@
         ctx.atBottom();
       }
       replayRaw = '';
+      subagentBuffers.forEach(function (buf, key) {
+        if (buf.replayRaw) bufferEvent(key, 'delta', { content: buf.replayRaw });
+        buf.replayRaw = '';
+      });
     }
 
     /** True while resume is still replaying buffered history (skip mode). */
@@ -419,7 +457,8 @@
 
     function isSubagentEvent(d) {
       var aid = d.agent_id || '';
-      return aid && subagentSet.has(aid) && aid !== ctx.agentId;
+      return !!(d.delegate_call_id || d.delegateCallId || d.subagent ||
+        (aid && subagentSet.has(aid) && aid !== ctx.agentId));
     }
 
     /** Per-delegation instance key (same catalog agent can run twice). */
@@ -559,11 +598,36 @@
       return subagentBuffers.get(key);
     }
 
+    function subagentEventSignature(kind, data) {
+      if (kind === 'done' || kind === 'subagent_final') kind = 'final';
+      var value = data.content || '';
+      if (kind === 'tool') value = data.call_id || JSON.stringify([data.tool, data.args]);
+      if (kind === 'tool_result') value = [data.call_id || '', data.result, !!data.error];
+      if (kind === 'ui') value = [data.ui_id, data.tree, data.patch];
+      return JSON.stringify([kind, value]);
+    }
+
     function bufferEvent(key, kind, data) {
       var buf = getBuffer(key);
+      if (data.agent_id) {
+        buf.agentId = data.agent_id;
+        buf.name = buf.name || data.agent || data.agent_id;
+        subagentSet.add(data.agent_id);
+        agentToInstanceKey[data.agent_id] = key;
+      }
+      if (!buf.row) addSwarmRow(key, buf.agentId || '', buf.name, buf.task, buf.index, buf.total);
+      if (inReplaySkip()) {
+        // Only the unfinished text tail survives replay. Completed segments
+        // already exist in the history buffer and must not be appended twice.
+        if (kind === 'delta') { buf.replayRaw = (buf.replayRaw || '') + (data.content || ''); return; }
+        if (kind === 'thinking' || kind === 'tool' || kind === 'done') buf.replayRaw = '';
+        var signature = subagentEventSignature(kind, data);
+        var remaining = buf.replayEvents && buf.replayEvents.get(signature);
+        if (remaining) { buf.replayEvents.set(signature, remaining - 1); return; }
+      }
       buf.events.push({ kind: kind, data: data });
-      Tomo.swarmRowEvent(buf.row || swarmRowFor(key), kind, data);
-      if (activeDetailAgent === key && detailPanel) renderEventInDetail(kind, data, key);
+      Tomo.swarmRowEvent(buf.row, kind, data);
+      if (activeDetailAgent === key && detailPanel && detailPanel.isConnected) renderEventInDetail(kind, data, key);
     }
 
     function createSwarmCard() {
@@ -584,10 +648,12 @@
     // Lanes pre-created from the run plan (queued tasks) get their trace
     // click once the worker actually starts. History rows own their own.
     function wireRow(key, row) {
-      if (!row || row._wired || row._buffer) return row;
+      if (!row) return row;
+      row._openTrace = function () { openDetailPanel(key); };
+      if (row._wired) return row;
       row._wired = true;
       row.classList.remove('no-trace');
-      row.addEventListener('click', function () { openDetailPanel(key); });
+      row.addEventListener('click', function () { row._openTrace(); });
       return row;
     }
 
@@ -600,6 +666,7 @@
       laneHost(card).appendChild(row);
       var buf = getBuffer(key);
       buf.row = row;
+      row._buffer = buf;
       buf.name = name || aid;
       buf.agentId = aid;
       buf.task = task || '';
@@ -762,69 +829,20 @@
       }
     }
 
-    // ── Simple swarm helpers (resume) ───────────────────────────────
-
+    // History and live segments share the same per-delegation rows and buffers.
     function swarmRowFor(key) {
       if (!key) return null;
-      var rows = ctx.turn.querySelectorAll('.swarm-row');
-      for (var i = 0; i < rows.length; i++) {
-        if (rows[i].dataset.instanceKey === key || rows[i].dataset.agentId === key) return rows[i];
+      for (var t = streamTurns.length - 1; t >= 0; t--) {
+        var rows = streamTurns[t].querySelectorAll('.swarm-row');
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].dataset.instanceKey === key || (!rows[i].dataset.instanceKey && rows[i].dataset.agentId === key)) return rows[i];
+        }
       }
       return null;
     }
 
-    function bumpSwarmProgressResume(key) {
-      if (!key) return;
-      var row = swarmRowFor(key);
-      if (!row) return;
-      row.classList.add('active');
-      var bar = row.querySelector('.swarm-progress-bar');
-      if (bar) {
-        var w = parseFloat(bar.style.width) || 0;
-        bar.style.width = Math.min(92, w + 7) + '%';
-      }
-    }
-
-    function ensureSwarmRow(key, aid, name, task, idx, total) {
-      if (!aid && !key) return;
-      if (aid) subagentSet.add(aid);
-      var row = swarmRowFor(key || aid);
-      if (row) {
-        bumpSwarmProgressResume(key || aid);
-        return row;
-      }
-      var card = ctx.turn.querySelector('.swarm-card');
-      if (!card) {
-        card = document.createElement('div');
-        card.className = 'swarm-card';
-        ctx.turn.appendChild(card);
-      }
-      var instKey = key || aid;
-      row = Tomo.buildSwarmRow({
-        key: instKey, aid: aid, name: name, task: task, idx: idx || 1, total: total || 1,
-      });
-      wireRow(instKey, row);
-      laneHost(card).appendChild(row);
-      ctx.atBottom();
-      return row;
-    }
-
-    function markSwarmDoneResume(key, status) {
-      if (!key) return;
-      var row = swarmRowFor(key);
-      if (!row) return;
-      Tomo.swarmRowDone(row, status);
-    }
-
-    function bumpSwarmProgress(key) {
-      if (isLive) bumpSwarmProgressLive(key);
-      else bumpSwarmProgressResume(key);
-    }
-
-    function markSwarmDone(key, status) {
-      if (isLive) markSwarmDoneLive(key, status);
-      else markSwarmDoneResume(key, status);
-    }
+    function bumpSwarmProgress(key) { bumpSwarmProgressLive(key); }
+    function markSwarmDone(key, status) { markSwarmDoneLive(key, status); }
 
     // ── HITL ────────────────────────────────────────────────────────
 
@@ -991,7 +1009,10 @@
     on('thinking_delta', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
-      if (isSubagentEvent(d)) return;
+      if (isSubagentEvent(d)) {
+        bufferEvent(instanceKeyFrom(d, d.agent_id), 'thinking_delta', d);
+        return;
+      }
       adoptAgent(d.agent_id, d.agent);
       clearPending();
       reasoningText += d.content || '';
@@ -1044,7 +1065,7 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       var aid = d.agent_id || '';
-      if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
+      if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, aid);
         bufferEvent(ik, 'tool', d);
         bumpSwarmProgress(ik);
@@ -1080,7 +1101,11 @@
     on('tool_output_delta', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
-      if (isSubagentEvent(d) || !window.Tomo || !Tomo.appendToolOutput) return;
+      if (isSubagentEvent(d)) {
+        bufferEvent(instanceKeyFrom(d, d.agent_id), 'tool_output_delta', d);
+        return;
+      }
+      if (!window.Tomo || !Tomo.appendToolOutput) return;
       Tomo.appendToolOutput(findStreamTool(d), d.content || '');
       ctx.atBottom();
     });
@@ -1090,7 +1115,7 @@
       var d = JSON.parse(e.data || '{}');
       if (!isLive) sawTurnEvent = true;
       var aid = d.agent_id || '';
-      if (aid && subagentSet.has(aid) && aid !== ctx.agentId) {
+      if (isSubagentEvent(d)) {
         var ik = instanceKeyFrom(d, aid);
         bufferEvent(ik, 'tool_result', d);
         bumpSwarmProgress(ik);
@@ -1303,7 +1328,7 @@
           code = payload.code || '';
           errAgentId = payload.agent_id || '';
         } catch (_) {}
-        if (errAgentId && subagentSet.has(errAgentId) && errAgentId !== ctx.agentId) {
+        if (payload && isSubagentEvent(payload)) {
           var errKey = instanceKeyFrom(payload, errAgentId);
           bufferEvent(errKey, 'error', { message: msg });
           markSwarmDone(errKey, 'error');

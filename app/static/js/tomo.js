@@ -1098,9 +1098,22 @@
     var preview = Tomo.toolResultPreview;
 
     if (kind === 'thinking') {
+      root.querySelectorAll('.si-streamed-reasoning').forEach(function (card) { card.remove(); });
       var wrap = Tomo.buildReasoningCard(data.content);
       root.appendChild(wrap);
       return wrap;
+    }
+
+    if (kind === 'thinking_delta') {
+      var reasoning = root.querySelector('.si-streamed-reasoning');
+      var text = (reasoning && reasoning._raw || '') + (data.content || '');
+      if (!reasoning) {
+        reasoning = Tomo.buildReasoningCard(text);
+        reasoning.classList.add('si-streamed-reasoning');
+        root.appendChild(reasoning);
+      } else Tomo.updateReasoningCard(reasoning, text);
+      reasoning._raw = text;
+      return reasoning;
     }
 
     if (kind === 'tool') {
@@ -1124,6 +1137,12 @@
       return last;
     }
 
+    if (kind === 'tool_output_delta') {
+      var card = Tomo.findToolCard(body, data);
+      if (card) Tomo.appendToolOutput(card, data.content || '');
+      return card;
+    }
+
     if (kind === 'todos') {
       return Tomo.upsertTodoPanel(root, data.todos || []);
     }
@@ -1132,7 +1151,7 @@
       return TomoGenerativeUI.mount(root, data, {});
     }
 
-    if (kind === 'delta' || kind === 'subagent_final' || kind === 'final') {
+    if (kind === 'delta' || kind === 'done' || kind === 'subagent_final' || kind === 'final') {
       var answerWrap = body.querySelector('.si-answer');
       if (!answerWrap) {
         answerWrap = document.createElement('section');
@@ -1145,7 +1164,7 @@
         (body || root).appendChild(answerWrap);
       }
       var bubble = answerWrap.querySelector('.si-answer-body');
-      answerWrap._raw = (answerWrap._raw || '') + (data.content || '');
+      answerWrap._raw = kind === 'delta' ? (answerWrap._raw || '') + (data.content || '') : (data.content || answerWrap._raw || '');
       if (window.TomoChat && TomoChat.setMarkdown) {
         TomoChat.setMarkdown(bubble, answerWrap._raw);
       } else {
