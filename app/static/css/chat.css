@@ -831,7 +831,7 @@
 .chat-wrap .composer .send:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .chat-wrap .composer .stop { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
 
-/* Keep message numbers readable even before hovering the navigation rail. */
+/* The conversation minimap stays quiet until a marker is hovered or active. */
 .chat-wrap.sessions-chat .chat-query-rail { opacity: 1; }
 
 @keyframes wnPulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }

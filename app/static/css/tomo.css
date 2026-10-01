@@ -3956,7 +3956,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 0;
   padding: 6px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -3968,57 +3968,63 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .sessions-chat .chat-query-rail::-webkit-scrollbar { display: none; }
 .sessions-chat .chat-query-item {
   position: relative;
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  flex: 0 0 12px;
+  width: 32px;
+  height: 12px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
   background: transparent;
-  color: var(--text-dim);
   pointer-events: auto;
   cursor: pointer;
-  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
-}
-.sessions-chat .chat-query-item:hover,
-.sessions-chat .chat-query-item:focus-visible {
-  background: var(--surface-3);
-  color: var(--text);
-  border-color: var(--border-strong);
 }
 .sessions-chat .chat-query-item:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
-.sessions-chat .chat-query-item.is-active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-}
 .sessions-chat .chat-query-marker {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  display: block;
+  width: 12px;
+  height: 1px;
+  background: var(--text-dim);
+  border-radius: 1px;
+  opacity: .4;
+  transition: width .16s ease, opacity .16s ease, background-color .16s ease;
 }
-.sessions-chat .chat-query-item[data-state="working"]::after,
-.sessions-chat .chat-query-item[data-state="responding"]::after {
-  content: "";
-  position: absolute;
-  right: 2px;
-  top: 2px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
+.sessions-chat .chat-query-item.is-active .chat-query-marker {
+  width: 24px;
+  height: 2px;
+  background: var(--text);
+  opacity: .85;
+}
+.sessions-chat .chat-query-item:has(+ .chat-query-item:hover) .chat-query-marker,
+.sessions-chat .chat-query-item:hover + .chat-query-item .chat-query-marker {
+  width: 19px;
+  opacity: .65;
+}
+.sessions-chat .chat-query-item:has(+ .chat-query-item + .chat-query-item:hover) .chat-query-marker,
+.sessions-chat .chat-query-item:hover + .chat-query-item + .chat-query-item .chat-query-marker {
+  width: 15px;
+  opacity: .5;
+}
+.sessions-chat .chat-query-item:hover .chat-query-marker,
+.sessions-chat .chat-query-item:focus-visible .chat-query-marker {
+  width: 30px;
+  background: var(--text);
+  opacity: 1;
+}
+.sessions-chat .chat-query-item[data-state="working"] .chat-query-marker,
+.sessions-chat .chat-query-item[data-state="responding"] .chat-query-marker {
   background: var(--accent);
+  opacity: .85;
 }
 .sessions-chat .chat-query-card {
   position: absolute;
-  left: 62px;
+  left: 56px;
   z-index: 5;
-  width: min(300px, calc(100% - 80px));
+  width: min(288px, calc(100% - 72px));
   padding: 13px 14px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
@@ -4057,12 +4063,14 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 }
 .sessions-chat .chat-query-context.is-empty { color: var(--text-faint); }
 .sessions-chat .chat-query-hint {
+  display: none;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
   color: var(--text-faint);
   font-size: 10px;
 }
+.sessions-chat .chat-query-card[data-keyboard="true"] .chat-query-hint { display: block; }
 .turn.is-query-target {
   outline: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
   outline-offset: 8px;
@@ -4075,7 +4083,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   100% { outline-color: color-mix(in srgb, var(--accent) 18%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sessions-chat .chat-query-item { transition: none; }
+  .sessions-chat .chat-query-marker { transition: none; }
   .turn.is-query-target { animation: none; }
 }
 .sessions-chat .composer.composer-float {

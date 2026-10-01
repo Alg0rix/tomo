@@ -600,7 +600,6 @@
     }
     Array.from(rail.children).forEach(function (item, index) {
       item.dataset.number = String(index + 1);
-      item.querySelector('.chat-query-marker').textContent = item.dataset.number;
       item.setAttribute('aria-label', 'Jump to message ' + item.dataset.number + ': ' + (item.dataset.prompt || 'User message'));
     });
     if (queryPreviewItem) showQueryPreview(queryPreviewItem);
@@ -679,9 +678,9 @@
     item.setAttribute('aria-describedby', queryPreview.id);
     queryPreview.hidden = false;
     queryPreview.dataset.state = item.dataset.state;
+    queryPreview.dataset.keyboard = String(document.activeElement === item);
     var labels = { answered: 'Response', responding: 'Responding', working: 'Working', queued: 'Queued', steering: 'Steering', empty: 'No text response' };
-    queryPreview.querySelector('.chat-query-meta').textContent = 'Message ' + item.dataset.number + ' / ' +
-      queryRail().children.length + ' · ' + (labels[item.dataset.state] || labels.empty);
+    queryPreview.querySelector('.chat-query-meta').textContent = 'Your message · ' + (labels[item.dataset.state] || labels.empty);
     queryPreview.querySelector('.chat-query-title').textContent = item.dataset.prompt || 'User message';
     var context = queryPreview.querySelector('.chat-query-context');
     var placeholders = {
@@ -773,7 +772,6 @@
     var marker = document.createElement('span');
     marker.className = 'chat-query-marker';
     marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = item.dataset.number;
     item.appendChild(marker);
     item.addEventListener('mouseenter', function () { showQueryPreview(item); });
     item.addEventListener('mouseleave', function () { if (document.activeElement !== item) hideQueryPreview(); });
