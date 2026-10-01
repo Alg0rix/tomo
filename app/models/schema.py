@@ -210,7 +210,8 @@ CREATE TABLE IF NOT EXISTS schedules (
     pause_reason      TEXT NOT NULL DEFAULT '',
     repeat_times      INTEGER,
     run_count         INTEGER NOT NULL DEFAULT 0,
-    claim_until       REAL
+    claim_until       REAL,
+    delivery_target   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS schedule_runs (
@@ -220,7 +221,12 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
     status       TEXT NOT NULL DEFAULT 'ok',
     error        TEXT NOT NULL DEFAULT '',
     started_at   REAL NOT NULL DEFAULT 0,
-    finished_at  REAL
+    finished_at  REAL,
+    delivery_target TEXT,
+    delivery_content TEXT NOT NULL DEFAULT '',
+    delivery_status TEXT NOT NULL DEFAULT 'local',
+    delivery_error TEXT NOT NULL DEFAULT '',
+    delivery_receipt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -695,6 +701,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "repeat_times": "ALTER TABLE schedules ADD COLUMN repeat_times INTEGER",
         "run_count": "ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
         "claim_until": "ALTER TABLE schedules ADD COLUMN claim_until REAL",
+        "delivery_target": "ALTER TABLE schedules ADD COLUMN delivery_target TEXT",
     }
     for col, ddl in _sch_alters.items():
         if col not in sch_cols:
@@ -712,6 +719,21 @@ def migrate(conn: sqlite3.Connection) -> None:
             "UPDATE schedules SET schedule_display=cron "
             "WHERE (schedule_display IS NULL OR schedule_display='') AND cron != ''"
         )
+
+    run_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_runs)")}
+    for col, definition in {
+        "delivery_target": "TEXT",
+        "delivery_content": "TEXT NOT NULL DEFAULT ''",
+        "delivery_status": "TEXT NOT NULL DEFAULT 'local'",
+        "delivery_error": "TEXT NOT NULL DEFAULT ''",
+        "delivery_receipt": "TEXT",
+    }.items():
+        if col not in run_cols:
+            conn.execute(f"ALTER TABLE schedule_runs ADD COLUMN {col} {definition}")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_schedule_pending_delivery "
+        "ON schedule_runs(started_at) WHERE delivery_status='pending'"
+    )
 
     # Learning OS: extract_json + sticky counter persistence.
     le_cols = {r[1] for r in conn.execute("PRAGMA table_info(learning_events)")}

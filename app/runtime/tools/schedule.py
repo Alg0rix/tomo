@@ -32,6 +32,7 @@ def _fmt(sch: dict[str, Any]) -> dict[str, Any]:
         "repeat_times": sch.get("repeat_times"),
         "run_count": sch.get("run_count") or 0,
         "interval_seconds": sch.get("interval_seconds") or 0,
+        "delivery": (sch.get("delivery_target") or {}).get("channel", "local"),
     }
 
 
@@ -71,6 +72,14 @@ def run(arguments: dict[str, Any]) -> str:
         return _err("action is required")
 
     from app.services import store
+    from app.channels.delivery import DeliveryBlocked, capture_current_target
+
+    if any(key in arguments for key in ("delivery_target", "chat_id", "thread_id", "channel", "bot")):
+        return _err("Delivery destination is captured from this conversation, not tool arguments.")
+    try:
+        calling_target = capture_current_target()
+    except DeliveryBlocked as exc:
+        return _err(str(exc))
 
     if action == "create":
         schedule = arguments.get("schedule")
@@ -88,6 +97,7 @@ def run(arguments: dict[str, Any]) -> str:
             "schedule": schedule.strip(),
             "message": message.strip(),
             "enabled": True,
+            "delivery_target": calling_target,
         }
         if data["name"] is None:
             data.pop("name")
@@ -110,6 +120,8 @@ def run(arguments: dict[str, Any]) -> str:
     if action == "list":
         include = bool(arguments.get("include_disabled", False))
         jobs = store.list_schedules(include_disabled=True)
+        if calling_target is not None:
+            jobs = [j for j in jobs if j.get("delivery_target") == calling_target]
         if not include:
             jobs = [
                 j
@@ -125,6 +137,8 @@ def run(arguments: dict[str, Any]) -> str:
     if isinstance(resolved, str):
         return resolved
     sch = resolved
+    if calling_target is not None and sch.get("delivery_target") != calling_target:
+        return _err("Schedule is not bound to this conversation.")
     sid = sch["id"]
 
     if action == "remove":

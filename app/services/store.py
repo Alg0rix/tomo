@@ -1141,6 +1141,7 @@ class Store:
         error: str = "",
         session_id: str | None = None,
         now: float | None = None,
+        delivery_content: str | None = None,
     ) -> None:
         with self._lock:
             schedules_store.finish_run(
@@ -1150,7 +1151,29 @@ class Store:
                 error=error,
                 session_id=session_id,
                 now=now,
+                delivery_content=delivery_content,
             )
+
+    def pending_schedule_deliveries(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return schedules_store.pending_deliveries(self._conn)
+
+    def claim_schedule_delivery(self, run_id: str) -> bool:
+        with self._lock:
+            return schedules_store.claim_delivery(self._conn, run_id)
+
+    def finish_schedule_delivery(
+        self, run_id: str, *, status: str, error: str = "",
+        receipt: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            schedules_store.finish_delivery(
+                self._conn, run_id, status=status, error=error, receipt=receipt,
+            )
+
+    def recover_schedule_deliveries(self) -> None:
+        with self._lock:
+            schedules_store.recover_deliveries(self._conn)
 
     def list_schedule_runs(
         self, schedule_id: str | None = None, *, limit: int = 50

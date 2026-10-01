@@ -1042,6 +1042,18 @@ def build_messages(
     if session_id and current_telegram_turn(session_id) is not None:
         # Channel capabilities belong in the reusable prefix, never after history.
         prompt = prompt + "\n\n" + _TELEGRAM_GUIDANCE
+    from app.channels.delivery import is_scheduled_delivery
+
+    if session_id and is_scheduled_delivery(session_id):
+        prompt += (
+            "\n\n## Scheduled channel delivery\n\n"
+            "Execute this existing job now using its self-contained instructions. "
+            "Do not create or modify schedules unless explicitly requested. "
+            "The scheduler automatically delivers your final response to the bound "
+            "conversation; do not send that text yourself. Deliver user-facing files "
+            "with the available channel file tool. Saving a file is not delivery. "
+            "Do not claim delivery succeeded without a tool confirmation."
+        )
     turn_context = [_current_time_section()]
     if live_context:
         turn_context.append(live_context)

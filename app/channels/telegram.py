@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import mimetypes
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
@@ -90,11 +90,13 @@ class TelegramAPI:
         transport: httpx.AsyncBaseTransport | None = None,
         client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
+        authorize: Callable[[], None] | None = None,
     ) -> None:
         raw = (token or "").strip()
         if not raw:
             raise ValueError("Telegram bot token is required")
         self._token = raw
+        self._authorize = authorize
         self._rich_disabled = False
         self._draft_disabled = False
         self._owns_client = client is None
@@ -128,6 +130,8 @@ class TelegramAPI:
             }
         )
         for attempt in range(3):
+            if self._authorize is not None:
+                self._authorize()
             try:
                 response = await self._client.post(
                     self._url(method),

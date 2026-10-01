@@ -7,6 +7,7 @@ claim-before-run CAS so concurrent ticks cannot double-fire. ``cron`` and
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import time
@@ -95,6 +96,7 @@ def _row_to_schedule(row: sqlite3.Row) -> dict[str, Any]:
         "repeat_times": row["repeat_times"] if "repeat_times" in keys else None,
         "run_count": int((row["run_count"] if "run_count" in keys else 0) or 0),
         "claim_until": row["claim_until"] if "claim_until" in keys else None,
+        "delivery_target": json.loads(row["delivery_target"]) if "delivery_target" in keys and row["delivery_target"] else None,
     }
 
 
@@ -268,8 +270,8 @@ def create_schedule(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     conn.execute(
         "INSERT INTO schedules (id, name, agent_id, cron, interval_seconds, message, "
         "enabled, last_run, next_run, created_at, schedule_kind, schedule_display, "
-        "schedule_expr, state, pause_reason, repeat_times, run_count, claim_until) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "schedule_expr, state, pause_reason, repeat_times, run_count, claim_until, delivery_target) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             sid,
             name,
@@ -289,6 +291,7 @@ def create_schedule(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
             repeat_times,
             int(fields.get("run_count") or 0),
             None,
+            json.dumps(fields["delivery_target"]) if fields.get("delivery_target") else None,
         ),
     )
     conn.commit()
@@ -424,7 +427,7 @@ def update_schedule(
         "UPDATE schedules SET name=?, agent_id=?, cron=?, interval_seconds=?, "
         "message=?, enabled=?, last_run=?, next_run=?, schedule_kind=?, "
         "schedule_display=?, schedule_expr=?, state=?, pause_reason=?, "
-        "repeat_times=?, run_count=?, claim_until=? WHERE id=?",
+        "repeat_times=?, run_count=?, claim_until=?, delivery_target=? WHERE id=?",
         (
             name,
             agent_id,
@@ -442,6 +445,7 @@ def update_schedule(
             repeat_times,
             run_count,
             claim_until,
+            json.dumps(data.get("delivery_target", sch["delivery_target"])) if data.get("delivery_target", sch["delivery_target"]) else None,
             schedule_id,
         ),
     )
@@ -561,8 +565,9 @@ def begin_run(
 
     conn.execute(
         "INSERT INTO schedule_runs (id, schedule_id, session_id, status, error, "
-        "started_at, finished_at) VALUES (?,?,?,?,?,?,?)",
-        (run_id, schedule_id, session_id, "running", "", ts, None),
+        "started_at, finished_at, delivery_target) VALUES (?,?,?,?,?,?,?,?)",
+        (run_id, schedule_id, session_id, "running", "", ts, None,
+         json.dumps(sch["delivery_target"]) if sch.get("delivery_target") else None),
     )
     # run_count is incremented only on successful finish (avoids burning
     # repeat_times / one-shot budgets when the process dies mid-run).
@@ -582,6 +587,7 @@ def finish_run(
     error: str = "",
     session_id: str | None = None,
     now: float | None = None,
+    delivery_content: str | None = None,
 ) -> None:
     ts = now if now is not None else _now()
     row = conn.execute(
@@ -597,6 +603,20 @@ def finish_run(
         conn.execute(
             "UPDATE schedule_runs SET status=?, error=?, finished_at=? WHERE id=?",
             (status, error or "", ts, run_id),
+        )
+
+    if status != "ok":
+        conn.execute(
+            "UPDATE schedule_runs SET delivery_status='not_attempted' "
+            "WHERE id=? AND delivery_target IS NOT NULL", (run_id,),
+        )
+    if delivery_content is not None and status == "ok":
+        # Save the final and pending delivery atomically with the finished run.
+        conn.execute(
+            "UPDATE schedule_runs SET delivery_content=?, "
+            "delivery_status=CASE WHEN delivery_target IS NULL THEN 'local' "
+            "WHEN ?='' THEN 'empty' ELSE 'pending' END WHERE id=?",
+            (delivery_content, delivery_content, run_id),
         )
 
     if row:
@@ -654,9 +674,55 @@ def list_runs(
             "error": r["error"] or "",
             "started_at": r["started_at"],
             "finished_at": r["finished_at"],
+            "delivery_status": r["delivery_status"],
+            "delivery_error": r["delivery_error"] or "",
+            "delivery_receipt": json.loads(r["delivery_receipt"]) if r["delivery_receipt"] else None,
         }
         for r in rows
     ]
+
+
+def pending_deliveries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT id, session_id, delivery_target, delivery_content FROM schedule_runs "
+        "WHERE delivery_status='pending' ORDER BY started_at LIMIT 100"
+    ).fetchall()
+    return [
+        {"run_id": r["id"], "session_id": r["session_id"],
+         "target": json.loads(r["delivery_target"]), "content": r["delivery_content"]}
+        for r in rows
+    ]
+
+
+def claim_delivery(conn: sqlite3.Connection, run_id: str) -> bool:
+    cur = conn.execute(
+        "UPDATE schedule_runs SET delivery_status='sending' "
+        "WHERE id=? AND delivery_status='pending'", (run_id,)
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def finish_delivery(
+    conn: sqlite3.Connection, run_id: str, *, status: str,
+    error: str = "", receipt: dict[str, Any] | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE schedule_runs SET delivery_status=?, delivery_error=?, delivery_receipt=? "
+        "WHERE id=? AND delivery_status='sending'",
+        (status, error, json.dumps(receipt) if receipt else None, run_id),
+    )
+    conn.commit()
+
+
+def recover_deliveries(conn: sqlite3.Connection) -> None:
+    """At process startup only: never replay sends with an uncertain outcome."""
+    conn.execute(
+        "UPDATE schedule_runs SET delivery_status='unknown', "
+        "delivery_error='Process stopped during delivery; not automatically retried' "
+        "WHERE delivery_status='sending'"
+    )
+    conn.commit()
 
 
 __all__ = [

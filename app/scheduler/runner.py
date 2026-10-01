@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from typing import Any
@@ -35,11 +36,6 @@ async def fire_schedule(
 
     ts = now if now is not None else time.time()
     schedule_id = schedule["id"]
-    agent_id = schedule["agent_id"]
-    message = (schedule.get("message") or "").strip() or (
-        f"[schedule] {schedule.get('name', schedule_id)}"
-    )
-
     claimed = not skip_claim
     if claimed:
         claimed_row = store.claim_schedule_for_fire(schedule_id, now=ts)
@@ -54,7 +50,14 @@ async def fire_schedule(
             }
         schedule = claimed_row
 
-    session_id = store.get_or_create_session(agent_id, "scheduler")
+    agent_id = schedule["agent_id"]
+    message = (schedule.get("message") or "").strip() or (
+        f"[schedule] {schedule.get('name', schedule_id)}"
+    )
+    target = schedule.get("delivery_target")
+    # Never share histories/artifacts between jobs aimed at different conversations.
+    user_id = f"scheduler:{schedule_id}" if target else "scheduler"
+    session_id = store.get_or_create_session(agent_id, user_id)
     run_id = store.begin_schedule_run(
         schedule_id, session_id=session_id, now=ts, claimed=claimed
     )
@@ -67,27 +70,126 @@ async def fire_schedule(
         "error": "",
         "claimed": claimed,
     }
+    execution_finished = False
     try:
-        async with contextlib.aclosing(
-            run_session_turn(session_id, message, "scheduler", origin="scheduler")
-        ) as agen:
-            async for _chunk in agen:
-                pass
-        store.finish_schedule_run(
-            run_id, status="ok", session_id=session_id, now=time.time()
-        )
+        from app.channels.delivery import open_delivery
+
+        async with contextlib.AsyncExitStack() as stack:
+            delivery = (
+                await stack.enter_async_context(open_delivery(target, session_id))
+                if target
+                else None
+            )
+            final = ""
+            completed = False
+            turn_error = ""
+            agen = await stack.enter_async_context(
+                contextlib.aclosing(
+                    run_session_turn(session_id, message, user_id, origin="scheduler")
+                )
+            )
+            async for chunk in agen:
+                # The chat service emits complete SSE frames, including coordinator done.
+                for frame in chunk.split("\n\n"):
+                    event = ""
+                    data: dict[str, Any] = {}
+                    for line in frame.splitlines():
+                        if line.startswith("event: "):
+                            event = line[7:]
+                        elif line.startswith("data: "):
+                            data = json.loads(line[6:])
+                    if (
+                        data.get("delegate_call_id")
+                        or data.get("agent_id", agent_id) != agent_id
+                    ):
+                        continue
+                    if event == "done":
+                        final = str(data.get("content") or "")
+                        completed = True
+                    elif event == "error":
+                        turn_error = str(data.get("message") or "Scheduled turn failed")
+            if not completed:
+                raise RuntimeError(
+                    turn_error or "Scheduled turn ended without a final result"
+                )
+            store.finish_schedule_run(
+                run_id,
+                status="ok",
+                session_id=session_id,
+                now=time.time(),
+                delivery_content=final.strip() if target else None,
+            )
+            execution_finished = True
+            if delivery and final.strip():
+                result.update(
+                    await _deliver_run(
+                        {
+                            "run_id": run_id,
+                            "session_id": session_id,
+                            "target": target,
+                            "content": final.strip(),
+                        },
+                        bound=delivery,
+                    )
+                )
     except Exception as exc:  # noqa: BLE001 — record and continue
         logger.exception("schedule fire failed id=%s", schedule_id)
-        result["status"] = "error"
-        result["error"] = str(exc)
-        store.finish_schedule_run(
-            run_id,
-            status="error",
-            error=str(exc),
-            session_id=session_id,
-            now=time.time(),
-        )
+        if execution_finished:
+            # Transport/cleanup failures must not undo a completed job or its outbox.
+            result.setdefault("delivery_status", "unknown")
+            result["delivery_error"] = str(exc)
+        else:
+            result["status"] = "error"
+            result["error"] = str(exc)
+            store.finish_schedule_run(
+                run_id,
+                status="error",
+                error=str(exc),
+                session_id=session_id,
+                now=time.time(),
+            )
     return result
+
+
+async def _deliver_run(row: dict[str, Any], *, bound=None) -> dict[str, Any]:
+    from app.channels.delivery import DeliveryBlocked, open_delivery
+    from app.services.store import store
+
+    run_id = row["run_id"]
+    if not store.claim_schedule_delivery(run_id):
+        return {"delivery_status": "skipped"}
+    receipt = None
+    error = ""
+    try:
+        if bound is not None:
+            receipt = await bound.send_final(row["content"], delivery_id=run_id)
+        else:
+            async with open_delivery(row["target"], row["session_id"]) as delivery:
+                receipt = await delivery.send_final(row["content"], delivery_id=run_id)
+        if not receipt:
+            raise RuntimeError("Channel did not confirm delivery")
+        status = "sent"
+    except DeliveryBlocked as exc:
+        status, error = "blocked", str(exc)
+    except Exception as exc:
+        # A failed/partial network send may already have reached the recipient.
+        # No automatic retry without a channel-supported idempotency key.
+        status, error = "unknown", str(exc)
+        logger.warning("schedule delivery unconfirmed run=%s", run_id)
+    store.finish_schedule_delivery(run_id, status=status, error=error, receipt=receipt)
+    return {
+        "delivery_status": status,
+        "delivery_error": error,
+        "delivery_receipt": receipt,
+    }
+
+
+async def drain_pending_deliveries() -> None:
+    """Deliver saved finals without re-running their agent or repeating attachments."""
+    from app.services.store import store
+
+    for row in store.pending_schedule_deliveries():
+        await _deliver_run(row)
 
 
 async def fire_due_schedules(*, now: float | None = None) -> list[dict[str, Any]]:
@@ -95,6 +197,7 @@ async def fire_due_schedules(*, now: float | None = None) -> list[dict[str, Any]
     from app.services.store import store
 
     ts = now if now is not None else time.time()
+    await drain_pending_deliveries()
     due = store.list_due_schedules(ts)
     if not due:
         return []

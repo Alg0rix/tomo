@@ -81,6 +81,9 @@ def start_engine() -> None:
         _started = True
         logger.info("APScheduler started timezone=%s", tz)
 
+    from app.services.store import store
+
+    store.recover_schedule_deliveries()
     reload_from_db()
     _register_builtins()
 
@@ -317,6 +320,13 @@ def _register_builtins() -> None:
     aps = _get_scheduler()
     if aps is None:
         return
+    from app.scheduler.runner import drain_pending_deliveries
+
+    aps.add_job(
+        drain_pending_deliveries, "interval", seconds=30,
+        id=f"{BUILTIN_PREFIX}delivery_drain", replace_existing=True,
+        next_run_time=datetime.now(_tz()), max_instances=1,
+    )
     try:
         from apscheduler.triggers.cron import CronTrigger
 
