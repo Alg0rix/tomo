@@ -26,6 +26,42 @@
     var idleTimer = null;
     var reconnectTimer = null;
     var reconnectAttempts = 0;
+    var streamTurns = [ctx.turn];
+
+    function continueAfterUser(bubble) {
+      if (closed || !bubble) return;
+      var turn = bubble.closest('.turn');
+      if (!turn || turn === ctx.turn) return;
+      // Receipts can arrive out of order when several steers are sent quickly.
+      if (!(ctx.turn.compareDocumentPosition(turn) & 4)) return;
+      sealAssistantBubble();
+      clearPending();
+      if (thinkEl) { thinkEl.remove(); thinkEl = null; }
+      streamedReasoning = null;
+      reasoningText = '';
+      ctx.turn = turn;
+      streamTurns.push(turn);
+      ctx.atBottom();
+    }
+
+    function findStreamTool(d) {
+      if (!window.Tomo || !Tomo.findToolCard) return null;
+      var callId = d.call_id || d.callId || (d.atg_node ? 'atg:' + d.atg_node : '');
+      if (callId) {
+        for (var t = 0; t < streamTurns.length; t++) {
+          var cards = streamTurns[t].querySelectorAll('.tool, .si-tool');
+          for (var c = 0; c < cards.length; c++) {
+            if (cards[c].dataset.callId === String(callId)) return cards[c];
+          }
+        }
+        return null;
+      }
+      for (var i = streamTurns.length - 1; i >= 0; i--) {
+        var card = Tomo.findToolCard(streamTurns[i], d);
+        if (card) return card;
+      }
+      return null;
+    }
 
     function on(type, listener) {
       es.addEventListener(type, function (event) {
@@ -454,9 +490,7 @@
     }
 
     function applyToolResult(d) {
-      var last = window.Tomo && Tomo.findToolCard
-        ? Tomo.findToolCard(ctx.turn, d)
-        : null;
+      var last = findStreamTool(d);
       if (!last) {
         var cards = ctx.turn.querySelectorAll('.tool.loading');
         last = cards[0] || ctx.turn.querySelectorAll('.tool')[ctx.turn.querySelectorAll('.tool').length - 1];
@@ -799,10 +833,10 @@
       clearPending();
     };
     if (ctx.onBindHitl) {
-      ctx.onBindHitl(es, ctx.turn, hitlCb);
+      ctx.onBindHitl(es, ctx.turn, hitlCb, function () { return ctx.turn; });
     } else if (window.TomoHitl && TomoHitl.bindStream) {
       TomoHitl.bindStream(es, {
-        turn: ctx.turn,
+        get turn() { return ctx.turn; },
         scroll: ctx.scroll,
         onEvent: hitlCb,
         clearPending: null,
@@ -1047,7 +1081,7 @@
       bumpActivity();
       var d = JSON.parse(e.data || '{}');
       if (isSubagentEvent(d) || !window.Tomo || !Tomo.appendToolOutput) return;
-      Tomo.appendToolOutput(Tomo.findToolCard(ctx.turn, d), d.content || '');
+      Tomo.appendToolOutput(findStreamTool(d), d.content || '');
       ctx.atBottom();
     });
 
@@ -1173,8 +1207,24 @@
       if (thinkEl) { thinkEl.remove(); thinkEl = null; }
       try {
         var d = JSON.parse(e.data || '{}');
-        if (d && d.steered && window.Tomo && Tomo.toast) {
-          /* client already rendered the steered bubble */
+        if (d && d.steered && !inReplaySkip()) {
+          var users = ctx.scroll.querySelectorAll('.msg.user');
+          var bubble = Array.prototype.find.call(users, function (el) {
+            return d.steer_id && el.dataset.steerId === d.steer_id;
+          });
+          // SSE consumption can beat the HTTP acceptance response.
+          if (!bubble) bubble = Array.prototype.find.call(users, function (el) {
+            var body = el.querySelector('.bubble-body');
+            return el.classList.contains('msg-steering') && body &&
+              body.dataset.raw === (d.content || '');
+          });
+          if (!bubble && ctx.appendUserBubble) {
+            bubble = ctx.appendUserBubble(d.content || '', false, d.attachments || []);
+          }
+          if (bubble) {
+            if (d.steer_id) bubble.dataset.steerId = d.steer_id;
+            continueAfterUser(bubble);
+          }
         }
       } catch (_) {}
     });
@@ -1342,7 +1392,7 @@
       armIdle(IDLE_MS);
     }
 
-    return { end: endTurn, dispose: dispose };
+    return { end: endTurn, dispose: dispose, continueAfterUser: continueAfterUser };
   }
 
   window.TomoTurnStream = { attach: attach };

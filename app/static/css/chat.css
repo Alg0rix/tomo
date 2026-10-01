@@ -831,9 +831,8 @@
 .chat-wrap .composer .send:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .chat-wrap .composer .stop { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
 
-/* User-message rail: small ticks on the left edge, label on hover. */
-.chat-wrap.sessions-chat .chat-query-rail { opacity: .55; transition: opacity .15s; }
-.chat-wrap.sessions-chat .chat-query-rail:hover { opacity: 1; }
+/* Keep message numbers readable even before hovering the navigation rail. */
+.chat-wrap.sessions-chat .chat-query-rail { opacity: 1; }
 
 @keyframes wnPulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
 @keyframes wnSpin { to { transform: rotate(360deg) } }

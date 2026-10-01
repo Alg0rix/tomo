@@ -499,7 +499,11 @@
     }
   }
 
-  var queryTracking = { scroll: null, handler: null, raf: 0 };
+  var queryTracking = { scroll: null, handler: null, raf: 0, observer: null };
+  var queryPreview = null;
+  var queryPreviewItem = null;
+  var queryContextRaf = 0;
+  var dirtyQueryTurns = new Set();
   var queryTargetTimer = null;
 
   function queryId(index) {
@@ -535,8 +539,8 @@
         records.push(current);
         return;
       }
-      if (!current || current.context) return;
-      if (entry.type === 'final' || entry.type === 'subagent_final') {
+      if (!current) return;
+      if (entry.type === 'final') {
         var context = String(entry.content || '').trim();
         if (context) current.context = context;
       }
@@ -584,6 +588,7 @@
         );
       }
     }
+    positionQueryPreview();
   }
 
   function syncQueryRailLayout() {
@@ -593,6 +598,12 @@
       rail.style.justifyContent = '';
       return;
     }
+    Array.from(rail.children).forEach(function (item, index) {
+      item.dataset.number = String(index + 1);
+      item.querySelector('.chat-query-marker').textContent = item.dataset.number;
+      item.setAttribute('aria-label', 'Jump to message ' + item.dataset.number + ': ' + (item.dataset.prompt || 'User message'));
+    });
+    if (queryPreviewItem) showQueryPreview(queryPreviewItem);
 
     // Centering is useful for a short rail, but it can place the first items
     // above the scrollport once the list becomes taller than the rail.
@@ -600,6 +611,7 @@
     rail.style.justifyContent = 'flex-start';
     var isOverflowing = rail.scrollHeight > rail.clientHeight + 1;
     rail.style.justifyContent = isOverflowing ? 'flex-start' : 'center';
+    positionQueryPreview();
   }
 
   function scheduleActiveQuery() {
@@ -623,10 +635,102 @@
     var center = bounds.top + (scroll.clientHeight / 2);
     var nearest = turns.reduce(function (best, turnEl) {
       var rect = turnEl.getBoundingClientRect();
-      var distance = Math.abs((rect.top + (rect.height / 2)) - center);
+      var distance = Math.max(rect.top - center, center - rect.bottom, 0);
       return !best || distance < best.distance ? { turn: turnEl, distance: distance } : best;
     }, null);
     setActiveQuery(nearest && nearest.turn.dataset.queryId);
+  }
+
+  function hideQueryPreview() {
+    if (queryPreview) queryPreview.hidden = true;
+    if (queryPreviewItem) queryPreviewItem.removeAttribute('aria-describedby');
+    queryPreviewItem = null;
+  }
+
+  function positionQueryPreview() {
+    if (!queryPreviewItem || !queryPreview || queryPreview.hidden) return;
+    var rail = queryRail();
+    var marker = queryPreviewItem.getBoundingClientRect();
+    var bounds = rail.getBoundingClientRect();
+    if (marker.bottom <= bounds.top || marker.top >= bounds.bottom) {
+      hideQueryPreview();
+      return;
+    }
+    var main = rail.parentElement.getBoundingClientRect();
+    var height = queryPreview.offsetHeight;
+    queryPreview.style.top = Math.max(12, Math.min(
+      marker.top - main.top + marker.height / 2 - height / 2,
+      main.height - height - 12
+    )) + 'px';
+  }
+
+  function showQueryPreview(item) {
+    if (queryPreviewItem && queryPreviewItem !== item) hideQueryPreview();
+    if (!queryPreview) {
+      queryPreview = document.createElement('div');
+      queryPreview.id = 'chatQueryPreview';
+      queryPreview.className = 'chat-query-card';
+      queryPreview.setAttribute('role', 'tooltip');
+      queryPreview.innerHTML = '<div class="chat-query-meta"></div><div class="chat-query-title"></div>' +
+        '<div class="chat-query-context"></div><div class="chat-query-hint">Click to jump · ↑ ↓ to browse</div>';
+      queryRail().parentElement.appendChild(queryPreview);
+    }
+    queryPreviewItem = item;
+    item.setAttribute('aria-describedby', queryPreview.id);
+    queryPreview.hidden = false;
+    queryPreview.dataset.state = item.dataset.state;
+    var labels = { answered: 'Response', responding: 'Responding', working: 'Working', queued: 'Queued', steering: 'Steering', empty: 'No text response' };
+    queryPreview.querySelector('.chat-query-meta').textContent = 'Message ' + item.dataset.number + ' / ' +
+      queryRail().children.length + ' · ' + (labels[item.dataset.state] || labels.empty);
+    queryPreview.querySelector('.chat-query-title').textContent = item.dataset.prompt || 'User message';
+    var context = queryPreview.querySelector('.chat-query-context');
+    var placeholders = {
+      working: 'The agent is working on this message…',
+      queued: 'This message is queued for the next turn.',
+      steering: 'Sending this direction to the active turn…',
+      empty: 'No text response for this message.',
+    };
+    context.textContent = item.dataset.context || placeholders[item.dataset.state] || placeholders.empty;
+    context.classList.toggle('is-empty', !item.dataset.context);
+    positionQueryPreview();
+  }
+
+  function syncQueryContext(turn) {
+    if (!turn.isConnected) return;
+    var rail = queryRail();
+    if (!rail) return;
+    var item = Array.from(rail.children).find(function (candidate) {
+      return candidate.dataset.queryId === turn.dataset.queryId;
+    });
+    if (!item) return;
+    // Only primary-agent bubbles count; nested inspectors and tool output don't.
+    var bodies = Array.from(turn.querySelectorAll(':scope > .msg.assistant .bubble-body'));
+    var body = bodies.reverse().find(function (candidate) { return candidate.textContent.trim(); });
+    var context = body ? previewText(body.textContent, 240) : '';
+    var turns = Array.from(queryTracking.scroll.querySelectorAll('.turn[data-query-id]')).filter(function (candidate) {
+      return !candidate.querySelector(':scope > .msg-queued, :scope > .msg-steering');
+    });
+    var working = chatWrap.dataset.liveStream === '1' && turn === turns[turns.length - 1];
+    var pending = turn.querySelector(':scope > .msg-queued, :scope > .msg-steering');
+    var emptyState = pending ? (pending.classList.contains('msg-steering') ? 'steering' : 'queued') : (working ? 'working' : 'empty');
+    var state = context ? (body.closest('.msg').classList.contains('streaming') ? 'responding' : 'answered') : emptyState;
+    if (item.dataset.context === context && item.dataset.state === state) return;
+    item.dataset.context = context;
+    item.dataset.state = state;
+    if (queryPreviewItem === item) showQueryPreview(item);
+  }
+
+  function scheduleQueryContexts(turn) {
+    if (turn) dirtyQueryTurns.add(turn);
+    else if (queryTracking.scroll) {
+      queryTracking.scroll.querySelectorAll('.turn[data-query-id]').forEach(function (el) { dirtyQueryTurns.add(el); });
+    }
+    if (queryContextRaf) return;
+    queryContextRaf = window.requestAnimationFrame(function () {
+      queryContextRaf = 0;
+      dirtyQueryTurns.forEach(syncQueryContext);
+      dirtyQueryTurns.clear();
+    });
   }
 
   function bindQueryTracking(scroll) {
@@ -634,9 +738,25 @@
     if (queryTracking.scroll && queryTracking.handler) {
       queryTracking.scroll.removeEventListener('scroll', queryTracking.handler);
     }
+    if (queryTracking.observer) queryTracking.observer.disconnect();
+    dirtyQueryTurns.clear();
     queryTracking.scroll = scroll;
     queryTracking.handler = scheduleActiveQuery;
     scroll.addEventListener('scroll', queryTracking.handler, { passive: true });
+    queryTracking.observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        var el = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
+        var turn = el && el.closest('.turn[data-query-id]');
+        if (turn) scheduleQueryContexts(turn);
+        else mutation.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1) return;
+          if (node.matches('.turn[data-query-id]')) scheduleQueryContexts(node);
+          node.querySelectorAll('.turn[data-query-id]').forEach(function (el) { scheduleQueryContexts(el); });
+        });
+      });
+    });
+    queryTracking.observer.observe(scroll, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    scheduleQueryContexts();
     scheduleActiveQuery();
   }
 
@@ -645,30 +765,28 @@
     item.type = 'button';
     item.className = 'chat-query-item';
     item.dataset.queryId = record.id;
-    var label = previewText(record.prompt, 260) || 'User message';
-    item.setAttribute('aria-label', 'Jump to user message: ' + label);
-
+    item.dataset.number = String(record.index + 1);
+    item.dataset.prompt = previewText(record.prompt, 260);
+    item.dataset.context = previewText(record.context, 240);
+    item.dataset.state = record.context ? 'answered' : 'empty';
+    item.setAttribute('aria-label', 'Jump to message ' + item.dataset.number + ': ' + (item.dataset.prompt || 'User message'));
     var marker = document.createElement('span');
     marker.className = 'chat-query-marker';
     marker.setAttribute('aria-hidden', 'true');
-
-    var card = document.createElement('span');
-    card.className = 'chat-query-card';
-    card.setAttribute('aria-hidden', 'true');
-
-    var title = document.createElement('span');
-    title.className = 'chat-query-title';
-    title.textContent = previewText(firstLine(record.prompt), 74) || 'User message';
-
-    var context = document.createElement('span');
-    context.className = 'chat-query-context';
-    context.textContent = previewText(record.context, 150) || 'Waiting for a response…';
-    if (!record.context) context.classList.add('is-empty');
-
-    card.appendChild(title);
-    card.appendChild(context);
+    marker.textContent = item.dataset.number;
     item.appendChild(marker);
-    item.appendChild(card);
+    item.addEventListener('mouseenter', function () { showQueryPreview(item); });
+    item.addEventListener('mouseleave', function () { if (document.activeElement !== item) hideQueryPreview(); });
+    item.addEventListener('blur', hideQueryPreview);
+    item.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') { hideQueryPreview(); item.blur(); return; }
+      var items = Array.from(queryRail().children);
+      var index = items.indexOf(item);
+      var next = { ArrowUp: index - 1, ArrowDown: index + 1, Home: 0, End: items.length - 1 }[event.key];
+      if (next === undefined) return;
+      event.preventDefault();
+      items[Math.max(0, Math.min(items.length - 1, next))].focus();
+    });
     item.addEventListener('click', function () {
       var turn = queryTurn(item.dataset.queryId);
       if (!turn) return;
@@ -684,13 +802,14 @@
         queryTargetTimer = null;
       }, reduced ? 0 : 900);
     });
-    item.addEventListener('focus', function () { setActiveQuery(item.dataset.queryId); });
+    item.addEventListener('focus', function () { setActiveQuery(item.dataset.queryId); showQueryPreview(item); });
     return item;
   }
 
   function renderQueryRail(records) {
     var rail = queryRail();
     if (!rail) return;
+    hideQueryPreview();
     rail.innerHTML = '';
     rail.hidden = !records.length;
     records.forEach(function (record) { rail.appendChild(createQueryRailItem(record)); });
@@ -711,6 +830,7 @@
     syncQueryRailLayout();
     var scroll = chatWrap.querySelector('.chat-scroll');
     if (scroll && queryTracking.scroll !== scroll) bindQueryTracking(scroll);
+    scheduleQueryContexts(queryTurn(detail.queryId));
     scheduleActiveQuery();
   }
 
@@ -720,6 +840,7 @@
     var item = Array.from(rail.querySelectorAll('.chat-query-item')).find(function (candidate) {
       return candidate.dataset.queryId === queryIdValue;
     });
+    if (item === queryPreviewItem) hideQueryPreview();
     if (item) item.remove();
     if (!rail.querySelector('.chat-query-item')) rail.hidden = true;
     syncQueryRailLayout();
@@ -1630,6 +1751,7 @@
   }
 
   chatWrap.addEventListener('tomo:turn-start', function () {
+    scheduleQueryContexts();
     stopHistoryPoll();
   });
   chatWrap.addEventListener('tomo:user-turn', function (ev) {
@@ -1640,7 +1762,9 @@
     removeLiveQuery(detail.queryId || '');
   });
   window.addEventListener('resize', syncQueryRailLayout);
+  if (queryRail()) queryRail().addEventListener('scroll', positionQueryPreview, { passive: true });
   chatWrap.addEventListener('tomo:turn-end', function () {
+    scheduleQueryContexts();
     var sid = chatWrap.dataset.sessionId;
     if (!sid) return;
     // Live stream already painted this turn. Forcing renderHistory() here
@@ -1667,6 +1791,7 @@
     });
   });
   chatWrap.addEventListener('tomo:chat-done', function () {
+    scheduleQueryContexts();
     refreshSessions().then(function () {
       const cur = sessions.find(function (x) { return x.id === activeId; });
       if (cur) applyChatHeader(cur);

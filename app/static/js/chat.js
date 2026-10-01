@@ -1308,6 +1308,10 @@
           throw new Error((data && data.reason) || 'Steer rejected');
         }
         markBubbleDequeued(el);
+        if (data.steer_id) el.dataset.steerId = data.steer_id;
+        if (streamAttachment && streamAttachment.continueAfterUser) {
+          streamAttachment.continueAfterUser(el);
+        }
         if (window.Tomo && Tomo.toast) {
           Tomo.toast('Steering into current turn…', 'ok');
         }
@@ -1343,10 +1347,10 @@
       return host;
     }
 
-    function bindHitl(es, turnEl, onEvent) {
+    function bindHitl(es, turnEl, onEvent, getTurn) {
       if (!window.TomoHitl || !TomoHitl.bindStream) return;
       TomoHitl.bindStream(es, {
-        turn: hitlHost(turnEl),
+        get turn() { return hitlHost(getTurn ? getTurn() : turnEl); },
         scroll: scroll,
         onEvent: onEvent,
         clearPending: null,
@@ -1587,6 +1591,7 @@
         defaultAgentName: defaultAgentName,
         esc: esc,
         bubbleHtml: bubbleHtml,
+        appendUserBubble: appendUserBubble,
         agentColor: agentColor,
         setMarkdown: setMarkdown,
         atBottom: atBottom,
@@ -1605,8 +1610,8 @@
         sendMessage: send,
         dispatchUiAction: dispatchUiAction,
         currentSessionId: currentSessionId,
-        onBindHitl: function (stream, turnEl, onEvent) {
-          bindHitl(stream, turnEl, onEvent);
+        onBindHitl: function (stream, turnEl, onEvent, getTurn) {
+          bindHitl(stream, turnEl, onEvent, getTurn);
         },
       }, extra);
     }
