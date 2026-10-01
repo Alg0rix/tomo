@@ -666,6 +666,25 @@
 .chat-wrap .si-answer-body { font-size: 14px; line-height: 1.65; }
 .chat-wrap .si-answer-body table { font-size: 12.5px; }
 
+/* Narrow screens: one bounded inspector over the chat, not a second flex
+   column competing for its height. Shared by live/replayed delegate and swarm. */
+@media (max-width: 900px) {
+  .chat-wrap:has(> .subagent-inspector) { position: relative; }
+  .chat-wrap > .subagent-inspector {
+    position: absolute; inset: 0; z-index: 40;
+    flex: none; width: auto; min-width: 0; height: auto;
+    border: 0;
+  }
+  .chat-wrap .subagent-inspector .si-head { flex: none; }
+  .chat-wrap .subagent-inspector .si-close { width: 44px; height: 44px; }
+  .chat-wrap .subagent-inspector .si-task { flex-shrink: 0; overflow-wrap: anywhere; }
+  .chat-wrap .subagent-inspector .si-name { overflow-wrap: anywhere; }
+  .chat-wrap .subagent-inspector .si-body {
+    min-width: 0; overflow-x: hidden; overscroll-behavior: contain;
+  }
+  .chat-wrap .subagent-inspector .si-answer-body { overflow-wrap: anywhere; }
+}
+
 /* ── Plan strip (todo) — sits on the composer ─────────────────────── */
 .chat-wrap .chat-todo-dock {
   padding: 0 24px; border: 0; background: none; max-height: none; overflow: visible;
@@ -830,7 +849,6 @@
   .chat-wrap .chat-todo-dock { padding: 0 10px; }
   .chat-wrap .msg.user .bubble { max-width: 92%; }
   .chat-wrap .turn .tool .targs, .chat-wrap .si-timeline .tool .targs { max-width: 150px; }
-  .chat-wrap .subagent-inspector { flex-basis: 100%; width: 100%; }
   .chat-wrap .composer-footer {
     display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px;
     gap: 6px; padding: 6px 8px 8px;
