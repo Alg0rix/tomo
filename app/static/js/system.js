@@ -64,9 +64,15 @@
   function show(section, opts) {
     opts = opts || {};
     closeDocks();
-    document.querySelectorAll('.sys-section').forEach(function (s) { s.style.display = 'none'; });
+    document.querySelectorAll('.sys-section').forEach(function (s) {
+      s.hidden = true;
+      s.style.display = 'none';
+    });
     var el = document.getElementById('sec-' + section);
-    if (el) el.style.display = 'block';
+    if (el) {
+      el.hidden = false;
+      el.style.display = 'block';
+    }
     var active = null;
     nav.querySelectorAll('a[data-section]').forEach(function (a) {
       var on = a.dataset.section === section;

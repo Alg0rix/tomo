@@ -5348,6 +5348,8 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   border-top: 1px solid var(--border);
 }
 .machine-bay-head { margin-bottom: 16px; }
+.machine-inspector > .sys-section[hidden] { display: none !important; }
+
 .machine-station-kicker {
   font-family: var(--font-mono);
   font-size: 11px;
