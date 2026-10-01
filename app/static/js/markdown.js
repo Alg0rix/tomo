@@ -315,9 +315,13 @@
 
   // Raw tags a model may legitimately write in prose. Anything else ("<div>",
   // "<script>", "List<String>") is shown as text instead of becoming markup.
+  // img/figure/figcaption are kept because the artifact prompt instructs models
+  // to embed session images as <img src="/api/sessions/.../artifacts/NAME"> —
+  // sanitize() below still gates the src scheme.
   var RAW_TAGS_KEPT = {
     br: 1, b: 1, i: 1, em: 1, strong: 1, u: 1, s: 1, del: 1, ins: 1, mark: 1,
     sub: 1, sup: 1, kbd: 1, small: 1, abbr: 1, details: 1, summary: 1, hr: 1,
+    img: 1, figure: 1, figcaption: 1,
   };
 
   /** Prose fixes that marked's CommonMark rules get wrong for chat output. */
