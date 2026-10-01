@@ -1,13 +1,15 @@
-<div class="machine-panel">
-  <p>Durable facts and uploaded references live in your private memory vault.</p>
-  <p><a class="btn" href="/memory">Open memory vault</a></p>
-  <form id="vaultFactForm">
-    <label for="vaultEntity">Page</label>
-    <input class="input" id="vaultEntity" required placeholder="project/tomo" pattern="[a-z]+/[a-z0-9][a-z0-9_-]*">
-    <label for="vaultContent">Fact</label>
-    <textarea class="input" id="vaultContent" required rows="5"></textarea>
-    <button class="btn" type="submit">Save fact</button>
-  </form>
-  <label for="vaultUpload">Upload a reference to this page</label>
-  <input id="vaultUpload" type="file">
-</div>
+<section id="sec-memory" class="sys-section machine-station" style="display:none">
+  <div class="machine-panel">
+    <p>Durable facts and uploaded references live in your private memory vault.</p>
+    <p><a class="btn" href="/memory">Open memory vault</a></p>
+    <form id="vaultFactForm">
+      <label for="vaultEntity">Page</label>
+      <input class="input" id="vaultEntity" required placeholder="project/tomo" pattern="[a-z]+/[a-z0-9][a-z0-9_-]*">
+      <label for="vaultContent">Fact</label>
+      <textarea class="input" id="vaultContent" required rows="5"></textarea>
+      <button class="btn" type="submit">Save fact</button>
+    </form>
+    <label for="vaultUpload">Upload a reference to this page</label>
+    <input id="vaultUpload" type="file">
+  </div>
+</section>
