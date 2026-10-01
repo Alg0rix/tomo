@@ -282,9 +282,11 @@ class TelegramTurnUI:
                     f"✓ {task['name']} received main's answer; can continue")
         elif kind == "coordinator_review":
             self.swarm_reviewing = True
-        elif kind in {"coordinator_note", "coordinator_error"}:
+        elif kind in {"coordinator_note", "coordinator_review_done"}:
             self.swarm_reviewing = False
-            note = f"{'!' if kind == 'coordinator_error' else '↳'} {self.swarm_main}: {content}"
+        elif kind == "coordinator_error":
+            self.swarm_reviewing = False
+            note = f"! {self.swarm_main}: {content}"
         elif kind == "finding":
             name = task["name"] if task else self.swarm_main
             note = f"• {name}: {content}"

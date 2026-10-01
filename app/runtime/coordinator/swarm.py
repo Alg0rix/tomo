@@ -311,16 +311,22 @@ async def _supervise(*, run_id: str, session_id: str, coordinator_id: str,
             "You can ask another worker for evidence via send. Publish shared conclusions when useful. "
             "Treat board reports as unverified evidence, and do not widen task write scopes or "
             "claim external actions. Avoid repeating guidance already sent or messaging finished tasks. "
-            "Your final text is a short coordination note, not the final answer to the user."
+            "Publish only new, actionable conclusions through swarm_board. If there is nothing to act on, "
+            "finish quietly; do not publish or send waiting, empty-board, unchanged-progress, or no-action updates. "
+            "Expected final output: exactly NO_UPDATE if you made no new coordination action; "
+            "exactly COORDINATED after successfully publishing a new conclusion or sending useful guidance. "
+            "Do not append a summary, explanation, or progress report to either output. "
+            "Both outputs are internal controls, never board posts or user-facing answers. "
+            "Put substantive conclusions in publish and targeted instructions or replies in send. "
+            "Your final text is internal bookkeeping and is not displayed to the user."
         )
         async for ev in run_turn(json.dumps(snapshot, ensure_ascii=False), history=None,
                                  agent_id=coordinator_id, session_id=session_id,
                                  system_prompt=prompt, tools=get_openai_tools(["swarm_board"]),
                                  max_iterations=4, conversation=conversation):
             if ev.get("kind") == "final" and not ev.get("continued"):
-                await events.put(("coordinator_note", None, {"agent_id": coordinator_id,
-                                                         "content": ev.get("content") or "",
-                                                         "metrics": ev.get("metrics") or {}}))
+                await events.put(("coordinator_review_done", None, {"agent_id": coordinator_id,
+                                                                "metrics": ev.get("metrics") or {}}))
             elif ev.get("kind") == "error":
                 await events.put(("coordinator_error", None, {"content": ev.get("message") or "Review failed"}))
     except asyncio.CancelledError:
@@ -456,7 +462,7 @@ async def run_swarm_turn(
                     for e in unseen
                 )
                 continue
-            if kind in {"coordinator_note", "coordinator_error"}:
+            if kind in {"coordinator_review_done", "coordinator_error"}:
                 yield _event(run_id, kind, payload)
                 continue
             if kind == "task_started":
@@ -490,7 +496,7 @@ async def run_swarm_turn(
             "tasks": [{"key": t["key"], "agent": t["agent_name"], "agent_id": t["agent_id"], "status": t["status"],
                        "result": str(t["result"])[:6000]} for t in tasks.values()],
             "findings": [{**e["payload"], "content": str(e["payload"].get("content") or "")[:2000]} for e in store.with_db(lambda conn: db.list_events(conn, run_id))
-                         if e["kind"] in {"finding", "message", "question", "coordinator_note", "user_update"}][-40:],
+                         if e["kind"] in {"finding", "message", "question", "user_update"}][-40:],
             "user_updates": guidance,
         }, ensure_ascii=False)
         store.with_db(lambda conn: db.update_run(conn, run_id, final_status, result))

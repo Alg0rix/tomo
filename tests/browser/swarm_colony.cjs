@@ -81,18 +81,28 @@ const root = path.resolve(__dirname, '../..');
         TomoSwarm.apply(run, { run_id: 'run', event_id: 6, kind: 'coordinator_review', agent_id: 'main' });
         TomoSwarm.paint(card);
         const reviewText = card.querySelector('.sr-board header').textContent;
+        TomoSwarm.apply(run, { run_id: 'run', event_id: 7, kind: 'coordinator_review_done' });
+        TomoSwarm.paint(card);
+        const finishedReviewText = card.querySelector('.sr-board header').textContent;
+        const quietRun = TomoSwarm.fromApi({ id: 'quiet', status: 'running', events: [
+          { id: 20, kind: 'coordinator_note', payload: { content: 'Still waiting' } },
+          { id: 21, kind: 'coordinator_note', payload: { content: 'Board is empty' } },
+        ], tasks: [] }, []);
         TomoSwarm.apply(run, { run_id: 'run', event_id: 3, kind: 'message', agent_id: 'main', content: 'Use v2' });
-        return { text, title: delivered && delivered.title, reviewText, before, after: run.board.length };
+        return { text, title: delivered && delivered.title, reviewText, finishedReviewText,
+          quietCount: quietRun.board.length, before, after: run.board.length };
       });
       assert.match(result.text, /question/);
-      assert.match(result.text, /coordination/);
+      assert.doesNotMatch(result.text, /Answered the worker|coordination/);
       assert.match(result.text, /delivered/);
       assert.match(result.title, /action is not confirmed/);
       assert.match(result.reviewText, /Tomo reviewing/);
-      assert.equal(result.before, 3);
+      assert.doesNotMatch(result.finishedReviewText, /reviewing/);
+      assert.equal(result.quietCount, 0);
+      assert.equal(result.before, 2);
       assert.equal(result.after, result.before);
     }
     assert.deepEqual(errors, []);
-    console.log('Swarm questions, coordinator notes, delivery receipts and replay deduplication passed at 390/820/1280px');
+    console.log('Swarm questions, quiet coordinator reviews, delivery receipts and replay deduplication passed at 390/820/1280px');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

@@ -756,7 +756,11 @@ async def test_colony_updates_one_status_and_waits_for_actual_answer_delivery(se
         await event(7, "question_resolved", task_id="a", question_event_id=4, status="answered")
         assert "waiting for main's answer" not in ui.status_text()
         assert "received main's answer; can continue" in ui.status_text()
-        await event(8, "coordinator_note", content="Answered the contract question")
+        notes = list(ui.swarm_notes)
+        await event(8, "coordinator_review_done", metrics={"cached_tokens": 80})
+        await event(9, "coordinator_note", content="Nothing new; still waiting")
+        assert ui.swarm_notes == notes
+        assert "Nothing new; still waiting" not in ui.status_text()
         await ui.refresh()
         assert "Tomo reviewing workers" not in bot.messages[ui.status_id]["text"]
         assert sum(method == "sendMessage" for method, _ in bot.calls) == sends

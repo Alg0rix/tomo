@@ -234,7 +234,7 @@ def _accumulate_turn_tokens(
         return
     kind = ev.get("kind")
     if kind not in ("final", "subagent_final") and not (
-        kind == "swarm_event" and ev.get("event") == "coordinator_note"
+        kind == "swarm_event" and ev.get("event") in {"coordinator_note", "coordinator_review_done"}
     ):
         return
     metrics = ev.get("metrics")

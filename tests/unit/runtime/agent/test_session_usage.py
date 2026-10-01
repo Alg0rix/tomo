@@ -95,13 +95,14 @@ async def test_context_endpoint_exposes_recorded_usage(tmp_path, monkeypatch):
     assert result["usage"]["prompt_tokens"] == 100
 
 
-def test_coordinator_reviews_count_toward_tokens_and_cache_without_final_answer(tmp_path):
+@pytest.mark.parametrize("event_kind", ["coordinator_note", "coordinator_review_done"])
+def test_coordinator_reviews_count_toward_tokens_and_cache_without_final_answer(tmp_path, event_kind):
     from app.channels.web import _accumulate_turn_tokens
     store.rebind(tmp_path / "coordination-usage.db")
     sid = store.create_swarm_session(["main"])
     metrics = TurnMetrics(llm_rounds=1)
     metrics.add_usage(100, 10, cached_tokens=80)
-    event = {"kind": "swarm_event", "event": "coordinator_note", "run_id": "r1",
+    event = {"kind": "swarm_event", "event": event_kind, "run_id": "r1",
              "event_id": 1, "content": "Sent guidance", "metrics": metrics.as_dict()}
     _, entries, _ = map_loop_event(event, "main", "Main", 0, "turn1")
     assert [e["type"] for e in entries] == ["coordination_metrics"]

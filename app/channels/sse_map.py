@@ -169,7 +169,7 @@ def map_loop_event(
     entries: list[dict[str, Any]] = []
 
     if kind == "swarm_event":
-        if ev.get("event") == "coordinator_note" and isinstance(ev.get("metrics"), dict):
+        if ev.get("event") in {"coordinator_note", "coordinator_review_done"} and isinstance(ev.get("metrics"), dict):
             entries.append({"type": "coordination_metrics", "agent_id": ev.get("agent_id") or agent_id,
                             "metrics": ev["metrics"], "ts": now()})
         seq += 1

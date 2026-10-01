@@ -214,3 +214,27 @@ async def test_user_steer_is_consumed_by_main_and_translated_for_worker(tmp_path
     assert len([e for e in events if e["kind"] == "steer"]) == 1
     result = json.loads(next(e["result"] for e in events if e["kind"] == "swarm_result"))
     assert result["user_updates"] == [{"role": "user", "content": "Only read production"}]
+
+
+async def test_quiet_review_records_usage_without_board_summary(tmp_path, monkeypatch):
+    for actionable in (False, True):
+        sid, rid, _ = setup_run(tmp_path)
+        async def turn(message, **kw):
+            assert "finish quietly" in kw["system_prompt"]
+            assert "exactly NO_UPDATE" in kw["system_prompt"]
+            assert "exactly COORDINATED" in kw["system_prompt"]
+            if actionable:
+                assert "Saved" in swarm_board.run({"action": "publish", "content": "New evidence changes the agreed contract"})
+            yield {"kind": "final", "content": "COORDINATED" if actionable else "NO_UPDATE",
+                   "metrics": {"prompt_tokens": 100, "cached_tokens": 80}}
+        monkeypatch.setattr(swarm, "run_turn", turn)
+        events = asyncio.Queue()
+        await swarm._supervise(run_id=rid, session_id=sid, coordinator_id="main",
+                               request="Check contract", tasks={}, guidance=[], events=events, conversation=[])
+        emitted = [events.get_nowait() for _ in range(events.qsize())]
+        assert [kind for kind, _, _ in emitted] == ["coordinator_review_done", "coordinator_finished"]
+        assert emitted[0][2]["metrics"]["cached_tokens"] == 80
+        assert "content" not in emitted[0][2]
+        stored = store.with_db(lambda c: db.list_events(c, rid))
+        assert all(e["kind"] != "coordinator_note" for e in stored)
+        assert len([e for e in stored if e["kind"] == "finding"]) == int(actionable)

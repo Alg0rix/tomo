@@ -96,6 +96,11 @@
           t.questionTimedOut = p.status === 'timeout';
         }
         break;
+      case 'coordinator_review_done':
+      case 'coordinator_note':
+        // Old run summaries also stay out of the board when replayed.
+        run.reviewing = false;
+        break;
       case 'coordinator_review':
         run.reviewing = true;
         break;
@@ -109,11 +114,10 @@
       case 'finding':
       case 'message':
       case 'question':
-      case 'coordinator_note':
       case 'coordinator_error':
       case 'user_update':
         if (kind === 'question' && t) { t.waitingQuestion = eventId; t.questionTimedOut = false; }
-        if (kind === 'coordinator_note' || kind === 'coordinator_error') run.reviewing = false;
+        if (kind === 'coordinator_error') run.reviewing = false;
         run.board.push({ id: eventId, kind: kind, at: at, from: p.agent_id || '', to: p.to_agent_id || '',
                          content: p.content || '' });
         break;
