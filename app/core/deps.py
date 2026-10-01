@@ -79,6 +79,15 @@ templates.env.globals["avatar_color"] = avatar_color
 templates.env.globals["ts"] = ts
 templates.env.globals["eval_ui_enabled"] = EVAL_UI_ENABLED
 
+# Static-asset cache buster. Hand-bumped ``?v=`` tags drift — a JS change that
+# forgets the bump ships stale code to browsers. Keyed to package version +
+# process start so every release/restart invalidates all assets automatically.
+import time as _time  # noqa: E402
+
+from .self_update import package_version as _pkg_version  # noqa: E402
+
+templates.env.globals["static_ver"] = f"{_pkg_version()}-{int(_time.time())}"
+
 from modules.paths import static_url as module_static  # noqa: E402
 
 templates.env.globals["module_static"] = module_static

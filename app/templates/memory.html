@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block extra_head %}
-<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v=ledger1">
+<link rel="stylesheet" href="{{ url_for('static', path='css/memory.css') }}?v={{ static_ver }}">
 {% endblock %}
 {% block content %}
 <section class="mem" id="mem" data-view="pages" aria-labelledby="memTitle">
@@ -63,4 +63,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v=ledger1"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/memory.js') }}?v={{ static_ver }}"></script>{% endblock %}

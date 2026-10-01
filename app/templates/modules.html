@@ -16,4 +16,4 @@
   </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/modules.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/modules.js') }}?v={{ static_ver }}"></script>{% endblock %}

@@ -114,4 +114,4 @@
   {% include 'partials/workplaces/kinds.html' %}
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}?v=wp-install1"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/workplaces.js') }}?v={{ static_ver }}"></script>{% endblock %}
