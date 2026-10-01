@@ -60,6 +60,35 @@ def _flatten_content(content: Any) -> str:
     return str(content)
 
 
+def _content_parts_to_responses(content: list) -> list[dict[str, Any]] | None:
+    """Responses-API content parts for a list-form user message.
+
+    ``image_url`` parts become ``input_image`` items; text parts become
+    ``input_text``. Returns ``None`` when no image parts exist so callers
+    keep the plain-string path for text-only messages.
+    """
+    parts: list[dict[str, Any]] = []
+    has_image = False
+    for part in content:
+        if isinstance(part, str):
+            if part:
+                parts.append({"type": "input_text", "text": part})
+            continue
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") in {"image_url", "input_image"}:
+            url = part.get("image_url")
+            url = url.get("url") if isinstance(url, dict) else url
+            if isinstance(url, str) and url:
+                has_image = True
+                parts.append({"type": "input_image", "image_url": url})
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            parts.append({"type": "input_text", "text": text})
+    return parts if has_image and parts else None
+
+
 def _messages_to_responses_input(
     messages: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -70,7 +99,9 @@ def _messages_to_responses_input(
     dynamic turn context does not invalidate the reusable history prefix.
     Everything else becomes an ``input`` item:
     plain user/assistant text, ``function_call`` for assistant tool calls,
-    ``function_call_output`` for tool-role results.
+    ``function_call_output`` for tool-role results. User messages carrying
+    ``image_url`` parts become multimodal ``input_text``/``input_image``
+    content (previously the image was silently dropped by the text flatten).
     """
     instructions_parts: list[str] = []
     items: list[dict[str, Any]] = []
@@ -102,6 +133,12 @@ def _messages_to_responses_input(
 
         if role not in {"user", "assistant"}:
             continue
+
+        if role == "user" and isinstance(msg.get("content"), list):
+            parts = _content_parts_to_responses(msg["content"])
+            if parts is not None:
+                items.append({"role": "user", "content": parts})
+                continue
 
         text = _flatten_content(msg.get("content"))
         tool_calls = msg.get("tool_calls")

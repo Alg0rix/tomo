@@ -869,16 +869,23 @@ async def run_turn(
                     + f"\nCurrent coordinator/template ID: {agent_id}. Create session-local "
                     "agents based on this ID if needed; do not assign it directly as a worker."
                 )
-            from app.runtime.llm.vision import agent_supports_vision
+            from app.services.vision import prepare_image_inputs
 
-            vision_capable = agent_supports_vision(agent_id)
+            try:
+                image_plan = await prepare_image_inputs(history, agent_id)
+            except Exception:
+                # Image handling must never kill a turn — degrade to the
+                # binary-attachment note when prep itself fails.
+                image_plan = {"mode": "text", "descriptions": {}}
+                _logger.warning("image input prep failed; continuing without", exc_info=True)
             messages = build_messages(
                 history,
                 user_message,
                 system_prompt=prompt,
                 for_agent_id=agent_id,
                 session_id=session_id,
-                vision_capable=vision_capable,
+                vision_capable=image_plan["mode"] == "native",
+                image_descriptions=image_plan["descriptions"],
                 live_context=live_context,
             )
         except Exception as exc:

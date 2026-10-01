@@ -41,6 +41,7 @@ _BACKENDS: dict[str, str | ToolRunner] = {
     "list_workplaces": "app.runtime.tools.list_workplaces:run",
     "search_files": "app.runtime.tools.search_files:run",
     "delete_file": "app.runtime.tools.delete_file:run",
+    "vision_analyze": "app.runtime.tools.vision_analyze:run",
     "web_fetch": "app.runtime.tools.web_fetch:run",
     "web_search": "app.runtime.tools.web_search:run",
     "process": "app.runtime.tools.process:run",

@@ -128,6 +128,8 @@
             learning_enabled: document.getElementById('setLearning').checked,
             memory_vault_enabled: document.getElementById('setMemoryVault').checked,
             memory_extraction_profile_id: document.getElementById('setMemoryExtractionProfile').value,
+            vision_profile_id: document.getElementById('setVisionProfile').value,
+            image_input_mode: document.getElementById('setImageInputMode').value,
             memory_consolidation_enabled: document.getElementById('setMemoryConsolidation').checked,
             memory_consolidation_cron: document.getElementById('setMemoryCron').value.trim(),
             approvals_mode: mode || 'smart',

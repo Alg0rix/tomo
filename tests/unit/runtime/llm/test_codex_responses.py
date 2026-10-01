@@ -99,6 +99,42 @@ def test_messages_to_responses_input_converts_tool_calls_and_results() -> None:
     assert items[2] == {"type": "function_call_output", "call_id": "call_1", "output": "file1\nfile2"}
 
 
+def test_messages_to_responses_input_translates_image_parts() -> None:
+    """``image_url`` parts on user messages become Responses ``input_image``."""
+    messages = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        },
+    ]
+    _, items = _messages_to_responses_input(messages)
+    assert items == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "what is this?"},
+                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            ],
+        }
+    ]
+
+
+def test_messages_to_responses_input_text_only_list_stays_flat() -> None:
+    """A list-form message without images keeps the plain-string path."""
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "hello"}],
+        }
+    ]
+    _, items = _messages_to_responses_input(messages)
+    assert items == [{"role": "user", "content": "hello"}]
+
+
 def test_responses_tools_converts_function_schema() -> None:
     tools = [{"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object"}}}]
     converted = _responses_tools(tools)

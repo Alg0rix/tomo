@@ -852,6 +852,7 @@ def history_to_messages(
     *,
     for_agent_id: str | None = None,
     vision_capable: bool = False,
+    image_descriptions: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Map session history entries to OpenAI-style chat messages.
 
@@ -864,7 +865,8 @@ def history_to_messages(
     as real ``image_url`` content parts instead of an opaque binary note —
     applies uniformly across the whole history (not just the newest turn),
     same as any other multimodal chat product re-sending prior images each
-    turn.
+    turn. ``image_descriptions`` substitutes a pre-analyzed text description
+    for image attachments when the model cannot see pixels.
     """
     messages: list[dict[str, Any]] = []
     if not history:
@@ -884,7 +886,9 @@ def history_to_messages(
                 {
                     "role": "user",
                     "content": expand_user_content_for_llm(
-                        entry, vision_capable=vision_capable
+                        entry,
+                        vision_capable=vision_capable,
+                        image_descriptions=image_descriptions,
                     ),
                 }
             )
@@ -1014,6 +1018,7 @@ def build_messages(
     for_agent_id: str | None = None,
     session_id: str | None = None,
     vision_capable: bool = False,
+    image_descriptions: dict[str, str] | None = None,
     live_context: str | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for one agent turn.
@@ -1073,7 +1078,10 @@ def build_messages(
     messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
     messages.extend(
         history_to_messages(
-            history, for_agent_id=for_agent_id, vision_capable=vision_capable
+            history,
+            for_agent_id=for_agent_id,
+            vision_capable=vision_capable,
+            image_descriptions=image_descriptions,
         )
     )
     messages.append({"role": "system", "content": "\n\n".join(turn_context)})

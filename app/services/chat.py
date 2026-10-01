@@ -539,7 +539,10 @@ def attachment_meta_for_ids(attachment_ids: list[str] | None) -> list[dict[str, 
 
 
 def attachment_info_lines(
-    attachment_ids: list[str] | None, *, vision_capable: bool = False
+    attachment_ids: list[str] | None,
+    *,
+    vision_capable: bool = False,
+    image_descriptions: dict[str, str] | None = None,
 ) -> str:
     """Build attachment blocks for the LLM only (not for chat UI history).
 
@@ -547,7 +550,9 @@ def attachment_info_lines(
     Office docs (docx/pdf/xlsx/…) convert to Markdown via anydoc. Images are
     skipped here (just a header note) when ``vision_capable`` — the pixels
     themselves go out as a separate ``image_url`` content part instead of a
-    text block (see :func:`expand_user_content_for_llm`). Absolute filesystem
+    text block (see :func:`expand_user_content_for_llm`). On non-vision models,
+    ``image_descriptions`` carries the auxiliary vision profile's per-image
+    description so the image is still understood. Absolute filesystem
     paths are never included.
     """
     if not attachment_ids:
@@ -563,6 +568,12 @@ def attachment_info_lines(
         header = f"[Attached: {name} ({mime}, {_format_size(size)}) id={att.get('id')}]"
         if vision_capable and _looks_image_attachment(att):
             blocks.append(header + " (image content included below)")
+            continue
+        description = (image_descriptions or {}).get(str(att.get("id") or aid))
+        if description and _looks_image_attachment(att):
+            blocks.append(
+                header + "\n(Image contents, analyzed by a vision model:)\n" + description
+            )
             continue
         if not _looks_text_attachment(att):
             if _looks_office_doc_attachment(att):
@@ -588,9 +599,17 @@ def attachment_info_lines(
 
 
 def prepend_attachment_info(
-    message: str, attachment_ids: list[str] | None, *, vision_capable: bool = False
+    message: str,
+    attachment_ids: list[str] | None,
+    *,
+    vision_capable: bool = False,
+    image_descriptions: dict[str, str] | None = None,
 ) -> str:
-    info = attachment_info_lines(attachment_ids, vision_capable=vision_capable)
+    info = attachment_info_lines(
+        attachment_ids,
+        vision_capable=vision_capable,
+        image_descriptions=image_descriptions,
+    )
     if not info:
         return message
     return info + ("\n\n" + message if message else "")
@@ -691,7 +710,10 @@ def expand_slash_skill(message: str) -> str:
 
 
 def expand_user_content_for_llm(
-    entry: dict[str, Any], *, vision_capable: bool = False
+    entry: dict[str, Any],
+    *,
+    vision_capable: bool = False,
+    image_descriptions: dict[str, str] | None = None,
 ) -> str | list[dict[str, Any]]:
     """User bubble content for the model — expands slash skills + attachments.
 
@@ -702,13 +724,18 @@ def expand_user_content_for_llm(
     (same text as the string form, minus the per-image binary note) followed
     by one ``image_url`` part per readable image. Unreadable images are
     silently skipped from the image parts (the text part still notes them).
+    ``image_descriptions`` supplies pre-analyzed image text for non-vision
+    models.
     """
     content = entry.get("content") or ""
     ids = entry.get("attachment_ids")
     if not ids and isinstance(entry.get("params"), dict):
         ids = entry["params"].get("attachment_ids")
     text = prepend_attachment_info(
-        expand_slash_skill(content), ids, vision_capable=vision_capable
+        expand_slash_skill(content),
+        ids,
+        vision_capable=vision_capable,
+        image_descriptions=image_descriptions,
     )
     if not vision_capable or not ids:
         return text

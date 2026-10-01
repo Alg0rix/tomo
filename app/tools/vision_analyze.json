@@ -1,0 +1,34 @@
+{
+  "id": "vision_analyze",
+  "name": "Vision Analyze",
+  "description": "Describe an image (workplace file, attachment, URL, or data URL) using a vision-capable model.",
+  "backend": "app.runtime.tools.vision_analyze",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "vision_analyze",
+      "description": "Load and describe an image so you can answer questions about it. Sources: a path inside the workplace, 'attachment:<id>' for a user-attached image, an http(s) URL, or a data: URL. Works even when your own model cannot see images — a separate vision model describes the image and the text comes back as this tool's result. Call it whenever the user references an image or you need to inspect one you created/found. Use 'region' to zoom into a specific area at full resolution after seeing the whole image first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Image source: path under the workplace, 'attachment:<id>', http(s) URL, or data: URL."
+          },
+          "question": {
+            "type": "string",
+            "description": "What you want to know about the image (e.g. 'read the error text', 'describe the layout')."
+          },
+          "region": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Optional [x1, y1, x2, y2] crop in original-image pixel coordinates — applied before downscaling, so the crop keeps full resolution. Use after loading the full image to zoom into small text or detail."
+          }
+        },
+        "required": ["source", "question"]
+      }
+    }
+  }
+}

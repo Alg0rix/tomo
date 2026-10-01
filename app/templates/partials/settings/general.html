@@ -56,6 +56,23 @@
       </select></div>
     </div>
     <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Vision model</div><p class="machine-field-hint">Describes images when the chat model can't see them (and powers the vision_analyze tool). Auto uses the chat model itself when it supports vision, else the first vision-capable profile.</p></div>
+      <div class="machine-field-control"><select class="input" id="setVisionProfile" aria-label="Vision model">
+        <option value="">Auto</option>
+        {% for profile in llm_profiles if profile.enabled %}
+        <option value="{{ profile.id }}" {% if settings.vision_profile_id == profile.id %}selected{% endif %}>{{ profile.name }} · {{ profile.model }}</option>
+        {% endfor %}
+      </select></div>
+    </div>
+    <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Image input</div><p class="machine-field-hint">Auto attaches images natively when the chat model supports vision, otherwise describes them with the vision model. Native always attaches; Describe always uses the vision model.</p></div>
+      <div class="machine-field-control"><select class="input" id="setImageInputMode" aria-label="Image input mode">
+        <option value="auto" {% if (settings.image_input_mode or 'auto') == 'auto' %}selected{% endif %}>Auto</option>
+        <option value="native" {% if settings.image_input_mode == 'native' %}selected{% endif %}>Native attach</option>
+        <option value="text" {% if settings.image_input_mode == 'text' %}selected{% endif %}>Describe via vision model</option>
+      </select></div>
+    </div>
+    <div class="machine-field">
       <div class="machine-field-copy"><div class="machine-field-name">Nightly memory consolidation</div><p class="machine-field-hint">Turn past day notes into durable entity facts.</p></div>
       <div class="machine-field-control">{{ toggle(id='setMemoryConsolidation', checked=settings.memory_consolidation_enabled) }}</div>
     </div>

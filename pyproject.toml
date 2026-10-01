@@ -23,6 +23,7 @@ dependencies = [
     "mcp>=1.27,<2",
     "markdown-it-py>=3,<5",
     "wsproto>=1.2,<2",
+    "pillow>=12.3.0",
 ]
 
 [build-system]

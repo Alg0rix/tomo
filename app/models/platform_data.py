@@ -106,6 +106,16 @@ def seed_settings() -> dict[str, Any]:
         "learning_cooldown_sec": 90,
         "learning_review_profile_id": "",
         "llm_timeout_seconds": 300,
+        # How user-attached images reach the model: "auto" = native image
+        # parts when the model proves vision-capable, else a vision-model
+        # text description; "native" = always attach; "text" = always describe.
+        "image_input_mode": "auto",
+        # Pinned auxiliary vision profile id ("" = auto: main profile when it
+        # sees images, else the first vision-capable enabled profile).
+        "vision_profile_id": "",
+        # Per-model capability pins: {"<model id or profile id>": {"supports_vision": true}}
+        # — wins over catalog/prefix detection.
+        "model_capability_overrides": {},
         "public_history": False,
         "setup_complete": True,
         "eval_parallel_workers": 2,

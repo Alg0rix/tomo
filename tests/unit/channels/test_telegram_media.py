@@ -411,7 +411,7 @@ async def test_stop_interrupts_active_download_and_never_calls_agent(
 async def test_received_photo_pixels_reach_vision_model(setup, monkeypatch):
     _, api = setup
     monkeypatch.setattr(
-        "app.runtime.llm.vision.agent_supports_vision", lambda agent_id: True
+        "app.runtime.llm.vision.decide_image_input_mode", lambda agent_id: "native"
     )
     llm = inject_recording(monkeypatch, [text_reply("Image received")])
     await process_update(media("photo", caption="Describe this image"), api=api)

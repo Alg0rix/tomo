@@ -26,5 +26,6 @@ $TOMO_HOME/state/tomo.db   (+ gated platform_data only for unused eval tiles)
 
   Progress: `docs/superpowers/progress/alpha.md`. Master spec: `docs/superpowers/specs/2026-07-26-alpha-kitchen-sink-design.md`.
 
+- **Image input routing** — `app/runtime/llm/vision.py` resolves per-model vision capability (settings `model_capability_overrides` → Ollama `/api/show` probe for local endpoints → models.dev catalog cached in `$TOMO_HOME/state/cache` → static prefix table on vendor-stripped ids). `image_input_mode` (`auto`/`native`/`text`) picks native `image_url` parts vs. describing images into text through the auxiliary vision profile (`vision_profile_id` → capable main profile → first capable enabled profile). Descriptions are disk-cached by content hash (`app/services/vision.py`); the `vision_analyze` tool (`source`: workplace path / `attachment:<id>` / URL / data URL) gives agents on-demand image reads. Codex/Responses clients translate image parts to `input_image` (`codex_responses.py`).
 - **Eval / evaluator deferred** — nav + `/evaluate` + `/history` + `/api/eval/*` are off by default (`TOMO_EVAL_UI=1` to re-enable). Seed/stubs remain.
 - **UI honesty** — primary nav and System settings only expose wired Alpha surfaces. Stub panels (Safety, Users, Logs, Upload skill) are hidden; plugin UIs that are planned say so on-page.
