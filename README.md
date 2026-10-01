@@ -480,7 +480,7 @@ Planned messaging tools (not in `app/tools/` yet):
 
 Web and Telegram chats support session attachments. Telegram receives photos, documents, voice/audio, video, animations, and stickers, with a 20 MB download bound and album grouping. Enable voice transcription in **System → Channels** and configure a compatible speech service to turn audio into a user message. Original files remain attached to the conversation.
 
-Enable **Rich answers** in the same panel for native tables, headings, lists, and fenced math blocks. Private chats stream rich drafts; group chats edit their preview in place. Definite API rejections fall back to balanced HTML, while ambiguous failures avoid duplicate sends. See [Telegram interaction UX](docs/telegram-ux.md) for configuration and limits.
+Enable **Rich answers** in the same panel for native tables, headings, lists, and fenced math blocks. Private and group chats stream into one editable preview; tool commentary appears once, and the final answer arrives as a new message at the bottom. Definite API rejections fall back to balanced HTML, while ambiguous failures avoid duplicate sends. Telegram turns also get channel-specific context and a `telegram_send_file` tool: save a screenshot/report with `save_artifact`, then upload its filename directly to the same chat/topic instead of sending web-only image tags or Files-panel references. See [Telegram interaction UX](docs/telegram-ux.md) for configuration and limits.
 
 Sessions are keyed by `(agent_id, user_id)` (Telegram uses `tg_<chat_id>` as the user). Separate histories per chat identity.
 

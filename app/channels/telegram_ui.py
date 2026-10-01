@@ -10,7 +10,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from app.channels.telegram_format import render_markdown, split_html
 from app.runtime.permissions import hitl
 from app.services.store import store
 
@@ -62,8 +61,6 @@ class TelegramTurnUI:
         self.answer_id: int | None = None
         self.answer = ""
         self.last_preview = ""
-        self.draft_id = secrets.randbits(31) or 1
-        self.last_draft_at = 0.0
         self.last_status = ""
         self.outcome = "Done"
         self._ticker: asyncio.Task | None = None
@@ -192,56 +189,27 @@ class TelegramTurnUI:
                     reply_markup=self.stop_keyboard(),
                 )
                 self.last_status = text
-            # Never publish private reasoning; only user-facing answer deltas.
-            if self.answer and self.api.rich_enabled:
-                preview_text = self.answer[:4000] + "\n\n…"
-                now = time.monotonic()
-                if preview_text != self.last_preview or (
-                    self.last_draft_at and now - self.last_draft_at >= 20
-                ):
-                    if self.answer_id is None and await self.api.send_rich_draft(
-                        self.chat_id,
-                        self.draft_id,
-                        preview_text,
-                        thread_id=self.thread_id,
-                    ):
-                        self.last_draft_at = now
-                    elif self.answer_id is None:
-                        sent = await self.api.send_answer(
-                            self.chat_id,
-                            preview_text,
-                            reply_to=self.reply_to,
-                            thread_id=self.thread_id,
-                            preview=True,
-                        )
-                        self.answer_id = sent.get("message_id")
-                    else:
-                        await self.api.edit_answer(
-                            self.chat_id,
-                            self.answer_id,
-                            preview_text,
-                            thread_id=self.thread_id,
-                            preview=True,
-                        )
-                    self.last_preview = preview_text
-                return
-            chunks = (
-                split_html(render_markdown(self.answer[:4000]), limit=3600)
-                if self.answer
-                else []
-            )
-            preview = chunks[0] + "\n\n…" if chunks else ""
+            # One editable bubble for user-facing deltas, never private reasoning.
+            preview = self.answer[:4000] + "\n\n…" if self.answer else ""
             if preview and preview != self.last_preview:
                 if self.answer_id is None:
-                    sent = await self.api.send_html(
+                    sent = await self.api.send_answer(
                         self.chat_id,
                         preview,
                         reply_to=self.reply_to,
                         thread_id=self.thread_id,
+                        silent=True,
+                        preview=True,
                     )
                     self.answer_id = sent.get("message_id")
                 else:
-                    await self.api.edit_html(self.chat_id, self.answer_id, preview)
+                    await self.api.edit_answer(
+                        self.chat_id,
+                        self.answer_id,
+                        preview,
+                        thread_id=self.thread_id,
+                        preview=True,
+                    )
                 self.last_preview = preview
 
     async def consume(self, chunk: str) -> None:
@@ -274,21 +242,40 @@ class TelegramTurnUI:
                     self.recent = self.recent[-3:]
             elif event == "assistant_progress" and not data.get("delegate_call_id"):
                 content = str(data.get("content") or "").strip()[:1000]
-                if (
-                    content
-                    and content != self.last_progress
-                    and self.progress_count < 10
-                ):
-                    self.last_progress = content
-                    self.progress_count += 1
-                    with contextlib.suppress(Exception):
-                        await self.api.send_message(
-                            self.chat_id,
-                            "↳ " + content,
-                            formatted=True,
-                            silent=True,
-                            thread_id=self.thread_id,
-                        )
+                async with self._io_lock:
+                    if (
+                        content
+                        and content != self.last_progress
+                        and self.progress_count < 10
+                    ):
+                        self.last_progress = content
+                        self.progress_count += 1
+                        with contextlib.suppress(Exception):
+                            if self.answer_id is not None:
+                                await self.api.edit_answer(
+                                    self.chat_id,
+                                    self.answer_id,
+                                    "↳ " + content,
+                                    thread_id=self.thread_id,
+                                    preview=True,
+                                )
+                            else:
+                                await self.api.send_message(
+                                    self.chat_id,
+                                    "↳ " + content,
+                                    formatted=True,
+                                    silent=True,
+                                    thread_id=self.thread_id,
+                                )
+                            # This bubble is now permanent progress, not a preview.
+                            self.answer_id = None
+                    if self.answer_id is not None:
+                        with contextlib.suppress(Exception):
+                            await self.api.delete_message(self.chat_id, self.answer_id)
+                        self.answer_id = None
+                    # The next model round starts a fresh stream.
+                    self.answer = ""
+                    self.last_preview = ""
             elif event in {"approval_required", "clarify_required"}:
                 await self.show_prompt(
                     "approval" if event == "approval_required" else "clarify", data
@@ -686,42 +673,18 @@ class TelegramTurnUI:
                 )
         if self.outcome == "Stopped":
             reply = "Stopped. A tool already running may still finish. You can send another message or use /new."
-        if self.api.rich_enabled or self.last_draft_at:
-            if self.answer_id is None:
-                await self.api.send_answer(
-                    self.chat_id,
-                    reply,
-                    thread_id=self.thread_id,
-                    reply_to=self.reply_to,
-                )
-            else:
-                await self.api.edit_answer(
-                    self.chat_id, self.answer_id, reply, thread_id=self.thread_id
-                )
-            return
-        chunks = split_html(render_markdown(reply))
-        if chunks:
-            if self.answer_id is not None:
-                try:
-                    await self.api.edit_html(self.chat_id, self.answer_id, chunks[0])
-                except Exception:
-                    await self.api.send_html(
-                        self.chat_id,
-                        chunks[0],
-                        thread_id=self.thread_id,
-                        reply_to=self.reply_to,
-                    )
-            else:
-                await self.api.send_html(
-                    self.chat_id,
-                    chunks[0],
-                    thread_id=self.thread_id,
-                    reply_to=self.reply_to,
-                )
-            for chunk in chunks[1:]:
-                await self.api.send_html(
-                    self.chat_id, chunk, silent=True, thread_id=self.thread_id
-                )
+        # Editing an old preview strands the final above progress/HITL messages.
+        # Deliver at the bottom first; keep the preview if final delivery fails.
+        await self.api.send_answer(
+            self.chat_id,
+            reply,
+            thread_id=self.thread_id,
+            reply_to=self.reply_to,
+        )
+        if self.answer_id is not None:
+            with contextlib.suppress(Exception):
+                await self.api.delete_message(self.chat_id, self.answer_id)
+            self.answer_id = None
 
     async def close(self) -> None:
         if self._ticker and not self._ticker.done():

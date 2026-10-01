@@ -799,6 +799,18 @@ async def run_turn(
                 )
             else:
                 tool_schemas = get_openai_tools()
+            from app.channels.telegram_context import current_turn as telegram_turn
+
+            excluded_tool = (
+                "render_ui"
+                if session_id and telegram_turn(session_id) is not None
+                else "telegram_send_file"
+            )
+            tool_schemas = [
+                schema
+                for schema in tool_schemas
+                if schema.get("function", {}).get("name") != excluded_tool
+            ]
             limit = (
                 max_iterations
                 if max_iterations is not None

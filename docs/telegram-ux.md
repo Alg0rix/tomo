@@ -6,7 +6,10 @@ three results, plan progress, elapsed time, and approval mode. A Stop button sta
 available during the task. Private reasoning and raw tool output stay out of the
 Telegram progress card.
 
-The first answer preview becomes the completed answer in place. Overflow arrives
+Each model round streams into one quiet editable preview. Tool commentary turns
+that preview into a single progress message, then the next round starts fresh.
+The completed answer is sent as a new message below progress and approval cards;
+its temporary preview is removed only after successful delivery. Overflow arrives
 in additional messages with notifications disabled. Markdown supports headings,
 emphasis, lists, links, quotes, inline code, and fenced code; tables become labeled
 rows for mobile screens. Each long-answer chunk preserves Unicode, escaped
@@ -28,6 +31,28 @@ waiting. Group answers must reply to the question and come from the initiating
 person. If a prompt cannot be delivered, the approval is denied / clarification
 returns empty rather than waiting invisibly. Resolved and expired controls lose
 their buttons, including when resolved through the web UI.
+
+## Channel context and file delivery
+
+Telegram turns explicitly tell the model that the user is reading Telegram, not
+the web UI. This is a static block in the first system message, before history,
+not a suffix after the conversation. It contains no chat IDs, tokens, filenames,
+or timestamps; the channel's tool schemas and provider cache routing key stay
+stable between model rounds and successive turns. Web-only `render_ui` is hidden;
+Files-panel instructions and HTML image embeds are replaced with channel-specific
+delivery guidance.
+
+Use `save_artifact` to store a deliverable, then `telegram_send_file` with its
+`filename` to upload it to the current chat and topic. Saving alone is not sending.
+The tool accepts only current-session artifacts, not arbitrary paths, URLs, chat
+IDs, or another session's files. It rechecks chat access before uploading, keeps
+stored files on failure, and reports success only after Telegram confirms delivery.
+
+`kind=auto` sends PNG/JPEG images up to 10 MB via `sendPhoto`; other files are
+uploaded via `sendDocument` (50 MB limit). Choose `kind=document` to preserve an
+image without compression. Captions are plain text, up to 1024 characters. The
+tool is unavailable in web turns and uses the existing bot transport—no token,
+shell helper, or public tunnel needs to be given to the model.
 
 ## Commands
 
@@ -145,16 +170,13 @@ Enable **System → Channels → Rich answers** to use Telegram's
 [rich-message API](https://core.telegram.org/bots/api#sendrichmessage).
 Native headings, tables, lists, code, and fenced `math`/`latex` blocks keep their
 structure. Raw HTML is escaped, and Markdown images do not trigger remote
-media fetches or inject control buttons. Private chats stream
-`sendRichMessageDraft` with a stable draft ID and refresh before its 30-second
-expiry; completion sends a persisted answer. Groups and servers rejecting drafts
-use a persistent preview that is edited in place. Received rich text and rich
-media blocks are also accepted.
+media fetches or inject control buttons. Both private and group chats stream
+into one editable rich preview, using the same progress and final-message ordering
+as legacy formatting. Received rich text and rich media blocks are also accepted.
 
 Definite rich API rejections fall back to the existing balanced HTML formatting,
 including long-answer chunking. Unsupported rich endpoints are remembered for
-the lifetime of the current API client; draft-only failures do not disable rich
-final answers. Timeouts, permission failures, and ambiguous server errors never
+the lifetime of the current API client. Timeouts, permission failures, and ambiguous server errors never
 trigger a second legacy send. Approval and stop buttons retain their existing
 message/sender/session checks. Rich answers are opt-in because Telegram client
 support and copying behavior vary.

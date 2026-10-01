@@ -43,6 +43,9 @@ class Bot:
                 **payload,
             }
             self.messages[self.counter] = result
+        elif method == "deleteMessage":
+            self.messages.pop(payload["message_id"], None)
+            result = True
         elif method == "editMessageText":
             self.messages.setdefault(payload["message_id"], {}).update(payload)
             result = self.messages[payload["message_id"]]
@@ -419,7 +422,7 @@ async def test_permanent_approval_requires_explicit_second_confirmation(setup):
         await api.aclose()
 
 
-async def test_streamed_preview_replaced_with_full_unicode_answer_without_duplicate_pages(
+async def test_streamed_preview_delivered_as_full_unicode_answer_without_duplicate_pages(
     setup,
 ):
     from app.channels.telegram_format import plain_text, render_markdown, utf16_len
@@ -440,13 +443,16 @@ async def test_streamed_preview_replaced_with_full_unicode_answer_without_duplic
         assert answer_id is not None
         initial_ids = set(bot.messages)
         await ui.finish(content)
-        answer_pages = [bot.messages[answer_id]] + [
+        assert answer_id not in bot.messages
+        answer_pages = [
             bot.messages[i] for i in sorted(set(bot.messages) - initial_ids)
         ]
         assert "".join(plain_text(p["text"]) for p in answer_pages) == plain_text(
             render_markdown(content)
         )
         assert all(utf16_len(p["text"]) <= 3900 for p in answer_pages)
+        assert not answer_pages[0]["disable_notification"]
+        assert all(p["disable_notification"] for p in answer_pages[1:])
         assert (
             len(
                 [

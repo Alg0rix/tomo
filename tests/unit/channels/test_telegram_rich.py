@@ -13,6 +13,7 @@ from app.channels.telegram import (
 )
 from app.channels.telegram_format import render_rich_html
 from app.channels.telegram_ui import TelegramTurnUI
+from app.channels.sse_map import fmt_sse
 from app.services import store
 from tests.fakes.llm import text_reply
 from tests.unit.channels.test_telegram_ux import Bot, inject, message, until
@@ -166,7 +167,78 @@ class RichBot(Bot):
         return super().transport(request)
 
 
-async def test_private_draft_is_persisted_once_and_keeps_approval_status_card(settings):
+@pytest.mark.parametrize("rich", [False, True])
+async def test_tool_commentary_shown_once_and_final_is_newest(settings, rich):
+    store.update_settings({"telegram_rich_messages": rich})
+    bot = RichBot()
+    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
+
+    def visible_texts():
+        return [
+            p.get("text") or p["rich_message"]["html"]
+            for _, p in sorted(bot.messages.items())
+        ]
+
+    try:
+        for content in ["Checking tunnel.", "Checking cameras."]:
+            await ui.consume(fmt_sse({"event": "delta", "data": {"content": content}}))
+            await ui.refresh()
+            # Each model round must start with a fresh preview.
+            assert content in visible_texts()[-1]
+            assert "…" in visible_texts()[-1]
+            await ui.consume(
+                fmt_sse({"event": "assistant_progress", "data": {"content": content}})
+            )
+            assert sum(content in text for text in visible_texts()) == 1
+            assert "…" not in visible_texts()[-1]
+        await ui.consume(fmt_sse({"event": "delta", "data": {"content": "All done."}}))
+        await ui.refresh()
+        assert "Checking" not in visible_texts()[-1]
+        preview_id = max(bot.messages)
+        # Another channel message must not strand the final above it.
+        await api.send_message(42, "Guidance received.", thread_id=8, silent=True)
+        await ui.finish("All done.")
+        assert preview_id not in bot.messages
+        assert "All done." in visible_texts()[-1]
+        assert sum("All done." in text for text in visible_texts()) == 1
+        final = bot.messages[max(bot.messages)]
+        assert final["message_thread_id"] == 8
+        assert final["reply_parameters"]["message_id"] == 7
+        assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
+    finally:
+        await ui.close()
+        await api.aclose()
+
+
+async def test_failed_final_delivery_keeps_streaming_preview(settings):
+    bot = RichBot()
+    fail_final = False
+
+    def handler(request):
+        if fail_final and request.url.path.endswith("/sendRichMessage"):
+            return httpx.Response(503, json={"ok": False, "error_code": 503})
+        return bot.transport(request)
+
+    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    sid = store.get_or_create_session("main", "tg_-100")
+    ui = TelegramTurnUI(api, -100, sid)
+    try:
+        ui.answer = "Preview"
+        await ui.refresh()
+        preview_id = max(bot.messages)
+        fail_final = True
+        with pytest.raises(TelegramAPIError):
+            await ui.finish("Final")
+        assert "Preview" in bot.messages[preview_id]["rich_message"]["html"]
+        assert not any(m == "deleteMessage" for m, _ in bot.calls)
+    finally:
+        await ui.close()
+        await api.aclose()
+
+
+async def test_private_streaming_preview_keeps_approval_status_card(settings):
     bot = RichBot()
     api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_42")
@@ -177,18 +249,18 @@ async def test_private_draft_is_persisted_once_and_keeps_approval_status_card(se
         await ui.refresh()
         await ui.refresh()
         await ui.finish("# Final\n\nComplete answer")
-        drafts = [p for m, p in bot.calls if m == "sendRichMessageDraft"]
-        assert drafts
-        assert len({p["draft_id"] for p in drafts}) == 1
-        assert ui.answer_id is None
-        assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 1
+        assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
+        assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 2
+        answers = [p for p in bot.messages.values() if "rich_message" in p]
+        assert len(answers) == 1
+        assert "Complete answer" in answers[0]["rich_message"]["html"]
         assert bot.messages[ui.status_id]["reply_markup"]["inline_keyboard"] == []
     finally:
         await ui.close()
         await api.aclose()
 
 
-async def test_group_rich_preview_edited_in_place_without_private_draft(settings):
+async def test_group_rich_final_sent_after_preview_without_private_draft(settings):
     bot = RichBot()
     api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_-100")
@@ -198,8 +270,11 @@ async def test_group_rich_preview_edited_in_place_without_private_draft(settings
     mid = ui.answer_id
     await ui.finish("# Final")
     assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
-    assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 1
-    assert "<h1>Final</h1>" in bot.messages[mid]["rich_message"]["html"]
+    assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 2
+    assert mid not in bot.messages
+    final = bot.messages[max(bot.messages)]
+    assert "<h1>Final</h1>" in final["rich_message"]["html"]
+    assert final["message_thread_id"] == 8
     await ui.close()
     await api.aclose()
 
@@ -264,11 +339,9 @@ async def test_long_rich_preview_rejection_keeps_single_preview_then_complete_fi
     await ui.refresh()
     assert len([m for m, _ in calls if m == "sendMessage"]) == 1
     await ui.finish("🚀" * 4000 + "THE END")
-    # One preview is replaced; remaining answer chunks arrive once each.
-    edited = [p for m, p in calls if m == "editMessageText" and "text" in p][-1]
-    overflow = [p for m, p in calls if m == "sendMessage"][1:]
-    assert (
-        edited["text"] + "".join(p["text"] for p in overflow) == "🚀" * 4000 + "THE END"
-    )
+    # Final chunks arrive once each, then the temporary preview is removed.
+    final = [p for m, p in calls if m == "sendMessage"][1:]
+    assert "".join(p["text"] for p in final) == "🚀" * 4000 + "THE END"
+    assert calls[-1][0] == "deleteMessage"
     await ui.close()
     await api.aclose()

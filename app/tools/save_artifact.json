@@ -1,13 +1,13 @@
 {
   "id": "save_artifact",
   "name": "Save Artifact",
-  "description": "Save a file to this agent's durable artifacts directory for later retrieval and UI browse/download.",
+  "description": "Save a file to this chat session's durable artifacts directory for later retrieval and channel-specific delivery.",
   "backend": "app.runtime.tools.save_artifact",
   "schema": {
     "type": "function",
     "function": {
       "name": "save_artifact",
-      "description": "Save lasting outputs (HTML pages, reports, CSVs, images, PDFs, exports) into this chat session's artifacts store so they appear in the Files panel and can be previewed/downloaded. ALWAYS call this in the same turn after you create a user-facing deliverable — writing a workplace file alone does not register an artifact. Prefer source_path for a file you just wrote; use content for UTF-8 text. Served at /api/sessions/<session-id>/artifacts/<filename>.",
+      "description": "Save lasting outputs (HTML pages, reports, CSVs, images, PDFs, exports) into this chat session's artifacts store. ALWAYS call this in the same turn after you create a user-facing deliverable — writing a workplace file alone does not register an artifact. Prefer source_path for a file you just wrote; use content for UTF-8 text. In the web UI, artifacts appear in the Files panel and are served at /api/sessions/<session-id>/artifacts/<filename>. In Telegram, saving is NOT delivery: call telegram_send_file with the returned filename; do not embed HTML or send relative artifact URLs.",
       "parameters": {
         "type": "object",
         "properties": {

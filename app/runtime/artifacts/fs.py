@@ -265,12 +265,20 @@ def write_artifact_text(
 
 
 def read_artifact_bytes(
-    session_id: str, filename: str, *, home_root: Path | None = None
+    session_id: str,
+    filename: str,
+    *,
+    home_root: Path | None = None,
+    max_bytes: int | None = None,
 ) -> bytes:
     path = _safe_join(session_id, filename, home_root=home_root)
     if not path.is_file():
         raise FileNotFoundError(f"Artifact not found: {filename}")
-    return path.read_bytes()
+    with path.open("rb") as source:
+        data = source.read() if max_bytes is None else source.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise ValueError(f"Artifact exceeds the {max_bytes}-byte upload limit")
+    return data
 
 
 def delete_artifact_file(

@@ -38,6 +38,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from app.channels.telegram_context import current_turn as current_telegram_turn
 from app.core import config, home
 
 _TOOL_RESULT_PREVIEW = 1200
@@ -48,6 +49,23 @@ _FALLBACK_PROMPT = (
     "and use tools when they help."
 )
 _CURRENT_TIME_HEADER = "## Current time"
+_TELEGRAM_GUIDANCE = (
+    "## Telegram conversation\n\n"
+    "This conversation is through Telegram, not the Tomo web UI. The user "
+    "does not have a Files panel or HTML/interactive UI previews here. "
+    "Reply with Telegram-friendly text; never output raw HTML image tags "
+    "or relative /api URLs as deliverables. When you create a user-facing "
+    "screenshot, image, report, PDF, export, or other file, call save_artifact "
+    "in the same turn. Use filename + content for text, or source_path for an "
+    "existing workplace file. Then call telegram_send_file with the saved "
+    "filename when that tool is available. Saving is not delivery. "
+    "Use list_artifacts and fetch_artifact for this session only. "
+    "Delivery is bound to this chat/topic automatically: no token, chat ID, "
+    "shell script, or public tunnel is needed. Use kind=photo for image "
+    "previews or kind=document to preserve the original file. Only say a "
+    "file was sent after the tool returns sent=true. If the tool is "
+    "unavailable or fails, explain that the file has not been delivered."
+)
 
 # Turn-scoped freeze so build_system_prompt + build_messages see one stable stamp
 # (avoids mid-turn hour-boundary flips and double-inject churn).
@@ -293,7 +311,9 @@ def _agent_has_memory_tool(agent_id: str | None) -> bool:
 
 
 def _ui_prompt_section(agent_id: str | None) -> str:
-    """Guidance for choosing declarative UI over raw HTML in chat."""
+    """Guidance for choosing declarative UI over raw HTML in web chat."""
+    if current_telegram_turn() is not None:
+        return ""
     try:
         from app.services import store
 
@@ -339,6 +359,9 @@ def _artifacts_prompt_section(agent_id: str) -> str:
         if "save_artifact" not in store.get_enabled_tool_ids(agent_id):
             return ""
         sid = current_session_id() or "<session_id>"
+        if current_telegram_turn(sid) is not None:
+            # Telegram artifact instructions are static in the leading system message.
+            return ""
         url = f"/api/sessions/{sid}/artifacts/<filename>"
         return (
             "## Artifacts (this session only)\n\n"
@@ -1016,6 +1039,9 @@ def build_messages(
     """
     prompt = system_prompt if system_prompt is not None else coordinator_system_prompt()
     prompt = _without_current_time(prompt)
+    if session_id and current_telegram_turn(session_id) is not None:
+        # Channel capabilities belong in the reusable prefix, never after history.
+        prompt = prompt + "\n\n" + _TELEGRAM_GUIDANCE
     turn_context = [_current_time_section()]
     if live_context:
         turn_context.append(live_context)

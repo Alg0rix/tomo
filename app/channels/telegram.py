@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
+import mimetypes
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -105,14 +107,32 @@ class TelegramAPI:
         return f"{API_ROOT}/bot{self._token}/{method}"
 
     async def _request(
-        self, method: str, payload: dict[str, Any], *, retry_flood: bool = True
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        retry_flood: bool = True,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
     ) -> Any:
+        request_body = (
+            {"json": payload}
+            if files is None
+            else {
+                "data": {
+                    key: json.dumps(value)
+                    if isinstance(value, (dict, list, bool))
+                    else str(value)
+                    for key, value in payload.items()
+                },
+                "files": files,
+            }
+        )
         for attempt in range(3):
             try:
                 response = await self._client.post(
                     self._url(method),
-                    json=payload,
-                    timeout=60.0 if method == "getUpdates" else 10.0,
+                    **request_body,
+                    timeout=60.0 if method == "getUpdates" or files is not None else 10.0,
                 )
                 body = response.json()
             except (httpx.HTTPError, ValueError):
@@ -207,6 +227,55 @@ class TelegramAPI:
                 else:
                     self._rich_disabled = True
             return None
+
+    async def send_file(
+        self,
+        chat_id: int | str,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str = "",
+        kind: str = "auto",
+        thread_id: int | None = None,
+        reply_to: int | None = None,
+        silent: bool = False,
+    ) -> dict:
+        from pathlib import Path
+
+        if kind not in {"auto", "photo", "document"}:
+            raise ValueError("kind must be auto, photo, or document")
+        photo = kind == "photo" or (
+            kind == "auto"
+            and Path(filename).suffix.lower() in {".png", ".jpg", ".jpeg"}
+            and len(data) <= 10_000_000
+        )
+        limit = 10_000_000 if photo else 50_000_000
+        if not data or len(data) > limit:
+            raise ValueError(f"File must be nonempty and at most {limit} bytes")
+        if len(caption) > 1024:
+            raise ValueError("caption must be at most 1024 characters")
+        field = "photo" if photo else "document"
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "caption": caption,
+            "disable_notification": silent,
+        }
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
+        if reply_to is not None:
+            payload["reply_parameters"] = {
+                "message_id": reply_to,
+                "allow_sending_without_reply": True,
+            }
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return (
+            await self._request(
+                "sendPhoto" if photo else "sendDocument",
+                payload,
+                files={field: (filename, data, mime)},
+            )
+            or {}
+        )
 
     async def send_answer(
         self, chat_id: int | str, text: str, *, preview: bool = False, **kwargs
@@ -325,7 +394,7 @@ class TelegramAPI:
             result = await self.send_html(
                 chat_id,
                 chunk,
-                silent=silent,
+                silent=silent or index > 0,
                 thread_id=thread_id,
                 reply_to=reply_to if index == 0 else None,
                 reply_markup=reply_markup if index == len(chunks) - 1 else None,
@@ -409,6 +478,11 @@ class TelegramAPI:
             if exc.code == 400 and "message is not modified" in exc.description.lower():
                 return {}
             raise
+
+    async def delete_message(self, chat_id: int | str, message_id: int) -> None:
+        await self._request(
+            "deleteMessage", {"chat_id": chat_id, "message_id": message_id}
+        )
 
     async def remove_keyboard(self, chat_id: int | str, message_id: int) -> None:
         await self._request(
@@ -505,10 +579,17 @@ async def run_channel_turn(
             "thread_id": ui.thread_id,
             "bot": hashlib.sha256(ui.api._token.encode()).hexdigest(),
         }
-    turn, queue = await start_session_turn(
-        session_id, message, session["user_id"], attachment_ids=attachment_ids,
-        delivery=delivery, recovery=recovery,
-    )
+    from app.channels.telegram_context import bind_turn, reset_turn
+
+    token = bind_turn(ui)
+    try:
+        # create_task copies this context; the caller does not retain the binding.
+        turn, queue = await start_session_turn(
+            session_id, message, session["user_id"], attachment_ids=attachment_ids,
+            delivery=delivery, recovery=recovery,
+        )
+    finally:
+        reset_turn(token)
     try:
         while True:
             chunk = await queue.get()

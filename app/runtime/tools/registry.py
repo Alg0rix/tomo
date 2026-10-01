@@ -59,6 +59,7 @@ _BACKENDS: dict[str, str | ToolRunner] = {
     "recall_episodes": "app.runtime.tools.recall_episodes:run",
     "agent_state": "app.runtime.tools.agent_state:run",
     "save_artifact": "app.runtime.tools.save_artifact:run",
+    "telegram_send_file": "app.runtime.tools.telegram_send_file:run",
     "list_artifacts": "app.runtime.tools.list_artifacts:run",
     "fetch_artifact": "app.runtime.tools.fetch_artifact:run",
     "portal": "app.runtime.tools.portal:run",
@@ -207,7 +208,7 @@ def is_mcp_tool_name(name: str) -> bool:
 
 
 async def execute_async(name: str, arguments: dict[str, Any]) -> str:
-    """Dispatch async: MCP calls await the live session; built-ins run in a worker thread."""
+    """MCP/channel I/O awaits its live transport; other built-ins use a worker thread."""
     denial = _swarm_board_backend.authorize(name, arguments)
     if denial:
         return denial
@@ -215,6 +216,10 @@ async def execute_async(name: str, arguments: dict[str, Any]) -> str:
         from app.runtime.mcp import mcp_manager
 
         return await mcp_manager.call_tool(name, arguments)
+    if name == "telegram_send_file":
+        from app.runtime.tools.telegram_send_file import run_async
+
+        return await run_async(arguments)
     return await asyncio.to_thread(execute, name, arguments)
 
 

@@ -1,0 +1,34 @@
+{
+  "id": "telegram_send_file",
+  "name": "Telegram Send File",
+  "description": "Send a current-session artifact to the active Telegram chat as a photo or document. Available only during Telegram turns.",
+  "backend": "app.runtime.tools.telegram_send_file",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "telegram_send_file",
+      "description": "Deliver an artifact to the user in this Telegram chat/topic. First use save_artifact to save a screenshot, image, report, PDF, or other file, then call this with its filename. Saving an artifact or embedding /api URLs does NOT send it to Telegram. Destination is fixed to this turn; you cannot choose a chat or session. Success confirms Telegram accepted the upload. Auto sends PNG/JPEG images up to 10 MB as photos; other files are documents (50 MB limit). Use kind=document to preserve the original image without compression.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Basename returned by save_artifact in the current session, e.g. screenshot.png or report.md. No paths or URLs."
+          },
+          "caption": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Optional plain-text caption, up to 1024 characters."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["auto", "photo", "document"],
+            "description": "Default auto. Use photo for a screenshot/image preview; document for an uncompressed file."
+          }
+        },
+        "required": ["filename"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
