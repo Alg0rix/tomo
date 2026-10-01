@@ -17,9 +17,15 @@ with optional YAML frontmatter (`name`, `description`, `version`).
 Override external roots with ``TOMO_SKILLS_EXTERNAL_DIRS`` (colon-separated). Set
 empty to disable external discovery.
 
-## Internal skill
+## Internal skills
 
-One package: [Tomo](internal/tomo/SKILL.md). Agents load a topic with
+Bundled packages:
+
+- [Tomo](internal/tomo/SKILL.md): operate and configure Tomo.
+- [Documents](internal/documents/SKILL.md): create, edit, and style Word/PDF
+  deliverables; includes design, embedded diagrams, proposal helpers, and page preview.
+
+Agents load a Tomo topic with
 `use_skill(skill_id="tomo", file="references/<file>")`.
 
 | File | Topic |
@@ -38,7 +44,7 @@ One package: [Tomo](internal/tomo/SKILL.md). Agents load a topic with
 | `references/accounts-sessions.md` | Login accounts, API keys, sessions/history, saved/shared artifacts |
 | `references/install.md` | Install paths: systemd, Docker, source, connector binary |
 
-The catalog shows this skill's `description`, truncated at 80 characters
+The catalog shows each skill's `description`, truncated at 80 characters
 (`app/runtime/agent/skills_prompt.py`). Keep that line short enough to survive
 the cut. A bundled id wins over a library or external package with the same id.
 
