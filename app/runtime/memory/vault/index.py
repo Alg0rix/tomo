@@ -30,13 +30,19 @@ def _remove(conn: sqlite3.Connection, key: str) -> None:
 
 
 def _resolve(conn: sqlite3.Connection, user_id: str) -> None:
-    rows = conn.execute('SELECT path,type,slug FROM vault_docs WHERE user_id=? AND kind="entity"', (user_id,)).fetchall()
-    keys = {f'{r["type"]}/{r["slug"]}': r['path'] for r in rows}
+    rows = conn.execute('SELECT path,kind,type,slug FROM vault_docs WHERE user_id=?', (user_id,)).fetchall()
+    keys = {}
+    for row in rows:
+        path = row['path']
+        keys[path.casefold()] = path
+        keys[path[len(user_id) + 1:].casefold()] = path
+        key = f'{row["type"]}/{row["slug"]}' if row['kind'] == 'entity' else row['slug']
+        keys[key.casefold()] = path
     aliases = conn.execute('SELECT a.alias,a.path FROM vault_aliases a JOIN vault_docs d ON d.path=a.path WHERE d.user_id=? ORDER BY a.path', (user_id,)).fetchall()
     for row in aliases:
         keys.setdefault(row['alias'].casefold(), row['path'])
     for row in conn.execute('SELECT src,dst FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (user_id,)).fetchall():
-        conn.execute('UPDATE vault_links SET dst_resolved=? WHERE src=? AND dst=?', (keys.get(row['dst'].casefold()), row['src'], row['dst']))
+        conn.execute('UPDATE vault_links SET dst_resolved=? WHERE src=? AND dst=?', (keys.get(row['dst'].split('#', 1)[0].strip().casefold()), row['src'], row['dst']))
 
 
 def _write_human_index(conn: sqlite3.Connection, user_id: str, home_root: Path | None) -> None:

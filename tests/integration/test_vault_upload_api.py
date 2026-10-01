@@ -54,6 +54,44 @@ def test_oversized_upload_rejected(client):
     assert result.status_code == 400
 
 
+def test_graph_exposes_auto_links_hash_pages_backlinks_and_optional_timeline(client):
+    from app.runtime.memory.vault import doc, paths, write
+
+    write.add_entity('web', 'tool/python', 'An implementation language.', aliases=['Python runtime'])
+    write.add_entity('other', 'topic/private', 'Private knowledge.', aliases=['Foreign runtime'])
+    text = 'Uses Python runtime and [[Python runtime]], not Foreign runtime.'
+    result = client.post('/api/memory/upload', data={'entity': 'project/tomo'},
+        files={'file': ('runtime.txt', text.encode(), 'text/plain')})
+    assert result.status_code == 200
+    hash_key = 'topic/id-' + 'a' * 64
+    write.add_entity('web', hash_key, 'Python is useful here.')
+    day = '2026-09-15'
+    path = paths.timeline_path('web', day)
+    write.atomic_write(path, doc.serialize(doc.Document({'date': day}, '## A turn')))
+    write.add_entity('web', 'project/tomo', 'Recorded deployment.', source=paths.timeline_source('web', day, 'consolidated'))
+    graph = client.get('/api/memory/graph').json()
+    python_path = 'web/entities/tool/python.md'
+    assert len(graph['edges']) == 2  # Aliases to one page count as one edge.
+    python = next(n for n in graph['nodes'] if n['id'] == python_path)
+    assert python['backlinks'] == 2
+    assert any(n['slug'] == hash_key.split('/')[1] for n in graph['nodes'])
+    assert all(e['src'].startswith('web/') and e['dst_resolved'].startswith('web/') for e in graph['edges'])
+    full = client.get('/api/memory/graph', params={'include_timeline': 'true'}).json()
+    assert any(n['kind'] == 'timeline' for n in full['nodes'])
+    assert len(full['edges']) == 3
+    overview = client.get('/api/memory/overview').json()
+    assert len(overview['links']) == 2
+    assert next(e for e in overview['entities'] if e['key'] == 'tool/python')['backlinks'] == 2
+    facts = client.get('/api/memory/entity/project/tomo').json()['facts']
+    assert doc.fact_data(facts[0])['text'] == text
+    human_index = client.get('/api/memory/index')
+    assert human_index.status_code == 200
+    assert '[[tool/python]]' in human_index.text and 'topic/private' not in human_index.text
+    # A truly empty derived index must reproduce the same API graph.
+    store.with_db(lambda conn: conn.executescript('DELETE FROM vault_docs; DELETE FROM vault_aliases; DELETE FROM vault_links; DELETE FROM vault_fts;'))
+    assert client.get('/api/memory/graph').json() == graph
+
+
 def test_fact_endpoint_uses_authenticated_owner_and_old_api_removed(client):
     result = client.post('/api/memory/facts', json={'entity': 'user/profile', 'content': 'Prefers Indonesian.', 'user_id': 'other'})
     assert result.status_code == 200

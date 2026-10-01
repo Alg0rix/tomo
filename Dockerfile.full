@@ -1,0 +1,64 @@
+# Tomo coordinator — "full" image.
+#
+# Everything the slim image ships plus the toolchain Tomo's bundled skills
+# and agents reach for: LibreOffice/Poppler document rendering, OCR, ffmpeg,
+# Node.js (npx-based MCP servers), a pre-downloaded CloakBrowser stealth
+# Chromium, and common CLI utilities.
+#
+# Built FROM the slim image — CI passes TOMO_BASE_IMAGE pointing at the
+# image it just pushed so both variants share the same app layer.
+# For a local build, build the slim image first (or use a published tag):
+#
+#   docker build -t tomo:local .
+#   docker build -f Dockerfile.full --build-arg TOMO_BASE_IMAGE=tomo:local \
+#     -t tomo:local-full .
+ARG TOMO_BASE_IMAGE=ghcr.io/alg0rix/tomo:latest
+FROM ${TOMO_BASE_IMAGE}
+
+USER root
+
+# System packages:
+#   documents skill — LibreOffice (soffice + python3-uno for render_fields.py),
+#     Poppler (pdftotext/pdftoppm for preview.py), pandoc, tesseract OCR
+#   media — ffmpeg, imagemagick
+#   agent toolbox — git/ssh, ripgrep, fd, jq, sqlite3, archives, build tools
+#   CloakBrowser — Chromium runtime libs (mirrors cloakhq/cloakbrowser) + fonts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libreoffice-writer libreoffice-calc libreoffice-impress \
+      python3-uno poppler-utils pandoc \
+      tesseract-ocr tesseract-ocr-eng tesseract-ocr-ind \
+      ffmpeg imagemagick \
+      git openssh-client ripgrep fd-find jq sqlite3 \
+      curl wget ca-certificates unzip zip xz-utils \
+      procps file less build-essential \
+      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+      libdbus-1-3 libdrm2 libxkbcommon0 libatspi2.0-0 libxcomposite1 \
+      libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
+      libcairo2 libasound2 libx11-xcb1 libfontconfig1 libx11-6 \
+      libxcb1 libxext6 libxshmfence1 libglib2.0-0 libgtk-3-0 \
+      libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf-2.0-0 \
+      libxss1 libxtst6 xvfb xdotool \
+      fonts-liberation fonts-dejavu fonts-noto-color-emoji \
+      fonts-unifont fonts-freefont-ttf fonts-ipafont-gothic \
+      fonts-wqy-zenhei fonts-tlwg-loma-otf \
+      fonts-crosextra-carlito fonts-crosextra-caladea \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python libraries referenced by the documents skill and common agent work,
+# installed into the app venv so `python`/`python3` resolve them.
+# render_fields.py needs LibreOffice's `uno` module — that lives in the OS
+# Python, run it with /usr/bin/python3.
+RUN uv pip install --python /app/.venv/bin/python --no-cache \
+      python-docx docxtpl python-pptx openpyxl \
+      reportlab pypdf pdfplumber pymupdf \
+      matplotlib pandas lxml weasyprint \
+      yt-dlp cloakbrowser
+
+ENV TOMO_IMAGE_VARIANT=full
+
+# Pre-download the stealth Chromium binary (~200MB) into the runtime user's
+# home so the first agent browser launch does not hit the network.
+USER tomo
+RUN python -c "from cloakbrowser import ensure_binary; ensure_binary()"

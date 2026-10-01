@@ -176,6 +176,17 @@ def get_active_session_turn(session_id: str) -> _ActiveTurn | None:
     return None
 
 
+def notify_session_event(session_id: str, event: str, data: dict[str, Any]) -> None:
+    """Out-of-band UI metadata from a broker route; never a model/history entry.
+
+    No sequence ID: normal loop events own sequence numbering. On reconnect,
+    unresolved requests are restored by the session pending endpoint.
+    """
+    turn = get_active_session_turn(session_id)
+    if turn:
+        turn._broadcast(_fmt_sse({"event": event, "data": data}))
+
+
 class SessionTurnBusy(Exception):
     """Raised when a session already has an in-flight background turn."""
 

@@ -82,6 +82,13 @@ def _normalize(text: str) -> str:
 
 
 def _run_streaming(command: str, cwd: str, timeout: float) -> tuple[int, str, str]:
+    from app.services.secret_store import shell_environment
+
+    with shell_environment(timeout) as env:
+        return _run_streaming_with_env(command, cwd, timeout, env)
+
+
+def _run_streaming_with_env(command: str, cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, str, str]:
     """Run ``command`` like ``subprocess.run(capture_output=True)`` but stream live.
 
     Chunks from stdout and stderr go to the bound :mod:`progress` sink as they
@@ -92,6 +99,7 @@ def _run_streaming(command: str, cwd: str, timeout: float) -> tuple[int, str, st
     proc = subprocess.Popen(
         ["bash", "-lc", command],
         cwd=cwd,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

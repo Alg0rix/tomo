@@ -40,8 +40,13 @@ def related(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limi
     if not paths_in:
         return []
     placeholders = ','.join('?' for _ in paths_in)
-    rows = conn.execute(f'''SELECT DISTINCT d.* FROM vault_docs d JOIN vault_links l ON (d.path=l.dst_resolved AND l.src IN ({placeholders})) OR (d.path=l.src AND l.dst_resolved IN ({placeholders})) WHERE d.user_id=? AND d.kind="entity" ORDER BY d.path LIMIT ?''', (*paths_in,*paths_in,user_id,limit)).fetchall()
-    return [dict(r) for r in rows if r['path'] not in paths_in][:limit]
+    rows = conn.execute(f'''SELECT DISTINCT d.* FROM vault_docs d JOIN vault_links l ON (d.path=l.dst_resolved AND l.src IN ({placeholders})) OR (d.path=l.src AND l.dst_resolved IN ({placeholders})) WHERE d.user_id=? AND d.kind="entity" AND d.path NOT IN ({placeholders}) ORDER BY d.path LIMIT ?''', (*paths_in,*paths_in,user_id,*paths_in,limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def related_text(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limit: int = 4) -> str:
+    rows = related(conn, user_id, paths_in, limit=limit)
+    return 'Related: ' + ' '.join(f'[[{r["type"]}/{r["slug"]}]]' for r in rows) if rows else ''
 
 
 def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int = 1100, home_root: Path | None = None) -> str:

@@ -356,7 +356,7 @@ def consolidate_semantic(
                 tags.append("procedural")
             else:
                 tags.append("semantic")
-            title = (e.get("title") or e.get("objective") or "Lesson")[:80]
+            title = (e.get("title") or e.get("objective") or "Lesson")[:60]
             try:
                 fact = (
                     f"{lesson}\n\n(Source episode {e.get('id')}; "
@@ -364,7 +364,7 @@ def consolidate_semantic(
                     f"context={(e.get('context_summary') or '')[:200]})"
                 )
                 entry = write.add_entity(
-                    user_id, scoped_key('topic', fact), fact, origin='consolidation',
+                    user_id, scoped_key('topic', 'experience:' + title), fact, origin='consolidation',
                     aliases=[f'From experience: {title}'], tags=tags,
                 )
                 written.append(
@@ -435,10 +435,11 @@ def extract_procedures(
             + f"\n\nOutcome: {e.get('outcome_summary') or 'success'}"
             + f"\n(Source episode {e.get('id')})"
         )
+        title = (e.get('title') or e.get('objective') or 'task')[:60]
         try:
             entry = write.add_entity(
-                user_id, scoped_key('topic', body), body, origin='consolidation',
-                aliases=[f"Procedure: {(e.get('title') or e.get('objective') or 'task')[:60]}"],
+                user_id, scoped_key('topic', 'procedure:' + title), body, origin='consolidation',
+                aliases=[f'Procedure: {title}'],
                 tags=['procedural', 'from-episodic', 'consolidated'],
             )
             written.append(

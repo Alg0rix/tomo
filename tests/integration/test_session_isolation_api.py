@@ -81,6 +81,26 @@ def test_users_cannot_see_or_open_each_others_sessions(tmp_path) -> None:
         app.dependency_overrides.pop(require_auth, None)
 
 
+def test_session_list_reports_concurrent_running_chats(tmp_path) -> None:
+    store.rebind(tmp_path / "running-api.db")
+    app.dependency_overrides.pop(require_auth, None)
+    user = store.create_user({"username": "runner", "password": "password1"})
+    ids = [store.create_swarm_session(["main"], user_id=user["id"]) for _ in range(3)]
+    with TestClient(app) as client:
+        _login(client, "runner", "password1")
+        try:
+            assert store.try_begin_session_turn(ids[0])
+            assert store.try_begin_session_turn(ids[1])
+            rows = {s["id"]: s for s in client.get("/api/sessions").json()["sessions"]}
+            assert [rows[sid]["active_turn"] for sid in ids] == [True, True, False]
+            store.end_session_turn(ids[0])
+            rows = {s["id"]: s for s in client.get("/api/sessions").json()["sessions"]}
+            assert [rows[sid]["active_turn"] for sid in ids] == [False, True, False]
+        finally:
+            for sid in ids:
+                store.end_session_turn(sid)
+
+
 def test_dashboard_recent_is_per_user(tmp_path) -> None:
     store.rebind(tmp_path / "iso-dash.db")
     app.dependency_overrides.pop(require_auth, None)

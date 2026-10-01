@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.config import TOMO_HOME
 from app.core.deps import AuthDep, require_owned_session, session_user_id, visible_sessions
@@ -278,6 +278,7 @@ async def list_sessions_api(request: Request, _: AuthDep):
         ids = row.get("agent_ids") or ([row["agent_id"]] if row.get("agent_id") else [])
         row["agent_ids"] = ids
         row["coordinator_id"] = row.get("coordinator_id") or row.get("agent_id")
+        row["active_turn"] = store.is_session_turn_active(row["id"])
         names = [agent_map[a]["name"] for a in ids if a in agent_map]
         row["agent_names"] = names
         # Do not expose a countable roster in labels — swarm is open-ended.
@@ -944,7 +945,7 @@ async def memory_upload_api(request: Request, _: AuthDep, entity: str = Form(...
 
 
 @router.get('/memory/graph')
-async def memory_graph_api(request: Request, _: AuthDep, until: str | None = None):
+async def memory_graph_api(request: Request, _: AuthDep, until: str | None = None, include_timeline: bool = False):
     from datetime import date
     from app.runtime.memory.vault import index
     from app.runtime.memory.vault.paths import TYPES
@@ -956,16 +957,31 @@ async def memory_graph_api(request: Request, _: AuthDep, until: str | None = Non
             raise HTTPException(400, 'Invalid date')
     def query(conn):
         index.rebuild(conn, uid)
-        rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
-        entities = [dict(r) for r in rows if not until or not r['updated'] or r['updated'] <= until]
+        rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? ORDER BY kind,type,slug', (uid,)).fetchall()
+        entities = [dict(r) for r in rows if (include_timeline or r['kind'] == 'entity') and (not until or not r['updated'] or r['updated'] <= until)]
         keys = {r['path'] for r in entities}
-        edges = [dict(r) for r in conn.execute('SELECT l.* FROM vault_links l JOIN vault_docs d ON d.path=l.src WHERE d.user_id=?', (uid,)).fetchall() if r['src'] in keys and r['dst_resolved'] in keys]
-        backlinks = {r['dst_resolved']: 0 for r in edges}
+        edges_by_pair = {}
+        for row in conn.execute('SELECT l.* FROM vault_links l JOIN vault_docs d ON d.path=l.src WHERE d.user_id=? ORDER BY l.src,l.dst', (uid,)):
+            if row['src'] in keys and row['dst_resolved'] in keys and row['src'] != row['dst_resolved']:
+                edges_by_pair.setdefault((row['src'], row['dst_resolved']), dict(row))
+        edges = list(edges_by_pair.values())
+        backlinks = {}
         for edge in edges:
-            backlinks[edge['dst_resolved']] += 1
-        nodes = [{'id': r['path'], 'type': r['type'], 'slug': r['slug'], 'title': r['title'], 'facts': len([x for x in r['body'].splitlines() if x.startswith('§')]), 'backlinks': backlinks.get(r['path'], 0), 'updated': r['updated']} for r in entities]
+            backlinks[edge['dst_resolved']] = backlinks.get(edge['dst_resolved'], 0) + 1
+        nodes = [{'id': r['path'], 'kind': r['kind'], 'type': r['type'] or 'timeline', 'slug': r['slug'], 'title': r['title'], 'facts': len([x for x in r['body'].splitlines() if x.startswith('§')]), 'backlinks': backlinks.get(r['path'], 0), 'updated': r['updated']} for r in entities]
         days = [r['slug'] for r in conn.execute('SELECT slug FROM vault_docs WHERE user_id=? AND kind="timeline" ORDER BY slug', (uid,)).fetchall()]
-        return {'nodes': nodes, 'edges': edges, 'days': days, 'types': sorted(TYPES) if entities else []}
+        return {'nodes': nodes, 'edges': edges, 'days': days,
+                'types': sorted(TYPES | ({'timeline'} if any(r['kind'] == 'timeline' for r in entities) else set())) if entities else []}
+    return store.with_db(query)
+
+
+@router.get('/memory/index', response_class=PlainTextResponse)
+async def memory_index_api(request: Request, _: AuthDep):
+    from app.runtime.memory.vault import index, paths
+    uid = session_user_id(request)
+    def query(conn):
+        index.rebuild(conn, uid)
+        return (paths.vault_root(uid) / 'index.md').read_text(encoding='utf-8')
     return store.with_db(query)
 
 
@@ -1062,10 +1078,14 @@ async def memory_overview_api(request: Request, _: AuthDep):
         aliases: dict[str, list[str]] = {}
         for r in conn.execute('SELECT alias,path FROM vault_aliases WHERE path IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
             aliases.setdefault(r['path'], []).append(r['alias'])
-        links = []
+        pairs = set()
         for r in conn.execute('SELECT src,dst_resolved FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
             if r['src'] in paths and r['dst_resolved'] in paths and r['src'] != r['dst_resolved']:
-                links.append({'from': paths[r['src']], 'to': paths[r['dst_resolved']]})
+                pairs.add((paths[r['src']], paths[r['dst_resolved']]))
+        links = [{'from': src, 'to': dst} for src, dst in sorted(pairs)]
+        backlinks = {}
+        for link in links:
+            backlinks[link['to']] = backlinks.get(link['to'], 0) + 1
         resolver = _memory_resolver(conn, uid)
         activity, agents = [], {}
         mentions: dict[str, int] = {}
@@ -1086,6 +1106,7 @@ async def memory_overview_api(request: Request, _: AuthDep):
             'key': paths[r['path']], 'type': r['type'], 'slug': r['slug'], 'title': r['title'] or r['slug'],
             'updated': r['updated'] or '', 'aliases': aliases.get(r['path'], []), 'facts': fact_rows(r['body'] or ''),
             'mentions': mentions.get(paths[r['path']], 0), 'last_seen': last_seen.get(paths[r['path']], ''),
+            'backlinks': backlinks.get(paths[r['path']], 0),
         } for r in ents]
         return {'entities': entities, 'links': links, 'activity': activity,
                 'agents': [{'id': a, 'name': names.get(a, a), 'turns': n} for a, n in sorted(agents.items(), key=lambda x: -x[1])]}

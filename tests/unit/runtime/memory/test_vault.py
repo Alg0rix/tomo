@@ -21,7 +21,7 @@ def db():
 def test_rebuild_links_aliases_and_deletion(tmp_path, db):
     uid = 'alice'
     write.add_entity(uid, 'project/tomo', 'Tomo uses [[tool/python]].', home_root=tmp_path, conn=db)
-    write.add_entity(uid, 'tool/python', 'Python powers Tomo.', home_root=tmp_path, conn=db)
+    write.add_entity(uid, 'tool/python', 'Python is a language.', home_root=tmp_path, conn=db)
     path = paths.entity_path(uid, 'project/tomo', home_root=tmp_path)
     page = doc.parse(path.read_text())
     page.meta['aliases'] = ['friendbot']
@@ -38,6 +38,67 @@ def test_rebuild_links_aliases_and_deletion(tmp_path, db):
     index.rebuild(db, uid, home_root=tmp_path)
     assert db.execute('SELECT count(*) FROM vault_docs').fetchone()[0] == 1
     assert db.execute('SELECT count(*) FROM vault_links').fetchone()[0] == 0
+
+
+def test_auto_links_survive_rebuild_without_changing_facts(tmp_path, db):
+    opts = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/python', 'An implementation language.', aliases=['Python runtime'], **opts)
+    write.add_entity('bob', 'tool/private', 'Other account.', aliases=['Private runtime'], **opts)
+    text = 'Uses Python runtime, not Private runtime.'
+    write.add_entity('alice', 'project/tomo', text, **opts)
+    page = doc.parse(paths.entity_path('alice', 'project/tomo', home_root=tmp_path).read_text())
+    assert doc.fact_data(page.entries[0])['text'] == text
+    assert doc.links(page.body) == ['tool/python']
+    source = 'alice/entities/project/tomo.md'
+    target = 'alice/entities/tool/python.md'
+    assert [r['path'] for r in read.related(db, 'alice', [target])] == [source]
+    assert not write.add_entity('alice', 'project/tomo', text, **opts)['added']
+    db.executescript('DELETE FROM vault_docs; DELETE FROM vault_aliases; DELETE FROM vault_links; DELETE FROM vault_fts;')
+    index.rebuild(db, 'alice', home_root=tmp_path)
+    assert [tuple(r) for r in db.execute('SELECT src,dst,dst_resolved FROM vault_links')] == [(source, 'tool/python', target)]
+    replacement = 'Uses a different language.'
+    assert write.add_entity('alice', 'project/tomo', replacement, supersedes=text, origin='user', **opts)['added']
+    assert doc.fact_data(doc.parse(paths.entity_path('alice', 'project/tomo', home_root=tmp_path).read_text()).entries[1])['text'] == replacement
+    assert not read.related(db, 'alice', [target])
+    write.add_entity('alice', 'project/tomo', 'Python runtime remains useful.', origin='user', **opts)
+    assert write.forget_fact('alice', 'project/tomo', 2, **opts)
+    assert not read.related(db, 'alice', [target])
+
+
+def test_auto_links_skip_short_generic_ambiguous_self_and_substrings(tmp_path, db):
+    opts = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'person/max', 'A driver.', aliases=['Max', 'F1', 'notes', 'racing'], **opts)
+    write.add_entity('alice', 'person/other', 'Another driver.', aliases=['racing'], **opts)
+    write.add_entity('alice', 'project/tomo', 'Max uses F1 notes on racing and Tomo. Maximum effort.', **opts)
+    assert not db.execute('SELECT * FROM vault_links').fetchall()
+    write.add_entity('alice', 'tool/python', 'Python powers Python.', **opts)
+    assert not db.execute('SELECT * FROM vault_links').fetchall()
+
+
+def test_auto_links_choose_longest_alias_and_cap_each_fact(tmp_path, db):
+    opts = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/alpha', 'A language.', **opts)
+    write.add_entity('alice', 'tool/runtime', 'A runtime.', aliases=['Alpha runtime'], **opts)
+    for n in range(6):
+        write.add_entity('alice', f'tool/system{n}', 'An implementation.', **opts)
+    write.add_entity('alice', 'project/tomo', 'Alpha runtime uses system0 system1 system2 system3 system4 system5.', **opts)
+    dsts = {r['dst'] for r in db.execute('SELECT dst FROM vault_links WHERE src="alice/entities/project/tomo.md"')}
+    assert 'tool/runtime' in dsts and 'tool/alpha' not in dsts
+    assert len(dsts) == 5
+
+
+def test_timeline_fragments_resolve_only_within_account(tmp_path, db):
+    opts = {'home_root': tmp_path, 'conn': db}
+    day = '2026-09-15'
+    path = paths.timeline_path('alice', day, home_root=tmp_path)
+    write.atomic_write(path, doc.serialize(doc.Document({'date': day}, '## A turn')))
+    write.add_entity('alice', 'project/tomo', 'A durable fact.', source=day + '#consolidated', **opts)
+    write.add_entity('alice', 'tool/python', 'Another fact.', source='alice/timeline/2026/09/2026-09-15.md#turn-ses_1', **opts)
+    write.add_entity('bob', 'project/tomo', 'Private fact.', source='alice/timeline/2026/09/2026-09-15.md#consolidated', **opts)
+    index.rebuild(db, 'alice', home_root=tmp_path)
+    index.rebuild(db, 'bob', home_root=tmp_path)
+    links = db.execute('SELECT src,dst_resolved FROM vault_links ORDER BY src').fetchall()
+    assert [r['dst_resolved'] for r in links] == ['alice/timeline/2026/09/2026-09-15.md'] * 2 + [None]
 
 
 def test_writer_dedup_and_scoping(tmp_path, db):

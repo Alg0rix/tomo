@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from . import doc, index, paths
+from . import doc, index, links, paths
 
 _locks: dict[str, threading.RLock] = {}
 _guard = threading.Lock()
@@ -46,22 +46,29 @@ def atomic_write(path: Path, content: str) -> None:
 def _aliases(slug: str, aliases: list[str] | None) -> list[str]:
     candidates = [slug, slug.replace('-', ' ').replace('_', ' '), *re.split('[-_]', slug), *(aliases or [])]
     clean = [re.sub(r'[\r\n,\[\]]', ' ', a).strip()[:80] for a in candidates if isinstance(a, str)]
-    return list(dict.fromkeys(a for a in clean if a))[:20]
+    unique = list(dict.fromkeys(a for a in clean if a))
+    legacy = [a for a in unique if re.fullmatch(r'(?:[a-z]+/)?id-[a-f0-9]{64}', a)]
+    return list(dict.fromkeys([*legacy, *unique[:20]]))
 
 
 def _save(user_id: str, path: Path, page: doc.Document, home_root, conn) -> None:
-    from app.services import store
+    def save(db):
+        index.rebuild(db, user_id, home_root=home_root)
+        key = f'{path.parent.name}/{path.stem}'
+        links.update(page, key, links.candidates(db, user_id, page=page, key=key))
+        page.meta['updated'] = datetime.now().astimezone().date().isoformat()
+        atomic_write(path, doc.serialize(page))
+        index.reindex_file(db, user_id, path, home_root=home_root)
 
-    page.meta['updated'] = datetime.now().astimezone().date().isoformat()
-    atomic_write(path, doc.serialize(page))
     if conn is None:
-        store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
+        from app.services import store
+        store.with_db(save)
     else:
-        index.reindex_file(conn, user_id, path, home_root=home_root)
+        save(conn)
 
 
 def _body(page: doc.Document, entries: list[str]) -> None:
-    heading = page.body.split('§', 1)[0].rstrip()
+    heading = page.preamble
     page.body = heading + '\n' + '\n'.join('§ ' + entry for entry in entries)
 
 
@@ -146,8 +153,6 @@ def correct_fact(user_id: str, key: str, number: int, *, text: str | None = None
 
 
 def forget_fact(user_id: str, key: str, number: int, *, home_root: Path | None = None, conn=None) -> bool:
-    from app.services import store
-
     path = paths.entity_path(user_id, key, home_root=home_root)
     with _lock(user_id):
         if not path.is_file():
@@ -157,14 +162,8 @@ def forget_fact(user_id: str, key: str, number: int, *, home_root: Path | None =
         if number < 0 or number >= len(entries) or entries[number].startswith('~~'):
             return False
         entries[number] = f'~~{entries[number]}~~ superseded {datetime.now().astimezone().date().isoformat()}'
-        heading = next((line for line in page.body.splitlines() if line.startswith('# ')), f'# {key.split("/")[1]}')
-        page.body = heading + '\n' + '\n'.join('§ ' + entry for entry in entries)
-        page.meta['updated'] = datetime.now().astimezone().date().isoformat()
-        atomic_write(path, doc.serialize(page))
-        if conn is None:
-            store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
-        else:
-            index.reindex_file(conn, user_id, path, home_root=home_root)
+        _body(page, entries)
+        _save(user_id, path, page, home_root, conn)
         return True
 
 

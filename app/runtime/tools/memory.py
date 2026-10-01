@@ -23,23 +23,37 @@ def run(arguments: dict[str, Any]) -> str:
             query = arguments.get("query")
             if not isinstance(query, str) or not query.strip():
                 return "Error: query is required"
-            hits = store.with_db(lambda conn: read.search(conn, uid, query, limit=20))
-            return "\n\n".join(f"[[{h['type']}/{h['slug']}]]\n{h['body']}" for h in hits) or "Vault has no matching facts."
+            def searching(conn):
+                hits = read.search(conn, uid, query, limit=20)
+                return '\n\n'.join(f'[[{h["type"]}/{h["slug"]}]]\n{h["body"]}\n' +
+                    read.related_text(conn, uid, [h['path']]) for h in hits)
+            return store.with_db(searching) or 'Vault has no matching facts.'
         if action == "list" and not key:
             def listing(conn):
                 from app.runtime.memory.vault import index
                 index.rebuild(conn, uid)
-                return conn.execute('SELECT type,slug,body FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
-            pages = store.with_db(listing)
-            lines = [f"[vault] {len(pages)} pages"]
-            for page in pages:
-                live = [doc.fact_data(e)["text"] for e in doc.parse(page['body']).entries if not e.startswith("~~")]
-                lines.append(f"[[{page['type']}/{page['slug']}]] " + "; ".join(f[:160] for f in live[:3]))
-            return "\n".join(lines)
+                pages = conn.execute('SELECT path,type,slug,body FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
+                lines = [f'[vault] {len(pages)} pages']
+                for page in pages:
+                    live = [doc.fact_data(e)['text'] for e in doc.parse(page['body']).entries if not e.startswith('~~')]
+                    lines.append(f'[[{page["type"]}/{page["slug"]}]] ' + '; '.join(f[:160] for f in live[:3]))
+                    related = read.related_text(conn, uid, [page['path']])
+                    if related:
+                        lines.append(related)
+                return '\n'.join(lines)
+            return store.with_db(listing)
         typ, slug = paths.entity_key(key)
         path = paths.entity_path(uid, key)
-        if action == "list":
-            return path.read_text(encoding="utf-8") if path.is_file() else "Vault page is empty."
+        if action == 'list':
+            if not path.is_file():
+                return 'Vault page is empty.'
+            def page_listing(conn):
+                from app.runtime.memory.vault import index
+                index.rebuild(conn, uid)
+                related = read.related_text(conn, uid, [f'{uid}/entities/{key}.md'])
+                raw = path.read_text(encoding='utf-8')
+                return raw + ('\n' + related if related else '')
+            return store.with_db(page_listing)
         if action == "add":
             if typ == "person" and (slug in {"me", "user", "self", "the-user", "myself", uid.casefold(), uid.casefold().replace("_", "-")} or slug.startswith("usr-")):
                 return "Error: save the user's identity/preferences on user/profile"
@@ -47,7 +61,7 @@ def run(arguments: dict[str, Any]) -> str:
             if not isinstance(content, str) or not content.strip():
                 return "Error: content is required"
             result = write.add_entity(uid, key, content,
-                source=str(arguments.get("source") or datetime.now().astimezone().date().isoformat()),
+                source=str(arguments.get('source') or paths.timeline_source(uid, datetime.now().astimezone().date().isoformat())),
                 aliases=arguments.get("aliases"), supersedes=str(arguments.get("supersedes") or ""))
             if result.get("conflict"):
                 return "Error: supersedes must match exactly one live fact"

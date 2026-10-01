@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core.deps import AuthDep, require_owned_session
 from app.runtime.permissions import hitl
-from app.services import store
+from app.services import secret_store, store
 
 router = APIRouter(prefix="/api", tags=["approvals"])
 
@@ -28,6 +28,7 @@ async def list_session_pending(session_id: str, request: Request, _: AuthDep):
         "session_id": session_id,
         "approvals": pending.get("approvals") or [],
         "clarifies": pending.get("clarifies") or [],
+        "secrets": secret_store.pending_for_session(session_id),
         # Lease (lock) is held for the full background-turn lifetime.
         "active_turn": store.is_session_turn_active(session_id),
         # In-memory session plan — survives refresh while the process is up.

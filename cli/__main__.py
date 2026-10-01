@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     from cli.config_cmd import add_parser as add_config_parser
 
     add_config_parser(sub)
+    from cli.http_cmd import add_parser as add_http_parser
+
+    add_http_parser(sub)
     return p
 
 
@@ -52,6 +55,10 @@ def _run(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.cmd in {"http", "connection", "secret"}:
+        from cli.http_cmd import run
+
+        return run(args)
     if args.cmd == "config":
         from cli.config_cmd import run
 

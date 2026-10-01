@@ -81,7 +81,10 @@ docker compose up -d   # pulls ghcr.io/alg0rix/tomo:latest
 ```
 
 Images are published to GHCR on `main` and `v*` tags. Persists `$TOMO_HOME` /
-`$TOMO_WORK` in named volumes. Full guide: [docs/deployments.md](docs/deployments.md).
+`$TOMO_WORK` in named volumes. Two variants: `latest` (slim) and `full`
+(LibreOffice, ffmpeg, CloakBrowser headless browser, Node.js, and common
+agent CLI tools — `TOMO_IMAGE=ghcr.io/alg0rix/tomo:full`).
+Full guide: [docs/deployments.md](docs/deployments.md).
 
 ### Install connector (tunnel workplaces)
 

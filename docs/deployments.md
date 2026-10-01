@@ -47,6 +47,43 @@ CI (`.github/workflows/ci.yml` job `docker`) builds and pushes on every
 `main` push and on `v*` tags after Python tests pass. No Docker Hub token
 needed — `GITHUB_TOKEN` + `packages: write` is enough.
 
+### Image variants: slim vs `full`
+
+Two variants are published for every ref — the slim image above plus a
+`-full` variant (`tomo:full`, `tomo:0.3.1-full`, `tomo:main-full`, …)
+built from `Dockerfile.full` on top of the slim image:
+
+- LibreOffice (`soffice`, `python3-uno`), Poppler, pandoc, tesseract —
+  everything the bundled **documents** skill needs for DOCX/PDF rendering
+  and page-image verification.
+- ffmpeg, ImageMagick, yt-dlp for media work.
+- **CloakBrowser** stealth Chromium (pre-downloaded binary) + Python
+  `cloakbrowser` package — `from cloakbrowser import launch` works
+  out of the box for headless browser automation.
+- Node.js 22 (npx-based MCP servers), git, ssh, ripgrep, fd, jq,
+  sqlite3, build-essential.
+- Python libs in the app venv: `python-docx`, `docxtpl`, `python-pptx`,
+  `openpyxl`, `reportlab`, `pypdf`, `pdfplumber`, `pymupdf`,
+  `matplotlib`, `pandas`, `weasyprint`.
+
+Use it by pointing `TOMO_IMAGE` at a `-full` tag:
+
+```bash
+TOMO_IMAGE=ghcr.io/alg0rix/tomo:full docker compose up -d
+```
+
+Local build (build the slim image first, or pass a published tag):
+
+```bash
+docker build -t tomo:local .
+docker build -f Dockerfile.full --build-arg TOMO_BASE_IMAGE=tomo:local \
+  -t tomo:local-full .
+```
+
+Note: `skills/internal/documents/scripts/render_fields.py` needs
+LibreOffice's `uno` module, which lives in the OS Python — run it with
+`/usr/bin/python3`, not the venv `python`.
+
 ### 1. Secrets
 
 ```bash

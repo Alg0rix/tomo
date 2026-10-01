@@ -12,6 +12,10 @@ class Document:
     body: str = ''
 
     @property
+    def preamble(self) -> str:
+        return re.split(r'(?m)^§', self.body, maxsplit=1)[0].rstrip()
+
+    @property
     def entries(self) -> list[str]:
         return [part.strip() for part in re.findall(r'(?ms)^§[ \t]*(.*?)(?=^§|\Z)', self.body) if part.strip()]
 

@@ -84,7 +84,7 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
                 continue
             result = write.add_entity(user_id, key, item['fact'], aliases=item['aliases'],
                                       supersedes=item['supersedes'], origin='extraction',
-                                      source=f'{date.today().isoformat()}#turn-{session_id}',
+                                      source=paths.timeline_source(user_id, date.today().isoformat(), f'turn-{session_id}', home_root=home_root),
                                       home_root=home_root, conn=conn)
             count += int(result['added'])
     return count

@@ -13,9 +13,17 @@
   function postEventSource(url, body) {
     var listeners = {};
     var closed = false;
+    var accepted = false;
     var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
 
     function emit(type, data) {
+      if (type === 'turn.start' || type === 'turn.end' || type === 'session_busy') accepted = true;
+      if (closed) {
+        // Leaving during POST startup must not cancel an already submitted
+        // message. Detach only once the server has acknowledged its turn.
+        if (accepted && controller) controller.abort();
+        return;
+      }
       var list = listeners[type] || [];
       for (var i = 0; i < list.length; i++) {
         try {
@@ -31,7 +39,7 @@
       },
       close: function () {
         closed = true;
-        if (controller) controller.abort();
+        if (accepted && controller) controller.abort();
       },
     };
 
@@ -46,7 +54,6 @@
       signal: controller ? controller.signal : undefined,
     })
       .then(function (res) {
-        if (closed) return;
         if (!res.ok) {
           emit("error", JSON.stringify({ message: "HTTP " + res.status }));
           emit("turn.end", "{}");
@@ -54,7 +61,6 @@
         }
         if (!res.body || !res.body.getReader) {
           return res.text().then(function (text) {
-            if (closed) return;
             parseSseBuffer(text, emit);
             emit("turn.end", "{}");
           });
@@ -64,7 +70,6 @@
         var buf = "";
         function pump() {
           return reader.read().then(function (result) {
-            if (closed) return;
             if (result.done) {
               if (buf.trim()) parseSseBuffer(buf, emit);
               // Body closed without an explicit client close. If turn.end already
@@ -214,7 +219,18 @@
 
   function initChat(wrap) {
     if (!wrap || wrap.dataset.chatInit === '1') return;
+    // This DOM is reused on switch. Disconnect the view, not the server turn.
+    if (wrap._tomoChatHandle) wrap._tomoChatHandle.destroy();
     wrap.dataset.chatInit = '1';
+    const bindings = new AbortController();
+    let destroyed = false;
+    let sessionId = wrap.dataset.sessionId || '';
+    function on(target, type, listener) {
+      if (destroyed) return;
+      target.addEventListener(type, function (event) {
+        if (!destroyed) listener(event);
+      }, { signal: bindings.signal });
+    }
 
     const agentId = wrap.dataset.agentId;
     const userId = wrap.dataset.userId || 'web';
@@ -245,6 +261,10 @@
     const reasoningRows = reasoningEl ? reasoningEl.querySelectorAll('.composer-reasoning-row') : [];
     const reasoningReset = reasoningEl && reasoningEl.querySelector('.composer-reasoning-reset');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
+    if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) {
+      wrap.dataset.chatInit = '0';
+      return;
+    }
 
     /** @type {{id: string, name: string, size: number}[]} */
     let uploadedAttachments = [];
@@ -273,7 +293,7 @@
     var MODE_LABEL = { manual: 'Manual', smart: 'Smart', off: 'Auto' };
     var reasoningState = null;
 
-    function currentSessionId() { return wrap.dataset.sessionId || ''; }
+    function currentSessionId() { return sessionId; }
 
     function closeMoreMenu() {
       if (!moreWrap || !moreBtn || !morePanel) return;
@@ -303,22 +323,20 @@
       if (event.key === 'Escape') closeMoreMenu();
     }
 
-    // initChat can run more than once for the same composer; bind once or the
-    // second handler immediately closes what the first one opened.
-    if (moreBtn && morePanel && moreWrap && !moreBtn.dataset.moreBound) {
-      moreBtn.dataset.moreBound = '1';
-      moreBtn.addEventListener('click', function (event) {
+    // All composer bindings belong to this view and are retired on switch.
+    if (moreBtn && morePanel && moreWrap) {
+      on(moreBtn, 'click', function (event) {
         event.preventDefault();
         event.stopPropagation();
         toggleMoreMenu();
       });
-      morePanel.addEventListener('click', function (event) {
+      on(morePanel, 'click', function (event) {
         var action = event.target.closest('button');
         if (!action || action === moreBtn) return;
-        window.setTimeout(closeMoreMenu, 0);
+        window.setTimeout(function () { if (!destroyed) closeMoreMenu(); }, 0);
       });
-      document.addEventListener('pointerdown', onMoreDocumentPointerDown);
-      document.addEventListener('keydown', onMoreEscape);
+      on(document, 'pointerdown', onMoreDocumentPointerDown);
+      on(document, 'keydown', onMoreEscape);
     }
 
     function closeReasoningMenus() {
@@ -328,6 +346,7 @@
     }
 
     function paintReasoningEffort(payload) {
+      if (destroyed) return;
       reasoningState = payload || null;
       if (!reasoningEl) return;
       var efforts = payload && Array.isArray(payload.reasoning_efforts)
@@ -353,7 +372,7 @@
             '<span>' + esc(value) + '</span><span class="check" aria-hidden="true">' + (selected ? '✓' : '') + '</span></button>';
         }).join('');
         reasoningFlyout.querySelectorAll('.composer-reasoning-option').forEach(function (option) {
-          option.addEventListener('click', function (event) {
+          on(option, 'click', function (event) {
             event.preventDefault();
             persistReasoningEffort(option.getAttribute('data-effort'));
           });
@@ -408,14 +427,14 @@
     }
 
     if (reasoningTrigger) {
-      reasoningTrigger.addEventListener('click', function (event) {
+      on(reasoningTrigger, 'click', function (event) {
         event.preventDefault();
         toggleReasoningPopover();
       });
     }
     if (reasoningRows.length) {
       reasoningRows.forEach(function (row) {
-        row.addEventListener('click', function (event) {
+        on(row, 'click', function (event) {
           event.preventDefault();
           if (row.getAttribute('data-reasoning-row') !== 'effort' || !reasoningFlyout) return;
           reasoningFlyout.classList.toggle('hidden');
@@ -423,7 +442,7 @@
       });
     }
     if (reasoningReset) {
-      reasoningReset.addEventListener('click', function (event) {
+      on(reasoningReset, 'click', function (event) {
         event.preventDefault();
         persistReasoningEffort('');
       });
@@ -431,14 +450,14 @@
     function onReasoningDocumentClick(event) {
       if (reasoningEl && !reasoningEl.contains(event.target)) closeReasoningMenus();
     }
-    document.addEventListener('click', onReasoningDocumentClick);
+    on(document, 'click', onReasoningDocumentClick);
     function onReasoningEscape(event) {
       if (event.key === 'Escape') closeReasoningMenus();
     }
-    document.addEventListener('keydown', onReasoningEscape);
+    on(document, 'keydown', onReasoningEscape);
 
     function paintApprovalMode(payload) {
-      if (!modeBtn) return;
+      if (destroyed || !modeBtn) return;
       var mode = (payload && payload.mode) || 'smart';
       var label = (payload && payload.label) || MODE_LABEL[mode] || 'Smart';
       modeBtn.dataset.mode = mode;
@@ -497,7 +516,7 @@
     }
 
     if (modeBtn) {
-      modeBtn.addEventListener('click', function (e) {
+      on(modeBtn, 'click', function (e) {
         e.preventDefault();
         cycleApprovalMode();
       });
@@ -650,6 +669,7 @@
           body: JSON.stringify({ name: entry.name, arguments: argValues }),
         });
         var d = res.ok ? await res.json() : null;
+        if (destroyed) return;
         if (!d) {
           Tomo.toast('Could not load MCP prompt', 'err');
           return;
@@ -711,7 +731,7 @@
     }
 
     function renderMcpResourceMenu(items) {
-      if (!mcpResourceMenu) return;
+      if (destroyed || !mcpResourceMenu) return;
       if (!items.length) {
         mcpResourceMenu.innerHTML = '<div class="slash-item" role="option">' +
           '<span class="slash-name">No MCP resources</span>' +
@@ -726,7 +746,7 @@
       }).join('');
       mcpResourceMenu.classList.remove('hidden');
       mcpResourceMenu.querySelectorAll('.slash-item[data-idx]').forEach(function (btn) {
-        btn.addEventListener('mousedown', function (e) {
+        on(btn, 'mousedown', function (e) {
           e.preventDefault();
           insertMcpResource(items[parseInt(btn.dataset.idx, 10) || 0]);
         });
@@ -743,6 +763,7 @@
           body: JSON.stringify({ uri: item.uri }),
         });
         var d = res.ok ? await res.json() : null;
+        if (destroyed) return;
         if (!d) {
           Tomo.toast('Could not read MCP resource', 'err');
           return;
@@ -764,7 +785,7 @@
     }
 
     if (mcpResourcesBtn) {
-      mcpResourcesBtn.addEventListener('click', function (e) {
+      on(mcpResourcesBtn, 'click', function (e) {
         e.preventDefault();
         if (mcpResourceMenu && !mcpResourceMenu.classList.contains('hidden')) {
           hideMcpResources();
@@ -832,7 +853,7 @@
       slashMenu.classList.remove('hidden');
       slashOpen = true;
       slashMenu.querySelectorAll('.slash-item').forEach(function (btn) {
-        btn.addEventListener('mousedown', function (e) {
+        on(btn, 'mousedown', function (e) {
           e.preventDefault();
           var idx = parseInt(btn.dataset.idx, 10) || 0;
           var picked = slashMatches[idx];
@@ -859,6 +880,7 @@
       var forcePrompts = !mcpPromptsCache || (slashMenu && slashMenu.classList.contains('hidden'));
       var pending = 2;
       function maybeRender() {
+        if (destroyed) return;
         pending -= 1;
         if (pending > 0) return;
         var cur = input.value;
@@ -905,7 +927,7 @@
       mentionMenu.classList.remove('hidden');
       mentionOpen = true;
       mentionMenu.querySelectorAll('.mention-item').forEach(function (btn) {
-        btn.addEventListener('mousedown', function (e) {
+        on(btn, 'mousedown', function (e) {
           e.preventDefault();
           insertMention(parseInt(btn.dataset.idx, 10) || 0);
         });
@@ -979,11 +1001,7 @@
     // Prefetch skills so first `/` feels instant.
     ensureSkills();
 
-    // Session chat may be a client-side draft (pendingAgents, no sessionId yet).
-    if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) return;
-
     let sending = false, es = null, streamAttachment = null;
-    let destroyed = false;
     /** @type {{text: string, el: Element|null, attachmentIds: string[]}[]} */
     let messageQueue = [];
     const MAX_QUEUE = 20;
@@ -1008,7 +1026,7 @@
       }
     }
     function setStatus(badge, label) {
-      if (!statusEl) return;
+      if (destroyed || !statusEl) return;
       // Map legacy badge tones → composer pill modifiers
       var tone = '';
       if (badge === 'amber' || badge === 'warn') tone = ' warn';
@@ -1023,6 +1041,7 @@
     }
 
     function syncGeneratingUi() {
+      if (destroyed) return;
       // Single action slot: .is-generating toggles Send ↔ Stop in CSS
       // (do not use [hidden] — display:grid overrides it).
       if (composerEl) {
@@ -1033,6 +1052,7 @@
     }
 
     function refreshSendBtn() {
+      if (destroyed) return;
       // While a turn is running, Enter still enqueues; primary control shows Stop.
       sendBtn.disabled = uploading || (!input.value.trim() && !uploadedAttachments.length);
       syncGeneratingUi();
@@ -1056,7 +1076,7 @@
     }
 
     function renderAttachmentPreview() {
-      if (!attachPreview) return;
+      if (destroyed || !attachPreview) return;
       attachPreview.innerHTML = '';
       if (!uploadedAttachments.length) {
         attachPreview.classList.add('hidden');
@@ -1065,7 +1085,7 @@
       attachPreview.classList.remove('hidden');
       attachPreview.innerHTML = attachmentChipsHtml(uploadedAttachments, true);
       Array.prototype.forEach.call(attachPreview.querySelectorAll('.attachment-chip .remove'), function (btn) {
-        btn.addEventListener('click', function (e) {
+        on(btn, 'click', function (e) {
           e.preventDefault();
           var chip = btn.closest('.attachment-chip');
           var idx = chip ? parseInt(chip.getAttribute('data-idx'), 10) : -1;
@@ -1097,6 +1117,7 @@
     async function uploadFiles(files) {
       if (!files.length) return;
       const sid = await resolveUploadSessionId();
+      if (destroyed) return;
       if (!sid) {
         Tomo.toast('Open or start a chat before uploading files.', 'err');
         return;
@@ -1105,6 +1126,7 @@
       refreshSendBtn();
       setStatus('amber', 'uploading…');
       for (let i = 0; i < files.length; i++) {
+        if (destroyed) return;
         const file = files[i];
         if (file.size > MAX_ATTACH_BYTES) {
           Tomo.toast(file.name + ' is too large (max 20MB)', 'err');
@@ -1131,6 +1153,7 @@
             continue;
           }
           const att = await resp.json();
+          if (destroyed) return;
           uploadedAttachments.push({ id: att.id, name: att.original_name || att.filename, size: att.size_bytes || 0 });
         } catch (e) {
           Tomo.toast('Upload error: ' + (e && e.message ? e.message : String(e)), 'err');
@@ -1304,6 +1327,7 @@
             }),
           }
         );
+        if (destroyed) return false;
         if (!data || !data.accepted) {
           throw new Error((data && data.reason) || 'Steer rejected');
         }
@@ -1318,6 +1342,7 @@
         setStatus('amber', 'busy · steering');
         return true;
       } catch (e) {
+        if (destroyed) return false;
         removeQueuedBubble(el);
         // Fall back to queue so the text is not lost; drain after turn ends.
         enqueueMessage(merged, attachIds, attachMeta);
@@ -1372,6 +1397,7 @@
     }
 
     function finishTurn() {
+      if (destroyed) return;
       closeStream();
       sending = false;
       syncGeneratingUi();
@@ -1428,6 +1454,7 @@
           Tomo.toast((e && e.message) || 'Could not stop', 'err');
         }
       }
+      if (destroyed) return;
       closeStream();
       sending = false;
       delete wrap.dataset.liveStream;
@@ -1441,7 +1468,7 @@
     /** Retry queued messages after a concurrent-session rejection (other tab). */
     function scheduleQueueDrain(delayMs) {
       setTimeout(function () {
-        if (sending) return;
+        if (destroyed || sending) return;
         if (!messageQueue.length) {
           setStatus('ok', 'online');
           return;
@@ -1533,7 +1560,11 @@
         }),
       });
       if (!data || !data.session_id) throw new Error('No session');
-      wrap.dataset.sessionId = data.session_id;
+      sessionId = data.session_id;
+      // A create can finish after New chat / switching. Never adopt that
+      // session into the next view; the original send still targets its owner.
+      if (destroyed) return sessionId;
+      wrap.dataset.sessionId = sessionId;
       if (data.workplace_id) wrap.dataset.workplaceId = data.workplace_id;
       delete wrap.dataset.pendingAgents;
       wrap.dispatchEvent(new CustomEvent('tomo:session-created', {
@@ -1553,6 +1584,7 @@
      * refresh and when the live POST stream dies while the agent keeps running.
      */
     function reconnectStream(turnEl) {
+      if (destroyed) return false;
       var url = listenUrl();
       if (!url) {
         sending = false;
@@ -1674,14 +1706,22 @@
       sending = true;
       refreshSendBtn();
       setStatus('amber', busyStatusLabel());
+      const body = streamBody(value, attachIds);
       try {
         await ensureSession();
       } catch (e) {
+        if (destroyed) return;
         sending = false;
         refreshSendBtn();
         setStatus('ok', 'online');
         Tomo.toast((e && e.message) || 'Could not start chat', 'err');
         if (messageQueue.length) finishTurn();
+        return;
+      }
+      if (destroyed) {
+        // The user already pressed Send: start it in the background even if
+        // session creation completed after they left, without painting here.
+        postEventSource(streamUrl(), body);
         return;
       }
       var userBubble = opts.bubbleEl || null;
@@ -1706,6 +1746,7 @@
     }
 
     async function send(text) {
+      if (destroyed) return;
       const value = (text != null ? String(text) : input.value).trim();
       const attachMeta = uploadedAttachments.map(function (a) {
         return { id: a.id, name: a.name, size: a.size };
@@ -1738,7 +1779,7 @@
 
     var swarmToggle = wrap.querySelector('.chat-swarm-toggle');
     if (swarmToggle) {
-      swarmToggle.addEventListener('click', function () {
+      on(swarmToggle, 'click', function () {
         var next = swarmToggle.getAttribute('aria-pressed') !== 'true';
         swarmToggle.setAttribute('aria-pressed', next ? 'true' : 'false');
         swarmToggle.classList.toggle('active', next);
@@ -1747,7 +1788,7 @@
       });
     }
 
-    input.addEventListener('input', function () {
+    on(input, 'input', function () {
       refreshSendBtn();
       resize();
       updateSlash();
@@ -1755,8 +1796,8 @@
     });
 
     if (attachBtn && attachInput) {
-      attachBtn.addEventListener('click', function () { attachInput.click(); });
-      attachInput.addEventListener('change', function () {
+      on(attachBtn, 'click', function () { attachInput.click(); });
+      on(attachInput, 'change', function () {
         if (attachInput.files && attachInput.files.length) {
           uploadFiles(Array.from(attachInput.files));
           attachInput.value = '';
@@ -1766,14 +1807,14 @@
 
     var dragTarget = composerEl || wrap;
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function (name) {
-      dragTarget.addEventListener(name, function (e) { e.preventDefault(); e.stopPropagation(); });
+      on(dragTarget, name, function (e) { e.preventDefault(); e.stopPropagation(); });
     });
-    dragTarget.addEventListener('dragenter', function () { dragTarget.classList.add('dragover'); });
-    dragTarget.addEventListener('dragover', function () { dragTarget.classList.add('dragover'); });
-    dragTarget.addEventListener('dragleave', function (e) {
+    on(dragTarget, 'dragenter', function () { dragTarget.classList.add('dragover'); });
+    on(dragTarget, 'dragover', function () { dragTarget.classList.add('dragover'); });
+    on(dragTarget, 'dragleave', function (e) {
       if (!dragTarget.contains(e.relatedTarget)) dragTarget.classList.remove('dragover');
     });
-    dragTarget.addEventListener('drop', function (e) {
+    on(dragTarget, 'drop', function (e) {
       dragTarget.classList.remove('dragover');
       const files = Array.from(e.dataTransfer.files || []);
       if (files.length) uploadFiles(files);
@@ -1791,7 +1832,7 @@
         .filter(Boolean);
       return files.length ? files : Array.from(data.files || []);
     }
-    input.addEventListener('paste', function (e) {
+    on(input, 'paste', function (e) {
       const files = pastedFiles(e);
       if (!files.length) return; // let normal text paste through untouched
       e.preventDefault();
@@ -1801,7 +1842,7 @@
     // nothing when the transcript (not the textarea) holds focus. Wrap-level
     // so the listener dies with the panel on remount; skip targets that are
     // themselves editable (don't steal pastes from other fields).
-    wrap.addEventListener('paste', function (e) {
+    on(wrap, 'paste', function (e) {
       if (e.defaultPrevented || e.target === input) return;
       const t = e.target;
       if (t && (t.isContentEditable || (t.closest && t.closest('input, textarea')))) return;
@@ -1810,7 +1851,7 @@
       e.preventDefault();
       uploadFiles(files);
     });
-    input.addEventListener('keydown', function (e) {
+    on(input, 'keydown', function (e) {
       if (slashOpen && slashMatches.length) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -1899,13 +1940,13 @@
       }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
-    input.addEventListener('blur', function () {
+    on(input, 'blur', function () {
       // Delay so mousedown on menu still fires.
-      setTimeout(hidePopups, 150);
+      setTimeout(function () { if (!destroyed) hidePopups(); }, 150);
     });
-    sendBtn.addEventListener('click', function () { send(); });
+    on(sendBtn, 'click', function () { send(); });
     if (stopBtn) {
-      stopBtn.addEventListener('click', function () { stopTurn(); });
+      on(stopBtn, 'click', function () { stopTurn(); });
     }
     resize();
     syncGeneratingUi();
@@ -1973,7 +2014,7 @@
       send(text);
     }
 
-    scroll.addEventListener('click', function (e) {
+    on(scroll, 'click', function (e) {
       var btn = e.target.closest('.msg-act');
       if (!btn || !scroll.contains(btn)) return;
       e.preventDefault();
@@ -1987,12 +2028,12 @@
     });
 
     ensureMsgActions(scroll);
-    wrap.addEventListener('tomo:turn-end', function () {
+    on(wrap, 'tomo:turn-end', function () {
       ensureMsgActions(scroll);
     });
 
     if (clearBtn) {
-      clearBtn.addEventListener('click', async function () {
+      on(clearBtn, 'click', async function () {
         if (!confirm('Clear this conversation?')) return;
         messageQueue = [];
         closeStream();
@@ -2005,6 +2046,7 @@
         }
         try {
           await Tomo.api(clearUrl(), { method: 'POST' });
+          if (destroyed) return;
           wrap.dispatchEvent(new CustomEvent('tomo:chat-cleared'));
         } catch (e) {
           Tomo.toast('Could not clear', 'err');
@@ -2013,7 +2055,7 @@
     }
 
     wrap.querySelectorAll('.chat-tab').forEach(function (t) {
-      t.addEventListener('click', function () {
+      on(t, 'click', function () {
         wrap.querySelectorAll('.chat-tab').forEach(function (x) { x.classList.remove('active'); });
         t.classList.add('active');
         const chat = wrap.querySelector('[data-chat-panel="chat"]');
@@ -2044,22 +2086,29 @@
       return reconnectStream(null);
     }
 
-    return {
+    const handle = {
       destroy: function () {
+        if (destroyed) return;
         destroyed = true;
+        bindings.abort();
         messageQueue = [];
         closeStream();
         if (window.TomoContextUsage && TomoContextUsage.destroy) {
           TomoContextUsage.destroy(wrap);
         }
         sending = false;
-        syncGeneratingUi();
-        document.removeEventListener('click', onReasoningDocumentClick);
-        document.removeEventListener('keydown', onReasoningEscape);
-        document.removeEventListener('pointerdown', onMoreDocumentPointerDown);
-        document.removeEventListener('keydown', onMoreEscape);
+        if (composerEl) composerEl.classList.remove('is-generating', 'dragover');
+        if (stopBtn) stopBtn.disabled = true;
+        if (attachPreview) { attachPreview.innerHTML = ''; attachPreview.classList.add('hidden'); }
+        var teamToggle = wrap.querySelector('.chat-swarm-toggle');
+        if (teamToggle) { teamToggle.setAttribute('aria-pressed', 'false'); teamToggle.classList.remove('active'); }
+        delete wrap.dataset.nextExecutionMode;
         closeMoreMenu();
+        closeReasoningMenus();
+        hidePopups();
         delete wrap.dataset.liveStream;
+        wrap.dataset.chatInit = '0';
+        delete wrap._tomoChatHandle;
       },
       send: send,
       uiAction: dispatchUiAction,
@@ -2068,6 +2117,10 @@
       reconnect: reconnectStream,
       rehydratePending: rehydratePendingHitl,
     };
+    wrap._tomoChatHandle = handle;
+    setStatus('ok', 'online');
+    refreshSendBtn();
+    return handle;
   }
 
   window.TomoChat = {

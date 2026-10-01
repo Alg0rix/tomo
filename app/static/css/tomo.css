@@ -4308,6 +4308,13 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .session-item .title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-item .desc { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .session-item .ts { font-size: 10px; flex-shrink: 0; align-self: center; }
+.session-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-group-running { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.session-running { display: inline-flex; align-items: center; gap: 5px; align-self: center; flex-shrink: 0; color: var(--accent); font-size: 10px; font-weight: 600; }
+.session-running-count { color: var(--accent); font-variant-numeric: tabular-nums; }
+.session-running-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: session-running-pulse 1.8s ease-in-out infinite; }
+@keyframes session-running-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .session-running-dot { animation: none; } }
 .sessions-main {
   flex: 1;
   min-width: 0;
@@ -4465,6 +4472,20 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .swarm-more { font-size: 11px; color: var(--text-faint); margin-left: 4px; }
 .avatar.xs { width: 22px; height: 22px; font-size: 10px; border: 1px solid var(--surface); }
 .avatar.sm { width: 28px; height: 28px; font-size: 12px; }
+/* Secure connection input follows the existing modal/HITL visual language. */
+.connection-dialog { margin: auto; padding: 0; width: min(480px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r); box-shadow: var(--shadow-2); }
+.connection-dialog::backdrop { background: rgba(0,0,0,.62); }
+.connection-form .field { display: block; margin-bottom: 14px; }
+.connection-form .field[hidden] { display: none; }
+.connection-form .field span { display: block; margin-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+.connection-form .input { width: 100%; }
+.connection-form textarea.input { resize: vertical; min-height: 96px; font-family: var(--font-mono); }
+.connection-policy { margin-bottom: 14px; padding: 10px; background: var(--surface-2); border-radius: var(--r-sm); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connection-purpose { margin-bottom: 14px; font-size: 13px; line-height: 1.5; }
+.connection-field-help { display: block; margin-top: 5px; color: var(--text-dim); font-size: 12px; line-height: 1.4; }
+.connection-http-warning { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--text-dim); }
+.connection-scope { margin-top: 12px; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.connection-error { margin-top: 12px; font-size: 12px; color: var(--danger, #e77676); }
 .modal-wide { max-width: min(720px, calc(100vw - 32px)); }
 .modal-lead { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
 .agent-pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }

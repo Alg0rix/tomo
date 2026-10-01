@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from app.models.ids import slugify
 from . import doc, paths
 
 GUIDANCE = (
@@ -17,8 +18,11 @@ GUIDANCE = (
 
 
 def scoped_key(kind: str, identifier: str) -> str:
-    # IDs are case-sensitive and may contain characters disallowed in a slug.
-    return f"{kind}/id-{hashlib.sha256(identifier.encode()).hexdigest()}"
+    # Human-readable, but IDs remain case-sensitive and collision-resistant.
+    digest = hashlib.sha256(identifier.encode()).hexdigest()[:8]
+    key = f"{kind}/{slugify(identifier)}-{digest}"
+    paths.entity_key(key)
+    return key
 
 
 def facts(user_id: str, key: str, *, home_root: Path | None = None) -> list[str]:

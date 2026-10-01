@@ -1083,7 +1083,9 @@
               var tip = document.createElement('div');
               tip.className = 'tloading';
               tip.textContent = 'running\u2026';
-              card.insertBefore(tip, card._res || null);
+              var outputParent = card._res && card._res.parentNode;
+              if (outputParent) outputParent.insertBefore(tip, card._res);
+              else card.appendChild(tip);
             }
           }
           return;

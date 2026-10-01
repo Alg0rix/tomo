@@ -292,6 +292,15 @@
     es.addEventListener("clarify_required", function (e) {
       handle("clarify", e);
     });
+    es.addEventListener("secret_required", function (e) {
+      if (!window.TomoSecrets) return;
+      if (opts.onEvent) opts.onEvent();
+      try {
+        if (opts.clearPending) opts.clearPending();
+        TomoSecrets.showCard(JSON.parse(e.data || "{}"), opts.turn, opts.scroll, true);
+        if (opts.setBusy) opts.setBusy();
+      } catch (_) {}
+    });
   }
 
   /** Fetch open HITL for a session and render into host. Resolves true if work remains. */
@@ -312,6 +321,9 @@
         });
         (data.clarifies || []).forEach(function (d) {
           if (showCard("clarify", d, host, scrollEl)) any = true;
+        });
+        (data.secrets || []).forEach(function (d) {
+          if (window.TomoSecrets && TomoSecrets.showCard(d, host, scrollEl, false)) any = true;
         });
         // Session todo dock lives outside the thread; restore from server store.
         if (

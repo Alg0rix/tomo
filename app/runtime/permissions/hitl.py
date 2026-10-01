@@ -265,6 +265,12 @@ def cancel_session_pending(
     """
     if not session_id:
         return 0
+    # /auto changes approval policy, but must not cancel secure input. Stop
+    # (choice=deny) revokes shell capabilities and pending credential requests.
+    if choice == "deny":
+        from app.services.secret_store import cancel_session
+
+        cancel_session(session_id)
     n = 0
     for pending in list(_approvals.values()):
         if pending.session_id != session_id or pending.event.is_set():

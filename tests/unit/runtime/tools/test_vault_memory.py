@@ -34,6 +34,18 @@ def test_large_save_search_replace_and_remove():
     assert facts('alice', 'project/wazzapi') == []
 
 
+def test_memory_and_agent_info_show_related_pages():
+    from app.runtime.memory.vault import write
+    from app.runtime.memory.vault.notes import scoped_key
+
+    execute('memory', {'action': 'add', 'entity': 'tool/python', 'content': 'An implementation language.'})
+    write.add_entity('alice', scoped_key('agent', 'ops'), 'Python is used for automation.')
+    assert 'Related: [[tool/python]]' in execute('memory', {'action': 'list', 'entity': scoped_key('agent', 'ops')})
+    assert 'Related: [[tool/python]]' in execute('memory', {'action': 'list'})
+    assert 'Related: [[tool/python]]' in execute('memory', {'action': 'search', 'query': 'automation'})
+    assert 'Related: [[tool/python]]' in execute('agent_info', {'action': 'get', 'agent': 'ops', 'include': 'memory'})
+
+
 def test_accounts_cannot_read_or_modify_other_accounts():
     execute('memory', {'action': 'add', 'entity': 'user/profile', 'content': 'Alice prefers concise replies.'})
     token = bind_user('bob')

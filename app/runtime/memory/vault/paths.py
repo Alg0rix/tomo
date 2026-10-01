@@ -51,6 +51,12 @@ def timeline_path(user_id: str, day: str, *, home_root: Path | None = None) -> P
     return _guard(root, root / 'timeline' / f'{parsed.year:04d}' / f'{parsed.month:02d}' / f'{day}.md')
 
 
+def timeline_source(user_id: str, day: str, fragment: str = '', *, home_root: Path | None = None) -> str:
+    path = timeline_path(user_id, day, home_root=home_root)
+    key = f'{user_id}/{relative_doc(vault_root(user_id, home_root=home_root), path)}'
+    return key + (f'#{fragment}' if fragment else '')
+
+
 def relative_doc(root: Path, path: Path) -> str:
     resolved = path.resolve()
     rel = resolved.relative_to(root.resolve())

@@ -142,15 +142,24 @@ def _section_skills(agent_id: str) -> list[str]:
 
 def _section_memory(agent_id: str) -> list[str]:
     from app.runtime.memory.vault.notes import facts, scoped_key
+    from app.runtime.memory.vault import index, read
     from app.runtime.tools.user_ctx import current_user_id
     from app.services import store
 
     uid = current_user_id()
-    lines = ["Account vault memory:"]
-    for key in ("user/profile", scoped_key("agent", agent_id)):
-        entries = facts(uid, key)
-        lines.append(f"  [[{key}]] {len(entries)} facts")
-        lines.extend("    " + e.replace("\n", " ")[:80] for e in entries[:3])
+    keys = ('user/profile', scoped_key('agent', agent_id))
+    def memory_lines(conn):
+        index.rebuild(conn, uid)
+        lines = ['Account vault memory:']
+        for key in keys:
+            entries = facts(uid, key)
+            lines.append(f'  [[{key}]] {len(entries)} facts')
+            lines.extend('    ' + e.replace('\n', ' ')[:80] for e in entries[:3])
+            related = read.related_text(conn, uid, [f'{uid}/entities/{key}.md'])
+            if related:
+                lines.append('    ' + related)
+        return lines
+    lines = store.with_db(memory_lines)
     state = store.list_agent_state(agent_id)
     if state:
         lines.append(f"Agent state keys ({len(state)}): " + ", ".join(sorted(state)[:12]))

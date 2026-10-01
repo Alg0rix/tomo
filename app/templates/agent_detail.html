@@ -16,6 +16,7 @@
 {% block scripts %}
 {% include 'partials/chat_assets.html' %}
 <script src="{{ url_for('static', path='js/context_usage.js') }}?v={{ static_ver }}"></script>
+<script src="{{ url_for('static', path='js/connection_ui.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/hitl_ui.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/chat_turn_stream.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/chat.js') }}?v={{ static_ver }}"></script>

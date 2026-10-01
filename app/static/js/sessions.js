@@ -24,6 +24,7 @@
   let workplaces = [];
   let activeId = null;
   let chatHandle = null;
+  const composerDrafts = new Map();
   var selectionSeq = 0;
   var pollTimer = null;
   var monitorEs = null;
@@ -50,6 +51,16 @@
     } catch (_) {}
   }
 
+  function detachChat() {
+    if (activeId) {
+      var input = chatWrap.querySelector('.chat-input');
+      if (input) composerDrafts.set(activeId, input.value);
+    }
+    if (chatHandle && chatHandle.destroy) chatHandle.destroy();
+    chatHandle = null;
+    stopHistoryPoll();
+  }
+
   function currentUserId() {
     return loginUserId || 'web';
   }
@@ -65,8 +76,9 @@
       if (cb) cb([]);
       return;
     }
+    var selection = selectionSeq;
     Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat').then(function (hist) {
-      if (chatWrap.dataset.sessionId !== sessionId) return;
+      if (selection !== selectionSeq || chatWrap.dataset.sessionId !== sessionId || chatWrap.dataset.liveStream === '1') return;
       var entries = hist.entries || [];
       if (entries.length === lastHistLen && !inspectorOpenKey) {
         if (cb) cb(entries);
@@ -313,7 +325,9 @@
   }
 
   function renderList() {
+    const focusedId = listEl.contains(document.activeElement) ? document.activeElement.dataset.id : null;
     const rows = sessions.slice();
+    const running = rows.filter(function (s) { return s.active_turn; });
 
     if (!rows.length) {
       listEl.innerHTML = '<div class="empty">No sessions yet</div>';
@@ -324,6 +338,7 @@
     var groups = {};
     var order = [];
     rows.forEach(function (s) {
+      if (s.active_turn) return;
       var key = s.channel === 'telegram' ? '__telegram__' : ((s.workplace_id || '').trim() || '__none__');
       if (!groups[key]) {
         groups[key] = [];
@@ -359,13 +374,22 @@
     function sessionButton(s) {
       const label = sessionLabel(s);
       const sel = s.id === activeId && !searchMode ? ' selected' : '';
-      return '<button type="button" class="session-item' + sel + '" data-id="' + esc(s.id) + '">' +
+      var state = s.active_turn
+        ? '<span class="session-running"><span class="session-running-dot" aria-hidden="true"></span>Running</span>'
+        : '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span>';
+      return '<button type="button" class="session-item' + sel + '" data-id="' + esc(s.id) + '"' +
+        (sel ? ' aria-current="true"' : '') +
+        ' title="' + esc((s.title || 'Conversation') + (s.active_turn ? ' · Running in background — click to view' : '')) + '">' +
         '<div class="meta"><div class="title">' + esc(s.title || 'Conversation') + '</div>' +
-        '<div class="desc">' + esc(label) + ' · ' + esc(String(s.message_count || 0)) + ' msgs</div></div>' +
-        '<span class="faint mono ts">' + esc(Tomo.ts ? Tomo.ts(s.updated_at) : '') + '</span></button>';
+        '<div class="desc">' + esc(label) + '</div></div>' +
+        state + '</button>';
     }
 
-    var html = '';
+    var html = running.length
+      ? '<div class="session-group session-group-running" aria-label="Running chats">' +
+        '<div class="session-group-head">Running <span class="session-running-count">' + running.length + '</span></div>' +
+        running.map(sessionButton).join('') + '</div>'
+      : '';
     order.forEach(function (key) {
       var list = groups[key] || [];
       // Newest first within group.
@@ -383,6 +407,7 @@
 
     listEl.querySelectorAll('.session-item').forEach(function (btn) {
       btn.addEventListener('click', function () { selectSession(btn.dataset.id); });
+      if (btn.dataset.id === focusedId) btn.focus({ preventScroll: true });
     });
   }
 
@@ -1484,10 +1509,19 @@
     stickChatScrollBottom(scroll);
   }
 
+  function closeMobileRail() {
+    var close = document.getElementById('navToggle');
+    if (close && window.matchMedia('(max-width: 760px)').matches &&
+        document.documentElement.classList.contains('is-rail-open')) close.click();
+  }
+
   async function selectSession(sessionId, opts) {
+    closeMobileRail();
     const s = sessions.find(function (x) { return x.id === sessionId; });
     if (!s) return;
+    if (activeId === sessionId && chatHandle && !searchMode && !(opts && opts.pendingMessage)) return;
     var selection = ++selectionSeq;
+    detachChat();
     closeSearchView();
     activeId = sessionId;
     setUrl(sessionId);
@@ -1517,9 +1551,14 @@
     applyChatHeader(s);
     renderAvatars(ids);
 
-    if (chatHandle && chatHandle.destroy) chatHandle.destroy();
-    chatHandle = null;
-    stopHistoryPoll();
+    var input = chatWrap.querySelector('.chat-input');
+    if (input) { input.value = composerDrafts.get(sessionId) || ''; input.disabled = true; }
+    var sendBtn = chatWrap.querySelector('.chat-send');
+    if (sendBtn) sendBtn.disabled = true;
+    renderHistory([]);
+    var loading = chatWrap.querySelector('.chat-empty');
+    if (loading) loading.innerHTML = '<div class="big">Loading conversation…</div><div>Your other chats keep running.</div>';
+    chatWrap.setAttribute('aria-busy', 'true');
     lastHistLen = -1;
     inspectorOpenKey = null;
 
@@ -1528,6 +1567,8 @@
       if (selection !== selectionSeq) return;
       renderHistory(hist.entries || []);
       hydrateSwarmRuns(sessionId);
+      if (input) input.disabled = false;
+      chatWrap.removeAttribute('aria-busy');
       chatHandle = TomoChat.init(chatWrap);
       // init may re-touch markdown; stick again after layout settles
       var scrollEl = chatWrap.querySelector('.chat-scroll');
@@ -1548,7 +1589,8 @@
       if (!pending && chatHandle) {
         var entries = hist.entries || [];
         var last = entries[entries.length - 1];
-        var maybeMidTurn = last && last.type !== 'final' && last.type !== 'error';
+        var maybeMidTurn = s.active_turn === true ||
+          (typeof s.active_turn !== 'boolean' && last && last.type !== 'final' && last.type !== 'error');
         var tryResume = function () {
           var statusEl = chatWrap.querySelector('.chat-status');
           if (statusEl) {
@@ -1571,16 +1613,16 @@
 
       if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
     } catch (e) {
-      if (selection === selectionSeq) Tomo.toast('Could not load session', 'err');
+      if (selection === selectionSeq) {
+        chatWrap.removeAttribute('aria-busy');
+        Tomo.toast('Could not load session — select it again to retry', 'err');
+      }
     }
   }
 
   async function refreshSessions() {
     try {
-      // Drop leftover never-messaged drafts from older clients / abandoned creates.
-      const keep = activeId || '';
-      const pruneUrl = '/api/sessions/prune-drafts' + (keep ? ('?keep_id=' + encodeURIComponent(keep)) : '');
-      await Tomo.api(pruneUrl, { method: 'POST' }).catch(function () { /* older servers */ });
+      // Read-only: pruning here races a different chat's first-message create.
       const data = await Tomo.api('/api/sessions');
       if (!data) return;
       sessions = data.sessions || [];
@@ -1635,9 +1677,10 @@
   }
 
   function openDraft(agentIds, opts) {
+    closeMobileRail();
+    detachChat();
     ++selectionSeq;
     cancelSwarmHydrate();
-    stopHistoryPoll();
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
     // Default: no workplace folder → agent Tomo work dir. Only when opts.workplaceId set.
@@ -1676,9 +1719,12 @@
     applyChatHeader(draft);
     renderAvatars(ids);
     renderHistory([]);
-
-    if (chatHandle && chatHandle.destroy) chatHandle.destroy();
+    chatWrap.removeAttribute('aria-busy');
+    var input = chatWrap.querySelector('.chat-input');
+    if (input) { input.value = ''; input.disabled = false; }
+    delete chatWrap.dataset.nextExecutionMode;
     chatHandle = TomoChat.init(chatWrap);
+    if (input) input.focus();
     if (pending && chatHandle && chatHandle.send) chatHandle.send(pending);
   }
 
@@ -1755,6 +1801,8 @@
   }
 
   chatWrap.addEventListener('tomo:turn-start', function () {
+    var current = sessions.find(function (s) { return s.id === activeId; });
+    if (current) { current.active_turn = true; renderList(); }
     scheduleQueryContexts();
     stopHistoryPoll();
   });
@@ -1768,6 +1816,8 @@
   window.addEventListener('resize', syncQueryRailLayout);
   if (queryRail()) queryRail().addEventListener('scroll', positionQueryPreview, { passive: true });
   chatWrap.addEventListener('tomo:turn-end', function () {
+    var current = sessions.find(function (s) { return s.id === activeId; });
+    if (current) { current.active_turn = false; renderList(); }
     scheduleQueryContexts();
     var sid = chatWrap.dataset.sessionId;
     if (!sid) return;

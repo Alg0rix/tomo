@@ -28,6 +28,7 @@ JSON-encoded into ``params_json``. Foreign keys are enforced by
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 _SCHEMA = """
@@ -510,6 +511,33 @@ CREATE INDEX IF NOT EXISTS idx_episodic_rel_from
 CREATE INDEX IF NOT EXISTS idx_episodic_rel_to
     ON episodic_relations(to_episode_id, relation);
 
+CREATE TABLE IF NOT EXISTS secret_bundles (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id             TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    form_json           TEXT NOT NULL,
+    usage_json          TEXT NOT NULL DEFAULT '{}',
+    values_ciphertext   TEXT NOT NULL,
+    values_format       TEXT NOT NULL DEFAULT 'map',
+    UNIQUE (session_id, name)
+);
+
+-- Legacy import source only; runtime storage uses protocol-neutral bundles.
+CREATE TABLE IF NOT EXISTS http_connections (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id             TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    base_url            TEXT NOT NULL,
+    auth_type           TEXT NOT NULL,
+    auth_field          TEXT NOT NULL,
+    form_json           TEXT NOT NULL DEFAULT '',
+    secret_ciphertext   TEXT NOT NULL,
+    allow_http          INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (session_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id                  TEXT PRIMARY KEY,
     name                TEXT NOT NULL,
@@ -564,6 +592,32 @@ def migrate(conn: sqlite3.Connection) -> None:
     ``ALTER TABLE``.
     """
     conn.executescript(_SCHEMA)
+    connection_cols = {r[1] for r in conn.execute("PRAGMA table_info(http_connections)")}
+    if "form_json" not in connection_cols:
+        conn.execute("ALTER TABLE http_connections ADD COLUMN form_json TEXT NOT NULL DEFAULT ''")
+    # Transfer ciphertext unchanged; migration never decrypts user input. Rows
+    # move transactionally so revocation cannot resurrect them on next startup.
+    for row in conn.execute("SELECT * FROM http_connections").fetchall():
+        if row["form_json"]:
+            form = json.loads(row["form_json"])
+            auth = form.pop("auth")
+            values_format = "map"
+        else:
+            form = {"title": "Connect " + row["name"], "purpose": "", "fields": [
+                {"name": "secret", "label": "Credential", "type": "password", "description": "", "required": True}
+            ]}
+            auth = {"type": row["auth_type"]}
+            if row["auth_type"] == "bearer":
+                auth["token_field"] = "secret"
+            else:
+                auth["fields"] = {row["auth_field"]: "secret"}
+            values_format = "single"
+        usage = {"type": "http", "base_url": row["base_url"], "auth": auth, "allow_http": bool(row["allow_http"])}
+        conn.execute(
+            "INSERT INTO secret_bundles (id, session_id, user_id, name, form_json, usage_json, values_ciphertext, values_format) VALUES (?,?,?,?,?,?,?,?)",
+            (row["id"], row["session_id"], row["user_id"], row["name"], json.dumps(form), json.dumps(usage), row["secret_ciphertext"], values_format),
+        )
+        conn.execute("DELETE FROM http_connections WHERE id=?", (row["id"],))
     swarm_task_cols = {r[1] for r in conn.execute("PRAGMA table_info(swarm_tasks)")}
     if "tools_json" not in swarm_task_cols:
         conn.execute("ALTER TABLE swarm_tasks ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]'")

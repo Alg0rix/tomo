@@ -159,6 +159,111 @@ def test_concurrent_startups_serialize_migration(tmp_path, db):
     assert facts('alice', 'user/profile', home_root=tmp_path) == ['Migrated exactly once.']
 
 
+def test_hash_pages_migrate_with_old_aliases_and_backfilled_links(tmp_path, db):
+    import hashlib
+    from app.runtime.memory.vault import index
+    from app.runtime.memory.vault.migrate import migrate_vault
+
+    old_slug = 'id-' + hashlib.sha256(b'ops').hexdigest()
+    old_key = 'agent/' + old_slug
+    # The agent directory recovers the original case-sensitive identifier.
+    (tmp_path / 'agents/ops').mkdir(parents=True)
+    old_path = paths.entity_path('alice', old_key, home_root=tmp_path)
+    write.atomic_write(old_path, doc.serialize(doc.Document(
+        {'type': 'agent', 'aliases': ['operations'], 'tags': ['lesson']},
+        '# Operations\n§ Knows Python. (origin: user)')))
+    write.add_entity('alice', 'tool/python', 'A runtime language.', home_root=tmp_path, conn=db)
+    write.add_entity('alice', 'project/tomo', f'Consult [[{old_key}]] and [[{old_slug}]].', home_root=tmp_path, conn=db)
+    index.rebuild(db, 'alice', home_root=tmp_path)
+    before = db.execute('SELECT count(*) FROM vault_links WHERE dst_resolved IS NOT NULL').fetchone()[0]
+    result = migrate_vault(db, 'alice', home_root=tmp_path)
+    new_key = scoped_key('agent', 'ops')
+    assert result['renamed'] == 1
+    assert result['resolved'] >= before
+    assert not old_path.exists()
+    assert facts('alice', new_key, home_root=tmp_path) == ['Knows Python.']
+    new_path = paths.entity_path('alice', new_key, home_root=tmp_path)
+    assert '[[tool/python]]' in new_path.read_text()
+    rewritten = paths.entity_path('alice', 'project/tomo', home_root=tmp_path).read_text()
+    assert f'[[{new_key}]]' in rewritten and f'[[{old_key}]]' not in rewritten
+    # Old links added after migration still work from both full and bare keys.
+    write.add_entity('alice', 'topic/legacy', f'Old reference [[{old_key}]] and [[{old_slug}]].', home_root=tmp_path, conn=db)
+    new_index_path = f'alice/entities/agent/{new_key.split("/")[1]}.md'
+    assert {r['dst_resolved'] for r in db.execute('SELECT dst_resolved FROM vault_links WHERE src="alice/entities/topic/legacy.md"')} == {new_index_path}
+    assert db.execute('SELECT path FROM vault_aliases WHERE alias=?', (old_key,)).fetchone()[0] == new_index_path
+    raw = new_path.read_text()
+    assert migrate_vault(db, 'alice', home_root=tmp_path)['renamed'] == 0
+    assert new_path.read_text() == raw
+    db.executescript('DELETE FROM vault_docs; DELETE FROM vault_aliases; DELETE FROM vault_links; DELETE FROM vault_fts;')
+    index.rebuild(db, 'alice', home_root=tmp_path)
+    assert {r['dst_resolved'] for r in db.execute('SELECT dst_resolved FROM vault_links WHERE src="alice/entities/topic/legacy.md"')} == {new_index_path}
+    assert (tmp_path / 'state/vault-slug-backup/alice/entities/agent' / (old_slug + '.md')).is_file()
+
+
+def test_topic_migration_recovers_identity_and_merges_same_experience(tmp_path, db):
+    import hashlib
+    from app.runtime.memory.vault.migrate import migrate_vault
+
+    for text in ['One lesson about the runtime.', 'Another lesson about the runtime.']:
+        key = 'topic/id-' + hashlib.sha256(text.encode()).hexdigest()
+        path = paths.entity_path('alice', key, home_root=tmp_path)
+        write.atomic_write(path, doc.serialize(doc.Document(
+            {'type': 'topic', 'aliases': ['From experience: Deploy runtime']},
+            f'# {key.split("/")[1].replace("-", " ").title()}\n§ {text} (origin: consolidation)')))
+    result = migrate_vault(db, 'alice', home_root=tmp_path)
+    assert result['renamed'] == 2
+    key = scoped_key('topic', 'experience:Deploy runtime')
+    assert set(facts('alice', key, home_root=tmp_path)) == {'One lesson about the runtime.', 'Another lesson about the runtime.'}
+    assert migrate_vault(db, 'alice', home_root=tmp_path)['renamed'] == 0
+
+
+def test_vault_rename_can_resume_after_reference_write(tmp_path, db, monkeypatch):
+    import hashlib
+    from app.runtime.memory.vault.migrate import migrate_vault
+
+    identifier = 'A runtime fact with a \\n literal newline escape.'
+    old_key = 'topic/id-' + hashlib.sha256(identifier.encode()).hexdigest()
+    old = paths.entity_path('alice', old_key, home_root=tmp_path)
+    write.atomic_write(old, doc.serialize(doc.Document({'type': 'topic', 'aliases': []},
+        f'# {old.stem.replace("-", " ").title()}\n§ {identifier} (origin: user)')))
+    write.add_entity('alice', 'project/tomo', f'Consult [[{old_key}]].', home_root=tmp_path, conn=db)
+    original = write.atomic_write
+    def interrupted(path, content):
+        original(path, content)
+        if path.stem == 'tomo':
+            raise OSError('interrupted after rewriting reference')
+    monkeypatch.setattr(write, 'atomic_write', interrupted)
+    with pytest.raises(OSError, match='interrupted'):
+        migrate_vault(db, 'alice', home_root=tmp_path)
+    assert old.is_file()
+    monkeypatch.setattr(write, 'atomic_write', original)
+    migrate_vault(db, 'alice', home_root=tmp_path)
+    new_key = scoped_key('topic', identifier)
+    assert facts('alice', new_key, home_root=tmp_path) == [identifier]
+    assert not old.exists()
+    assert f'[[{new_key}]]' in paths.entity_path('alice', 'project/tomo', home_root=tmp_path).read_text()
+    # Later alias enrichment must not evict the old key compatibility aliases.
+    write.add_entity('alice', new_key, identifier, aliases=[f'alias-{i}' for i in range(30)], home_root=tmp_path, conn=db)
+    aliases = doc.parse(paths.entity_path('alice', new_key, home_root=tmp_path).read_text()).meta['aliases']
+    assert old_key in aliases and old_key.split('/')[1] in aliases
+
+
+def test_backfill_respects_external_fact_edits_in_authoritative_markdown(tmp_path, db):
+    from app.runtime.memory.vault.migrate import migrate_vault
+    opts = {'home_root': tmp_path, 'conn': db}
+    write.add_entity('alice', 'tool/python', 'An implementation language.', **opts)
+    write.add_entity('alice', 'project/tomo', 'Python is used here.', **opts)
+    path = paths.entity_path('alice', 'project/tomo', home_root=tmp_path)
+    page = doc.parse(path.read_text())
+    assert '[[tool/python]]' in page.body
+    write._body(page, ['A different language is used. (origin: user)'])
+    write.atomic_write(path, doc.serialize(page))
+    # The obsolete generated edge is not a migration failure, and is removed.
+    migrate_vault(db, 'alice', home_root=tmp_path)
+    assert '[[tool/python]]' not in path.read_text()
+    assert facts('alice', 'project/tomo', home_root=tmp_path) == ['A different language is used.']
+
+
 def test_tool_allowlist_migration_respects_disabled_permissions(tmp_path, db):
     from app.models.seed import seed_if_empty
     seed_if_empty(db)

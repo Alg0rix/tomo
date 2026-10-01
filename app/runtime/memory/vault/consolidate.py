@@ -61,7 +61,7 @@ async def consolidate_day(user_id: str, day: str, client, *, home_root: Path | N
         for item in facts:
             if current.get(item['entity'], []) != snapshot.get(item['entity'], []):
                 continue
-            write.add_entity(user_id, item['entity'], item['fact'], source=f'{day}#consolidated',
+            write.add_entity(user_id, item['entity'], item['fact'], source=paths.timeline_source(user_id, day, 'consolidated', home_root=home_root),
                              origin='consolidation', aliases=item['aliases'], supersedes=item['supersedes'],
                              home_root=home_root, conn=conn)
         page.meta['consolidated'] = 'true'

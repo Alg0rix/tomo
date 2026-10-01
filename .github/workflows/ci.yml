@@ -181,3 +181,37 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # "full" variant: slim image + agent toolchain (Dockerfile.full).
+      # Runs after the slim push so it can layer on the just-published image.
+      - name: Base image ref for full build
+        id: base
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "ref=${{ steps.image.outputs.name }}:${{ github.ref_name }}" | sed 's/:v/:/' >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ steps.image.outputs.name }}:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/metadata-action@v5
+        id: meta-full
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=full,enable={{is_default_branch}}
+            type=semver,pattern={{version}}-full
+            type=semver,pattern={{major}}.{{minor}}-full
+            type=ref,event=branch,suffix=-full
+            type=sha,prefix=sha-,suffix=-full
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.full
+          push: true
+          build-args: |
+            TOMO_BASE_IMAGE=${{ steps.base.outputs.ref }}
+          tags: ${{ steps.meta-full.outputs.tags }}
+          labels: ${{ steps.meta-full.outputs.labels }}
+          cache-from: type=gha,scope=full
+          cache-to: type=gha,scope=full,mode=max
