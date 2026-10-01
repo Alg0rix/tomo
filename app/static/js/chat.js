@@ -1772,18 +1772,37 @@
       const files = Array.from(e.dataTransfer.files || []);
       if (files.length) uploadFiles(files);
     });
-    // Ctrl+V / Cmd+V one or more images straight into the composer — same
-    // upload path as drag-drop/the attach button, so paste is additive, not
-    // a replacement for either.
-    input.addEventListener('paste', function (e) {
-      const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
-      const images = items
-        .filter(function (it) { return it.kind === 'file' && it.type.indexOf('image/') === 0; })
+    // Ctrl+V / Cmd+V straight into the composer — same upload path as
+    // drag-drop/the attach button. Files land in clipboardData.items on
+    // Chromium but only in clipboardData.files on some Firefox/Linux
+    // clipboard sources, so check both.
+    function pastedFiles(e) {
+      const data = e.clipboardData;
+      if (!data) return [];
+      const files = Array.from(data.items || [])
+        .filter(function (it) { return it.kind === 'file'; })
         .map(function (it) { return it.getAsFile(); })
         .filter(Boolean);
-      if (!images.length) return; // let normal text paste through untouched
+      return files.length ? files : Array.from(data.files || []);
+    }
+    input.addEventListener('paste', function (e) {
+      const files = pastedFiles(e);
+      if (!files.length) return; // let normal text paste through untouched
       e.preventDefault();
-      uploadFiles(images);
+      uploadFiles(files);
+    });
+    // Paste only fires on the focused element — without this, Ctrl+V does
+    // nothing when the transcript (not the textarea) holds focus. Wrap-level
+    // so the listener dies with the panel on remount; skip targets that are
+    // themselves editable (don't steal pastes from other fields).
+    wrap.addEventListener('paste', function (e) {
+      if (e.defaultPrevented || e.target === input) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || (t.closest && t.closest('input, textarea')))) return;
+      const files = pastedFiles(e);
+      if (!files.length) return;
+      e.preventDefault();
+      uploadFiles(files);
     });
     input.addEventListener('keydown', function (e) {
       if (slashOpen && slashMatches.length) {
