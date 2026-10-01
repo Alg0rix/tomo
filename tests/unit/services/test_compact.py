@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.runtime.agent.context import history_to_messages
 from app.services import store
 from app.services.compact import compact_session, entries_after_last_compact

@@ -68,8 +68,6 @@ def test_local_path_source(monkeypatch, tmp_path, fake_analyze) -> None:
 
 
 def test_local_path_escape_rejected(monkeypatch, tmp_path) -> None:
-    from app.runtime.tools import sandbox
-
     root = tmp_path / "work"
     root.mkdir()
     monkeypatch.setattr(

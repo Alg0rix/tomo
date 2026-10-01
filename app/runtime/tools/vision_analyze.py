@@ -148,7 +148,7 @@ def run(arguments: dict[str, Any]) -> str:
     if error:
         return error
     try:
-        from app.runtime.llm.vision_image import encode_image_data_url, guess_image_mime
+        from app.runtime.llm.vision_image import encode_image_data_url
 
         data_url, note = encode_image_data_url(raw or b"", mime, region=region)
     except ValueError as exc:
