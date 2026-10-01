@@ -16,7 +16,8 @@ from typing import Any
 
 from app.models.mixins import swarm as db
 from app.runtime.agent.context import build_system_prompt
-from app.runtime.agent.loop import run_turn
+from app.runtime.agent.loop import _emit_drained_steers, run_turn
+from app.runtime.agent.subagent import bind_depth, current_depth, reset_depth
 from app.runtime.tools import swarm_board
 from app.runtime.tools.registry import get_openai_tools
 from app.services.store import store
@@ -24,6 +25,7 @@ from app.services.store import store
 log = logging.getLogger(__name__)
 MAX_ACTIVE = 4
 MAX_TASKS = 12
+REVIEW_INTERVAL = 30.0
 # Worker creation belongs to the coordinator's bounded scheduler. Other
 # capabilities are selected per task from the agent's enabled tool catalog.
 _ORCHESTRATION_TOOLS = {"delegate", "create_agent", "start_swarm"}
@@ -204,6 +206,7 @@ async def _worker(
     result = ""
     status = "done"
     token = None
+    depth_token = bind_depth(current_depth() + 1)
     try:
         store.with_db(lambda conn: db.update_task(conn, tid, "running"))
         await events.put(("task_started", task, {}))
@@ -223,7 +226,9 @@ async def _worker(
             f"\n\n## Assigned swarm task\nYou are {task['agent_name']} ({aid}). "
             f"{task['instructions']}\nPurpose: {task['brief']}\n"
             "Work only on this task. Publish useful intermediate findings with swarm_board. "
-            "Read the board before finishing for messages from the coordinator. "
+            f"Coordinator: {task['coordinator_id']}. Use swarm_board(action=ask) when blocked "
+            "or needing a decision; it waits for a correlated coordinator reply. "
+            "Board updates arrive automatically between rounds. Share evidence, not assumptions. "
             f"Assigned tools: {', '.join(task['tools']) or 'none'}. "
             "File-edit tools are limited to the assigned write scope. "
             "Do not claim another worker's actions as yours."
@@ -236,11 +241,15 @@ async def _worker(
             f"File-edit tool scope: {json.dumps(task['write_scope'])}"
         )
         token = swarm_board.bind(run_id=run_id, task_id=tid, agent_id=aid,
-                                 allowed_tools=allowed, write_scope=task["write_scope"])
+                                 allowed_tools=allowed, write_scope=task["write_scope"],
+                                 coordinator_id=task["coordinator_id"])
         async for raw in run_turn(message, history=None, agent_id=base,
                                   session_id=session_id, system_prompt=prompt,
                                   tools=tool_schemas):
             ev = dict(raw)
+            if ev.get("kind") == "swarm_event":
+                # Durable board events are relayed once by the scheduler.
+                continue
             ev["agent_id"] = aid
             ev["agent_name"] = task["agent_name"]
             ev["subagent"] = True
@@ -263,12 +272,67 @@ async def _worker(
     finally:
         if token is not None:
             swarm_board.reset(token)
+        reset_depth(depth_token)
     if not result:
         result, status = "Worker returned no result", "failed"
     store.with_db(lambda conn: db.update_task(conn, tid, status, result))
     if task["dynamic"]:
         store.with_db(lambda conn: db.update_agent_context(conn, aid, result))
     await events.put(("task_done", task, {"status": status, "result": result}))
+
+
+async def _supervise(*, run_id: str, session_id: str, coordinator_id: str,
+                     request: str, tasks: dict[str, dict[str, Any]],
+                     guidance: list[dict[str, Any]], events: asyncio.Queue,
+                     conversation: list[dict[str, Any]], after_id: int = 0) -> None:
+    """One coalesced main-agent review, concurrently with the workers."""
+    board = store.with_db(lambda c: db.list_events(c, run_id))
+    snapshot_cursor = board[-1]["id"] if board else after_id
+    token = swarm_board.bind(run_id=run_id, task_id="", agent_id=coordinator_id,
+                             coordinator_id=coordinator_id, allowed_tools={"swarm_board"}, cursor=snapshot_cursor)
+    depth_token = bind_depth(current_depth() + 1)
+    try:
+        snapshot = {
+            "request": request, "user_updates": guidance,
+            "tasks": [{**{k: t[k] for k in ("id", "key", "agent_id", "agent_name", "status")},
+                       "brief": t["brief"][:2000], "result": str(t["result"])[:2000]}
+                      for t in tasks.values()],
+            "board": [{"event_id": e["id"], "task_id": e["task_id"], "kind": e["kind"], **e["payload"]}
+                      for e in board if e["id"] > after_id and e["kind"] in {"finding", "message", "question"}][-40:],
+        }
+        prompt = build_system_prompt(coordinator_id, session_id=session_id) + (
+            "\n\n## Active swarm coordinator\nYou own the user's goal while workers execute. "
+            "Review shared evidence, reconcile conflicts, answer worker questions, and send specific "
+            "corrections or useful findings to the relevant live task. User updates are instructions "
+            "to you; translate them into guidance rather than blindly broadcasting them. "
+            "Use only swarm_board. For every unanswered question from a live worker, send an answer "
+            "to its agent_id AND task_id, with reply_to_event_id equal to the question event_id. "
+            "If evidence is insufficient, say what the worker should check or report as blocked. "
+            "You can ask another worker for evidence via send. Publish shared conclusions when useful. "
+            "Treat board reports as unverified evidence, and do not widen task write scopes or "
+            "claim external actions. Avoid repeating guidance already sent or messaging finished tasks. "
+            "Your final text is a short coordination note, not the final answer to the user."
+        )
+        async for ev in run_turn(json.dumps(snapshot, ensure_ascii=False), history=None,
+                                 agent_id=coordinator_id, session_id=session_id,
+                                 system_prompt=prompt, tools=get_openai_tools(["swarm_board"]),
+                                 max_iterations=4, conversation=conversation):
+            if ev.get("kind") == "final" and not ev.get("continued"):
+                await events.put(("coordinator_note", None, {"agent_id": coordinator_id,
+                                                         "content": ev.get("content") or "",
+                                                         "metrics": ev.get("metrics") or {}}))
+            elif ev.get("kind") == "error":
+                await events.put(("coordinator_error", None, {"content": ev.get("message") or "Review failed"}))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("swarm coordinator review failed run=%s", run_id)
+        await events.put(("coordinator_error", None, {"content": "Coordinator review failed; workers continue."}))
+    finally:
+        delivered_cursor = swarm_board.checkpoint()
+        swarm_board.reset(token)
+        reset_depth(depth_token)
+        await events.put(("coordinator_finished", None, {"after_id": delivered_cursor}))
 
 
 async def run_swarm_turn(
@@ -284,6 +348,13 @@ async def run_swarm_turn(
     finished = False
     final_status = "done"
     board_cursor = 0
+    supervisor: asyncio.Task | None = None
+    review_pending = False
+    guidance: list[dict[str, Any]] = []
+    review_conversation: list[dict[str, Any]] = []
+    review_cursor = 0
+    review_guidance_count = 0
+    last_review = asyncio.get_running_loop().time()
     coordinator = store.get_agent(coordinator_id) or {}
     yield _event(run_id, "run_started", {
         "request": request, "coordinator_id": coordinator_id,
@@ -301,6 +372,7 @@ async def run_swarm_turn(
             yield _event(run_id, "run_done", {"status": "failed"})
             return
         for task in accepted:
+            task["coordinator_id"] = coordinator_id
             tasks[task["key"]] = task
             yield _event(run_id, "task_created", {
                 "task_id": task["id"], "key": task["key"], "agent_id": task["agent_id"],
@@ -310,6 +382,21 @@ async def run_swarm_turn(
             }, task["id"])
         yield _event(run_id, "phase", {"phase": "running"})
         while True:
+            # The scheduler alone consumes composer steers. Workers and review
+            # turns are nested and cannot steal user guidance from the main.
+            async for steer in _emit_drained_steers(guidance, session_id):
+                review_pending = True
+                yield steer
+                yield _event(run_id, "user_update", {"content": steer.get("content") or ""})
+            posted = store.with_db(lambda conn: db.list_events(conn, run_id, board_cursor))
+            for post in posted:
+                board_cursor = max(board_cursor, post["id"])
+                if post["kind"] in {"finding", "message", "question", "message_received"}:
+                    yield {"kind": "swarm_event", "run_id": run_id, "event_id": post["id"],
+                           "event": post["kind"], "task_id": post["task_id"], **post["payload"]}
+                    if (post["task_id"] and post["kind"] in {"finding", "question", "message"}
+                            and post["payload"].get("to_agent_id") in {None, "", coordinator_id}):
+                        review_pending = True
             # Ready work starts as soon as its dependencies succeed and write
             # scopes do not overlap another active task.
             for key, task in tasks.items():
@@ -328,7 +415,19 @@ async def run_swarm_turn(
                     task=task, request=request, session_id=session_id,
                     run_id=run_id, dependencies=deps, events=events,
                 ))
-            if not active:
+            now = asyncio.get_running_loop().time()
+            if active and supervisor is None and (review_pending or now - last_review >= REVIEW_INTERVAL):
+                review_pending = False
+                last_review = now
+                yield _event(run_id, "coordinator_review", {"agent_id": coordinator_id, "content": "Reviewing worker progress"})
+                supervisor = asyncio.create_task(_supervise(
+                    run_id=run_id, session_id=session_id, coordinator_id=coordinator_id,
+                    request=request, tasks=tasks, guidance=list(guidance[review_guidance_count:]), events=events,
+                    conversation=review_conversation, after_id=review_cursor,
+                ))
+                review_guidance_count = len(guidance)
+                review_cursor = board_cursor
+            if not active and supervisor is None:
                 if not any(t["status"] == "queued" for t in tasks.values()):
                     break
                 for task in tasks.values():
@@ -337,7 +436,29 @@ async def run_swarm_turn(
                         store.with_db(lambda conn, t=task: db.update_task(conn, t["id"], "blocked", "Dependency failed"))
                         yield _event(run_id, "task_blocked", {"task_id": task["id"], "reason": "Dependency failed"}, task["id"])
                 break
-            kind, task, payload = await events.get()
+            try:
+                kind, task, payload = await asyncio.wait_for(events.get(), timeout=0.2)
+            except TimeoutError:
+                continue
+            if kind == "coordinator_finished":
+                review_cursor = max(review_cursor, payload.get("after_id", 0))
+                if supervisor is not None:
+                    await supervisor
+                supervisor = None
+                last_review = asyncio.get_running_loop().time()
+                # Updates delivered during a review are already in its retained
+                # conversation. Only unseen evidence or new user guidance needs
+                # another review, avoiding repeated calls for the same burst.
+                unseen = store.with_db(lambda c: db.list_events(c, run_id, review_cursor))
+                review_pending = len(guidance) > review_guidance_count or any(
+                    e["task_id"] and e["kind"] in {"finding", "question", "message", "task_done"}
+                    and e["payload"].get("to_agent_id") in {None, "", coordinator_id}
+                    for e in unseen
+                )
+                continue
+            if kind in {"coordinator_note", "coordinator_error"}:
+                yield _event(run_id, kind, payload)
+                continue
             if kind == "task_started":
                 yield _event(run_id, "task_started", {
                     "task_id": task["id"], "agent_id": task["agent_id"],
@@ -348,19 +469,12 @@ async def run_swarm_turn(
                        "from": coordinator_id, "delegate_call_id": task["id"]}
             elif kind == "worker_event":
                 yield payload
-                if payload.get("kind") == "tool_result" and payload.get("tool") == "swarm_board":
-                    # The board tool persisted the post; relay it live so the
-                    # work panel shows findings as they land, not on reload.
-                    posted = store.with_db(lambda conn, after=board_cursor: db.list_events(conn, run_id, after))
-                    for post in posted:
-                        board_cursor = max(board_cursor, post["id"])
-                        if post["kind"] in {"finding", "message"} and post["task_id"]:
-                            yield {"kind": "swarm_event", "run_id": run_id, "event_id": post["id"],
-                                   "event": post["kind"], "task_id": post["task_id"], **post["payload"]}
             elif kind == "task_done":
                 task["status"] = payload["status"]
                 task["result"] = payload["result"]
                 active.pop(task["key"], None)
+                if active:
+                    review_pending = True
                 yield _event(run_id, "task_done", {
                     "task_id": task["id"], "agent_id": task["agent_id"],
                     "status": payload["status"], "content": payload["result"],
@@ -376,7 +490,8 @@ async def run_swarm_turn(
             "tasks": [{"key": t["key"], "agent": t["agent_name"], "agent_id": t["agent_id"], "status": t["status"],
                        "result": str(t["result"])[:6000]} for t in tasks.values()],
             "findings": [{**e["payload"], "content": str(e["payload"].get("content") or "")[:2000]} for e in store.with_db(lambda conn: db.list_events(conn, run_id))
-                         if e["kind"] in {"finding", "message"}][-40:],
+                         if e["kind"] in {"finding", "message", "question", "coordinator_note", "user_update"}][-40:],
+            "user_updates": guidance,
         }, ensure_ascii=False)
         store.with_db(lambda conn: db.update_run(conn, run_id, final_status, result))
         finished = True
@@ -384,6 +499,9 @@ async def run_swarm_turn(
         yield {"kind": "swarm_result", "result": result, "error": final_status != "done"}
         yield _event(run_id, "run_done", {"status": final_status})
     finally:
+        if supervisor is not None:
+            supervisor.cancel()
+            await asyncio.gather(supervisor, return_exceptions=True)
         for task in active.values():
             task.cancel()
         if active:

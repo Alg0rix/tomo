@@ -53,10 +53,17 @@ Inside an active worker task:
 ```text
 swarm_board(action="publish", content="Finding: ... Evidence: ... Impact: ...")
 swarm_board(action="send", to_agent_id="<actual worker id>", content="Blocker: ... Needed: ...")
+swarm_board(action="ask", content="Which contract should I follow? Evidence: ...")
 swarm_board(action="read")
 ```
 
-Publish findings that change another task or the plan; send targeted questions to actual roster IDs. Report unavailable tools or broken assumptions promptly. Read messages before finishing. The board returns the latest thirty visible finding, message, or completion events and limits a post to 8,000 characters, so keep updates concise and put lasting evidence in task outputs or artifacts. Reading a post does not prove the receiving worker acted on it.
+Publish findings that change another task or the plan; send targeted messages to actual roster IDs. Use `ask` for a blocker or decision that needs the main coordinator: this pauses the worker for up to 120 seconds. The coordinator answers with `send`, the worker agent and task IDs, and `reply_to_event_id` matching the question event ID. On timeout, report the unresolved blocker honestly. Do not invent an answer or permission. Report unavailable tools or broken assumptions promptly. The board returns the latest thirty visible finding, message, or completion events and limits a post to 8,000 characters, so keep updates concise and put lasting evidence in task outputs or artifacts. Shared findings and targeted messages enter worker context automatically between model rounds, including a final-answer checkpoint. Delivery receipts prove context delivery, not action or agreement. Running tools and model requests are not interrupted. Use `to_task_id` to target one of several concurrent tasks owned by the same agent; messages to ended tasks are rejected.
+
+The main coordinator reviews new shared findings, questions addressed to it, user steering, intermediate completions, and a 30-second progress heartbeat while workers are active. One review runs at a time, coalescing concurrent updates. It can answer questions, forward evidence, and correct live tasks through the board. Composer steering belongs to the coordinator; it translates guidance for the relevant workers. Coordinator review failures are visible and workers continue. Cancelling the run also cancels the review and any waiting workers.
+
+Worker and coordinator updates append to existing model conversations. Repeated coordinator reviews retain the same message prefix and tool schema, with new board events at the end, to preserve prompt caching; actual hit rates depend on the model provider. Existing context compression still applies when conversations grow.
+
+This shared board acts as the colony's working memory. Workers keep their own task context and ownership; the coordinator reconciles shared evidence and delivers relevant guidance. Posting an assertion does not make it verified knowledge. This does not create unlimited workers, automatically widen scopes, or resume side effects after a process restart.
 
 ## Verify and finish
 

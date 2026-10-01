@@ -135,7 +135,7 @@ def session_usage(history: list[dict[str, Any]] | None) -> dict[str, Any]:
     recorded = 0
     last_elapsed_ms = None
     for entry in history or []:
-        if entry.get("type") not in {"final", "subagent_final"}:
+        if entry.get("type") not in {"final", "subagent_final", "coordination_metrics"}:
             continue
         metrics = entry.get("metrics")
         if not isinstance(metrics, dict):

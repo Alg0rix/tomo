@@ -90,12 +90,28 @@
         t.result = p.reason || t.result;
         t.ended = at;
         break;
+      case 'coordinator_review':
+        run.reviewing = true;
+        break;
+      case 'message_received':
+        var source = run.board.find(function (e) { return e.id === p.source_event_id; });
+        if (source) {
+          source.delivered = source.delivered || [];
+          if (source.delivered.indexOf(p.agent_id) < 0) source.delivered.push(p.agent_id);
+        }
+        break;
       case 'finding':
       case 'message':
-        run.board.push({ kind: kind, at: at, from: p.agent_id || '', to: p.to_agent_id || '',
+      case 'question':
+      case 'coordinator_note':
+      case 'coordinator_error':
+      case 'user_update':
+        if (kind === 'coordinator_note' || kind === 'coordinator_error') run.reviewing = false;
+        run.board.push({ id: eventId, kind: kind, at: at, from: p.agent_id || '', to: p.to_agent_id || '',
                          content: p.content || '' });
         break;
       case 'run_done':
+        run.reviewing = false;
         run.status = p.status || 'done';
         run.tEnd = at;
         break;
@@ -389,17 +405,20 @@
   }
 
   function boardHtml(card, run, colors) {
-    if (!run.board.length) return '';
+    if (!run.board.length && !run.reviewing) return '';
     var items = run.board.slice().reverse();
     var all = card._srBoardAll;
     var shown = all ? items : items.slice(0, 3);
-    return '<header><b>Shared board</b><span>' + run.board.length + '</span></header><ol>' +
+    return '<header><b>Shared board</b><span>' + (run.reviewing ? esc(run.coordinator) + ' reviewing…' : run.board.length) + '</span></header><ol>' +
       shown.map(function (e) {
         var c = isCoordinator(run, e.from) ? 'var(--accent)' : colors[e.from] || colorOf(null, e.from);
-        var who = esc(nameOf(run, e.from));
-        var verb = e.kind === 'message'
-          ? '<em>→ ' + esc(nameOf(run, e.to)) + '</em>'
-          : '<em class="is-finding">finding</em>';
+        var who = e.kind === 'user_update' ? 'You' : esc(nameOf(run, e.from));
+        var labels = { finding: 'finding', question: 'question', coordinator_note: 'coordination',
+                       coordinator_error: 'review failed', user_update: 'guidance' };
+        var verb = e.to ? '<em>→ ' + esc(nameOf(run, e.to)) +
+          (e.kind === 'question' ? ' · question' : '') + '</em>'
+          : '<em class="is-finding">' + (labels[e.kind] || 'message') + '</em>';
+        if (e.delivered && e.delivered.length) verb += '<em title="Added to worker context; action is not confirmed"> · delivered</em>';
         return '<li class="is-' + e.kind + '" style="--c:' + c + '">' +
           '<i aria-hidden="true"></i><div><p><b>' + who + '</b>' + verb +
           '<time>+' + clock(e.at - run.t0) + '</time></p><q>' + esc(oneLine(e.content, 280)) + '</q></div></li>';

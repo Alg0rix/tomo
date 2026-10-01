@@ -727,6 +727,7 @@ async def run_turn(
     enable_atg: bool | None = None,
     origin: str | None = None,
     reasoning_effort: str | None = None,
+    conversation: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run one agent turn, yielding internal events.
 
@@ -739,6 +740,10 @@ async def run_turn(
     store. Planning defaults to the prompt-gated ``todo`` tool. Pass
     ``enable_atg=True`` to front-load an ATG DAG that seeds the same
     checklist; omit or pass ``False`` to leave ATG off.
+
+    ``conversation`` optionally retains complete model messages across internal
+    coordinator reviews, preserving their prompt-cache prefix. It is separate
+    from persisted chat history and must belong to one sequential caller.
 
     Setup failures and per-round backend failures are surfaced as
     ``{"kind": "error", ...}`` events — ``run_turn`` never raises out to the
@@ -880,16 +885,21 @@ async def run_turn(
                 # binary-attachment note when prep itself fails.
                 image_plan = {"mode": "text", "descriptions": {}}
                 _logger.warning("image input prep failed; continuing without", exc_info=True)
-            messages = build_messages(
-                history,
-                user_message,
-                system_prompt=prompt,
-                for_agent_id=agent_id,
-                session_id=session_id,
-                vision_capable=image_plan["mode"] == "native",
-                image_descriptions=image_plan["descriptions"],
-                live_context=live_context,
-            )
+            if conversation:
+                messages = list(conversation)
+                if user_message:
+                    messages.append({"role": "user", "content": user_message})
+            else:
+                messages = build_messages(
+                    history,
+                    user_message,
+                    system_prompt=prompt,
+                    for_agent_id=agent_id,
+                    session_id=session_id,
+                    vision_capable=image_plan["mode"] == "native",
+                    image_descriptions=image_plan["descriptions"],
+                    live_context=live_context,
+                )
         except Exception as exc:
             metrics.ended_kind = "error"
             metrics.log_summary()
@@ -946,6 +956,10 @@ async def run_turn(
             # Mid-turn steers (composer queue → Enter / ctrl+s).
             async for steer_ev in _emit_drained_steers(messages, session_id):
                 yield steer_ev
+            from app.runtime.tools import swarm_board
+
+            async for board_ev in swarm_board.deliver(messages):
+                yield board_ev
             resp: LLMResponse | None = None
             streamed = False
             reasoning_streamed = False
@@ -1008,7 +1022,7 @@ async def run_turn(
 
             if not resp.has_tool_calls:
                 # Late steer during the LLM round — keep going instead of ending.
-                if _peek_has_steers(session_id):
+                if _peek_has_steers(session_id) or swarm_board.pending():
                     final_content = resp.content or ""
                     if final_content:
                         messages.append(
@@ -1032,9 +1046,12 @@ async def run_turn(
                 metrics.ended_kind = "final"
                 metrics.log_summary()
                 final_content = resp.content or ""
+                if conversation is not None:
+                    messages.append({"role": "assistant", "content": final_content})
                 from app.runtime.memory.vault.write import record_turn
 
-                record_turn(session_id, agent_id, user_request, final_content)
+                if conversation is None:
+                    record_turn(session_id, agent_id, user_request, final_content)
                 yield {
                     "kind": "final",
                     "content": final_content,
@@ -1457,6 +1474,8 @@ async def run_turn(
             ),
         }
     finally:
+        if conversation is not None and "messages" in locals():
+            conversation[:] = messages
         reset_prompt_clock(clock_token)
         artifacts_fs.reset_session(arts_token)
         todo_mod.reset_session(todo_token)

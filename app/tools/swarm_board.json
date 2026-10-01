@@ -7,15 +7,37 @@
     "type": "function",
     "function": {
       "name": "swarm_board",
-      "description": "Publish a finding, message another worker, or read the run board. Available only inside an active swarm task.",
+      "description": "Share findings, send targeted guidance, ask the coordinator and wait for a reply, or read the shared run board. Updates enter worker context automatically between model rounds. Ask pauses up to 120 seconds; the coordinator must answer with send and reply_to_event_id.",
       "parameters": {
         "type": "object",
         "properties": {
-          "action": {"type": "string", "enum": ["publish", "send", "read"]},
-          "content": {"type": "string"},
-          "to_agent_id": {"type": "string"}
+          "action": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "send",
+              "read",
+              "ask"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "to_agent_id": {
+            "type": "string"
+          },
+          "to_task_id": {
+            "type": "string",
+            "description": "Optional task ID to distinguish concurrent tasks owned by the same agent."
+          },
+          "reply_to_event_id": {
+            "type": "integer",
+            "description": "Question event ID being answered. Required to release a worker waiting after ask."
+          }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     }
   }

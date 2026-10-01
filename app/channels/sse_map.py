@@ -169,6 +169,9 @@ def map_loop_event(
     entries: list[dict[str, Any]] = []
 
     if kind == "swarm_event":
+        if ev.get("event") == "coordinator_note" and isinstance(ev.get("metrics"), dict):
+            entries.append({"type": "coordination_metrics", "agent_id": ev.get("agent_id") or agent_id,
+                            "metrics": ev["metrics"], "ts": now()})
         seq += 1
         chunks.append(fmt_sse({"event": "swarm.event", "data": {
             "run_id": ev.get("run_id"), "event_id": ev.get("event_id"),
