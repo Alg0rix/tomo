@@ -61,10 +61,14 @@ def collect_image_attachments(
         return []
     from app.services import store
     from app.services.chat import _looks_image_attachment
+    from app.services.compact import entries_after_last_compact
 
+    # Entries before a /compact marker no longer reach the model — don't
+    # attach or describe their images either.
+    live, _ = entries_after_last_compact(history)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for entry in history:
+    for entry in live:
         if entry.get("type") != "user":
             continue
         ids = entry.get("attachment_ids")

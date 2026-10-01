@@ -992,3 +992,19 @@
 .chat-wrap.sessions-chat .chat-scroll { padding-bottom: calc(var(--composer-h, 200px) + 20px); }
 /* Context usage: open above the ring, right-aligned to the composer card. */
 .chat-wrap .composer-shell > .ctx-usage-popover { left: auto; right: 10px; bottom: calc(100% + 8px); }
+
+/* /compact marker: quiet divider between old (summarized) and live history. */
+.chat-wrap .turn .compact-divider {
+  margin: 14px auto; max-width: 70%;
+  font-size: 12px; color: var(--text-dim); text-align: center;
+  border-top: 1px solid var(--border, rgba(255,255,255,.08));
+  padding-top: 10px;
+}
+.chat-wrap .turn .compact-divider summary {
+  cursor: pointer; list-style: none; display: inline-block;
+}
+.chat-wrap .turn .compact-divider summary::-webkit-details-marker { display: none; }
+.chat-wrap .turn .compact-summary {
+  margin-top: 8px; text-align: left; font-size: 12.5px; line-height: 1.6;
+  color: var(--text-dim); white-space: pre-wrap;
+}

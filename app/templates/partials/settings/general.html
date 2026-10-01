@@ -73,6 +73,13 @@
       </select></div>
     </div>
     <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Auto-compact</div><p class="machine-field-hint">When the projected context crosses this share of the model window, older messages fold into an LLM summary before the next turn. /compact works either way.</p></div>
+      <div class="machine-field-control" style="display:flex; gap:8px; align-items:center">
+        {{ toggle(id='setAutoCompact', checked=settings.auto_compact_enabled) }}
+        <input class="input machine-input-narrow" type="number" id="setAutoCompactThreshold" min="50" max="99" value="{{ ((settings.auto_compact_threshold or 0.9) * 100) | round | int }}" aria-label="Auto-compact threshold percent">
+      </div>
+    </div>
+    <div class="machine-field">
       <div class="machine-field-copy"><div class="machine-field-name">Nightly memory consolidation</div><p class="machine-field-hint">Turn past day notes into durable entity facts.</p></div>
       <div class="machine-field-control">{{ toggle(id='setMemoryConsolidation', checked=settings.memory_consolidation_enabled) }}</div>
     </div>

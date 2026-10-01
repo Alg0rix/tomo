@@ -781,6 +781,7 @@
       { id: 'auto', name: 'auto', description: 'Toggle AUTO — run tools without approval prompts' },
       { id: 'smart', name: 'smart', description: 'Smart approvals — aux LLM assesses risky tools' },
       { id: 'manual', name: 'manual', description: 'Manual approvals — always ask for risky tools' },
+      { id: 'compact', name: 'compact', description: 'Summarize older messages to free context' },
     ];
 
     function filterSkills(query) {

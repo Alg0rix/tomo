@@ -465,6 +465,20 @@ async def stream_turn_sse(
         from app.runtime.permissions.slash import handle_approval_slash
 
         slash_notice = None if resume else handle_approval_slash(message or "", session_id)
+        if (
+            slash_notice is None
+            and not resume
+            and (message or "").strip().lower() == "/compact"
+        ):
+            from app.services.compact import compact_session
+
+            try:
+                slash_notice = (await compact_session(
+                    session_id, agent_id=coordinator_id
+                ))["message"]
+            except Exception as exc:
+                logger.warning("web /compact failed session=%s: %s", session_id, exc)
+                slash_notice = f"Compact failed: {exc}"
         if slash_notice is not None:
             store.append_session_history(
                 session_id,
@@ -678,6 +692,36 @@ async def stream_turn_sse(
         else:
             from app.services.chat import attachment_meta_for_ids
 
+            # Auto-compact folds everything before this turn's message into a
+            # summary marker — must run before the user entry lands so the new
+            # request stays live on the other side of the divider.
+            if not resume:
+                from app.services.compact import maybe_auto_compact
+
+                try:
+                    auto_compact = await maybe_auto_compact(
+                        session_id, agent_id=coordinator_id
+                    )
+                except Exception as exc:
+                    auto_compact = None
+                    logger.warning(
+                        "auto-compact failed session_id=%s: %s", session_id, exc
+                    )
+                if auto_compact:
+                    seq += 1
+                    yield fmt_sse(
+                        {
+                            "event": "compact",
+                            "data": {
+                                "compacted": auto_compact["compacted"],
+                                "summary": auto_compact["summary"],
+                                "auto": True,
+                                "agent_id": coordinator_id,
+                                "usage_before": auto_compact.get("usage_before"),
+                            },
+                            "seq": seq,
+                        }
+                    )
             # ChatGPT-style: store clean user text + attachment chips metadata.
             # File contents are expanded only when building the LLM prompt.
             clean = (message or "").strip()

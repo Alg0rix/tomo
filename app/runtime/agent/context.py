@@ -879,6 +879,27 @@ def history_to_messages(
         entry = history[i]
         etype = entry.get("type")
 
+        if etype == "compact":
+            # /compact marker — replace everything before it with the stored
+            # summary so the next turn starts from a short context. The raw
+            # entries stay in session history for the transcript UI.
+            messages.clear()
+            summary = (entry.get("content") or "").strip()
+            if summary:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM] The earlier conversation was compacted. "
+                            "This summary replaces it — rely on it for continuity:\n\n"
+                            + summary
+                        ),
+                    }
+                )
+            call_counter = 0
+            i += 1
+            continue
+
         if etype == "user":
             from app.services.chat import expand_user_content_for_llm
 

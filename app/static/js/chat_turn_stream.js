@@ -1111,6 +1111,26 @@
       }
     });
 
+    on('compact', function (e) {
+      // /compact + auto-compact marker — same divider the history renderer
+      // draws, appended where the marker landed (before the current turn).
+      bumpActivity();
+      var d = JSON.parse(e.data || '{}');
+      var row = document.createElement('div');
+      row.className = 'msg compact-note';
+      row.innerHTML =
+        '<details class="compact-divider"><summary>' +
+        '<span class="compact-mark" aria-hidden="true">✂</span> ' +
+        (d.auto ? 'Context auto-compacted' : 'Earlier messages compacted') +
+        (d.compacted ? ' · ' + d.compacted + ' messages' : '') +
+        '</summary>' +
+        (d.summary ? '<div class="compact-summary"></div>' : '') +
+        '</details>';
+      if (d.summary) row.querySelector('.compact-summary').textContent = d.summary;
+      ctx.turn.appendChild(row);
+      ctx.atBottom();
+    });
+
     on('delta', function (e) {
       bumpActivity();
       var d = JSON.parse(e.data || '{}');

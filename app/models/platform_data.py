@@ -116,6 +116,11 @@ def seed_settings() -> dict[str, Any]:
         # Per-model capability pins: {"<model id or profile id>": {"supports_vision": true}}
         # — wins over catalog/prefix detection.
         "model_capability_overrides": {},
+        # Auto-compact: fold older session history into an LLM summary marker
+        # when the projected context crosses auto_compact_threshold of the
+        # model's window (0.5–0.99). /compact stays available regardless.
+        "auto_compact_enabled": True,
+        "auto_compact_threshold": 0.9,
         "public_history": False,
         "setup_complete": True,
         "eval_parallel_workers": 2,

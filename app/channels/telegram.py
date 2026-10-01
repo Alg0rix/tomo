@@ -545,6 +545,10 @@ class TelegramAPI:
                         "command": "status",
                         "description": "Show progress and approval mode",
                     },
+                    {
+                        "command": "compact",
+                        "description": "Summarize older messages to free context",
+                    },
                     {"command": "manual", "description": "Ask before risky tool calls"},
                     {"command": "smart", "description": "Use smart tool approvals"},
                     {"command": "help", "description": "Show commands and guidance"},
@@ -713,6 +717,7 @@ async def handle_inbound_text(
         reply = (
             "Welcome to Tomo. Send a message to talk with your coordinator.\n"
             "/new — start a fresh conversation\n/stop — stop the current task\n/status — show progress\n"
+            "/compact — summarize older messages to free context\n"
             "/manual, /smart — set approval mode\n/help — show this guide\n/id — show this chat's ID\n"
             "/steer <text> — guide the current task\n/queue <text> — run another task afterwards\n"
             "/queue list, /queue clear — manage waiting tasks\n/interrupt <text> — replace current and waiting tasks\n"
@@ -733,6 +738,17 @@ async def handle_inbound_text(
 
         mode = mode_payload(session_id)
         reply = f"{'Working' if store.is_session_turn_active(session_id) else 'Ready'} · Approvals: {mode['label']}"
+    elif command == "/compact":
+        from app.services.compact import compact_session
+
+        if store.is_session_turn_active(session_id):
+            reply = "Still working on the current task — run /compact after it finishes."
+        else:
+            try:
+                reply = (await compact_session(session_id, agent_id=resolved))["message"]
+            except Exception as exc:
+                logger.warning("telegram /compact failed session=%s: %s", session_id, exc)
+                reply = f"Compact failed: {exc}"
     elif command in {"/manual", "/smart", "/auto"}:
         from app.runtime.permissions.slash import handle_approval_slash
 
@@ -935,6 +951,43 @@ class TelegramDispatcher:
         item["feedback_id"] = sent.get("message_id")
         # The runner can start while the acknowledgement request is in flight.
         await self._receipt_state(chat_id, item)
+
+    async def _compact_chat(self, chat_id: int, thread_id: int | None = None) -> None:
+        """/compact — fold the chat's older messages into a summary marker."""
+        resolved = _resolve_agent_id(self.agent_id)
+        if not resolved:
+            await self.api.send_message(
+                chat_id,
+                "No agent is available to compact this conversation.",
+                thread_id=thread_id,
+            )
+            return
+        session_id = store.find_session(resolved, user_id_for_chat(chat_id))
+        if not session_id:
+            await self.api.send_message(
+                chat_id,
+                "Nothing to compact yet — start chatting first.",
+                thread_id=thread_id,
+            )
+            return
+        progress = await self.api.send_message(
+            chat_id, "Compacting this conversation…", thread_id=thread_id
+        )
+        progress_id = (progress or {}).get("message_id")
+        from app.services.compact import compact_session
+
+        try:
+            reply = (await compact_session(session_id, agent_id=resolved))["message"]
+        except Exception as exc:
+            logger.warning("telegram /compact failed session=%s: %s", session_id, exc)
+            reply = f"Compact failed: {exc}"
+        if progress_id:
+            try:
+                await self.api.edit_message(chat_id, progress_id, reply)
+                return
+            except Exception:
+                pass  # fall through to a fresh reply
+        await self.api.send_message(chat_id, reply, thread_id=thread_id)
 
     async def _busy_input(
         self, chat_id: int, text: str, message: dict, mode: str, *, has_media: bool
@@ -1143,6 +1196,23 @@ class TelegramDispatcher:
                 "Only the person who started this task can steer, queue, or interrupt it in this topic.",
                 thread_id=thread_id,
             )
+            return
+        if command == "/compact":
+            if busy and (sender_id, thread_id) != self.actors.get(chat_id):
+                await self.api.send_message(
+                    chat_id,
+                    "Only the person who started this task can compact this conversation.",
+                    thread_id=thread_id,
+                )
+                return
+            if busy:
+                await self.api.send_message(
+                    chat_id,
+                    "Still working on the current task — run /compact after it finishes.",
+                    thread_id=thread_id,
+                )
+                return
+            await self._compact_chat(chat_id, thread_id)
             return
         parts = text.split(maxsplit=1)
         args = parts[1].strip() if len(parts) == 2 else ""

@@ -1331,6 +1331,23 @@
         }
         return;
       }
+
+      if (e.type === 'compact') {
+        // /compact marker — a quiet divider with the summary on expand.
+        if (!turn) startTurn();
+        var summary = (e.content || '').trim();
+        var row = document.createElement('div');
+        row.className = 'msg compact-note';
+        row.innerHTML =
+          '<details class="compact-divider"><summary>' +
+          '<span class="compact-mark" aria-hidden="true">✂</span> ' +
+          esc('Earlier messages compacted') +
+          '</summary>' +
+          (summary ? '<div class="compact-summary">' + esc(summary) + '</div>' : '') +
+          '</details>';
+        turn.appendChild(row);
+        return;
+      }
     });
 
     if (inspectorOpenKey) {

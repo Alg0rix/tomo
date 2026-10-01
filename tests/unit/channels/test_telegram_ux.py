@@ -661,3 +661,69 @@ async def test_stop_during_status_delivery_never_starts_model(setup, monkeypatch
     finally:
         await dispatcher.close()
         await api.aclose()
+
+
+async def test_compact_command_progress_then_edit(setup, monkeypatch):
+    """/compact sends a progress message, edits it with the result, and drops
+    a history marker the next turn reads instead of old messages."""
+    bot, api = setup
+    sid = store.get_or_create_session("main", "tg_42")
+    for i in range(5):
+        store.append_session_history(
+            sid, {"type": "user", "content": f"question {i}", "agent_id": "main"}
+        )
+        store.append_session_history(
+            sid, {"type": "final", "content": f"answer {i}", "agent_id": "main"}
+        )
+    llm = ScriptedLLM([text_reply("Talked about five questions and answers.")])
+    monkeypatch.setattr("app.runtime.llm.get_llm", lambda *a, **kw: llm)
+
+    dispatcher = TelegramDispatcher(api)
+    try:
+        await dispatcher.dispatch(message("/compact"))
+    finally:
+        await dispatcher.close()
+
+    # One progress message, edited in place to the result — not two messages.
+    sent = [m for m in bot.messages.values()]
+    assert len(sent) == 1
+    assert "Compacted 10 earlier messages" in (sent[0].get("text") or "")
+    history = store.get_session_history(sid)
+    assert any(e.get("type") == "compact" for e in history)
+
+
+async def test_compact_command_empty_session(setup, monkeypatch):
+    bot, api = setup
+    monkeypatch.setattr(
+        "app.runtime.llm.get_llm",
+        lambda *a, **kw: ScriptedLLM([text_reply("unused")]),
+    )
+    dispatcher = TelegramDispatcher(api)
+    try:
+        await dispatcher.dispatch(message("/compact"))
+    finally:
+        await dispatcher.close()
+    sent = [m.get("text") or "" for m in bot.messages.values()]
+    assert any("Nothing to compact" in t for t in sent)
+
+
+async def test_compact_command_via_plain_update(setup, monkeypatch):
+    """process_update (webhook-style) path — /compact replies inline."""
+    from app.channels.telegram import process_update
+
+    _, api = setup
+    sid = store.get_or_create_session("main", "tg_42")
+    for i in range(5):
+        store.append_session_history(
+            sid, {"type": "user", "content": f"q{i}", "agent_id": "main"}
+        )
+        store.append_session_history(
+            sid, {"type": "final", "content": f"a{i}", "agent_id": "main"}
+        )
+    monkeypatch.setattr(
+        "app.runtime.llm.get_llm",
+        lambda *a, **kw: ScriptedLLM([text_reply("Summary.")]),
+    )
+    result = await process_update(message("/compact"), api=api)
+    assert "Compacted 10 earlier messages" in result["reply"]
+    await api.aclose()

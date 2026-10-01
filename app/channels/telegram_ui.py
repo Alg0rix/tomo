@@ -280,6 +280,12 @@ class TelegramTurnUI:
                 await self.show_prompt(
                     "approval" if event == "approval_required" else "clarify", data
                 )
+            elif event == "compact":
+                self.recent.append(
+                    "✂ Context compacted" +
+                    (f" ({data.get('compacted')} msgs)" if data.get("compacted") else "")
+                )
+                self.recent = self.recent[-3:]
             elif event == "tool":
                 tool = str(data.get("tool") or "tool")[:80]
                 key = f"{data.get('agent_id')}:{data.get('delegate_call_id')}:{data.get('call_id') or tool}"

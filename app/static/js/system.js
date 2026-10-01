@@ -130,6 +130,8 @@
             memory_extraction_profile_id: document.getElementById('setMemoryExtractionProfile').value,
             vision_profile_id: document.getElementById('setVisionProfile').value,
             image_input_mode: document.getElementById('setImageInputMode').value,
+            auto_compact_enabled: document.getElementById('setAutoCompact').checked,
+            auto_compact_threshold: (parseInt(document.getElementById('setAutoCompactThreshold').value, 10) || 90) / 100,
             memory_consolidation_enabled: document.getElementById('setMemoryConsolidation').checked,
             memory_consolidation_cron: document.getElementById('setMemoryCron').value.trim(),
             approvals_mode: mode || 'smart',
