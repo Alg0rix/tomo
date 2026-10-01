@@ -1,6 +1,6 @@
 """Soft evaluator for learning-review writes.
 
-Gates ``saved=1``: tool must succeed, not be a curated near-duplicate noop,
+Gates ``saved=1``: tool must succeed, not be a vault near-duplicate noop,
 and belong to a write tool. Provider failures stay out of the ledger
 (handled in the runner).
 """

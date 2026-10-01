@@ -25,7 +25,7 @@ from app.runtime.agent.loop import _truncate_result, run_turn
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import store
-from tests.fakes.llm import ScriptedLLM, bash_call, recall_call, text_reply, tool_then_text
+from tests.fakes.llm import ScriptedLLM, bash_call, memory_search_call, text_reply, tool_then_text
 
 _DEFAULT_REPLY = "Ready to help."
 _BASH_FINAL = "The command finished."
@@ -52,8 +52,8 @@ def _bash_tools() -> list[dict[str, Any]]:
     return [{"type": "function", "function": {"name": "bash"}}]
 
 
-def _recall_tools() -> list[dict[str, Any]]:
-    return [{"type": "function", "function": {"name": "recall"}}]
+def _memory_tools() -> list[dict[str, Any]]:
+    return [{"type": "function", "function": {"name": "memory"}}]
 
 
 async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
@@ -277,24 +277,26 @@ async def test_bash_tool_result_preserves_large_output(monkeypatch) -> None:
     assert result_ev["result"] == bash_output
 
 
-async def test_recall_path_returns_seeded_fact(tmp_path) -> None:
+async def test_vault_search_path_returns_saved_fact(tmp_path) -> None:
     """Scripted recall tool call; result includes seeded KB fact."""
     store.rebind(tmp_path / "recall_loop.db")
+    from app.runtime.memory.vault.write import add_entity
+    add_entity("web", "topic/vendor-deadline", "The Q3 vendor onboarding deadline is October 15, 2026.")
     llm = ScriptedLLM(
         tool_then_text(
-            recall_call("Q3 vendor onboarding deadline"),
+            memory_search_call("Q3 vendor onboarding deadline"),
             _RECALL_FINAL,
         )
     )
     events = await _collect(
         "What is the Q3 vendor onboarding deadline?",
         llm=llm,
-        tools=_recall_tools(),
+        tools=_memory_tools(),
     )
     assert _kinds(events, drop_delta=True) == ["tool", "tool_result", "final"]
     tool_ev = next(e for e in events if e["kind"] == "tool")
     result_ev = next(e for e in events if e["kind"] == "tool_result")
-    assert tool_ev["tool"] == "recall"
+    assert tool_ev["tool"] == "memory"
     assert "vendor" in tool_ev["args"]["query"].lower() or "deadline" in tool_ev["args"]["query"].lower()
     assert "October 15, 2026" in result_ev["result"]
     assert result_ev["error"] is False

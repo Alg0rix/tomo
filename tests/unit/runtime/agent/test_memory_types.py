@@ -24,10 +24,10 @@ def test_nine_memory_types() -> None:
 
 
 def test_memory_type_for_tool_targets() -> None:
-    assert memory_type_for_tool("remember") == "semantic"
-    assert memory_type_for_tool("memory", arguments={"target": "user"}) == "user"
-    assert memory_type_for_tool("memory", arguments={"target": "project"}) == "project"
-    assert memory_type_for_tool("memory", arguments={"target": "memory"}) == "agent"
+    assert memory_type_for_tool("memory", arguments={"entity": "topic/general"}) == "semantic"
+    assert memory_type_for_tool("memory", arguments={"entity": "user/profile"}) == "user"
+    assert memory_type_for_tool("memory", arguments={"entity": "project/tomo"}) == "project"
+    assert memory_type_for_tool("memory", arguments={"entity": "agent/ops"}) == "agent"
     assert memory_type_for_tool("save_artifact") == "execution"
     assert memory_type_for_tool("record_episode") == "episodic"
     assert memory_type_for_tool("recall_episodes") == "episodic"
@@ -35,7 +35,7 @@ def test_memory_type_for_tool_targets() -> None:
 
 
 def test_saved_only_on_successful_writes() -> None:
-    assert is_successful_write("memory", "added to USER.md (120 chars, 3 entries).")
+    assert is_successful_write("memory", "Saved vault fact.")
     assert not is_successful_write("list_skills", "skill-a, skill-b")
     assert not is_successful_write("memory", "Error: content is empty")
     assert not is_successful_write(
@@ -58,8 +58,8 @@ def test_classify_actions_saved_flag() -> None:
         ),
         classify_review_action(
             "memory",
-            arguments={"target": "user", "action": "add"},
-            result_text="added to USER.md (80 chars, 1 entries).",
+            arguments={"entity": "user/profile", "action": "add"},
+            result_text="Saved vault fact.",
         ),
     ]
     agg = classify_actions([], classified=items)

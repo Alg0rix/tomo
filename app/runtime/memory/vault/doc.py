@@ -48,16 +48,24 @@ def links(text: str) -> list[str]:
     return list(dict.fromkeys(m.group(1).strip() for m in _LINK.finditer(text)))
 
 
+def encode_fact(text: str) -> str:
+    """Escape section markers inside a fact, preserving existing backslashes."""
+    text = re.sub(r'^(\\*~~)', lambda m: "\\" + m.group(1), text)
+    return re.sub(r'(?m)^(\\*§)', lambda m: "\\" + m.group(1), text)
+
+
 def fact_data(entry: str) -> dict:
     """Decode optional provenance; old Markdown remains readable."""
     gone = entry.startswith('~~')
-    text = re.sub(r'^~~(.*?)~~.*$', r'\1', entry, flags=re.S) if gone else entry
+    text = re.sub(r'^~~(.*)~~ superseded \d{4}-\d{2}-\d{2}$', r'\1', entry, flags=re.S) if gone else entry
     source = re.search(r'\s*\(src: \[\[([^\]]+)\]\]\)\s*$', text)
     if source:
         text = text[:source.start()]
     origin = re.search(r'\s*\(origin: (agent|consolidation|user|extraction)\)\s*$', text)
     if origin:
         text = text[:origin.start()]
+    text = re.sub(r'^\\(\\*~~)', r'\1', text)
+    text = re.sub(r'(?m)^\\(\\*§)', r'\1', text)
     return {'text': text.strip(), 'source': source.group(1) if source else '',
             'origin': origin.group(1) if origin else ('consolidation' if source and '#consolidated' in source.group(1) else 'agent'),
             'superseded': gone}

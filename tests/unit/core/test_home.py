@@ -26,7 +26,7 @@ def test_ensure_tomo_home_creates_tree(tmp_path: Path, monkeypatch) -> None:
     assert (root / "SOUL.md").is_file()
     assert (root / "tomo.yaml").is_file()
     assert (root / "library" / "skills").is_dir()
-    assert (root / "library" / "memory").is_dir()
+    assert (root / "memory" / "vault").is_dir()
     assert (root / "agents").is_dir()
     assert (root / "workplaces").is_dir()
     assert (root / "state").is_dir()
@@ -80,14 +80,12 @@ def test_agent_paths(tmp_path: Path, monkeypatch) -> None:
     home.ensure_tomo_home(root)
     assert home.agent_system_path("main", root).name == "SYSTEM.md"
     assert home.agent_soul_path("main", root).name == "SOUL.md"
-    assert home.agent_knowledge_dir("main", root).name == "knowledge"
     # Work dirs live under $TOMO_WORK/<agent>, not $TOMO_HOME/agents/.../work
     work = tmp_path / "workroot"
     assert home.agent_work_dir("main", work) == work / "main"
     assert home.agent_work_dir("ops", work).name == "ops"
     assert home.agent_dir("main", root).parent.name == "agents"
     assert home.library_skills_dir(root).name == "skills"
-    assert home.library_memory_dir(root).name == "memory"
     assert home.state_dir(root).name == "state"
     assert home.workplaces_dir(root).name == "workplaces"
 

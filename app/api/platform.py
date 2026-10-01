@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
@@ -14,8 +13,6 @@ from app.core.deps import AuthDep, can_manage_telegram, session_user_id
 from app.runtime.llm import codex_models, codex_oauth
 from app.schemas import (
     CodexLoginPoll,
-    KnowledgeEntryCreate,
-    KnowledgeEntryUpdate,
     LLMProfileCreate,
     LLMProfileUpdate,
     McpItemEnabled,
@@ -433,157 +430,6 @@ async def install_via_ssh(body: WorkplaceInstallViaSsh, _: AuthDep):
         "log": result.log,
         "exit_code": 0,
     }
-
-
-@router.get("/knowledge")
-async def list_knowledge(
-    request: Request,
-    _: AuthDep,
-    q: str | None = Query(None, max_length=500),
-    limit: int = Query(50, ge=1, le=200),
-):
-    uid = session_user_id(request)
-    query = (q or "").strip()
-    if query:
-        return {
-            "entries": store.search_knowledge(query, limit=limit, user_id=uid),
-            "query": query,
-        }
-    return {"entries": store.list_knowledge_entries(user_id=uid)}
-
-
-@router.post("/knowledge")
-async def create_knowledge(
-    body: KnowledgeEntryCreate, request: Request, _: AuthDep
-):
-    try:
-        data = body.model_dump(exclude_none=True)
-        data["user_id"] = session_user_id(request)
-        return store.create_knowledge_entry(data)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-_MAX_KB_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB
-_KB_READ_CHUNK = 64 * 1024
-_MAX_KB_TITLE_CHARS = 200
-
-
-async def _read_upload_capped(file: UploadFile, max_bytes: int) -> bytes:
-    """Read upload in chunks; reject as soon as size exceeds max_bytes."""
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await file.read(_KB_READ_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise HTTPException(status_code=400, detail="file too large (max 20MB)")
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
-def _dedupe_tags(tags: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for t in tags:
-        key = t.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(t)
-    return out
-
-
-@router.post("/knowledge/upload")
-async def upload_knowledge(
-    request: Request,
-    _: AuthDep,
-    file: UploadFile = File(...),
-    title: str | None = Form(None),
-    tags: str | None = Form(None),  # comma-separated optional
-):
-    from app.services.doc_parse import parse_document
-
-    data = await _read_upload_capped(file, _MAX_KB_UPLOAD_BYTES)
-    if not data:
-        raise HTTPException(status_code=400, detail="file is empty")
-
-    safe_name = Path(file.filename or "upload").name[:120] or "upload"
-    try:
-        parsed = await asyncio.to_thread(parse_document, safe_name, data)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("knowledge upload parse failed for %s", safe_name)
-        raise HTTPException(
-            status_code=400, detail=f"failed to parse file: {e}"
-        ) from e
-
-    entry_title = ((title or "").strip() or parsed.title)[:_MAX_KB_TITLE_CHARS]
-    if not entry_title:
-        entry_title = "Untitled"
-
-    tag_list = _dedupe_tags(
-        [t.strip() for t in (tags or "").split(",") if t.strip()]
-        + ["uploaded", parsed.source_type]
-    )
-    try:
-        entry = store.create_knowledge_entry(
-            {
-                "title": entry_title,
-                "body": parsed.body,
-                "tags": tag_list,
-                "user_id": session_user_id(request),
-            }
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    return {
-        **entry,
-        "upload": {
-            "filename": safe_name,
-            "source_type": parsed.source_type,
-            "truncated": parsed.truncated,
-            "warnings": parsed.warnings,
-        },
-    }
-
-
-@router.get("/knowledge/{entry_id}")
-async def get_knowledge(entry_id: str, request: Request, _: AuthDep):
-    entry = store.get_knowledge_entry(entry_id, user_id=session_user_id(request))
-    if not entry:
-        raise HTTPException(status_code=404, detail="Knowledge entry not found")
-    return entry
-
-
-@router.put("/knowledge/{entry_id}")
-async def update_knowledge(
-    entry_id: str, body: KnowledgeEntryUpdate, request: Request, _: AuthDep
-):
-    try:
-        entry = store.update_knowledge_entry(
-            entry_id,
-            body.model_dump(exclude_unset=True),
-            user_id=session_user_id(request),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if not entry:
-        raise HTTPException(status_code=404, detail="Knowledge entry not found")
-    return entry
-
-
-@router.delete("/knowledge/{entry_id}")
-async def delete_knowledge(entry_id: str, request: Request, _: AuthDep):
-    if not store.delete_knowledge_entry(
-        entry_id, user_id=session_user_id(request)
-    ):
-        raise HTTPException(status_code=404, detail="Knowledge entry not found")
-    return {"success": True}
 
 
 @router.get("/schedules")

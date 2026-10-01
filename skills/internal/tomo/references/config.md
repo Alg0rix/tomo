@@ -22,7 +22,7 @@ running deployment's config; a database setting does not override its environmen
 | Encrypt UI secrets | `TOMO_SECRET_KEY`, else `$TOMO_HOME/.secret_key` (mode `0600`, never overwritten). Losing it makes encrypted SQLite settings unrecoverable. |
 | LLM base URL, model id, API key | `tomo config llm-profiles` or System → Models. The key is encrypted in SQLite. A blank save keeps the existing key. GET settings returns masked values. |
 | Persona | `$TOMO_HOME/SOUL.md`, plus `agents/<id>/SYSTEM.md` and `SOUL.md`. |
-| Curated notes | `memories/users/<user_id>/USER.md`. Per-login agent notes: `agents/<id>/users/<user_id>/MEMORY.md`. Legacy shared files `memories/USER.md` and `agents/<id>/MEMORY.md` are the web fallback. |
+| Vault facts | `memory/vault/<user-id>/entities/<type>/<slug>.md`; account-scoped profiles, agent lessons and project notes. |
 | Markdown vault | `$TOMO_HOME/memory/vault/<user_id>/`, when System → General has the vault on. |
 | Artifacts | `$TOMO_HOME/sessions/<session_id>/artifacts/`. |
 | Database | `$TOMO_HOME/state/tomo.db`. `TOMO_VAR_DIR` changes the directory; `TOMO_DB_PATH` changes the file. There is no automatic migration from a legacy `var/tomo.db`. |
@@ -37,19 +37,15 @@ $TOMO_HOME/
 ├── .env
 ├── .secret_key
 ├── SOUL.md
-├── memories/users/<user_id>/USER.md
-├── memories/USER.md
 ├── library/{skills,memory}
-├── agents/<id>/{SYSTEM.md,SOUL.md,knowledge}
-├── agents/<id>/users/<user_id>/MEMORY.md
-├── agents/<id>/MEMORY.md
+├── agents/<id>/{SYSTEM.md,SOUL.md}
 ├── memory/vault/<user_id>/
 ├── sessions/<session_id>/artifacts/
 ├── workplaces/
 └── state/tomo.db
 ```
 
-Allowed familiar names: `SOUL.md`, `SYSTEM.md`, `MEMORY.md`, `USER.md`, `.env`, `.secret_key`. Do not create `secrets.env`, `identity.md`, or `prompt.md`. First start copies `SOUL.md` and `tomo.yaml` from the shipped `defaults/`. It does not bind-mount the git tree as live config.
+Allowed familiar names: `SOUL.md`, `SYSTEM.md`, `.env`, `.secret_key`. Do not create `secrets.env`, `identity.md`, or `prompt.md`. First start copies `SOUL.md` and `tomo.yaml` from the shipped `defaults/`. It does not bind-mount the git tree as live config.
 
 ## Server safety
 

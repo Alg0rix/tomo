@@ -154,7 +154,7 @@ def create_agent(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, An
 
         adir = home.agent_dir(aid)
         adir.mkdir(parents=True, exist_ok=True)
-        home.agent_knowledge_dir(aid).mkdir(parents=True, exist_ok=True)
+
         home.agent_work_dir(aid).mkdir(parents=True, exist_ok=True)
         sys_path = home.agent_system_path(aid)
         custom_prompt = (data.get("system_prompt") or "").strip()

@@ -1,38 +1,8 @@
-"""curated.near_duplicate + add_entry skip."""
-
-from __future__ import annotations
-
-from app.runtime.memory.curated import add_entry, near_duplicate, read_entries, user_path
+from app.runtime.memory.vault.write import near_duplicate
 
 
-def test_near_duplicate_exact(tmp_path, monkeypatch) -> None:
-    from app.core import config
-
-    monkeypatch.setattr(config, "TOMO_HOME", tmp_path)
-    entries = ["User prefers concise answers"]
-    assert near_duplicate(entries, "User prefers concise answers")
-    assert near_duplicate(entries, "user prefers  concise   answers")
-    assert near_duplicate(entries, "x") is None
-
-
-def test_near_duplicate_substring(tmp_path) -> None:
-    long = "User prefers concise answers without long preambles in chat"
-    assert near_duplicate([long], "prefers concise answers without long preambles")
-    assert near_duplicate(["short tip"], "short tip extra words here that are longer") is None
-
-
-def test_add_entry_skips_near_dup(tmp_path, monkeypatch) -> None:
-    from app.core import config
-
-    monkeypatch.setattr(config, "TOMO_HOME", tmp_path)
-    r1 = add_entry("user", "Prefers short answers over essays", agent_id=None)
-    assert r1["ok"]
-    r2 = add_entry(
-        "user",
-        "prefers short answers over essays",
-        agent_id=None,
-    )
-    assert r2["ok"]
-    assert "near-duplicate" in r2["message"] or "already" in r2["message"]
-    entries = read_entries(user_path())
-    assert len(entries) == 1
+def test_duplicate_normalization_and_long_substrings():
+    assert near_duplicate(["User prefers short answers."], " user PREFERS   short answers. ")
+    assert near_duplicate(["User prefers short answers. Especially in chat."], "User prefers short answers.")
+    assert near_duplicate(["host server alpha"], "host") is None
+    assert near_duplicate(["Port is 8000."], "Port is 9000.") is None

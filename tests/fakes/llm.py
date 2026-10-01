@@ -25,11 +25,11 @@ def bash_call(command: str, id: str = "call_1") -> LLMResponse:
     )
 
 
-def recall_call(query: str, id: str = "call_r") -> LLMResponse:
+def memory_search_call(query: str, id: str = "call_r") -> LLMResponse:
     """Single ``recall`` tool call."""
     return LLMResponse(
         content=None,
-        tool_calls=[ToolCall(id=id, name="recall", arguments={"query": query})],
+        tool_calls=[ToolCall(id=id, name="memory", arguments={"action": "search", "query": query})],
     )
 
 
@@ -79,6 +79,6 @@ __all__ = [
     "ScriptedLLM",
     "text_reply",
     "bash_call",
-    "recall_call",
+    "memory_search_call",
     "tool_then_text",
 ]

@@ -27,7 +27,7 @@ Most agent frameworks give you a chatbot or a coding copilot. Tomo gives you a *
 
 ## Getting started
 
-Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, curated memory + KB recall, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
+Tomo's **Alpha is live** — SQLite store, multi-model profiles, swarm delegation, bash/file tools on path-jailed or remote workplaces, Markdown vault memory, interval scheduler, and Telegram (Settings). Configure models in System → Models; chat over SSE from the dashboard or Chat page.
 
 Chats start with one agent. To use a team in a new or existing chat, turn on **Team** for the next message or ask for multiple agents in the message itself. Tomo may suggest a task split for an ordinary request; reply **gas** or **ya** to approve it. The bundled policy is the [Tomo skill](skills/internal/tomo/SKILL.md) (`references/swarm.md`), alongside skills from `~/.agents/skills`. A team run can mix configured agents with specialists that exist only in that chat. The coordinator selects enabled tools for each task, including `bash` and `portal` where appropriate. The chat shows actual task progress instead of a generic swarm label.
 
@@ -141,9 +141,9 @@ $TOMO_HOME/
 ├── .env               # bootstrap secrets (TOMO_SESSION_SECRET, TOMO_ADMIN_PASSWORD; install/update/start seed if missing)
 ├── .secret_key        # master key for at-rest encryption (chmod 600; auto-created)
 ├── SOUL.md            # global default persona
-├── memories/USER.md   # curated user profile (memory tool)
 ├── library/{skills,memory}
-├── agents/<id>/{SYSTEM.md,SOUL.md,MEMORY.md,knowledge}
+├── agents/<id>/{SYSTEM.md,SOUL.md}
+├── memory/vault/<user-id>/{entities,timeline,index.md}
 ├── workplaces/
 └── state/tomo.db      # SQLite (secret settings encrypted at rest)
 ```
@@ -151,10 +151,9 @@ $TOMO_HOME/
 Agent tool cwd is **not** under Home — it is `$TOMO_WORK/<agent_id>` (default `~/tomo/<id>`), or a bound local workplace root.
 
 Persona/prompt files use the familiar names `SOUL.md` (persona) and `SYSTEM.md`
-(agent system prompt). Curated notes use `memories/USER.md` and
-`agents/<id>/MEMORY.md`. Edit them under `$TOMO_HOME` to customize Tomo without
+(agent system prompt). Durable facts use `memory/vault/<user-id>/entities/<type>/<slug>.md`. Edit them under `$TOMO_HOME` to customize Tomo without
 touching the git tree; the coordinator loads `$TOMO_HOME/SOUL.md` plus each
-agent's `SYSTEM.md` / `SOUL.md` (and a frozen curated-memory snapshot) at turn time.
+agent's `SYSTEM.md` / `SOUL.md` and reads vault context live at turn time.
 
 **Secrets policy** — UI-managed secrets (LLM API key, …) are stored **encrypted
 at rest** in the SQLite `settings` table, never as plaintext. A master key
@@ -229,7 +228,7 @@ CI workflows:
 | [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
 
 Dependabot (`.github/dependabot.yml`) opens weekly PRs for `pip`, `gomod`, and Actions.
-> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (FTS-first + curated MD), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
+> **Note:** Alpha (slices 0→H) is complete. Connector, learning loop, memory (Markdown vault + FTS), portals, interval scheduler, and Telegram (code) are implemented — see Roadmap. Next: richer channels (WhatsApp, multi-agent routing, media tools).
 
 ---
 
@@ -279,9 +278,9 @@ Dependabot (`.github/dependabot.yml`) opens weekly PRs for `pip`, `gomod`, and A
 
 **Coordinator** — routes tasks, manages agent lifecycle, and tracks state across the swarm.
 
-**Agents** — independent workers. Each has its own model, tools, skills, and channels; curated memory and a shared KB. You define their role when you need to — or leave them general-purpose until a pattern emerges.
+**Agents** — independent workers. Each has its own model, tools, skills, and channels; account-scoped vault facts. You define their role when you need to — or leave them general-purpose until a pattern emerges.
 
-**Memory & learning** — agents remember past conversations, store facts in curated MD / KB, and can distill repeated workflows into skills (mid-turn tools + background review). See [Learning](#learning-agents-that-get-smarter).
+**Memory & learning** — agents remember past conversations, store facts in the Markdown vault, and can distill repeated workflows into skills (mid-turn tools + background review). See [Learning](#learning-agents-that-get-smarter).
 
 **Tools** — atomic actions (run a script, edit files, search the web). JSON schema + Python backend registered in the tool registry.
 
@@ -306,37 +305,34 @@ Tomo agents don't reset every session. They **learn** — from you, from each ot
 
 | Layer | What it stores | Example |
 |-------|----------------|---------|
-| **Curated memory** | `USER.md` + per-agent `MEMORY.md` (file-backed, always in prompt) | Prefs, timezone, env quirks |
-| **Markdown vault** | Per-user day logs and linked entity facts under `$TOMO_HOME/memory/vault/` | Inspectable project, person, tool, and topic notes |
-| **Conversation memory** | Recent turns + rolled session summaries; `session_search` (FTS5) | "Last week we discussed the Q3 budget" |
-| **Knowledge base** | Longer documents via `remember` / `recall` (FTS5; embeddings optional) | Company policies, API docs |
-| **Artifacts** | Per-session files under `$TOMO_HOME/sessions/<id>/artifacts/` (`save_artifact` / `list_artifacts` / `fetch_artifact`) | Reports, exports, images for this chat |
+| **Markdown vault** | Per-account entity pages and timelines; memory add/list/search/replace/remove | Profiles, agent lessons, projects, people, tools, and uploaded references |
+| **Conversation memory** | Turns and summaries; session_search | Past task discussions |
+| **Experiences** | Structured episodes; record_episode / recall_episodes | What worked and failed |
+| **Artifacts** | Per-session files | Reports and exports |
+| **Skills** | Reusable procedures | How-to playbooks |
+| **Agent state** | Structured KV | Machine-readable keys |
 
+All durable facts live under `$TOMO_HOME/memory/vault/<user-id>/`. Markdown is authoritative; SQLite indexes are rebuildable. There is no storage character quota. Profile and matching facts are read each turn with bounded context excerpts. Use `memory` with `entity=type/slug`, including `user/profile` for identity/preferences. The Memory page supports inspection, correction, moving and forgetting facts. System → Memory saves facts and uploads references directly to vault pages.
 
-| **Skills** | Reusable procedures distilled from experience | "How to onboard a new customer" playbook |
-| **Agent state** | Optional structured KV (`agent_state`) | Machine-readable keys when useful |
-
-Curated memory is the hot path: short durable notes written with the `memory` tool to Markdown under `$TOMO_HOME`. A frozen snapshot is injected at session start; mid-session writes update the files but refresh the prompt on the **next** session. Episodic search is **FTS5-first** (no vector DB required). Embeddings, when an API key is configured, are an optional boost for KB recall — not required for memory to work. Matching KB/skills/state may also be injected at turn start (Reuse).
-
-The optional Markdown vault runs alongside the existing SQLite memory lanes. Enable it in System → General to append end-of-turn notes to a per-user timeline and retrieve linked entity facts. The `memory` tool accepts `target=entity` and `entity=type/slug` for durable facts. The [Memory page](/memory) shows a rotatable 3D memory universe and day notes; drag to rotate and scroll to zoom. An optional nightly consolidation job extracts durable facts from prior days; its cron schedule is configurable in the same settings section. Markdown files are authoritative; SQLite vault tables can be rebuilt from them.
+Startup performs a one-way migration of old profile/agent/workplace files and SQLite KB rows, verifies their content, then deletes the source files and drops the KB tables. Retired tools and endpoints are removed. Automatic turn timelines and nightly consolidation remain configurable.
 
 ### The learning loop
 
 1. **Observe** — agent completes a turn (tool calls, decisions, your corrections)
-2. **Distill** — a background review (counter-based nudges, not similarity search) may call `memory` / `remember` / `manage_skill` when durable prefs or procedures appear; agents can also save mid-turn
-3. **Reuse** — curated memory is in the next session's system prompt; matching KB/skills may be injected at turn start; agents can `use_skill` / `recall`
+2. **Distill** — a background review (counter-based nudges, not similarity search) may call `memory` / `manage_skill` when durable prefs or procedures appear; agents can also save mid-turn
+3. **Reuse** — vault facts are refreshed each turn; matching skills can be loaded with `use_skill`
 4. **Refine** — later reviews can patch skills; you can edit or delete the Markdown / skill files by hand
 
-Skills are inspectable files — not black-box weight updates. Toggle **Settings → Learning loop** to enable/disable the background distill pass (agents can still call `manage_skill` / `memory` / `remember` mid-turn).
+Skills are inspectable files — not black-box weight updates. Toggle **Settings → Learning loop** to enable/disable the background distill pass (agents can still call `manage_skill` / `memory` mid-turn).
 
 ### Cross-agent learning
 
 Knowledge isn't siloed. Agents in the swarm can:
 
-- Inspect peers with **`agent_info`** — roster (`action=list`), or one agent's enabled tools, linked/shared skills, shared KB sample, and curated memory/state (`action=get`)
+- Inspect peers with **`agent_info`** — roster (`action=list`), or one agent's enabled tools, linked/shared skills, account vault facts and agent state (`action=get`)
 - **`delegate`** subtasks to the agent best suited for them
 - Share **artifacts** and **portal** files across workplaces
-- Use the **shared** skill catalog and knowledge base (`list_skills` / `recall`); each agent still has its own tool allowlist and `MEMORY.md`
+- Use the **shared** skill catalog (`list_skills`); each agent has its own tool allowlist, and vault facts are account-scoped
 
 A general-purpose agent might hand off to a specialist — or load a skill another agent created.
 
@@ -539,11 +535,11 @@ General-purpose primitives — enable per agent based on your use case:
 | `web_fetch` / `web_search` | Fetch URLs and search the web |
 | `todo` / `session_search` | Lightweight todos and message search (FTS) |
 | `list_skills` / `use_skill` / `manage_skill` | Browse, load, and distill skill playbooks |
-| `memory` | Curated `USER.md` / `MEMORY.md` notes (always-on next session) |
+| `memory` | Account vault facts: add, list, search, replace, remove |
 | `list_workplaces` / `agent_info` / `register_workplace` / `create_agent` | Workplaces, peer inspect, register local path, spawn agents |
 | `portal` | Copy files across workplaces via `/_portal/<name>/...` (async + progress) |
-| `clarify` / `forget_memory` | Ask the user / delete knowledge entries |
-| `recall` / `remember` / `agent_state` / `save_artifact` / `list_artifacts` / `fetch_artifact` | Searchable KB, KV state, durable artifacts |
+| `clarify` / `memory` | Ask the user / save, search, correct and remove vault facts |
+| `agent_state` / `save_artifact` / `list_artifacts` / `fetch_artifact` | Searchable KB, KV state, durable artifacts |
 
 | `delegate` | Hand a subtask to another agent |
 
@@ -567,7 +563,7 @@ tomo/
 │   ├── runtime/                  # Agent execution core (loop, LLM, tools)
 │   │   ├── coordinator/          # Swarm routing and delegation
 │   │   ├── agent/                # LLM turn loop, context, learning
-│   │   ├── memory/               # FTS / curated MD / retrieval layers
+│   │   ├── memory/               # Markdown vault / FTS / retrieval
 │   │   ├── portal/               # Cross-workplace file bridge
 │   │   ├── events/               # Event bus stub (placeholder)
 │   │   └── tools/                # Built-in Python tool backends
@@ -618,7 +614,7 @@ See `app/tools/` for declarative tool definitions; Python implementations go in 
 
 - [x] Alpha — home, models, swarm handoff, tools, workplaces, KB, Web UI
 - [x] Learning loop — mid-turn tools + background review (counter nudges); `manage_skill` / `memory`
-- [x] Memory engine — curated MD + FTS5; optional embeddings when an API key is set
+- [x] Memory engine — Markdown vault + rebuildable FTS5 indexes
 - [x] Portals — file bridge across workplaces with chunked binary + progress
 - [x] Tomo Connector — WebSocket tunnel agent for remote workplaces (Go `connector/`)
 - [x] Interval scheduler — SQLite schedules + background runner + UI

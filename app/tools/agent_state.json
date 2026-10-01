@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "agent_state",
-      "description": "Read or write durable agent state (timezone, preferred language, ongoing projects). Use for cross-session facts — not for one-off task notes (use remember) or procedures (use manage_skill).",
+      "description": "Read or write durable agent state (timezone, preferred language, ongoing projects). Use for structured operational keys. Save durable facts with memory on vault pages and procedures with manage_skill.",
       "parameters": {
         "type": "object",
         "properties": {

@@ -9,7 +9,6 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``settings``       — key/value platform settings (JSON-encoded values)
 * ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
 * ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
-* ``knowledge_entries`` — title/body/tags KB rows (Slice E; keyword recall)
 * ``skills`` / ``agent_skills`` — skill catalog + per-agent links (Slice G)
 * ``modules``        — optional module catalog enable/disable
 * ``usage_events``   — Token Monitor turn/token ledger
@@ -148,19 +147,6 @@ CREATE TABLE IF NOT EXISTS workplaces (
     enabled                INTEGER NOT NULL DEFAULT 1,
     created_at             REAL NOT NULL DEFAULT 0,
     updated_at             REAL NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS knowledge_entries (
-    id             TEXT PRIMARY KEY,
-    title          TEXT NOT NULL,
-    body           TEXT NOT NULL DEFAULT '',
-    tags_json      TEXT NOT NULL DEFAULT '[]',
-    confidence     REAL NOT NULL DEFAULT 0.7,
-    use_count      INTEGER NOT NULL DEFAULT 0,
-    success_count  INTEGER NOT NULL DEFAULT 0,
-    user_id        TEXT NOT NULL DEFAULT 'web',
-    created_at     REAL NOT NULL DEFAULT 0,
-    updated_at     REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS skills (
@@ -678,11 +664,6 @@ def migrate(conn: sqlite3.Connection) -> None:
             "SELECT name FROM sqlite_master WHERE type='table' OR type='virtual'"
         )
     }
-    if "knowledge_fts" not in fts_names:
-        conn.execute(
-            "CREATE VIRTUAL TABLE knowledge_fts USING fts5("
-            "id UNINDEXED, title, body, tags, tokenize='porter')"
-        )
     if "messages_fts" not in fts_names:
         conn.execute(
             "CREATE VIRTUAL TABLE messages_fts USING fts5("
@@ -765,35 +746,6 @@ def migrate(conn: sqlite3.Connection) -> None:
             )
             """
         )
-
-    # Slice 2: knowledge confidence / usage counters + per-account owner.
-    kb_cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_entries)")}
-    _kb_alters = {
-        "confidence": (
-            "ALTER TABLE knowledge_entries "
-            "ADD COLUMN confidence REAL NOT NULL DEFAULT 0.7"
-        ),
-        "use_count": (
-            "ALTER TABLE knowledge_entries "
-            "ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
-        ),
-        "success_count": (
-            "ALTER TABLE knowledge_entries "
-            "ADD COLUMN success_count INTEGER NOT NULL DEFAULT 0"
-        ),
-        "user_id": (
-            "ALTER TABLE knowledge_entries "
-            "ADD COLUMN user_id TEXT NOT NULL DEFAULT 'web'"
-        ),
-    }
-    for col, ddl in _kb_alters.items():
-        if col not in kb_cols:
-            conn.execute(ddl)
-    # Index for multi-user knowledge list/search.
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_user "
-        "ON knowledge_entries(user_id, updated_at DESC)"
-    )
 
     table_names = {
         r[0]
@@ -1016,8 +968,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ON episodic_relations(to_episode_id, relation)"
         )
 
-    from app.runtime.memory.fts import rebuild_knowledge_fts, rebuild_messages_fts
+    from app.runtime.memory.fts import rebuild_messages_fts
 
-    rebuild_knowledge_fts(conn)
     rebuild_messages_fts(conn)
     conn.commit()

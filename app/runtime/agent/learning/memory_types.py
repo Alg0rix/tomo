@@ -50,7 +50,6 @@ SAVED_LESSON_TYPES: frozenset[str] = frozenset(
 # Tools that can persist durable state during learning review.
 WRITE_TOOLS: frozenset[str] = frozenset(
     {
-        "remember",
         "memory",
         "agent_state",
         "manage_skill",
@@ -70,7 +69,6 @@ READ_TOOLS: frozenset[str] = frozenset(
 
 # Tool → default memory type (refined by memory target / args).
 _TOOL_DEFAULT_TYPE: dict[str, MemoryType] = {
-    "remember": "semantic",
     "agent_state": "agent",
     "manage_skill": "agent",  # skill update adjacent; tagged agent lane for extract
     "save_artifact": "execution",
@@ -84,10 +82,10 @@ _TOOL_DEFAULT_TYPE: dict[str, MemoryType] = {
 _STORE_HINTS: dict[MemoryType, str] = {
     "diary": "learning_events.diary — short growth-log line for Companion (not full episode)",
     "episodic": "episodic_memories — structured experiences (objective/context/trajectory/outcome/reflection)",
-    "semantic": "knowledge_entries via remember/recall (FTS)",
-    "user": "$TOMO_HOME/memories/users/<user_id>/USER.md via memory target=user",
-    "project": "$TOMO_HOME/workplaces/<id>/PROJECT.md",
-    "agent": "agents/<id>/users/<user_id>/MEMORY.md + agent_state",
+    "semantic": "vault entity pages via memory add/search",
+    "user": "vault user/profile via memory entity=user/profile",
+    "project": "vault project/<slug>",
+    "agent": "vault agent/<slug> + agent_state",
     "execution": "artifacts + execution_snippets index + tagged review actions",
     "conversation": "messages + session_summaries (session-scoped)",
     "shared": "swarm_notes (session-scoped; published on delegate complete)",
@@ -108,14 +106,8 @@ def memory_type_for_tool(
     name = (tool_name or "").strip()
     args = arguments or {}
     if name == "memory":
-        target = str(args.get("target") or "memory").strip().lower()
-        if target == "user":
-            return "user"
-        if target == "project":
-            return "project"
-        return "agent"
-    if name == "remember":
-        return "semantic"
+        kind = str(args.get("entity") or "").split("/", 1)[0]
+        return {"user": "user", "project": "project", "agent": "agent"}.get(kind, "semantic")
     if name == "save_artifact":
         return "execution"
     if name == "agent_state":
@@ -150,7 +142,9 @@ def classify_review_action(
     err = text.startswith("Error") or text.startswith("Error:")
     mtype = memory_type_for_tool(name, arguments=arguments, result_text=text)
     write = name in WRITE_TOOLS
-    successful_write = is_successful_write(name, text)
+    if name == "memory" and (arguments or {}).get("action", "list") in {"list", "search"}:
+        write = False
+    successful_write = write and is_successful_write(name, text)
     kind = "error" if err else ("write" if write else "read")
     if write and not err and not successful_write:
         kind = "noop"
@@ -171,7 +165,7 @@ def classify_actions(
     """Aggregate classification for a review pass.
 
     Prefer ``classified`` (structured) when available; otherwise parse action
-    strings like ``remember: …``.
+    strings like ``memory: …``.
 
     Slice 2 extract shape::
 
@@ -248,10 +242,10 @@ def lanes_prompt_block() -> str:
     """Short rules block for the learning-review system prompt."""
     lines = [
         "Memory lanes (choose the right store — never dump everything into USER):",
-        "- user → memory target=user (who they are, prefs, style) — hard char limit",
-        "- agent → memory target=memory / agent_state (your notes, env quirks) — hard char limit",
-        "- project → memory target=project (stack, architecture for the workplace)",
-        "- semantic → remember (searchable general facts; use when files full or fact is long)",
+        "- user → memory entity=user/profile (who they are, prefs, style)",
+        "- agent → memory entity=agent/<slug> / agent_state (your notes, env quirks)",
+        "- project → memory entity=project/<slug> (stack, architecture for the workplace)",
+        "- semantic → memory entity=topic/<slug> (searchable general facts)",
         "- episodic → record_episode (structured experience: objective, context, trajectory, outcome, reflection)",
         "- execution → save_artifact / tool outcomes (not USER prefs)",
         "- diary → Diary: line only (Companion growth log; NOT a full episode)",
@@ -260,7 +254,7 @@ def lanes_prompt_block() -> str:
         "Skills (manage_skill) are NOT a memory lane. Only for reusable how-to procedures.",
         "Episodic = what happened this time (experience). Semantic = what is known. Diary = growth log only.",
         "Record failures as well as successes. Prefer trajectory (what was tried) over problem→solution only.",
-        "Wrong lane: episode → skill create; prefs → skill; full MEMORY → skill overflow.",
+        "Wrong lane: episode → skill create; prefs → skill; facts → skill overflow.",
     ]
     return "\n".join(lines)
 

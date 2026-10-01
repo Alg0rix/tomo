@@ -106,13 +106,13 @@ def test_semantic_and_procedural_consolidation(tmp_path) -> None:
 
     sem = ep_svc.consolidate_semantic(user_id="u", min_reuse=2)
     assert sem
-    kb = store.list_knowledge_entries(user_id="u")
-    assert any("from-episodic" in (e.get("tags") or []) for e in kb)
+    kb = store.with_db(lambda conn: conn.execute('SELECT * FROM vault_docs WHERE user_id="u" AND kind="entity"').fetchall())
+    assert any("from-episodic" in (e["tags"] or []) for e in kb)
 
     procs = ep_svc.extract_procedures(user_id="u", min_success=0)
     assert procs
-    kb2 = store.list_knowledge_entries(user_id="u")
-    assert any("procedural" in (e.get("tags") or []) for e in kb2)
+    kb2 = store.with_db(lambda conn: conn.execute('SELECT * FROM vault_docs WHERE user_id="u" AND kind="entity"').fetchall())
+    assert any("procedural" in (e["tags"] or []) for e in kb2)
 
 
 def test_boundaries_open_close(tmp_path) -> None:

@@ -1,173 +1,79 @@
-"""``memory`` tool — curated MEMORY.md / USER.md notes."""
-
+"""Persistent memory CRUD and search over the account's Markdown vault."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from app.runtime.memory import curated
-from app.runtime.tools.sandbox import current_agent_id
-
-
-def _is_self_slug(slug: str, user_id: str) -> bool:
-    s = slug.casefold().replace("_", "-")
-    uid = (user_id or "").casefold().replace("_", "-")
-    return s in {"me", "user", "self", "the-user", "myself", uid} or s.startswith("usr-")
-
-
-def _vault_index(user_id: str, *, max_pages: int = 40) -> str:
-    """Compact list of entity pages with their live facts."""
-    from app.runtime.memory.vault import doc, paths
-
-    root = paths.vault_root(user_id) / "entities"
-    files = sorted(root.glob("*/*.md")) if root.is_dir() else []
-    if not files:
-        return "[entity] vault is empty"
-    lines = [f"[entity] {len(files)} pages"]
-    for path in files[:max_pages]:
-        try:
-            page = doc.parse(path.read_text(encoding="utf-8"))
-        except OSError:
-            continue
-        facts = [doc.fact_data(e)["text"] for e in page.entries if not e.startswith("~~")]
-        preview = "; ".join(f[:160] for f in facts[:3]) or "(no facts)"
-        lines.append(f"  [[{path.parent.name}/{path.stem}]] {preview}")
-    if len(files) > max_pages:
-        lines.append(f"  … +{len(files) - max_pages} more")
-    return "\n".join(lines)
+from app.runtime.memory.vault import doc, paths, read, write
 
 
 def run(arguments: dict[str, Any]) -> str:
+    from app.services import store
+    from app.runtime.tools.user_ctx import current_user_id
+
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
+    if "target" in arguments:
+        return "Error: use entity=type/slug; memory stores only vault pages"
     action = str(arguments.get("action") or "list").strip().lower()
-    target = str(arguments.get("target") or "memory").strip().lower()
-    agent_id = str(arguments.get("agent_id") or current_agent_id() or "").strip() or None
-    workplace_id = str(arguments.get("workplace_id") or "").strip() or None
-
-    if target == "entity":
-        from app.runtime.memory.vault import paths, write
-        from app.runtime.tools.user_ctx import current_user_id
-
-        key = str(arguments.get("entity") or "").strip()
+    key = str(arguments.get("entity") or "").strip()
+    uid = current_user_id()
+    try:
+        if action == "search":
+            query = arguments.get("query")
+            if not isinstance(query, str) or not query.strip():
+                return "Error: query is required"
+            hits = store.with_db(lambda conn: read.search(conn, uid, query, limit=20))
+            return "\n\n".join(f"[[{h['type']}/{h['slug']}]]\n{h['body']}" for h in hits) or "Vault has no matching facts."
         if action == "list" and not key:
-            return _vault_index(current_user_id())
-        try:
-            typ, slug = paths.entity_key(key)
-            if action == "add" and _is_self_slug(slug, current_user_id()):
-                return ("Error: don't make a page for the user. Put the fact on the page of the "
-                        "thing it is about, e.g. entity=person/max-verstappen with "
-                        "\"The user's favorite F1 driver.\" User preferences about how you work go to target=user.")
-            if action == "add":
-                from datetime import datetime
-
-                # Link the fact to today's timeline page unless a source is given.
-                source = str(arguments.get("source") or "").strip() or datetime.now().astimezone().date().isoformat()
-                result = write.add_entity(current_user_id(), key, str(arguments.get("content") or ""),
-                                          source=source, aliases=arguments.get('aliases'),
-                                          supersedes=str(arguments.get('supersedes') or ''))
-                return "Saved entity fact." if result["added"] else "Near-duplicate already present."
-            if action == "list":
-                path = paths.entity_path(current_user_id(), key)
-                return path.read_text(encoding="utf-8") if path.is_file() else "Entity is empty."
-        except ValueError as exc:
-            return f"Error: {exc}"
-        return "Error: entity target supports action=add|list only"
-
-    if target == "project":
-        from app.runtime.memory import project as project_mem
-
-        if not workplace_id:
-            workplace_id = project_mem.workplace_id_for_agent(agent_id)
-        if action == "list":
-            if not workplace_id:
-                return "Error: workplace_id required for project target (agent has no workplace)"
-            entries = project_mem.read_entries(workplace_id)
-            path = project_mem.project_path(workplace_id)
-            lines = [
-                f"[project] {path} ({len(entries)} entries)"
-                if path
-                else "[project] (unavailable)"
-            ]
-            for i, e in enumerate(entries, 1):
-                lines.append(f"  {i}. {e.replace(chr(10), ' ')[:200]}")
-            return "\n".join(lines) if entries else f"[project] empty ({path})"
-        if action == "add":
-            content = arguments.get("content")
-            if not isinstance(content, str):
-                return "Error: content is required"
-            result = project_mem.add_entry(workplace_id, content)
-            if not result.get("ok"):
-                return f"Error: {result.get('error')}"
-            return (
-                f"{result.get('message')} "
-                f"({result.get('chars', '?')} chars, {result.get('count')} entries)."
-            )
-        return "Error: project target supports action=add|list only"
-
-    if action == "list":
-        if target == "all":
-            lines = []
-            for t in ("user", "memory"):
-                result = curated.list_entries(t, agent_id=agent_id)
-                if not result.get("ok"):
-                    continue
-                lines.append(
-                    f"[{t}] {result['path']} "
-                    f"({result['chars']}/{result['limit']} chars, {result['count']} entries)"
-                )
-                for i, e in enumerate(result.get("entries") or [], 1):
-                    preview = e.replace("\n", " ")[:120]
-                    lines.append(f"  {i}. {preview}")
-            from app.runtime.tools.user_ctx import current_user_id
-
-            index_text = _vault_index(current_user_id())
-            lines.append(index_text)
+            def listing(conn):
+                from app.runtime.memory.vault import index
+                index.rebuild(conn, uid)
+                return conn.execute('SELECT type,slug,body FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY type,slug', (uid,)).fetchall()
+            pages = store.with_db(listing)
+            lines = [f"[vault] {len(pages)} pages"]
+            for page in pages:
+                live = [doc.fact_data(e)["text"] for e in doc.parse(page['body']).entries if not e.startswith("~~")]
+                lines.append(f"[[{page['type']}/{page['slug']}]] " + "; ".join(f[:160] for f in live[:3]))
             return "\n".join(lines)
-        result = curated.list_entries(target, agent_id=agent_id)
-        if not result.get("ok"):
-            return f"Error: {result.get('error')}"
-        lines = [
-            f"[{target}] {result['path']} "
-            f"({result['chars']}/{result['limit']} chars, {result['count']} entries)"
-        ]
-        for i, e in enumerate(result.get("entries") or [], 1):
-            preview = e.replace("\n", " ")[:200]
-            lines.append(f"  {i}. {preview}")
-        return "\n".join(lines) if result["count"] else f"[{target}] empty ({result['path']})"
-
-    if action == "add":
-        content = arguments.get("content")
-        if not isinstance(content, str):
-            return "Error: content is required"
-        result = curated.add_entry(target, content, agent_id=agent_id)
-        if not result.get("ok"):
-            return f"Error: {result.get('error')}"
-        return (
-            f"{result.get('message')} "
-            f"({result.get('chars')} chars, {result.get('count')} entries). "
-            "Saved to disk; system prompt updates next session."
-        )
-
-    if action == "replace":
-        old = arguments.get("old") or arguments.get("old_text")
-        new = arguments.get("new") or arguments.get("content")
-        if not isinstance(old, str) or not isinstance(new, str):
-            return "Error: old and new are required"
-        result = curated.replace_entry(target, old, new, agent_id=agent_id)
-        if not result.get("ok"):
-            return f"Error: {result.get('error')}"
-        return f"{result.get('message')}. Saved to disk; system prompt updates next session."
-
-    if action == "remove":
-        old = arguments.get("old") or arguments.get("old_text") or arguments.get("content")
-        if not isinstance(old, str):
-            return "Error: old (unique substring) is required"
-        result = curated.remove_entry(target, old, agent_id=agent_id)
-        if not result.get("ok"):
-            return f"Error: {result.get('error')}"
-        return f"{result.get('message')}. Saved to disk; system prompt updates next session."
-
-    return "Error: action must be add, replace, remove, or list"
-
-
-__all__ = ["run"]
+        typ, slug = paths.entity_key(key)
+        path = paths.entity_path(uid, key)
+        if action == "list":
+            return path.read_text(encoding="utf-8") if path.is_file() else "Vault page is empty."
+        if action == "add":
+            if typ == "person" and (slug in {"me", "user", "self", "the-user", "myself", uid.casefold(), uid.casefold().replace("_", "-")} or slug.startswith("usr-")):
+                return "Error: save the user's identity/preferences on user/profile"
+            content = arguments.get("content")
+            if not isinstance(content, str) or not content.strip():
+                return "Error: content is required"
+            result = write.add_entity(uid, key, content,
+                source=str(arguments.get("source") or datetime.now().astimezone().date().isoformat()),
+                aliases=arguments.get("aliases"), supersedes=str(arguments.get("supersedes") or ""))
+            if result.get("conflict"):
+                return "Error: supersedes must match exactly one live fact"
+            return "Saved vault fact." if result["added"] else "Near-duplicate already present."
+        if action in {"replace", "remove"}:
+            old = arguments.get("old")
+            if not isinstance(old, str) or not old.strip():
+                return "Error: old (unique substring of a live fact) is required"
+            # Resolve and mutate under the same account lock to prevent stale-index edits.
+            with write._lock(uid):
+                if not path.is_file():
+                    return "Error: vault page is empty"
+                page = doc.parse(path.read_text(encoding="utf-8"))
+                matches = [(i, doc.fact_data(e)["text"]) for i, e in enumerate(page.entries)
+                           if not e.startswith("~~") and old in doc.fact_data(e)["text"]]
+                if len(matches) != 1:
+                    return "Error: old must match exactly one live fact"
+                number, expected = matches[0]
+                if action == "replace":
+                    text = arguments.get("content")
+                    if not isinstance(text, str) or not text.strip():
+                        return "Error: content is required"
+                    ok = write.correct_fact(uid, key, number, text=text, expected=expected)
+                else:
+                    ok = write.forget_fact(uid, key, number)
+            return ("Replaced vault fact." if action == "replace" else "Removed vault fact.") if ok else "Error: fact changed; list the page and retry"
+        return "Error: action must be add, list, search, replace, or remove"
+    except (ValueError, OSError) as exc:
+        return f"Error: {exc}"

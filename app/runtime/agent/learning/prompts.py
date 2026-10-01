@@ -31,13 +31,11 @@ Rules:
 3. Memory = who the user is / durable prefs. Skills = how to do this class of task.
    If a similar preference already exists in USER profile, replace or skip —
    do not stack near-duplicates.
-4. Style/workflow complaints: first try `memory` (user/agent) or `remember`.
-   Only put them in a skill when they are a reusable procedure for a class of task.
-5. Memory capacity (see digest "## Memory capacity"):
-   - If a lane is near/full, do NOT create a skill as overflow storage.
-   - Prefer: replace/remove an outdated entry, then add; or use `remember`
-     (semantic KB, no char cap); or `agent_state` for short keyed facts.
-   - Never invent a skill just because `memory` returned a char-limit error.
+4. Save style and workflow preferences with memory entity=user/profile.
+   Agent lessons go on agent/<slug>, project conventions on project/<slug>.
+   Only put a lesson in a skill when it describes a reusable procedure.
+5. Vault storage has no character quota. List/search before writes and replace
+   outdated facts. Never use skills to store facts.
 6. If genuinely nothing durable stands out, reply exactly: Nothing to save.
 7. Keep skill bodies actionable (steps, pitfalls, verification). Be concise.
 8. After any successful write tool, your final text MUST include a line:
@@ -53,14 +51,10 @@ Rules:
 
 _FOCUS_MEMORY = """
 Focus this pass: MEMORY primarily — be ACTIVE.
-Look for persona, preferences, corrections, or expectations about how you should behave.
-If something stands out, save with `memory` (target=user for who they are; target=memory
-for env/conventions; target=project for workplace stack/architecture) even if the user
-never said "remember".
-Use `remember` for longer searchable KB docs; `agent_state` for short keyed facts.
-If capacity is tight: list entries, replace/remove stale ones, then add — or use
-`remember` / `agent_state`. Do NOT create skills as a dump for full memory files.
-Only touch skills if a clear procedural lesson appeared (how-to, not who they are).
+Save durable preferences and corrections on user/profile, agent lessons on
+agent/<slug>, and workplace facts on project/<slug> using memory entity=type/slug.
+Use topic/<slug> for longer references, memory action=search for recall.
+Save proactively; skills contain procedures, never facts.
 """
 
 _FOCUS_SKILLS = """
@@ -71,15 +65,15 @@ Preference order:
   3. CREATE a new class-level skill only when nothing covers the class AND the
      lesson is a reusable procedure (not a preference and not memory overflow)
 Only save memory if a clear durable preference/correction appeared.
-Prefs/persona never go into manage_skill create — use memory / remember.
+Prefs/persona never go into manage_skill create — use memory.
 """
 
 _FOCUS_BOTH = """
 Focus this pass: BOTH memory and skills — but they are different jobs.
-Memory first for who the user is (prefs, corrections, persona): `memory` /
-`remember` / `agent_state`. If a file is near capacity, replace or use `remember`.
+Memory first for who the user is: memory entity=user/profile.
+Use memory entity=topic/<slug> for references and agent_state for structured keys.
 Skills only for how to do a class of task. Prefer patch; create only when no
-class-level skill exists. Never create a skill because memory was full.
+class-level skill exists. Keep procedures in skills and facts in vault pages.
 """
 
 

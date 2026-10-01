@@ -1,5 +1,5 @@
 """Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
-workplaces/knowledge_entries/skills/plugins/schedules/users and ``platform_data``
+workplaces/skills/plugins/schedules/users and ``platform_data``
 for remaining stub lists (models, providers, safety rules, channel users, shared
 channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
@@ -20,7 +20,6 @@ from app.core.config import ADMIN_PASSWORD, DB_PATH
 from app.models.db import get_connection
 from app.models.mixins import agents as agents_store
 from app.models.mixins import attachments as attachments_store
-from app.models.mixins import knowledge_entries as knowledge_store
 from app.models.mixins import messages as messages_store
 from app.models.mixins import modules as modules_store
 from app.models.mixins import schedules as schedules_store
@@ -68,6 +67,8 @@ class Store:
         migrate(self._conn)
         swarm_store.interrupt_inflight(self._conn)
         seed_if_empty(self._conn)
+        from app.runtime.memory.vault.migrate import migrate_notes
+        migrate_notes(self._conn)
         users_store.ensure_bootstrap_admin(self._conn, ADMIN_PASSWORD)
         # A persisted "connected" status is never trustworthy after a restart
         # (live SDK sessions are process-local and do not survive it).
@@ -406,12 +407,6 @@ class Store:
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
             messages_store.clear_session_history(self._conn, session_id)
-        try:
-            from app.runtime.memory.curated import reset_freeze
-
-            reset_freeze(session_id=session_id)
-        except Exception:
-            pass
 
     # -- attachments (SQLite) --------------------------------------------
     def create_attachment(
@@ -467,12 +462,6 @@ class Store:
             if sid is None:
                 return
             messages_store.clear_session_history(self._conn, sid)
-        try:
-            from app.runtime.memory.curated import reset_freeze
-
-            reset_freeze(session_id=sid)
-        except Exception:
-            pass
 
     # -- stats / dashboard -----------------------------------------------
     def _stats_from(
@@ -868,61 +857,6 @@ class Store:
         """Assigned workplace (public) for ``agent_id``, or ``None``."""
         with self._lock:
             return workplaces_store.resolve_agent_workplace(self._conn, agent_id)
-
-    # -- knowledge entries (SQLite) --------------------------------------
-    def list_knowledge_entries(
-        self, *, user_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        with self._lock:
-            return knowledge_store.list_entries(self._conn, user_id=user_id)
-
-    def get_knowledge_entry(
-        self, entry_id: str, *, user_id: str | None = None
-    ) -> dict[str, Any] | None:
-        with self._lock:
-            return knowledge_store.get_entry(self._conn, entry_id, user_id=user_id)
-
-    def create_knowledge_entry(self, data: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            return knowledge_store.create_entry(self._conn, data)
-
-    def update_knowledge_entry(
-        self,
-        entry_id: str,
-        data: dict[str, Any],
-        *,
-        user_id: str | None = None,
-    ) -> dict[str, Any] | None:
-        with self._lock:
-            return knowledge_store.update_entry(
-                self._conn, entry_id, data, user_id=user_id
-            )
-
-    def delete_knowledge_entry(
-        self, entry_id: str, *, user_id: str | None = None
-    ) -> bool:
-        with self._lock:
-            return knowledge_store.delete_entry(
-                self._conn, entry_id, user_id=user_id
-            )
-
-    def search_knowledge(
-        self, query: str, *, limit: int = 5, user_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        with self._lock:
-            return knowledge_store.search_entries(
-                self._conn, query, limit=limit, user_id=user_id
-            )
-
-    def bump_knowledge_use(self, entry_id: str, *, success: bool = False) -> None:
-        with self._lock:
-            knowledge_store.bump_entry_use(
-                self._conn, entry_id, success=success
-            )
-
-    def mark_knowledge_success(self, entry_id: str) -> None:
-        with self._lock:
-            knowledge_store.mark_entry_success(self._conn, entry_id)
 
     # -- skills / plugins / schedules (SQLite) ---------------------------
     def list_skills(self) -> list[dict[str, Any]]:

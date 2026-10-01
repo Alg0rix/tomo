@@ -121,22 +121,10 @@ def _truncate(text: str, limit: int) -> str:
     return " ".join((text or "").split())[:limit]
 
 
-def _knowledge_context(user_id: str) -> str:
+def _vault_context(user_id: str) -> str:
     from app.services import store
-
-    entries = store.list_knowledge_entries(user_id=user_id)[:_KNOWLEDGE_LIMIT]
-    lines = []
-    for e in entries:
-        title = _truncate(e.get("title") or "", 80)
-        body = _truncate(e.get("body") or "", _KNOWLEDGE_TRUNC)
-        if not title and not body:
-            continue
-        tags = ", ".join(e.get("tags") or [])
-        bit = f"- {title}: {body}" if title else f"- {body}"
-        if tags:
-            bit += f" [tags: {tags}]"
-        lines.append(bit)
-    return "\n".join(lines)
+    from app.runtime.memory.vault.read import world_card
+    return store.with_db(lambda conn: world_card(conn, user_id))
 
 
 def _episode_context(user_id: str) -> str:
@@ -164,7 +152,7 @@ def _episode_context(user_id: str) -> str:
 def build_user_context(user_id: str) -> str:
     """Compact, user-scoped context block for the prompt-suggestion LLM call."""
     parts = []
-    kn = _knowledge_context(user_id)
+    kn = _vault_context(user_id)
     if kn:
         parts.append("Recent knowledge:\n" + kn)
     ep = _episode_context(user_id)

@@ -41,7 +41,7 @@ model decides when to track multi-step work). Optional ATG: pass
 checklist; default is off (no word/length heuristic).
 
 **Active learning.** After eligible top-level finals, a background review may
-distill durable facts (``memory`` / ``remember``) and procedural skills
+distill durable facts (``memory``) and procedural skills
 (``manage_skill``). Triggers: every N turns (memory) and cumulative tool
 iters / skill-touch (skills). Mid-turn the agent can also call those tools
 directly.
@@ -113,7 +113,6 @@ _READ_ONLY_TOOLS = frozenset(
         "search_files",
         "web_fetch",
         "web_search",
-        "recall",
         "render_ui",
         "session_search",
         "list_skills",
@@ -121,7 +120,6 @@ _READ_ONLY_TOOLS = frozenset(
         "todo",
         "use_skill",
         "agent_state",
-        "recall",
     }
 )
 
@@ -753,7 +751,7 @@ async def run_turn(
     from app.runtime.tools import user_ctx as user_ctx_mod
 
     arts_token = artifacts_fs.bind_session(session_id)
-    # Bind session owner so knowledge / session_search / USER.md stay private.
+    # Bind session owner so vault / session_search stay private.
     turn_user_id = "web"
     if session_id:
         try:

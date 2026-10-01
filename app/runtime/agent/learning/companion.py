@@ -31,11 +31,11 @@ def _days_together(first_seen_at: float | None) -> int:
 def _user_profile(user_id: str | None = None) -> tuple[list[str], int, int]:
     """Return (preview entries, total entry count, char count) from one read."""
     try:
-        from app.runtime.memory import curated
+        from app.runtime.memory.vault.notes import facts
 
-        entries = curated.read_user_entries(user_id=user_id)
+        entries = facts(user_id or "web", "user/profile")
         cleaned = [e.strip() for e in entries if (e or "").strip()]
-        chars = len(curated.ENTRY_DELIMITER.join(cleaned)) if cleaned else 0
+        chars = len("\n".join(cleaned)) if cleaned else 0
         return cleaned[:12], len(cleaned), chars
     except Exception:
         return [], 0, 0

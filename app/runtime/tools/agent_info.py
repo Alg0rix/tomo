@@ -78,7 +78,7 @@ def _list_swarm() -> str:
             lines.append(f"  {desc}")
     lines.append("")
     lines.append(
-        "Shared: knowledge base (remember/recall) and skill catalog are swarm-wide. "
+        "Shared: skill catalog is swarm-wide. Vault memory is account-scoped. "
         "Delegate with `delegate` when their role/workplace fits."
     )
     return "\n".join(lines)
@@ -140,39 +140,17 @@ def _section_skills(agent_id: str) -> list[str]:
     return lines
 
 
-def _section_kb() -> list[str]:
-    from app.services import store
-
-    entries = store.list_knowledge_entries()
-    lines = [
-        f"Knowledge base (shared swarm-wide): {len(entries)} entries. "
-        "Any agent with recall/remember can search/write."
-    ]
-    for e in entries[:8]:
-        title = (e.get("title") or e.get("id") or "?").strip()
-        eid = e.get("id") or ""
-        lines.append(f"  - {title} (`{eid}`)")
-    if len(entries) > 8:
-        lines.append(f"  … +{len(entries) - 8} more (use recall to search)")
-    return lines
-
-
 def _section_memory(agent_id: str) -> list[str]:
-    from app.runtime.memory import curated
+    from app.runtime.memory.vault.notes import facts, scoped_key
+    from app.runtime.tools.user_ctx import current_user_id
     from app.services import store
 
-    lines: list[str] = []
-    user = curated.list_entries("user", agent_id=agent_id)
-    mem = curated.list_entries("memory", agent_id=agent_id)
-    lines.append(
-        f"Curated memory files: USER.md entries={user.get('count', 0)}; "
-        f"agents/{agent_id}/MEMORY.md entries={mem.get('count', 0)} "
-        "(frozen into that agent's prompt next session)."
-    )
-    for label, result in (("USER", user), ("MEMORY", mem)):
-        for e in (result.get("entries") or [])[:3]:
-            preview = e.replace("\n", " ")[:80]
-            lines.append(f"  [{label}] {preview}")
+    uid = current_user_id()
+    lines = ["Account vault memory:"]
+    for key in ("user/profile", scoped_key("agent", agent_id)):
+        entries = facts(uid, key)
+        lines.append(f"  [[{key}]] {len(entries)} facts")
+        lines.extend("    " + e.replace("\n", " ")[:80] for e in entries[:3])
     state = store.list_agent_state(agent_id)
     if state:
         lines.append(f"Agent state keys ({len(state)}): " + ", ".join(sorted(state)[:12]))
@@ -232,9 +210,6 @@ def _detail(agent: dict[str, Any], include: set[str]) -> str:
     if "skills" in include:
         lines.extend(_section_skills(aid))
         lines.append("")
-    if "kb" in include or "knowledge" in include:
-        lines.extend(_section_kb())
-        lines.append("")
     if "memory" in include or "state" in include:
         lines.extend(_section_memory(aid))
         lines.append("")
@@ -272,7 +247,7 @@ def run(arguments: dict[str, Any] | None = None) -> str:
     elif isinstance(include_raw, list):
         include = {str(p).strip().lower() for p in include_raw if str(p).strip()}
     else:
-        include = {"tools", "skills", "kb", "memory"}
+        include = {"tools", "skills", "memory"}
 
     # Default action
     if not action:

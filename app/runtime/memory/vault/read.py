@@ -64,12 +64,14 @@ def world_card(conn: sqlite3.Connection, user_id: str, *, home_root: Path | None
     rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY updated DESC,mtime DESC,path', (user_id,)).fetchall()
     candidates = []
     for row in rows:
+        if row['type'] == 'agent':
+            continue
         live = [doc.fact_data(e)['text'] for e in doc.parse(row['body']).entries if not e.startswith('~~')]
         for number, fact in enumerate(reversed(live)):
             low = fact.casefold()
             personal = any(w in low for w in ('favorite', 'favourite', 'favorit', 'driver', 'partner', 'wife', 'husband', 'friend', 'keluarga', 'istri', 'suami', 'teman', 'prefers'))
             active = row['type'] in {'project', 'tool'}
-            candidates.append((int(personal) * 4 + int(active) * 2, number, row, fact))
+            candidates.append((int(row['type'] == 'user') * 6 + int(personal) * 4 + int(active) * 2, number, row, fact))
     candidates.sort(key=lambda c: (-c[0], c[1]))
     lines = []
     per_page = {}

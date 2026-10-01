@@ -188,7 +188,7 @@ def test_cli_does_not_initialize_server_store(db):
 from cli.__main__ import _run
 from cli.config_cmd import RESOURCES
 commands = [["config", resource, "list"] for resource in RESOURCES]
-commands += [["config", "settings", "show"], ["config", "knowledge", "create", "--set", "title=test", "--set", "body=test"], ["workplaces", "list"], ["skills", "sync"]]
+commands += [["config", "settings", "show"], ["workplaces", "list"], ["skills", "sync"]]
 for argv in commands:
     assert _run(argv) == 0
 assert "app.services.store" not in sys.modules, "CLI booted the server store"

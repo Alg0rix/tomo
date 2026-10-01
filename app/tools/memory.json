@@ -1,13 +1,13 @@
 {
   "id": "memory",
   "name": "Memory",
-  "description": "Persistent memory: vault entity pages plus curated USER.md / MEMORY.md / PROJECT.md.",
+  "description": "Persistent memory in the per-account Markdown vault.",
   "backend": "app.runtime.tools.memory",
   "schema": {
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Save durable facts to persistent memory (Markdown under $TOMO_HOME). Saved facts come back in future sessions, so keep them compact and high-signal.\n\nWHEN — save proactively (do NOT wait for \"remember this\"):\n- User states a preference, correction, or personal detail\n- You learn a stable fact about a person, project, tool, place, org, or topic in their life/work\n- You learn a stable fact about their environment, hostnames, conventions, or workflow\n\nPICK THE TARGET — route each fact to exactly one:\n- entity → the knowledge vault, one page per thing. DEFAULT for facts ABOUT something: a project, a tool/service, another person, a place, an org, a topic. Pass entity=\"<type>/<slug>\" with type in person|project|tool|place|org|topic and a lowercase-hyphen slug (project/tomo, tool/aio-serv, person/budi-santoso, org/kompas-tv). One fact per call. Mention related things as [[type/slug]] inside the fact to link pages, e.g. \"Deployed on [[tool/aio-serv]] behind Cloudflare.\"\n- user → memories/USER.md — ONLY who the user themself is: name, role, preferences, communication style, corrections to how you work. Not their projects, servers, or other people — those are entities.\n- memory → agents/<id>/MEMORY.md — your own working notes: tool quirks, lessons, conventions for how YOU operate.\n- project → PROJECT.md of the current workplace — repo-local conventions and layout.\nExamples: \"User prefers Indonesian casual replies\" → user. \"Tomo is a FastAPI agent IDE; UI uses vanilla JS\" → entity project/tomo. \"aio-serv listens on 8000\" → entity tool/aio-serv. \"Budi is the user's DevOps lead\" → entity person/budi. \"web_fetch fails on kompas.tv without a UA header\" → memory.\n\nRECALL: when the user asks what you know about them or their things (favorites, projects, people, servers), check before answering — relevant vault facts may already be in context as \"Vault [linked memory]\"; if not, call memory(action=list, target=entity) to see every page. Never say you don't know without checking.\n\nNEVER create an entity for the user themself (no person/<user-id>, person/me). A fact like \"user's favorite F1 driver is Max Verstappen\" goes on the thing's page: entity=person/max-verstappen, content=\"The user's favorite F1 driver.\"\n\nHOW: action=add|replace|remove|list. target=entity with no entity key + action=list returns the whole vault index. entity supports add|list only (list shows the page). For replace/remove on other targets, pass old= a short unique substring of the existing entry.\n\nSKIP: trivial/obvious info, easily re-discovered facts, raw dumps, task progress, completed-work logs, temporary TODOs, PR/issue numbers, commit SHAs — use session_search for those. Reusable procedures belong in manage_skill.\n\nSTYLE: declarative facts, not self-instructions. \"User prefers concise responses\" ✓ — \"Always respond concisely\" ✗.",
+      "description": "Save durable declarative facts proactively in the per-account Markdown vault, without a storage character quota. entity=type/slug: user/profile for user identity and preferences; agent/<slug> for agent lessons; project/<slug> for projects and repository conventions; person|tool|place|org|topic for facts about things. Link related pages with [[type/slug]]. Never create person/me or a person page for the user. Use list without entity for the complete index, list with entity for a page, search with query for recall. Use replace/remove with entity and old (unique substring of a live fact); replace requires content. Prefer one fact per add; aliases improves recall. supersedes must exactly match one live fact. Use session_search for past tasks and manage_skill for reusable procedures.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -17,64 +17,41 @@
               "add",
               "replace",
               "remove",
-              "list"
-            ],
-            "description": "add | replace | remove | list"
-          },
-          "target": {
-            "type": "string",
-            "enum": [
-              "memory",
-              "user",
-              "project",
-              "entity",
-              "all"
-            ],
-            "description": "entity (vault page about a project/tool/person/place/org/topic — default for facts about things) | user (the user's own profile & preferences only) | memory (your agent notes) | project (workplace PROJECT.md) | all (list only)"
-          },
-          "content": {
-            "type": "string",
-            "description": "Entry text for add (or new text for replace)."
-          },
-          "old": {
-            "type": "string",
-            "description": "Unique substring identifying the entry for replace/remove."
-          },
-          "new": {
-            "type": "string",
-            "description": "Replacement text for replace."
-          },
-          "agent_id": {
-            "type": "string",
-            "description": "Defaults to the bound agent (for memory target)."
-          },
-          "workplace_id": {
-            "type": "string",
-            "description": "Workplace id for project target (defaults from agent workplace)."
+              "list",
+              "search"
+            ]
           },
           "entity": {
             "type": "string",
-            "description": "For target=entity: <type>/<slug>, type in person|project|tool|place|org|topic, e.g. project/tomo, tool/aio-serv. Omit with action=list to list all pages."
+            "description": "type/slug of the vault page"
+          },
+          "content": {
+            "type": "string"
+          },
+          "old": {
+            "type": "string",
+            "description": "Unique substring of the live fact to replace/remove"
+          },
+          "query": {
+            "type": "string"
           },
           "source": {
-            "type": "string",
-            "description": "Optional source day/session for the fact; defaults to today's date."
+            "type": "string"
           },
           "aliases": {
             "type": "array",
             "items": {
               "type": "string"
-            },
-            "description": "Names, abbreviations and related search terms for the entity page."
+            }
           },
           "supersedes": {
-            "type": "string",
-            "description": "Exact old entity fact text to replace when an attribute changes."
+            "type": "string"
           }
         },
         "required": [
           "action"
-        ]
+        ],
+        "additionalProperties": false
       }
     }
   }

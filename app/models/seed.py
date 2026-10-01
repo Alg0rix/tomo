@@ -34,8 +34,6 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "search_files",
             "todo",
             "clarify",
-            "recall",
-            "remember",
             "agent_state",
             "save_artifact",
             "list_artifacts",
@@ -64,8 +62,6 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
             "todo",
             "session_search",
             "clarify",
-            "recall",
-            "remember",
             "agent_state",
             "save_artifact",
             "list_artifacts",
@@ -83,8 +79,6 @@ _AGENT_TOOLS: dict[str, frozenset[str]] = {
         {
             "web_search",
             "web_fetch",
-            "recall",
-            "remember",
             "agent_state",
             "save_artifact",
             "list_artifacts",
@@ -137,7 +131,7 @@ def _seed_agent_homes() -> None:
         try:
             adir = home.agent_dir(aid)
             adir.mkdir(parents=True, exist_ok=True)
-            home.agent_knowledge_dir(aid).mkdir(parents=True, exist_ok=True)
+
             home.agent_work_dir(aid).mkdir(parents=True, exist_ok=True)
             dest = home.agent_system_path(aid)
             if not dest.exists():
@@ -255,51 +249,6 @@ def _seed_settings(conn: sqlite3.Connection) -> None:
     conn.executemany("INSERT INTO settings (key, value_json) VALUES (?,?)", rows)
 
 
-def _seed_knowledge_entries(conn: sqlite3.Connection) -> None:
-    """Seed a small FAQ-style KB for recall demos (Slice E)."""
-    base = _now()
-    rows = [
-        (
-            "kb_vendor_deadline",
-            "Q3 vendor onboarding deadline",
-            "The Q3 vendor onboarding deadline is October 15, 2026. All vendor "
-            "packets must be submitted to Ops by that date.",
-            json.dumps(["vendors", "onboarding", "deadline", "q3"]),
-            base - 86400 * 3,
-            base - 86400 * 3,
-        ),
-        (
-            "kb_support_hours",
-            "On-call business hours",
-            "Human on-call coverage is Monday–Friday, 09:00–18:00 local time. "
-            "Urgent production incidents can page Ops outside those hours.",
-            json.dumps(["oncall", "hours", "ops"]),
-            base - 86400 * 2,
-            base - 86400 * 2,
-        ),
-        (
-            "kb_staging_cluster",
-            "Staging cluster hostname",
-            "The staging Kubernetes cluster hostname is staging.tomo.internal. "
-            "Deployments require the Ops agent workplace.",
-            json.dumps(["staging", "ops", "cluster"]),
-            base - 86400,
-            base - 86400,
-        ),
-    ]
-    conn.executemany(
-        "INSERT INTO knowledge_entries (id, title, body, tags_json, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?)",
-        rows,
-    )
-    try:
-        from app.runtime.memory.fts import rebuild_knowledge_fts
-
-        rebuild_knowledge_fts(conn)
-    except Exception:
-        pass
-
-
 def _seed_skills(conn: sqlite3.Connection) -> None:
     """Discover filesystem skills into the catalog (no fake placeholder rows)."""
     from app.extensions.skills import sync_skills_to_db
@@ -369,8 +318,6 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
             _seed_agent_homes()
         if _count(conn, "settings") == 0:
             _seed_settings(conn)
-        if _count(conn, "knowledge_entries") == 0:
-            _seed_knowledge_entries(conn)
         if _count(conn, "skills") == 0:
             _seed_skills(conn)
         # Always upsert missing discovered modules (safe for existing DBs).

@@ -204,8 +204,7 @@ def build_system_prompt(
     4. **Skills awareness / UI guidance** — compact enabled-skill catalog when the agent has
        ``list_skills`` / ``use_skill`` / ``manage_skill`` (full bodies via
        ``use_skill``).
-    5. **Curated memory** — frozen ``USER.md`` + ``MEMORY.md`` snapshot for
-       this session (file-backed; refreshes next session).
+    5. **Vault memory guidance** — durable facts on account-scoped Markdown pages.
     6. **Live context** — roster, workplace bindings, session artifacts and world facts.
     7. **Current time** — local + UTC, stamped once per turn (use bash ``date``
        for a live clock).
@@ -241,16 +240,9 @@ def build_system_prompt(
         if ui_block:
             parts.append(ui_block)
 
-    try:
-        from app.runtime.memory.curated import MEMORY_GUIDANCE, prompt_block
-
-        if _agent_has_memory_tool(agent_id):
-            parts.append(MEMORY_GUIDANCE)
-        mem = prompt_block(agent_id, session_id=session_id, home_root=root)
-        if mem:
-            parts.append(mem)
-    except Exception:
-        pass
+    from app.runtime.memory.vault.notes import GUIDANCE
+    if _agent_has_memory_tool(agent_id):
+        parts.append(GUIDANCE)
 
     if include_live_context:
         live = build_live_context(agent_id, session_id=session_id, home_root=root)
@@ -288,6 +280,10 @@ def build_live_context(
             session = store.get_session(session_id)
             if session:
                 uid = session.get('user_id') or uid
+        from app.runtime.memory.vault.notes import context
+        profile = context(uid, agent_id, home_root=root)
+        if profile:
+            parts.append(profile)
         card = store.with_db(lambda conn: world_card(conn, uid, home_root=root))
         if card:
             parts.append(card)
@@ -299,7 +295,7 @@ def build_live_context(
 
 
 def _agent_has_memory_tool(agent_id: str | None) -> bool:
-    """True when curated-memory guidance should be injected for this agent."""
+    """True when vault-memory guidance should be injected for this agent."""
     if not agent_id:
         return True  # coordinator fallback path still gets guidance
     try:

@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from app.core import home
 
-TYPES = frozenset({'person', 'project', 'tool', 'place', 'org', 'topic'})
+TYPES = frozenset({'person', 'project', 'tool', 'place', 'org', 'topic', 'user', 'agent'})
 _SAFE_ID = re.compile(r'^[A-Za-z0-9_.:@-]{1,128}$')
 _SAFE_SLUG = re.compile(r'^[a-z0-9][a-z0-9_-]{0,127}$')
 

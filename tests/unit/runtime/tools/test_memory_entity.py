@@ -15,15 +15,15 @@ def home(tmp_path, monkeypatch):
 
 
 def test_refuses_page_for_the_user(home) -> None:
-    out = memory_tool.run({"action": "add", "target": "entity", "entity": "person/usr_admin",
+    out = memory_tool.run({"action": "add", "entity": "person/usr_admin",
                            "content": "Favorite F1 driver is Max."})
     assert out.startswith("Error:")
 
 
 def test_list_without_key_indexes_vault(home) -> None:
-    saved = memory_tool.run({"action": "add", "target": "entity", "entity": "person/max-verstappen",
+    saved = memory_tool.run({"action": "add", "entity": "person/max-verstappen",
                              "content": "The user's favorite F1 driver."})
-    assert saved == "Saved entity fact."
-    out = memory_tool.run({"action": "list", "target": "entity"})
+    assert saved == "Saved vault fact."
+    out = memory_tool.run({"action": "list"})
     assert "[[person/max-verstappen]]" in out
     assert "favorite F1 driver" in out

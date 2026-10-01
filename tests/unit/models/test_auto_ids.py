@@ -53,14 +53,6 @@ def test_llm_profile_create_without_id(tmp_path: Path) -> None:
     assert "north" in p["id"] or "cloud" in p["id"]
 
 
-def test_knowledge_create_without_id(tmp_path: Path) -> None:
-    _rebind(tmp_path)
-    e = store.create_knowledge_entry(
-        {"title": "Vendor deadline", "body": "Oct 15"}
-    )
-    assert e["id"].startswith("kb_")
-
-
 def test_explicit_id_still_works(tmp_path: Path) -> None:
     _rebind(tmp_path)
     wp = store.create_workplace(

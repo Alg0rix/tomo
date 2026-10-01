@@ -22,55 +22,6 @@ def _rrf_fuse(
     return [rid for rid, _ in ordered[: max(1, min(limit, 20))]]
 
 
-def search_knowledge_hybrid(
-    conn: Any,
-    query: str,
-    *,
-    limit: int = 5,
-    user_id: str | None = None,
-) -> list[dict[str, Any]]:
-    """Hybrid KB search: FTS + semantic (+ lexical fallback), confidence-ranked.
-
-    When ``user_id`` is set, only that account's knowledge rows are returned.
-    """
-    from app.models.mixins import knowledge_entries as kb
-    from app.runtime.memory import embeddings as emb
-    from app.runtime.memory import fts
-
-    text = (query or "").strip()
-    if not text:
-        return []
-    k = max(1, min(int(limit or 5), 20))
-
-    fts_ids = fts.search_knowledge_fts(conn, text, limit=k * 2)
-    sem_ids = [
-        rid for rid, _ in emb.semantic_rank(conn, scope="knowledge", query=text, limit=k * 2)
-    ]
-
-    fused = _rrf_fuse([fts_ids, sem_ids], limit=k * 2)
-    hits: list[dict[str, Any]] = []
-    for eid in fused:
-        entry = kb.get_entry(conn, eid, user_id=user_id)
-        if entry:
-            hits.append(entry)
-    if not hits:
-        hits = kb.search_entries_lexical(conn, text, limit=k * 2, user_id=user_id)
-    else:
-        # Drop other-users' FTS/sem hits when scoping.
-        if user_id is not None:
-            hits = [
-                h
-                for h in hits
-                if (h.get("user_id") or "web") == (user_id or "web")
-            ]
-        if not hits:
-            hits = kb.search_entries_lexical(conn, text, limit=k * 2, user_id=user_id)
-
-    # Prefer high-confidence semantic knowledge among fused hits.
-    ranked = kb.rank_entries_by_confidence(hits, limit=k)
-    return ranked
-
-
 def search_messages_hybrid(
     conn: Any,
     query: str,
@@ -141,7 +92,7 @@ def retrieve_for_turn(
     Ranking preference (Learning OS Slice 2):
     user prefs → bound project → high-confidence semantic KB → rest.
 
-    Knowledge and USER.md are scoped to ``user_id`` (turn-bound account).
+    Vault facts and knowledge are scoped to ``user_id`` (turn-bound account).
     """
     if not (query or "").strip():
         return ""
@@ -172,30 +123,13 @@ def retrieve_for_turn(
     except Exception as exc:
         _logger.debug("vault retrieve failed: %s", exc)
 
-    # 1) User lane (prefs / style) — highest priority retrieval signal.
     try:
-        from app.runtime.memory import curated
-
-        user_entries = curated.read_user_entries(user_id=uid)
-        cleaned = [e.strip() for e in user_entries if (e or "").strip()]
-        if cleaned:
-            snippet = "\n".join(f"- {e[:160]}" for e in cleaned[:4])
-            parts.append("User prefs [user]:\n" + snippet)
+        from app.runtime.memory.vault.notes import context
+        profile = context(uid, agent_id)
+        if profile:
+            parts.append(profile)
     except Exception as exc:
-        _logger.debug("user retrieve failed: %s", exc)
-
-    # 2) Project lane when workplace is bound.
-    if agent_id:
-        try:
-            from app.runtime.memory import project as project_mem
-
-            wid = project_mem.workplace_id_for_agent(agent_id)
-            if wid:
-                snip = project_mem.format_snippet(wid, limit=400)
-                if snip and snip != "(empty)":
-                    parts.append(f"Project notes [project] ({wid}):\n{snip}")
-        except Exception as exc:
-            _logger.debug("project retrieve failed: %s", exc)
+        _logger.debug("vault profile retrieval failed: %s", exc)
 
     # 3) Concrete past experiences (episodic), then semantic KB.
     try:
@@ -226,27 +160,6 @@ def retrieve_for_turn(
             )
     except Exception as exc:
         _logger.debug("episodic retrieve failed: %s", exc)
-
-    try:
-        kb_hits = store.search_knowledge(query, limit=limit, user_id=uid)
-        if kb_hits:
-            lines = []
-            for h in kb_hits[:limit]:
-                body = (h.get("body") or "").strip().replace("\n", " ")
-                if len(body) > 180:
-                    body = body[:177] + "…"
-                conf = h.get("confidence")
-                conf_s = f" conf={conf:.2f}" if isinstance(conf, (int, float)) else ""
-                lines.append(f"- {h.get('title')}: {body}{conf_s}")
-                try:
-                    eid = (h.get("id") or "").strip()
-                    if eid:
-                        store.bump_knowledge_use(eid)
-                except Exception:
-                    pass
-            parts.append("Knowledge [semantic]:\n" + "\n".join(lines))
-    except Exception as exc:
-        _logger.debug("kb retrieve failed: %s", exc)
 
     try:
         skills = store.list_skills()
@@ -337,7 +250,6 @@ def retrieve_for_turn(
 
 
 __all__ = [
-    "search_knowledge_hybrid",
     "search_messages_hybrid",
     "retrieve_for_turn",
 ]

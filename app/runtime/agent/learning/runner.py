@@ -11,7 +11,6 @@ from typing import Any, Iterator
 from app.runtime.agent.learning.diary import derive_diary
 from app.runtime.agent.learning.digest import (
     build_review_digest,
-    format_memory_capacity,
     format_skill_catalog,
     format_user_snippet,
 )
@@ -35,7 +34,6 @@ _MAX_REVIEW_ROUNDS = 5
 
 _ALLOWED_REVIEW_TOOLS = frozenset(
     {
-        "remember",
         "memory",
         "agent_state",
         "list_skills",
@@ -61,7 +59,7 @@ def _gather_digest_context(
     project_snip = "(no workplace)"
     conversation = "(none)"
     agent_snip = "(empty)"
-    semantic = "(use remember for durable searchable facts — not chat dumps)"
+    semantic = "(use memory for durable searchable facts — not chat dumps)"
     shared = "(none yet)"
     capacity = "(capacity unknown)"
     uid = (user_id or "").strip() or None
@@ -86,20 +84,17 @@ def _gather_digest_context(
     except Exception as exc:
         _logger.debug("learning catalog gather failed: %s", exc)
     try:
-        from app.runtime.memory import curated
+        from app.runtime.memory.vault.notes import facts, scoped_key
 
-        user_entries = curated.read_user_entries(user_id=uid)
+        user_entries = facts(uid, "user/profile")
         user_snip = format_user_snippet(user_entries)
     except Exception as exc:
         _logger.debug("learning USER snippet gather failed: %s", exc)
     try:
-        from app.runtime.memory import project as project_mem
-
-        wid = project_mem.workplace_id_for_agent(agent_id)
-        if wid:
-            project_snip = project_mem.format_snippet(wid)
-        else:
-            project_snip = "(no workplace bound)"
+        from app.runtime.memory.vault.notes import facts, scoped_key
+        agent = store.get_agent(agent_id) if agent_id else None
+        wid = (agent or {}).get("workplace_id")
+        project_snip = format_user_snippet(facts(uid, scoped_key("project", wid))) if wid else "(no workplace bound)"
     except Exception as exc:
         _logger.debug("learning project snippet failed: %s", exc)
     try:
@@ -113,44 +108,23 @@ def _gather_digest_context(
         _logger.debug("learning conversation summary failed: %s", exc)
     try:
         if agent_id:
-            from app.runtime.memory import curated
+            from app.runtime.memory.vault.notes import facts, scoped_key
 
-            agent_entries = curated.read_agent_entries(agent_id, user_id=uid)
+            agent_entries = facts(uid, scoped_key("agent", agent_id))
             agent_snip = format_user_snippet(agent_entries)
     except Exception as exc:
         _logger.debug("learning agent memory snippet failed: %s", exc)
-    try:
-        from app.runtime.memory import curated
-
-        def _chars(entries: list[str]) -> int:
-            cleaned = [e.strip() for e in entries if (e or "").strip()]
-            if not cleaned:
-                return 0
-            return len(curated.ENTRY_DELIMITER.join(cleaned))
-
-        capacity = format_memory_capacity(
-            user_chars=_chars(user_entries),
-            user_limit=curated.USER_CHAR_LIMIT,
-            user_entries=len([e for e in user_entries if (e or "").strip()]),
-            agent_chars=_chars(agent_entries),
-            agent_limit=curated.MEMORY_CHAR_LIMIT,
-            agent_entries=len([e for e in agent_entries if (e or "").strip()]),
-        )
-    except Exception as exc:
-        _logger.debug("learning capacity gather failed: %s", exc)
+    capacity = "Vault pages have no storage character quota. Keep facts useful and deduplicated; skills are for procedures."
     try:
         from app.services import store
 
-        rows = store.list_knowledge_entries(user_id=uid) or []
-        titles = []
-        for r in rows[:8]:
-            if not isinstance(r, dict):
-                continue
-            t = (r.get("title") or r.get("id") or "").strip()
-            if t:
-                titles.append(f"- {t[:80]}")
+        from app.runtime.memory.vault import index
+        def pages(conn):
+            index.rebuild(conn, uid)
+            return conn.execute('SELECT title FROM vault_docs WHERE user_id=? AND kind="entity" ORDER BY updated DESC LIMIT 8', (uid,)).fetchall()
+        titles = ["- " + row["title"][:80] for row in store.with_db(pages)]
         if titles:
-            semantic = "Recent KB titles:\n" + "\n".join(titles)
+            semantic = "Recent vault pages:\n" + "\n".join(titles)
     except Exception as exc:
         _logger.debug("learning semantic hint failed: %s", exc)
     try:
@@ -294,7 +268,6 @@ def _learning_tool_schemas(*, review_memory: bool, review_skills: bool) -> list[
     if review_memory:
         allow.update(
             {
-                "remember",
                 "agent_state",
                 "save_artifact",
                 "list_artifacts",
@@ -314,7 +287,7 @@ def _learning_tool_schemas(*, review_memory: bool, review_skills: bool) -> list[
         )
     if not allow:
         allow = {
-            "remember",
+
             "memory",
             "list_skills",
             "use_skill",

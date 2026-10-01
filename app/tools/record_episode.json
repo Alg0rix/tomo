@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "record_episode",
-      "description": "Persist one coherent experience for future retrieval. Prefer structured fields (objective, context, trajectory, outcome, reflection, evaluation). Freeform `content` is allowed as a fallback narrative. Episodic = what happened this time; not a general fact (remember) or preference (memory). Failures are valuable to record.",
+      "description": "Persist one coherent experience for future retrieval. Prefer structured fields (objective, context, trajectory, outcome, reflection, evaluation). Freeform `content` is allowed as a fallback narrative. Episodic = what happened this time; general facts and preferences belong on memory vault pages. Failures are valuable to record.",
       "parameters": {
         "type": "object",
         "properties": {

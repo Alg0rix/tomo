@@ -403,187 +403,30 @@
   var codexCloseBtns = codexCard ? codexCard.querySelectorAll('[data-dock-close]') : [];
   codexCloseBtns.forEach(function (btn) { btn.addEventListener('click', closeCodexCard); });
 
-  // ---- Knowledge entries (System → Memory) ----
-  var kbList = document.getElementById('knowledgeList');
-  var kbFormCard = document.getElementById('knowledgeFormCard');
-  var kbMode = document.getElementById('kbFormMode');
-  var kbId = document.getElementById('kbId');
-  var kbTitle = document.getElementById('kbTitle');
-  var kbBody = document.getElementById('kbBody');
-  var kbTags = document.getElementById('kbTags');
-  var kbSearch = document.getElementById('kbSearch');
-  var kbSearchMeta = document.getElementById('kbSearchMeta');
-  var kbSearchTimer = null;
-  var kbSearchSeq = 0;
-
-  function parseTags(s) {
-    return String(s || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
-  }
-
-  function kbRowHtml(e) {
-    var tags = (e.tags || []).map(function (t) { return '<span class="badge muted sm">' + esc(t) + '</span>'; }).join(' ');
-    var preview = (e.body || '').slice(0, 120);
-    if ((e.body || '').length > 120) preview += '…';
-    return '<div class="row" data-id="' + esc(e.id) + '"><div class="meta"><div class="title">' + esc(e.title) + ' <span class="faint mono">' + esc(e.id) + '</span></div><div class="desc">' + esc(preview) + (tags ? ' · ' + tags : '') + '</div></div><div class="machine-row-actions"><button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
-  }
-
-  function renderKnowledge(entries, opts) {
-    if (!kbList) return;
-    opts = opts || {};
-    var q = (opts.query || '').trim();
-    if (kbSearchMeta) {
-      if (q) {
-        kbSearchMeta.hidden = false;
-        kbSearchMeta.textContent = entries.length + ' hit' + (entries.length === 1 ? '' : 's');
-      } else {
-        kbSearchMeta.hidden = true;
-        kbSearchMeta.textContent = '';
-      }
-    }
-    if (!entries.length) {
-      kbList.innerHTML = q
-        ? '<div class="empty">No entries match “' + esc(q) + '”.</div>'
-        : '<div class="empty">No knowledge entries yet.</div>';
-    } else {
-      kbList.innerHTML = entries.map(kbRowHtml).join('');
-    }
-    if (!q) {
-      var val = document.getElementById('map-memory-val');
-      var node = nav.querySelector('a[data-section="memory"]');
-      if (val) val.textContent = entries.length ? (entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies')) : 'Empty';
-      if (node) node.setAttribute('data-state', entries.length ? 'ok' : 'off');
-    }
-  }
-
-  async function loadKnowledge(query) {
-    var q = (query != null ? query : (kbSearch && kbSearch.value) || '').trim();
-    var seq = ++kbSearchSeq;
+  // ---- Vault memory ----
+  var vaultForm = document.getElementById('vaultFactForm');
+  if (vaultForm) vaultForm.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    var entity = document.getElementById('vaultEntity').value.trim();
+    var content = document.getElementById('vaultContent').value.trim();
     try {
-      var path = q
-        ? '/api/knowledge?q=' + encodeURIComponent(q) + '&limit=50'
-        : '/api/knowledge';
-      var d = await Tomo.api(path);
-      if (seq !== kbSearchSeq) return;
-      if (d) renderKnowledge(d.entries || [], { query: q });
-    } catch (e) {
-      if (seq !== kbSearchSeq) return;
-      if (kbList) kbList.innerHTML = '<div class="empty">Could not load knowledge entries.</div>';
-    }
-  }
-
-  if (kbSearch) {
-    kbSearch.addEventListener('input', function () {
-      clearTimeout(kbSearchTimer);
-      kbSearchTimer = setTimeout(function () { loadKnowledge(kbSearch.value); }, 220);
-    });
-    kbSearch.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape') {
-        kbSearch.value = '';
-        loadKnowledge('');
-      }
-    });
-  }
-
-  function openKbForm(mode, e) {
-    kbMode.value = mode;
-    document.getElementById('knowledgeFormTitle').textContent = mode === 'add' ? 'New entry' : 'Inspect entry';
-    if (mode === 'add') {
-      kbId.value = ''; kbTitle.value = ''; kbBody.value = ''; kbTags.value = '';
-      markSelected(kbList, '');
-    } else {
-      kbId.value = e.id; kbTitle.value = e.title || ''; kbBody.value = e.body || ''; kbTags.value = (e.tags || []).join(', ');
-      markSelected(kbList, e.id);
-    }
-    kbFormCard.classList.remove('hidden');
-    if (kbTitle) kbTitle.focus();
-  }
-
-  var addKb = document.getElementById('addKnowledgeBtn');
-  if (addKb) addKb.addEventListener('click', function () { openKbForm('add'); });
-  var cancelKb = document.getElementById('kbCancel');
-  if (cancelKb) cancelKb.addEventListener('click', function () { kbFormCard.classList.add('hidden'); });
-
-  var uploadKbBtn = document.getElementById('uploadKnowledgeBtn');
-  var kbFileInput = document.getElementById('kbFileInput');
-  var KB_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-  var KB_ALLOWED_EXT = { pdf: 1, docx: 1, txt: 1, md: 1, markdown: 1 };
-  if (uploadKbBtn && kbFileInput) {
-    uploadKbBtn.addEventListener('click', function () { kbFileInput.click(); });
-    kbFileInput.addEventListener('change', async function () {
-      var f = kbFileInput.files && kbFileInput.files[0];
-      kbFileInput.value = '';
-      if (!f) return;
-      var ext = (f.name.split('.').pop() || '').toLowerCase();
-      if (!KB_ALLOWED_EXT[ext]) {
-        Tomo.toast('Unsupported file type. Allowed: PDF, DOCX, TXT, MD', 'err');
-        return;
-      }
-      if (f.size > KB_MAX_UPLOAD_BYTES) {
-        Tomo.toast('File too large (max 20MB)', 'err');
-        return;
-      }
-      if (f.size === 0) {
-        Tomo.toast('File is empty', 'err');
-        return;
-      }
-      var fd = new FormData();
-      fd.append('file', f, f.name);
-      uploadKbBtn.disabled = true;
-      Tomo.toast('Parsing upload…', 'ok');
-      try {
-        var created = await Tomo.api('/api/knowledge/upload', { method: 'POST', body: fd });
-        var msg = 'Uploaded "' + (created && created.title ? created.title : f.name) + '"';
-        if (created && created.upload && created.upload.truncated) msg += ' (truncated)';
-        Tomo.toast(msg, 'ok');
-        var warns = created && created.upload && created.upload.warnings;
-        if (warns && warns.length) {
-          Tomo.toast(warns.slice(0, 2).join('; '), 'err');
-        }
-        loadKnowledge();
-      } catch (err) {
-        var detail = err && err.body && err.body.detail;
-        Tomo.toast((typeof detail === 'string' ? detail : null) || (err && err.message) || 'Upload failed', 'err');
-      } finally {
-        uploadKbBtn.disabled = false;
-      }
-    });
-  }
-
-  if (kbList) {
-    kbList.addEventListener('click', async function (e) {
-      var btn = e.target.closest('button[data-act]');
-      var row = e.target.closest('[data-id]');
-      var eid = row ? row.dataset.id : '';
-      if (btn && btn.dataset.act === 'delete') {
-        if (!confirm('Delete knowledge entry "' + eid + '"?')) return;
-        try { await Tomo.api('/api/knowledge/' + encodeURIComponent(eid), { method: 'DELETE' }); Tomo.toast('Entry deleted', 'ok'); closeDocks(); loadKnowledge(); } catch (er) { Tomo.toast((er && er.message) || 'Could not delete', 'err'); }
-        return;
-      }
-      if (btn || !eid) return;
-      try { var ent = await Tomo.api('/api/knowledge/' + encodeURIComponent(eid)); if (ent) openKbForm('edit', ent); } catch (er) { Tomo.toast('Could not load entry', 'err'); }
-    });
-  }
-
-  var saveKb = document.getElementById('kbSave');
-  if (saveKb) {
-    saveKb.addEventListener('click', async function () {
-      var title = kbTitle.value.trim();
-      if (!title) { Tomo.toast('Title is required', 'err'); return; }
-      var body = { title: title, body: kbBody.value, tags: parseTags(kbTags.value) };
-      try {
-        if (kbMode.value === 'add') {
-          await Tomo.api('/api/knowledge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          Tomo.toast('Entry created', 'ok');
-        } else {
-          await Tomo.api('/api/knowledge/' + encodeURIComponent(kbId.value), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          Tomo.toast('Entry saved', 'ok');
-        }
-        kbFormCard.classList.add('hidden'); loadKnowledge();
-      } catch (err) { Tomo.toast((err && err.message) || 'Could not save entry', 'err'); }
-    });
-  }
-
-  loadKnowledge();
+      await Tomo.api('/api/memory/facts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entity: entity, content: content}) });
+      Tomo.toast('Saved to vault', 'ok');
+      document.getElementById('vaultContent').value = '';
+    } catch (err) { Tomo.toast(err.message || 'Could not save fact', 'err'); }
+  });
+  var vaultUpload = document.getElementById('vaultUpload');
+  if (vaultUpload) vaultUpload.addEventListener('change', async function () {
+    if (!vaultUpload.files.length) return;
+    var form = new FormData();
+    form.append('file', vaultUpload.files[0]);
+    form.append('entity', document.getElementById('vaultEntity').value.trim());
+    try {
+      await Tomo.api('/api/memory/upload', {method: 'POST', body: form});
+      Tomo.toast('Uploaded to vault', 'ok');
+    } catch (err) { Tomo.toast(err.message || 'Could not upload', 'err'); }
+    vaultUpload.value = '';
+  });
 
   // ---- Login accounts (System → Accounts) ----
   var userList = document.getElementById('userList');

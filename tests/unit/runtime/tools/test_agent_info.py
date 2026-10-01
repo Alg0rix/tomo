@@ -30,7 +30,7 @@ def test_agent_info_get_ops_tools(tmp_path: Path) -> None:
     assert "bash" in out
     assert "Tools" in out
     assert "Skills" in out
-    assert "Knowledge base" in out
+    assert "Account vault memory" in out
 
 
 def test_agent_info_resolve_by_name(tmp_path: Path) -> None:

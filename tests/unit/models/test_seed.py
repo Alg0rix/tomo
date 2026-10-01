@@ -28,8 +28,7 @@ def test_seed_if_empty_populates_demo_data(tmp_path) -> None:
     assert {"main", "ops", "coder", "research"} <= agent_ids
     assert conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"] == 0
     assert conn.execute("SELECT COUNT(*) AS c FROM settings").fetchone()["c"] > 0
-    kb_ids = {r["id"] for r in conn.execute("SELECT id FROM knowledge_entries")}
-    assert "kb_vendor_deadline" in kb_ids
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name='knowledge_entries'").fetchone() is None
     conn.close()
 
 
@@ -39,12 +38,10 @@ def test_seed_if_empty_idempotent(tmp_path) -> None:
     n_agents = conn.execute("SELECT COUNT(*) AS c FROM agents").fetchone()["c"]
     n_sessions = conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"]
     n_settings = conn.execute("SELECT COUNT(*) AS c FROM settings").fetchone()["c"]
-    n_kb = conn.execute("SELECT COUNT(*) AS c FROM knowledge_entries").fetchone()["c"]
     seed_if_empty(conn)  # all tables non-empty -> no-op
     assert conn.execute("SELECT COUNT(*) AS c FROM agents").fetchone()["c"] == n_agents
     assert conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"] == n_sessions
     assert conn.execute("SELECT COUNT(*) AS c FROM settings").fetchone()["c"] == n_settings
-    assert conn.execute("SELECT COUNT(*) AS c FROM knowledge_entries").fetchone()["c"] == n_kb
     conn.close()
 
 

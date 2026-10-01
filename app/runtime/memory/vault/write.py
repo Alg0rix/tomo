@@ -8,12 +8,20 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from app.runtime.memory import curated
-from app.services import store
 from . import doc, index, paths
 
 _locks: dict[str, threading.RLock] = {}
 _guard = threading.Lock()
+
+
+def near_duplicate(entries: list[str], content: str) -> str | None:
+    needle = " ".join(content.casefold().split())
+    for entry in entries:
+        normalized = " ".join(entry.casefold().split())
+        shorter, longer = sorted((normalized, needle), key=len)
+        if normalized == needle or (len(shorter) >= 24 and shorter in longer):
+            return entry
+    return None
 
 
 def _lock(user_id: str) -> threading.RLock:
@@ -42,6 +50,8 @@ def _aliases(slug: str, aliases: list[str] | None) -> list[str]:
 
 
 def _save(user_id: str, path: Path, page: doc.Document, home_root, conn) -> None:
+    from app.services import store
+
     page.meta['updated'] = datetime.now().astimezone().date().isoformat()
     atomic_write(path, doc.serialize(page))
     if conn is None:
@@ -56,13 +66,15 @@ def _body(page: doc.Document, entries: list[str]) -> None:
 
 
 def add_entity(user_id: str, key: str, fact: str, *, source: str = '', origin: str = 'agent',
-               aliases: list[str] | None = None, supersedes: str = '',
+               aliases: list[str] | None = None, supersedes: str = '', tags: list[str] | None = None,
                home_root: Path | None = None, conn=None) -> dict:
     typ, slug = paths.entity_key(key)
     if aliases is not None and (not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases)):
         raise ValueError('invalid aliases')
+    if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) or any(c in t for c in '\r\n,[]') for t in tags)):
+        raise ValueError('invalid tags')
     fact = (fact or '').strip()
-    if not fact or re.search(r'(?m)^§', fact) or fact.startswith('~~') or len(fact) > 2000:
+    if not fact or fact.startswith('~~'):
         raise ValueError('invalid fact')
     if origin not in {'agent', 'consolidation', 'user', 'extraction'}:
         raise ValueError('invalid fact origin')
@@ -72,6 +84,8 @@ def add_entity(user_id: str, key: str, fact: str, *, source: str = '', origin: s
     with _lock(user_id):
         page = doc.parse(path.read_text(encoding='utf-8')) if path.exists() else doc.Document(
             {'type': typ, 'aliases': [], 'tags': [], 'updated': ''}, f'# {slug.replace("-", " ").title()}')
+        if tags is not None:
+            page.meta['tags'] = list(dict.fromkeys([*page.meta.get('tags', []), *tags]))
         entries = page.entries
         matches = [i for i, e in enumerate(entries) if not e.startswith('~~') and
                    supersedes and doc.fact_data(e)['text'] == supersedes]
@@ -86,7 +100,7 @@ def add_entity(user_id: str, key: str, fact: str, *, source: str = '', origin: s
             return {'added': False, 'path': str(path), 'conflict': True}
         stamp = datetime.now().astimezone().date().isoformat()
         duplicate = (any(e.casefold() == fact.casefold() for e in live) if origin == 'user'
-                     else curated.near_duplicate(live, fact))
+                     else near_duplicate(live, fact))
         for i in matches:
             entries[i] = f'~~{entries[i]}~~ superseded {stamp}'
         if duplicate:
@@ -94,7 +108,8 @@ def add_entity(user_id: str, key: str, fact: str, *, source: str = '', origin: s
             _save(user_id, path, page, home_root, conn)
             return {'added': False, 'superseded': bool(matches), 'path': str(path)}
         src = f' (src: [[{source}]])' if source else ''
-        entries.append(f'{fact} (origin: {origin}){src}')
+        encoded = doc.encode_fact(fact)
+        entries.append(f'{encoded} (origin: {origin}){src}')
         _body(page, entries)
         _save(user_id, path, page, home_root, conn)
         return {'added': True, 'path': str(path)}
@@ -131,6 +146,8 @@ def correct_fact(user_id: str, key: str, number: int, *, text: str | None = None
 
 
 def forget_fact(user_id: str, key: str, number: int, *, home_root: Path | None = None, conn=None) -> bool:
+    from app.services import store
+
     path = paths.entity_path(user_id, key, home_root=home_root)
     with _lock(user_id):
         if not path.is_file():
@@ -152,6 +169,8 @@ def forget_fact(user_id: str, key: str, number: int, *, home_root: Path | None =
 
 
 def append_timeline(user_id: str, session_id: str, agent_id: str, summary: str, *, home_root: Path | None = None, conn=None) -> Path:
+    from app.services import store
+
     now = datetime.now().astimezone()
     path = paths.timeline_path(user_id, now.date().isoformat(), home_root=home_root)
     safe_session = re.sub(r'[^A-Za-z0-9_.:@-]', '', session_id)[:128]
@@ -175,6 +194,8 @@ def append_timeline(user_id: str, session_id: str, agent_id: str, summary: str, 
 
 def record_turn(session_id: str | None, agent_id: str | None, user_message: str | None, final_content: str) -> None:
     """Record timeline immediately and schedule automatic background extraction."""
+    from app.services import store
+
     if not session_id or not (user_message or final_content):
         return
     try:

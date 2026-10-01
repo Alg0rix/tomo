@@ -8,7 +8,7 @@ Behaviour (mirrors the real two-step tool flows the agent loop uses):
   ``tools`` advertises a function named ``bash``.
 * A user message that looks like a knowledge question (contains ``recall``,
   ``remember``, ``knowledge``, ``deadline``, ``vendor``, ``what is``, or
-  ``what's``) triggers ``recall`` when that tool is advertised — unless a
+  ``what's``) triggers ``memory`` search when that tool is advertised — unless a
   bash request takes priority.
 * Once the conversation includes a ``tool`` role message *after the most
   recent user message* (i.e. mid-turn), the next ``complete`` returns a
@@ -29,10 +29,10 @@ _DEFAULT_REPLY = (
     "I'm a mock LLM. I don't have real knowledge, but I'm ready to help."
 )
 _BASH_FINAL = "The command finished."
-_RECALL_FINAL = "I found the relevant knowledge base entry."
+_MEMORY_FINAL = "I found the relevant vault facts."
 _DONE_FINAL = "Done."
 _TOOL_CALL_ID = "call_mock_bash"
-_RECALL_CALL_ID = "call_mock_recall"
+_MEMORY_CALL_ID = "call_mock_memory"
 
 _RECALL_HINTS = (
     "recall",
@@ -73,7 +73,7 @@ def _extract_bash_command(content: str) -> str:
 
 
 def _is_recall_request(content: str | None) -> bool:
-    """True when the prompt should trigger the recall tool."""
+    """True when the prompt should trigger vault search."""
     if not content:
         return False
     lower = content.lower()
@@ -127,8 +127,8 @@ def _bash_available(tools: list[dict[str, Any]] | None) -> bool:
     return _tool_named(tools, "bash")
 
 
-def _recall_available(tools: list[dict[str, Any]] | None) -> bool:
-    return _tool_named(tools, "recall")
+def _memory_available(tools: list[dict[str, Any]] | None) -> bool:
+    return _tool_named(tools, "memory")
 
 
 def _last_tool_name(messages: list[dict[str, Any]]) -> str | None:
@@ -166,8 +166,8 @@ class MockLLMClient:
             last = _last_tool_name(messages)
             if last == "bash":
                 return LLMResponse(content=_BASH_FINAL, tool_calls=[])
-            if last == "recall":
-                return LLMResponse(content=_RECALL_FINAL, tool_calls=[])
+            if last == "memory":
+                return LLMResponse(content=_MEMORY_FINAL, tool_calls=[])
             return LLMResponse(content=_DONE_FINAL, tool_calls=[])
 
         content = _last_user_content(messages)
@@ -182,14 +182,14 @@ class MockLLMClient:
                     )
                 ],
             )
-        if _is_recall_request(content) and _recall_available(tools):
+        if _is_recall_request(content) and _memory_available(tools):
             return LLMResponse(
                 content=None,
                 tool_calls=[
                     ToolCall(
-                        id=_RECALL_CALL_ID,
-                        name="recall",
-                        arguments={"query": _extract_recall_query(content or "")},
+                        id=_MEMORY_CALL_ID,
+                        name="memory",
+                        arguments={"action": "search", "query": _extract_recall_query(content or "")},
                     )
                 ],
             )

@@ -128,7 +128,7 @@ async def test_review_saves_via_memory_tool() -> None:
                         id="m1",
                         name="memory",
                         arguments={
-                            "target": "user",
+                            "entity": "user/profile",
                             "action": "add",
                             "content": "Prefers concise answers",
                         },

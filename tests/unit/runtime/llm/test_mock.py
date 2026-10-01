@@ -158,7 +158,7 @@ async def test_run_prompt_with_non_bash_tools_returns_no_tool_calls() -> None:
     assert resp.content == _DEFAULT_REPLY
 
 
-_RECALL_TOOLS = [{"type": "function", "function": {"name": "recall"}}]
+_RECALL_TOOLS = [{"type": "function", "function": {"name": "memory"}}]
 
 
 async def test_vendor_deadline_triggers_recall_tool_call() -> None:
@@ -167,7 +167,7 @@ async def test_vendor_deadline_triggers_recall_tool_call() -> None:
         tools=_RECALL_TOOLS,
     )
     assert resp.has_tool_calls
-    assert resp.tool_calls[0].name == "recall"
+    assert resp.tool_calls[0].name == "memory"
     assert "vendor" in resp.tool_calls[0].arguments["query"].lower() or (
         "deadline" in resp.tool_calls[0].arguments["query"].lower()
     )
@@ -177,5 +177,5 @@ async def test_recall_keyword_triggers_recall() -> None:
     resp = await MockLLMClient().complete(
         [_user("recall support hours")], tools=_RECALL_TOOLS
     )
-    assert resp.tool_calls[0].name == "recall"
+    assert resp.tool_calls[0].name == "memory"
     assert resp.tool_calls[0].arguments["query"] == "support hours"

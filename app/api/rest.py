@@ -905,6 +905,44 @@ async def get_shared_artifact_download(token: str):
     return _serve_artifact_file(share["session_id"], share["filename"], download=True)
 
 # Markdown vault API — every query is bound to the authenticated account.
+@router.post('/memory/facts')
+async def memory_add_api(request: Request, body: dict, _: AuthDep):
+    from app.runtime.memory.vault import write
+    entity, content = body.get('entity'), body.get('content')
+    if not isinstance(entity, str) or not isinstance(content, str):
+        raise HTTPException(400, 'entity and content are required')
+    try:
+        return write.add_entity(session_user_id(request), entity, content, origin='user')
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/memory/upload')
+async def memory_upload_api(request: Request, _: AuthDep, entity: str = Form(...),
+                            file: UploadFile = File(...)):
+    import asyncio
+    from app.runtime.memory.vault import paths, write
+    from app.services.doc_parse import parse_document
+    try:
+        paths.entity_key(entity)
+        chunks, total = [], 0
+        while chunk := await file.read(64 * 1024):
+            total += len(chunk)
+            if total > 20 * 1024 * 1024:
+                raise HTTPException(400, 'File too large (max 20MB)')
+            chunks.append(chunk)
+        if not total:
+            raise HTTPException(400, 'File is empty')
+        try:
+            parsed = await asyncio.to_thread(parse_document, Path(file.filename or 'upload').name, b''.join(chunks))
+        except Exception as exc:
+            raise HTTPException(400, 'Could not parse the uploaded document') from exc
+        result = write.add_entity(session_user_id(request), entity, parsed.body, origin='user', aliases=[parsed.title], tags=['uploaded', parsed.source_type])
+        return {**result, 'warnings': parsed.warnings, 'truncated': parsed.truncated}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.get('/memory/graph')
 async def memory_graph_api(request: Request, _: AuthDep, until: str | None = None):
     from datetime import date

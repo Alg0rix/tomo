@@ -62,16 +62,6 @@ RESOURCES = {
         "ScheduleCreate",
         "ScheduleUpdate",
     ),
-    "knowledge": (
-        "knowledge_entries",
-        "list_entries",
-        "get_entry",
-        "create_entry",
-        "update_entry",
-        "delete_entry",
-        "KnowledgeEntryCreate",
-        "KnowledgeEntryUpdate",
-    ),
     "users": (
         "users",
         "list_users",

@@ -1,7 +1,7 @@
 """Turn-scoped login account id for tools and memory isolation.
 
 Bound for the duration of ``run_turn`` (and learning review) so tools like
-``session_search``, ``remember``/``recall``, and curated ``USER.md`` can scope
+``session_search`` and vault memory can scope
 to the session owner without every call site threading ``user_id``.
 """
 

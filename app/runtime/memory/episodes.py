@@ -3,7 +3,7 @@
 No vector embeddings. Features:
 - Experience graph (relations + auto-link)
 - Contradiction analysis
-- Semantic consolidation → knowledge_entries
+- Semantic consolidation → vault entity pages
 - Procedural extraction → knowledge tags procedural
 - Learned retrieval ranking (feedback-driven weights)
 - Utility learning via retrieval feedback
@@ -13,6 +13,9 @@ No vector embeddings. Features:
 """
 
 from __future__ import annotations
+
+from app.runtime.memory.vault import write
+from app.runtime.memory.vault.notes import scoped_key
 
 import logging
 import re
@@ -303,7 +306,7 @@ def contradictions(
 def consolidate_semantic(
     *, user_id: str, limit: int = 8, min_reuse: int = 2
 ) -> list[dict[str, Any]]:
-    """Mine durable facts from high-utility episodes → knowledge_entries.
+    """Mine durable facts from high-utility episodes → vault entity pages.
 
     Procedural-looking lessons stay tagged; general lessons become semantic.
     Marks source episodes consolidated when a write succeeds.
@@ -355,24 +358,17 @@ def consolidate_semantic(
                 tags.append("semantic")
             title = (e.get("title") or e.get("objective") or "Lesson")[:80]
             try:
-                entry = store.create_knowledge_entry(
-                    {
-                        "title": f"From experience: {title}",
-                        "body": (
-                            f"{lesson}\n\n"
-                            f"(Source episode {e.get('id')}; "
-                            f"outcome={e.get('outcome_status')}; "
-                            f"context={ (e.get('context_summary') or '')[:200] })"
-                        ),
-                        "tags": tags,
-                        "user_id": user_id,
-                        "confidence": min(
-                            0.95, 0.55 + 0.1 * int(e.get("reuse_success") or 0)
-                        ),
-                    }
+                fact = (
+                    f"{lesson}\n\n(Source episode {e.get('id')}; "
+                    f"outcome={e.get('outcome_status')}; "
+                    f"context={(e.get('context_summary') or '')[:200]})"
+                )
+                entry = write.add_entity(
+                    user_id, scoped_key('topic', fact), fact, origin='consolidation',
+                    aliases=[f'From experience: {title}'], tags=tags,
                 )
                 written.append(
-                    {"knowledge_id": entry.get("id"), "episode_id": e.get("id"), "tags": tags}
+                    {"vault_path": entry.get("path"), "episode_id": e.get("id"), "tags": tags}
                 )
                 # Mark episode consolidated when durable fact extracted.
                 from app.models.mixins import episodic as ep_mod
@@ -440,17 +436,13 @@ def extract_procedures(
             + f"\n(Source episode {e.get('id')})"
         )
         try:
-            entry = store.create_knowledge_entry(
-                {
-                    "title": f"Procedure: {(e.get('title') or e.get('objective') or 'task')[:60]}",
-                    "body": body,
-                    "tags": ["procedural", "from-episodic", "consolidated"],
-                    "user_id": user_id,
-                    "confidence": 0.75,
-                }
+            entry = write.add_entity(
+                user_id, scoped_key('topic', body), body, origin='consolidation',
+                aliases=[f"Procedure: {(e.get('title') or e.get('objective') or 'task')[:60]}"],
+                tags=['procedural', 'from-episodic', 'consolidated'],
             )
             written.append(
-                {"knowledge_id": entry.get("id"), "episode_id": e.get("id")}
+                {"vault_path": entry.get("path"), "episode_id": e.get("id")}
             )
         except Exception as exc:
             _logger.debug("procedure extract failed: %s", exc)

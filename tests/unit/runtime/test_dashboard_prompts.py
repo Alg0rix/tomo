@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from app.runtime.memory.vault import write
+from app.runtime.memory.vault.notes import scoped_key
+
 import asyncio
 
 import pytest
@@ -179,12 +182,8 @@ def test_build_user_context_empty_when_no_data(tmp_path):
 
 def test_build_user_context_scoped_to_user(tmp_path):
     store.rebind(tmp_path / "ctx_scope.db")
-    store.create_knowledge_entry(
-        {"title": "Alpha secret", "body": "only alice's note", "user_id": "alice"}
-    )
-    store.create_knowledge_entry(
-        {"title": "Bob secret", "body": "only bob's note", "user_id": "bob"}
-    )
+    write.add_entity('alice', scoped_key('topic', 'Alpha secret'), 'Alpha secret' + ': ' + "only alice's note")
+    write.add_entity('bob', scoped_key('topic', 'Bob secret'), 'Bob secret' + ': ' + "only bob's note")
     store.insert_episode(
         {
             "user_id": "alice",
@@ -217,9 +216,7 @@ def test_build_user_context_scoped_to_user(tmp_path):
 
 def test_build_user_context_truncates_long_body(tmp_path):
     store.rebind(tmp_path / "ctx_trunc.db")
-    store.create_knowledge_entry(
-        {"title": "Long", "body": "z" * 500, "user_id": "alice"}
-    )
+    write.add_entity('alice', scoped_key('topic', 'Long'), 'Long' + ': ' + 'z' * 500)
     ctx = build_user_context("alice")
     assert "z" * 500 not in ctx
     assert "z" * 160 in ctx

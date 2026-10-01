@@ -14,7 +14,6 @@ _READ_ONLY_TOOLS = frozenset(
         "search_files",
         "web_fetch",
         "web_search",
-        "recall",
         "session_search",
         "list_skills",
         "list_workplaces",
@@ -32,7 +31,7 @@ TOOL_INTERFACES = {
     "bash": DEFAULT_INTERFACE,
     "web_fetch": DEFAULT_INTERFACE,
     "web_search": DEFAULT_INTERFACE,
-    "recall": DEFAULT_INTERFACE,
+    "memory": DEFAULT_INTERFACE,
 }
 
 

@@ -23,9 +23,9 @@ def test_seed_writes_specialist_system_prompts(tmp_path) -> None:
 def test_seed_specialist_tool_allowlists(tmp_path) -> None:
     _rebind(tmp_path)
     agents = {a["id"]: a for a in store.list_agents()}
-    assert agents["ops"]["tool_count"] == 22
-    assert agents["coder"]["tool_count"] == 26
-    assert agents["research"]["tool_count"] == 20
+    assert agents["ops"]["tool_count"] == 20
+    assert agents["coder"]["tool_count"] == 24
+    assert agents["research"]["tool_count"] == 18
 
     ops_tools = {t["id"]: t["enabled"] for t in store.get_agent_tools("ops")}
     assert ops_tools.get("bash") is True
