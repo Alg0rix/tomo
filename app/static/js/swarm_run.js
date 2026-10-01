@@ -90,6 +90,12 @@
         t.result = p.reason || t.result;
         t.ended = at;
         break;
+      case 'question_resolved':
+        if (t && t.waitingQuestion === p.question_event_id) {
+          t.waitingQuestion = null;
+          t.questionTimedOut = p.status === 'timeout';
+        }
+        break;
       case 'coordinator_review':
         run.reviewing = true;
         break;
@@ -106,6 +112,7 @@
       case 'coordinator_note':
       case 'coordinator_error':
       case 'user_update':
+        if (kind === 'question' && t) { t.waitingQuestion = eventId; t.questionTimedOut = false; }
         if (kind === 'coordinator_note' || kind === 'coordinator_error') run.reviewing = false;
         run.board.push({ id: eventId, kind: kind, at: at, from: p.agent_id || '', to: p.to_agent_id || '',
                          content: p.content || '' });
@@ -157,9 +164,10 @@
 
   // ── Derived ────────────────────────────────────────────
   function counts(run) {
-    var c = { done: 0, running: 0, queued: 0, failed: 0 };
+    var c = { done: 0, running: 0, awaiting: 0, queued: 0, failed: 0 };
     run.tasks.forEach(function (t) {
       if (t.status === 'done') c.done++;
+      else if (t.status === 'running' && t.waitingQuestion) c.awaiting++;
       else if (t.status === 'running') c.running++;
       else if (t.status === 'queued') c.queued++;
       else c.failed++;
@@ -290,7 +298,8 @@
     switch (phase) {
       case 'planning': return 'Planning the team';
       case 'working':
-        return [c.running ? c.running + ' working' : '', c.done ? c.done + ' done' : '',
+        return [c.running ? c.running + ' working' : '', c.awaiting ? c.awaiting + ' awaiting main' : '',
+                c.done ? c.done + ' done' : '',
                 c.queued ? c.queued + ' waiting' : '', c.failed ? c.failed + ' failed' : '']
           .filter(Boolean).join(' · ');
       case 'synthesizing': return run.coordinator + ' is synthesizing ' + total + (total === 1 ? ' result' : ' results');
@@ -350,6 +359,21 @@
     row.dataset.taskStatus = t.status;
     row.classList.toggle('is-queued', t.status === 'queued');
     row.classList.toggle('is-blocked', t.status === 'blocked' || t.status === 'cancelled' || t.status === 'interrupted');
+    var waiting = !ENDED[run.status] && t.status === 'running' && !!t.waitingQuestion;
+    var timedOut = !ENDED[run.status] && t.status === 'running' && !!t.questionTimedOut;
+    row.classList.toggle('is-awaiting-main', waiting);
+    var badge = row.querySelector('.sw-wait');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'sw-wait';
+      badge.setAttribute('aria-live', 'polite');
+      row.querySelector('.sw-head').appendChild(badge);
+    }
+    badge.hidden = !waiting && !timedOut;
+    var badgeText = waiting ? 'Menunggu jawaban main' : timedOut ? 'Jawaban main belum diterima' : '';
+    if (badge.textContent !== badgeText) badge.textContent = badgeText;
+    badge.title = waiting ? 'Worker menunggu balasan main sebelum melanjutkan langkah berikutnya' :
+      timedOut ? 'Batas waktu menunggu habis; pertanyaan masih belum terjawab' : '';
     var state = row.querySelector('.sw-state');
     if (t.status === 'running') {
       if (!row.dataset.start && t.started) row.dataset.start = String(Math.round(t.started * 1000));

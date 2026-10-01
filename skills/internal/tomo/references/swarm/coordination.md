@@ -72,3 +72,10 @@ Return findings or changes, supporting evidence, checks and outcomes, and open q
 The coordinator checks results against the request and reconciles conflicts using evidence. For code, run appropriate checks on the integrated state; individual worker success does not establish compatibility. For research, check source support and recency for consequential claims.
 
 Replan for a specific missing answer, failed prerequisite, or integration problem. Do not repeat an unchanged failed approach or create workers just to fill capacity. Report failed and blocked work honestly when synthesizing; runtime completion alone does not mean the requested outcome was achieved.
+
+
+## Follow coordination progress
+
+The web worker lane shows “Menunggu jawaban main” while a question is pending. It clears when the correlated reply enters worker context, not when the coordinator merely sends it. If waiting times out, the lane shows “Jawaban main belum diterima” while that task remains active. Persisted resolution events keep refresh and resumed views consistent; ended or cancelled runs do not retain waiting badges.
+
+Telegram folds colony progress into its existing editable activity message: task counts, up to three active or queued worker states, and two recent board updates. It distinguishes waiting for the main coordinator from a human approval or clarification request. Main reviews, questions, replies, delivery, timeout, and review failures are visible without sending a separate message per board event. Existing Stop, Steer, Queue, Interrupt, and `/status` controls continue to apply. These UI updates do not trigger additional model requests or change the prompt-cache prefix.

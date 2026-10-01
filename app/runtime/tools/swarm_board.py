@@ -96,6 +96,12 @@ async def deliver(messages: list[dict[str, Any]]):
                             "task_id": event["task_id"], **payload})
             if (scope["question"] and payload.get("reply_to_event_id") == scope["question"]
                     and payload.get("agent_id") == scope["coordinator_id"]):
+                resolved = {"agent_id": scope["agent_id"], "question_event_id": scope["question"],
+                            "status": "answered", "reply_event_id": event["id"]}
+                resolved_id = store.with_db(lambda c, p=resolved: swarm_store.append_event(
+                    c, scope["run_id"], "question_resolved", p, scope["task_id"]))
+                receipts.append({"kind": "swarm_event", "event": "question_resolved", "event_id": resolved_id,
+                                 "run_id": scope["run_id"], "task_id": scope["task_id"], **resolved})
                 scope["question"] = None
             receipt = {"agent_id": scope["agent_id"], "source_event_id": event["id"],
                        "content": "Delivered to worker context"}
@@ -113,7 +119,12 @@ async def deliver(messages: list[dict[str, Any]]):
         if asyncio.get_running_loop().time() >= deadline:
             messages.append({"role": "user", "content": "Coordinator reply timed out. Your question remains unresolved. "
                              "Report the blocker honestly; do not invent approval or an answer."})
+            resolved = {"agent_id": scope["agent_id"], "question_event_id": scope["question"], "status": "timeout"}
+            eid = store.with_db(lambda c: swarm_store.append_event(
+                c, scope["run_id"], "question_resolved", resolved, scope["task_id"]))
             scope["question"] = None
+            yield {"kind": "swarm_event", "event": "question_resolved", "event_id": eid,
+                   "run_id": scope["run_id"], "task_id": scope["task_id"], **resolved}
             return
         await asyncio.sleep(0.2)
 

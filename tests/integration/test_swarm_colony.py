@@ -63,6 +63,7 @@ async def test_worker_asks_main_and_receives_answer_before_resuming(tmp_path, mo
         return [e async for e in swarm.run_swarm_turn("Check contract", session_id=sid,
                 coordinator_id="main", history=[], initial_plan=plan)]
     events = await asyncio.wait_for(collect(), 5)
+    assert any(e.get("event") == "question_resolved" and e.get("status") == "answered" for e in events)
     assert len(reviews) == 1
     assert any(e.get("event") == "question" for e in events)
     assert any(e.get("event") == "message_received" and e.get("agent_id") == "research" for e in events)
@@ -114,7 +115,10 @@ async def test_question_timeout_and_invalid_recipient_are_honest(tmp_path, monke
         assert "Saved" in swarm_board.run({"action": "ask", "content": "Need approval"})
         monkeypatch.setattr(swarm_board, "QUESTION_TIMEOUT", 0)
         messages = []
-        assert [e async for e in swarm_board.deliver(messages)] == []
+        resolved = [e async for e in swarm_board.deliver(messages)]
+        assert len(resolved) == 1
+        assert resolved[0]["event"] == "question_resolved"
+        assert resolved[0]["status"] == "timeout"
         assert "unresolved" in messages[-1]["content"]
         assert "invent approval" in messages[-1]["content"]
         store.with_db(lambda c: db.update_task(c, other, "done"))

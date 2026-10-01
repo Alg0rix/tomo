@@ -391,7 +391,7 @@ async def run_swarm_turn(
             posted = store.with_db(lambda conn: db.list_events(conn, run_id, board_cursor))
             for post in posted:
                 board_cursor = max(board_cursor, post["id"])
-                if post["kind"] in {"finding", "message", "question", "message_received"}:
+                if post["kind"] in {"finding", "message", "question", "message_received", "question_resolved"}:
                     yield {"kind": "swarm_event", "run_id": run_id, "event_id": post["id"],
                            "event": post["kind"], "task_id": post["task_id"], **post["payload"]}
                     if (post["task_id"] and post["kind"] in {"finding", "question", "message"}

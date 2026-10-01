@@ -1007,3 +1007,13 @@
   margin-top: 8px; text-align: left; font-size: 12.5px; line-height: 1.6;
   color: var(--text-dim); white-space: pre-wrap;
 }
+
+/* A worker waiting on its coordinator retains its task and tool stats. */
+.chat-wrap .sw-wait {
+  font: 500 11px/1.5 var(--font-sans); color: var(--accent);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 999px; padding: 2px 8px; max-width: 100%;
+}
+.chat-wrap .sw-wait[hidden] { display: none; }
+.chat-wrap .sw-head:has(.sw-wait:not([hidden])) { flex-wrap: wrap; }
+.chat-wrap .swarm-row.is-awaiting-main .sw-dot { animation: none; background: var(--accent); }

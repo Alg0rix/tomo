@@ -13,9 +13,56 @@ const root = path.resolve(__dirname, '../..');
     for (const width of [390, 820, 1280]) {
       await page.setViewportSize({ width, height: 844 });
       await page.goto('http://colony.test/');
-      await page.setContent('<html data-theme="dark"><body><section class="swarm-card" id="card"></section></body></html>');
+      await page.setContent('<html data-theme="dark"><body><div class="chat-wrap" style="display:block;height:auto"><section class="swarm-card" id="card"></section></div></body></html>');
       for (const css of ['tomo.css', 'chat.css']) await page.addStyleTag({ path: path.join(root, 'app/static/css', css) });
       for (const js of ['tomo.js', 'swarm_run.js']) await page.addScriptTag({ path: path.join(root, 'app/static/js', js) });
+      const states = await page.evaluate(() => {
+        const now = Date.now() / 1000;
+        const events = [
+          { id: 101, kind: 'run_started', payload: { coordinator_id: 'main' } },
+          { id: 102, kind: 'task_created', task_id: 'worker', payload: { agent_id: 'research', agent_name: 'API reviewer' } },
+          { id: 103, kind: 'task_started', task_id: 'worker', payload: {} },
+          { id: 104, kind: 'question', task_id: 'worker', payload: { agent_id: 'research', to_agent_id: 'main', content: 'Which contract?' } },
+        ];
+        const api = { id: 'waiting', status: 'running', created_at: now, events, tasks: [
+          { id: 'worker', agent_id: 'research', status: 'running', brief: 'Check API' }
+        ] };
+        const card = document.getElementById('card');
+        const badge = () => card.querySelector('.sw-wait');
+        let run = TomoSwarm.fromApi(api, []);
+        TomoSwarm.mount(card, run, { collapse: false });
+        const waiting = badge().hidden ? '' : badge().textContent;
+        const headline = card.querySelector('.sr-line').textContent;
+        const bounds = badge().getBoundingClientRect();
+        const apply = (id, kind, payload) => {
+          TomoSwarm.apply(run, { run_id: 'waiting', event_id: id, kind, task_id: 'worker', ...payload });
+          TomoSwarm.paint(card);
+        };
+        apply(105, 'message', { agent_id: 'main', reply_to_event_id: 104, content: 'Use v2' });
+        const sentStillWaiting = !badge().hidden;
+        apply(106, 'question_resolved', { question_event_id: 999, status: 'answered' });
+        const unrelatedStillWaiting = !badge().hidden;
+        apply(107, 'question_resolved', { question_event_id: 104, status: 'answered' });
+        const answeredHidden = badge().hidden;
+        apply(108, 'question', { content: 'Another decision?' });
+        apply(109, 'question_resolved', { question_event_id: 108, status: 'timeout' });
+        const timeout = badge().textContent;
+        apply(110, 'question', { content: 'Retry decision?' });
+        apply(111, 'run_done', { status: 'cancelled' });
+        const cancelledHidden = badge().hidden;
+        // Rehydrate the persisted resolved state after refresh.
+        run = TomoSwarm.fromApi({ ...api, events: [...events, { id: 107, kind: 'question_resolved',
+          task_id: 'worker', payload: { question_event_id: 104, status: 'answered' } }] }, []);
+        TomoSwarm.mount(card, run, { collapse: false });
+        return { waiting, headline, bounds: { left: bounds.left, right: bounds.right }, sentStillWaiting,
+          unrelatedStillWaiting, answeredHidden, timeout, cancelledHidden, resumedHidden: badge().hidden };
+      });
+      assert.equal(states.waiting, 'Menunggu jawaban main');
+      assert.equal(states.headline, '1 awaiting main');
+      assert.ok(states.bounds.left >= 0 && states.bounds.right <= width);
+      assert.ok(states.sentStillWaiting && states.unrelatedStillWaiting);
+      assert.ok(states.answeredHidden && states.cancelledHidden && states.resumedHidden);
+      assert.equal(states.timeout, 'Jawaban main belum diterima');
       const result = await page.evaluate(() => {
         const events = [
           { id: 1, kind: 'run_started', payload: { coordinator_id: 'main', coordinator_name: 'Tomo' } },

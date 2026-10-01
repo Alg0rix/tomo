@@ -73,6 +73,13 @@ class TelegramTurnUI:
         self.progress_count = 0
         self.last_progress = ""
         self._io_lock = asyncio.Lock()
+        self.swarm_id = ""
+        self.swarm_status = ""
+        self.swarm_reviewing = False
+        self.swarm_tasks: dict[str, dict[str, Any]] = {}
+        self.swarm_notes: list[str] = []
+        self.swarm_seen: set[int] = set()
+        self.swarm_main = "Main agent"
 
     def stop_keyboard(self) -> dict:
         return {
@@ -94,6 +101,11 @@ class TelegramTurnUI:
         if not finished:
             elapsed = (elapsed // 5) * 5
         phase = self.phase
+        if self.swarm_status == "running":
+            live = [t for t in self.swarm_tasks.values() if t.get("status") == "running"]
+            phase = (f"{self.swarm_main} reviewing workers" if self.swarm_reviewing else
+                     "Workers waiting for main" if live and all(t.get("question") for t in live) else
+                     "Swarm working")
         if self.waiting:
             phase = (
                 "Waiting for approval"
@@ -108,6 +120,20 @@ class TelegramTurnUI:
                 ("Pending tools: " if self.waiting else "Running: ")
                 + ", ".join(list(self.tools.values())[-3:])
             )
+        if self.swarm_tasks:
+            live = ([t for t in self.swarm_tasks.values() if t.get("status") in {"queued", "running"}]
+                    if not finished and self.swarm_status == "running" else [])
+            done = sum(t.get("status") == "done" for t in self.swarm_tasks.values())
+            lines.append(f"Colony: {done}/{len(self.swarm_tasks)} tasks complete")
+            live.sort(key=lambda t: not bool(t.get("question")))
+            for task in live[:3]:
+                state = ("waiting for main's answer" if task.get("question") else
+                         "main reply timed out; question unresolved" if task.get("timeout") else
+                         task.get("status") or "queued")
+                lines.append(f"→ {task['name']}: {state}")
+            if len(live) > 3:
+                lines.append(f"+ {len(live) - 3} other active/queued tasks")
+            lines.extend(self.swarm_notes[-2:])
         lines.extend(self.recent[-3:])
         if self.todos:
             done = sum(t.get("status") == "completed" for t in self.todos)
@@ -212,6 +238,74 @@ class TelegramTurnUI:
                     )
                 self.last_preview = preview
 
+    def consume_swarm(self, data: dict[str, Any]) -> None:
+        """Fold colony events into the existing activity message, without sends."""
+        kind = data.get("kind")
+        run_id = data.get("run_id")
+        if not run_id:
+            return
+        if kind == "run_started" and run_id != self.swarm_id:
+            self.swarm_id = run_id
+            self.swarm_status = "running"
+            self.swarm_tasks.clear()
+            self.swarm_notes.clear()
+            self.swarm_seen.clear()
+            self.swarm_reviewing = False
+            self.swarm_main = str(data.get("coordinator_name") or "Main agent")[:40]
+        if run_id != self.swarm_id:
+            return
+        eid = data.get("event_id")
+        if eid is not None:
+            if eid in self.swarm_seen:
+                return
+            self.swarm_seen.add(eid)
+        tid = data.get("task_id")
+        task = self.swarm_tasks.get(tid)
+        note = ""
+        content = " ".join(str(data.get("content") or "").split())[:160]
+        if kind == "task_created":
+            self.swarm_tasks[tid] = {"name": str(data.get("agent_name") or data.get("agent_id") or "Worker")[:40],
+                                     "agent_id": data.get("agent_id"), "status": "queued", "question": None, "timeout": False}
+        elif kind == "task_started" and task:
+            task["status"] = "running"
+        elif kind in {"task_done", "task_blocked"} and task:
+            task["status"] = data.get("status") or "blocked"
+            task["question"] = None
+        elif kind == "question" and task:
+            task["question"] = eid
+            task["timeout"] = False
+            note = f"? {task['name']} → {self.swarm_main}: {content}"
+        elif kind == "question_resolved" and task and task.get("question") == data.get("question_event_id"):
+            task["question"] = None
+            task["timeout"] = data.get("status") == "timeout"
+            note = (f"! {task['name']}: main reply timed out; question unresolved" if task["timeout"] else
+                    f"✓ {task['name']} received main's answer; can continue")
+        elif kind == "coordinator_review":
+            self.swarm_reviewing = True
+        elif kind in {"coordinator_note", "coordinator_error"}:
+            self.swarm_reviewing = False
+            note = f"{'!' if kind == 'coordinator_error' else '↳'} {self.swarm_main}: {content}"
+        elif kind == "finding":
+            name = task["name"] if task else self.swarm_main
+            note = f"• {name}: {content}"
+        elif kind == "message":
+            recipient = self.swarm_tasks.get(data.get("to_task_id"))
+            target = recipient["name"] if recipient else next(
+                (t["name"] for t in self.swarm_tasks.values() if t["agent_id"] == data.get("to_agent_id")),
+                self.swarm_main,
+            )
+            sender = task["name"] if task else self.swarm_main
+            note = f"↳ {sender} → {target}: {content}"
+        elif kind == "run_done":
+            self.swarm_status = str(data.get("status") or "done")
+            self.swarm_reviewing = False
+            for task in self.swarm_tasks.values():
+                task["question"] = None
+            self.phase = "Combining results"
+        if note:
+            self.swarm_notes.append(note)
+            self.swarm_notes = self.swarm_notes[-2:]
+
     async def consume(self, chunk: str) -> None:
         for block in chunk.strip().split("\n\n"):
             event = ""
@@ -227,7 +321,9 @@ class TelegramTurnUI:
                 continue
             if not isinstance(data, dict):
                 continue
-            if event == "user" and data.get("steered"):
+            if event == "swarm.event":
+                self.consume_swarm(data)
+            elif event == "user" and data.get("steered"):
                 receipt = self.steer_receipts.pop(data.get("steer_id"), None)
                 if receipt is not None:
                     receipt["consumed"] = True
@@ -236,7 +332,9 @@ class TelegramTurnUI:
                             await self.api.edit_message(
                                 self.chat_id,
                                 receipt["feedback_id"],
-                                "✓ Agent read your guidance and will use it in the next model round.",
+                                ("✓ Main agent read your guidance and will coordinate the relevant workers."
+                                 if self.swarm_status == "running" else
+                                 "✓ Agent read your guidance and will use it in the next model round."),
                             )
                     self.recent.append("↳ Guidance read by agent")
                     self.recent = self.recent[-3:]

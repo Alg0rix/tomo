@@ -727,3 +727,74 @@ async def test_compact_command_via_plain_update(setup, monkeypatch):
     result = await process_update(message("/compact"), api=api)
     assert "Compacted 10 earlier messages" in result["reply"]
     await api.aclose()
+
+
+async def test_colony_updates_one_status_and_waits_for_actual_answer_delivery(setup):
+    bot, api = setup
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid)
+    async def event(eid, kind, **payload):
+        await ui.consume(fmt_sse({"event": "swarm.event", "data": {
+            "run_id": "colony", "event_id": eid, "kind": kind, **payload}}))
+    try:
+        await ui.start()
+        sends = sum(method == "sendMessage" for method, _ in bot.calls)
+        await event(1, "run_started", coordinator_name="Tomo")
+        await event(2, "task_created", task_id="a", agent_id="research", agent_name="API reviewer")
+        await event(3, "task_started", task_id="a")
+        await event(4, "question", task_id="a", content="Which contract?")
+        assert "API reviewer: waiting for main's answer" in ui.status_text()
+        assert "Waiting for your answer" not in ui.status_text()
+        assert not ui.waiting
+        await event(5, "message", agent_id="main", to_agent_id="research", to_task_id="a",
+                    reply_to_event_id=4, content="Use v2")
+        assert "waiting for main's answer" in ui.status_text()
+        await event(6, "coordinator_review")
+        assert "Tomo reviewing workers" in ui.status_text()
+        await ui.refresh()
+        assert "Tomo reviewing workers" in bot.messages[ui.status_id]["text"]
+        await event(7, "question_resolved", task_id="a", question_event_id=4, status="answered")
+        assert "waiting for main's answer" not in ui.status_text()
+        assert "received main's answer; can continue" in ui.status_text()
+        await event(8, "coordinator_note", content="Answered the contract question")
+        await ui.refresh()
+        assert "Tomo reviewing workers" not in bot.messages[ui.status_id]["text"]
+        assert sum(method == "sendMessage" for method, _ in bot.calls) == sends
+        assert not ui.answer  # Board traffic is never promoted to the main answer.
+    finally:
+        await ui.close()
+        await api.aclose()
+
+
+async def test_colony_task_specific_timeout_replay_and_cancel_clear_waiting(setup):
+    from types import SimpleNamespace
+    _, api = setup
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid)
+    ui.consume_swarm({"kind": "run_started", "run_id": "r", "event_id": 1})
+    eid = 2
+    for tid in ("a", "b"):
+        ui.consume_swarm({"kind": "task_created", "run_id": "r", "event_id": eid,
+                          "task_id": tid, "agent_id": "research", "agent_name": f"Reviewer {tid}"})
+        ui.consume_swarm({"kind": "task_started", "run_id": "r", "event_id": eid + 1, "task_id": tid})
+        ui.consume_swarm({"kind": "question", "run_id": "r", "event_id": eid + 2, "task_id": tid, "content": "Need help"})
+        eid += 3
+    try:
+        ui.consume_swarm({"kind": "question_resolved", "run_id": "r", "event_id": 8,
+                          "task_id": "a", "question_event_id": 4, "status": "timeout"})
+        assert "Reviewer a: main reply timed out; question unresolved" in ui.status_text()
+        assert "Reviewer b: waiting for main's answer" in ui.status_text()
+        before = list(ui.swarm_notes)
+        ui.consume_swarm({"kind": "question", "run_id": "r", "event_id": 4, "task_id": "a"})
+        assert ui.swarm_notes == before
+        assert ui.swarm_tasks["a"]["question"] is None
+        ui.prompts["human"] = SimpleNamespace(kind="approval")
+        assert ui.status_text().startswith("◌ Waiting for approval")
+        ui.prompts.clear()
+        ui.consume_swarm({"kind": "run_done", "run_id": "r", "event_id": 9, "status": "cancelled"})
+        assert "waiting for main's answer" not in ui.status_text()
+        assert not any(t["question"] for t in ui.swarm_tasks.values())
+        ui.consume_swarm({"kind": "run_started", "run_id": "next", "event_id": 10})
+        assert not ui.swarm_tasks and not ui.swarm_notes
+    finally:
+        await api.aclose()
