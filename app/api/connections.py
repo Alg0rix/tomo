@@ -6,9 +6,10 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import AuthDep, require_owned_session, session_user_id
-from app.services import connections, secret_store
+from app.services import connections, secret_files, secret_store
 
 router = APIRouter(prefix="/api", tags=["secrets"])
 
@@ -108,6 +109,18 @@ async def broker_status(request_id: str, scope: BrokerScope):
     if result.get("bundle") and result["bundle"]["usage"].get("type") == "http":
         result["connection"] = connections.public_connection(result["bundle"])
     return result
+
+
+@router.post("/secret-broker/apply")
+async def broker_apply_file(request: Request, scope: BrokerScope):
+    try:
+        return await run_in_threadpool(
+            secret_files.apply_file, scope, await _body(request, 65_536)
+        )
+    except KeyError:
+        raise HTTPException(404, "Secret bundle not found in this session") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 @router.post("/connection-broker/http")

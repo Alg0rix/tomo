@@ -1,7 +1,7 @@
 ---
 name: secret-store
 description: "Request any private inputs through a dynamic secure form: tokens, env keys, account fields, passwords, signing/private keys, or other operator values. Store encrypted bundles without returning values to the model; no HTTP connection required."
-version: 1.0
+version: 1.1
 ---
 
 # Dynamic private input and secret bundles
@@ -71,18 +71,64 @@ tomo secret revoke workspace
 ```
 
 There is **no plaintext `get`, export, or env injection into agent-controlled
-bash**. Saving values does not run a task or automatically grant a consumer.
+bash**. Saving values does not run a task or deploy an application.
 
-The store is protocol-neutral. A trusted backend consumer receives a scoped
-bundle reference, checks its approved usage, and reads values internally. It
-must not return them through tool output, exceptions, logs or artifacts. Merely
-adding a skill does not create a safe executable consumer.
+The store is protocol-neutral. Trusted backend consumers read scoped values
+internally and must not return them through tool output, exceptions or logs.
+`tomo http` requires a separately approved origin and field-to-auth bindings;
+load `use_skill(skill_id="secure-http")`. A store-only bundle cannot be used
+for HTTP without an approved HTTP policy. The file consumer below applies
+stored fields only inside the invoking local shell's workspace.
 
-The currently available consumer is `tomo http`; load
-`use_skill(skill_id="secure-http")` for its separately approved origin and
-field-to-auth bindings. A store-only bundle cannot be used for HTTP without an
-approved HTTP policy. Other consumers are not implemented yet: report that
-limitation, do not invent a command or recover values via local code.
+## Apply private fields to app configuration
+
+Write non-private configuration first, add generated secret paths to the
+project's `.gitignore`, then use the backend to apply stored fields. Neither
+CLI arguments nor stdin contain values; mappings contain **names only**.
+
+```bash
+# After defining/requesting whichever fields this app actually needs:
+tomo secret apply workspace --file .env --format compose \\
+  --map '{"API_TOKEN":"ACCESS_KEY","APP_ACCOUNT":"ACCOUNT_NAME"}'
+tomo secret apply workspace --file signing.pem --format text --field SIGNING_KEY
+tomo secret apply workspace --file config.json --format json \\
+  --map '{"apiKey":"ACCESS_KEY"}'
+```
+
+- `--format compose` (default): Docker Compose `.env` / `env_file` syntax.
+  Dollars, quotes, backslashes, Unicode, tabs and multiline values are escaped
+  for Compose. Unsupported control characters fail rather than corrupt values.
+- `--format dotenv`: python-dotenv dialect. The consuming loader must use
+  `interpolate=False` to preserve literal `${...}` in secrets; quoting alone
+  does not disable python-dotenv interpolation. Do not assume an app's loader
+  is compatible without checking its documentation.
+- `--format json`: merge private values into top-level object keys, retaining
+  unrelated settings. Nested key paths/templates are not supported.
+- `--format text`: write one exact field, including newlines (e.g. PEM).
+- Without `--map`, env/JSON output keys use the form's field names. Map names
+  containing hyphens to valid env keys. `--map -` reads metadata from stdin.
+- Paths resolve from CLI cwd and must stay inside the shell's initial local
+  workspace. Create parent directories first. Symlink targets, directories,
+  invalid existing env/JSON syntax and files over 1 MB are rejected.
+- Env updates replace all occurrences of mapped keys (including `export` and
+  multiline assignments), retaining unrelated entries/comments. JSON merges
+  top-level keys; text replaces the file. Files are atomically replaced with
+  owner-only permissions (0600); errors do not echo values or parser input.
+- Repeat apply to rotate/update a file after requesting the bundle again.
+  Revoking a bundle does **not** remove values already written to files or
+  running applications. Cleanup/redeploy those separately when required.
+
+Success returns only `ok`, the file path, format and key names. Verify that
+metadata and app health, **not** file contents or rendered config. Do not run
+`cat .env`, print secret files, `docker compose config`, `docker inspect`,
+`env`, shell tracing or secret-bearing diffs as part of this workflow. Do not
+commit generated secret files. Use `docker compose up -d` separately when the
+user authorized deployment; apply itself never executes a command.
+
+There is no universal `.env` dialect. The quoted output is **not** suitable for
+shell sourcing or `docker run --env-file`. Choose a documented supported
+consumer/format, or report the limitation; never recover values via local code
+as a fallback. Other protocols/file consumers are not implemented by a skill.
 
 Missing broker access on SSH/tunnel, background jobs, Telegram, scheduler, or a
 standalone terminal is not a reason to request raw input. Use the supported
@@ -95,8 +141,11 @@ Stored maps use Tomo's Fernet encryption. Metadata never includes entered
 values, ciphertext, masked previews, or a selected value. The shell capability
 expires when its command exits/times out or the session stops.
 
-This is not an OS-isolated vault. Current local bash shares the backend's OS
-account and can access its filesystem/processes; cwd guards are not isolation.
+This is **transport privacy**, not an OS-isolated vault or a filesystem read
+ban. Generated files contain plaintext for the app, and ordinary agent tools
+still have their existing filesystem access. Current local bash shares the
+backend's OS account; cwd guards and 0600 are not isolation. The supported
+workflow keeps values out of the model by not reading/printing them.
 Strong protection against a malicious executor needs a separate OS/container
 boundary without access to the master key/store and restricted consumer access.
 Do not promise zero leakage or add plaintext getters as a workaround.

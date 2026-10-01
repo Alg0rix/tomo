@@ -88,7 +88,9 @@ def _prune() -> None:
             _PENDING.pop(pid, None)
 
 
-def issue_capability(session_id: str, user_id: str, ttl: float = 120) -> str:
+def issue_capability(
+    session_id: str, user_id: str, ttl: float = 120, *, work_root: str | None = None
+) -> str:
     session = store.get_owned_session(session_id, user_id)
     if not session or session.get("channel") != "web":
         raise ValueError("Secure input requires an owned web chat session")
@@ -99,6 +101,7 @@ def issue_capability(session_id: str, user_id: str, ttl: float = 120) -> str:
             "session_id": session_id,
             "user_id": user_id,
             "expires_at": time.time() + min(max(ttl, 1), 300),
+            "work_root": work_root,
         }
     return token
 
@@ -132,7 +135,7 @@ def cancel_session(session_id: str) -> None:
 
 
 @contextmanager
-def shell_environment(timeout: float):
+def shell_environment(timeout: float, *, work_root: str | None = None):
     from app.core import config
     from app.runtime.artifacts.fs import current_session_id
     from app.runtime.tools.user_ctx import current_user_id
@@ -150,7 +153,9 @@ def shell_environment(timeout: float):
     sid = current_session_id()
     if sid:
         try:
-            token = issue_capability(sid, current_user_id(), ttl=timeout + 5)
+            token = issue_capability(
+                sid, current_user_id(), ttl=timeout + 5, work_root=work_root
+            )
         except ValueError:
             pass
     if token:

@@ -11,6 +11,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "itsdangerous>=2.2",
     "python-multipart>=0.0.32",
+    "python-dotenv>=1.2.2",
     "httpx>=0.28.1",
     "openai>=2.50.0",
     "cryptography>=50.0.0",

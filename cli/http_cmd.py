@@ -25,6 +25,28 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
         "revoke", help="Delete a private bundle in this session"
     )
     secret_revoke.add_argument("name")
+    apply = secret_actions.add_parser(
+        "apply",
+        help="Apply private fields to a local file via the backend; never print values",
+    )
+    apply.add_argument("name", help="Session-local bundle name or ID")
+    apply.add_argument(
+        "--file", required=True, help="Target file inside this shell's workspace"
+    )
+    apply.add_argument(
+        "--format",
+        choices=["compose", "dotenv", "json", "text"],
+        default="compose",
+        help="File dialect (default compose); not compatible with shell sourcing/docker run --env-file",
+    )
+    apply.add_argument(
+        "--map",
+        dest="mapping",
+        help="JSON output-key to private-field mapping, or - for stdin; names only",
+    )
+    apply.add_argument(
+        "--field", help="Single private field for text format (e.g. a PEM key)"
+    )
     secret_request = secret_actions.add_parser(
         "request", help="Ask for any private fields; no protocol or connection required"
     )
@@ -175,6 +197,33 @@ def run(args: argparse.Namespace) -> int:
                         client.delete(
                             prefix + resource + "/" + quote(args.name, safe="")
                         )
+                    )
+                elif action == "apply":
+                    from pathlib import Path
+
+                    definition = {
+                        "bundle": args.name,
+                        "file": str(Path(args.file).absolute()),
+                        "format": args.format,
+                    }
+                    if args.mapping is not None:
+                        raw = (
+                            sys.stdin.read(65_537)
+                            if args.mapping == "-"
+                            else args.mapping
+                        )
+                        try:
+                            if len(raw.encode()) > 65_536:
+                                raise ValueError
+                            definition["mapping"] = json.loads(raw)
+                        except (ValueError, RecursionError):
+                            raise ValueError(
+                                "--map must be a names-only JSON object within 64 KB"
+                            ) from None
+                    if args.field is not None:
+                        definition["field"] = args.field
+                    data = _response(
+                        client.post("/api/secret-broker/apply", json=definition)
                     )
                 else:
                     if not 0 < args.wait <= 95:

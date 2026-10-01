@@ -84,7 +84,7 @@ def _normalize(text: str) -> str:
 def _run_streaming(command: str, cwd: str, timeout: float) -> tuple[int, str, str]:
     from app.services.secret_store import shell_environment
 
-    with shell_environment(timeout) as env:
+    with shell_environment(timeout, work_root=cwd) as env:
         return _run_streaming_with_env(command, cwd, timeout, env)
 
 

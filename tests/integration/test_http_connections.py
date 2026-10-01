@@ -498,3 +498,218 @@ def test_dynamic_private_bundle_without_connection_or_protocol(environment):
     finally:
         artifacts_fs.reset_session(session_token)
         user_ctx.reset_user(user_token)
+
+
+def _private_file_bundle(client, sid, headers, values):
+    pending = client.post(
+        "/api/secret-broker/requests",
+        headers=headers,
+        json={
+            "name": "deployment",
+            "form": {
+                "fields": [
+                    {"name": key, "type": "textarea", "required": False}
+                    for key in values
+                ]
+            },
+        },
+    ).json()
+    response = client.post(
+        f"/api/sessions/{sid}/secrets/requests/{pending['id']}", json={"values": values}
+    )
+    assert response.status_code == 200
+
+
+def test_private_file_cli_preserves_config_and_round_trips_formats(
+    environment, tmp_path, caplog
+):
+    import stat
+    from dotenv import dotenv_values
+
+    client, _, _, sid, uid, _ = environment
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / ".env"
+    target.write_text(
+        "# public settings\nAPP_PORT=3000\nexport ACCESS_KEY='old'\nACCESS_KEY='duplicate'\n",
+        encoding="utf-8",
+    )
+    values = {
+        "key": "synthetic $NEVER ${MISSING} $$ \\\\'single\" # é  ",
+        "pem": "synthetic key\r\nsecond line\n",
+        "blank": "",
+    }
+    token = secret_store.issue_capability(sid, uid, work_root=str(root))
+    headers = {"Authorization": "Bearer " + token}
+    _private_file_bundle(client, sid, headers, values)
+    session_token = artifacts_fs.bind_session(sid)
+    user_token = user_ctx.bind_user(uid)
+    try:
+
+        def apply(arguments):
+            command = (
+                "PYTHONPATH="
+                + shlex.quote(str(ROOT))
+                + " "
+                + _command("secret apply deployment " + arguments)
+            )
+            result = bash._run_streaming(command, str(root), 30)
+            assert result[0] == 0, result[2]
+            assert values["key"] not in result[1] + result[2]
+            assert values["pem"] not in result[1] + result[2]
+            return json.loads(result[1])
+
+        mapping = {"ACCESS_KEY": "key", "SIGNING_KEY": "pem", "OPTIONAL": "blank"}
+        args = "--file .env --format dotenv --map " + shlex.quote(json.dumps(mapping))
+        assert apply(args)["keys"] == list(mapping)
+        content = target.read_bytes().decode()
+        parsed = dotenv_values(target, interpolate=False)
+        assert parsed == {
+            "APP_PORT": "3000",
+            **{k: values[v] for k, v in mapping.items()},
+        }
+        assert content.startswith("# public settings\nAPP_PORT=3000\n")
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        # Reapply/rotate without reading existing private values through the CLI.
+        apply(args)
+        assert target.read_bytes().decode() == content
+        values["key"] += "-rotated"
+        _private_file_bundle(client, sid, headers, values)
+        apply(args)
+        assert dotenv_values(target, interpolate=False) == {
+            "APP_PORT": "3000",
+            **{k: values[v] for k, v in mapping.items()},
+        }
+        (root / "config.json").write_text('{"port":3000,"nested":{"enabled":true}}')
+        apply('--file config.json --format json --map \'{"credential":"key"}\'')
+        assert json.loads((root / "config.json").read_text()) == {
+            "port": 3000,
+            "nested": {"enabled": True},
+            "credential": values["key"],
+        }
+        apply("--file signing.pem --format text --field pem")
+        assert (root / "signing.pem").read_bytes() == values["pem"].encode()
+        # CLI resolves a changed working directory, rather than backend's cwd.
+        (root / "app").mkdir()
+        result = bash._run_streaming(
+            "cd app && PYTHONPATH="
+            + shlex.quote(str(ROOT))
+            + " "
+            + _command(
+                "secret apply deployment --file .env --format compose --map "
+                + shlex.quote(json.dumps(mapping))
+            ),
+            str(root),
+            30,
+        )
+        assert result[0] == 0, result[2]
+        assert values["key"] not in result[1] + result[2]
+        assert (root / "app" / ".env").is_file()
+        assert not list(root.rglob(".tomo-secret-*"))
+        assert client.get(f"/api/sessions/{sid}/chat").json()["entries"] == []
+        assert values["key"] not in caplog.text and values["pem"] not in caplog.text
+        # The real Compose parser, when present, must preserve dollars/quotes/CRLF.
+        import shutil
+        import subprocess
+
+        if (
+            shutil.which("docker")
+            and subprocess.run(
+                ["docker", "compose", "version"], capture_output=True
+            ).returncode
+            == 0
+        ):
+            compose = root / "app" / "compose.yaml"
+            compose.write_text(
+                "services:\n  app:\n    image: busybox\n    env_file: .env\n"
+                "    environment:\n      INJECTED: ${ACCESS_KEY}\n"
+            )
+            result = subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "--env-file",
+                    str(root / "app" / ".env"),
+                    "-f",
+                    str(compose),
+                    "config",
+                    "--format",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert result.returncode == 0, result.stderr
+            actual = json.loads(result.stdout)["services"]["app"]["environment"]
+            # Compose's config serialization doubles literal dollars for replay.
+            assert {k: v.replace("$$", "$") for k, v in actual.items()} == {
+                **{k: values[v] for k, v in mapping.items()},
+                "INJECTED": values["key"],
+            }
+    finally:
+        artifacts_fs.reset_session(session_token)
+        user_ctx.reset_user(user_token)
+        secret_store.revoke_capability(token)
+
+
+def test_private_file_application_errors_are_private_and_leave_files_unchanged(
+    environment, tmp_path, caplog
+):
+    client, _, _, sid, uid, _ = environment
+    root = tmp_path / "workspace"
+    root.mkdir()
+    token = secret_store.issue_capability(sid, uid, work_root=str(root))
+    headers = {"Authorization": "Bearer " + token}
+    _private_file_bundle(client, sid, headers, {"TOKEN": SECRET})
+    endpoint = "/api/secret-broker/apply"
+    data = {"bundle": "deployment", "file": ".env"}
+    target = root / ".env"
+    original = "TOKEN='" + SECRET + "\n"  # Invalid syntax containing a stored secret.
+    target.write_text(original)
+    result = client.post(endpoint, headers=headers, json=data)
+    assert result.status_code == 400 and SECRET not in result.text
+    assert target.read_text() == original and SECRET not in caplog.text
+    # Failed mappings/formats/targets cannot partially write the existing file.
+    for overrides in (
+        {"mapping": {"TOKEN": "unknown"}},
+        {"mapping": {"BAD-KEY": "TOKEN"}},
+        {"format": []},
+        {"format": "json"},
+        {"file": "../outside.env"},
+        {"file": "missing/.env"},
+    ):
+        result = client.post(endpoint, headers=headers, json={**data, **overrides})
+        assert result.status_code == 400 and SECRET not in result.text
+        assert target.read_text() == original
+    link = root / "link.env"
+    link.symlink_to(target)
+    assert (
+        client.post(
+            endpoint, headers=headers, json={**data, "file": "link.env"}
+        ).status_code
+        == 400
+    )
+    assert target.read_text() == original
+    other_sid = store.create_swarm_session(["main"], user_id=uid)
+    other = secret_store.issue_capability(other_sid, uid, work_root=str(root))
+    result = client.post(
+        endpoint, headers={"Authorization": "Bearer " + other}, json=data
+    )
+    assert result.status_code == 404 and SECRET not in result.text
+    assert target.read_text() == original
+    secret_store.revoke_capability(other)
+    target.write_bytes(b"\xff" + SECRET.encode())
+    result = client.post(endpoint, headers=headers, json=data)
+    assert result.status_code == 400 and SECRET not in result.text
+    assert target.read_bytes() == b"\xff" + SECRET.encode()
+    target.write_text("APP_PORT=3000\n")
+    _private_file_bundle(client, sid, headers, {"TOKEN": SECRET + "\x01"})
+    result = client.post(endpoint, headers=headers, json=data)
+    assert result.status_code == 400 and SECRET not in result.text
+    assert target.read_text() == "APP_PORT=3000\n"
+    secret_store.revoke_capability(token)
+    assert client.post(endpoint, headers=headers, json=data).status_code == 401
+    assert target.read_text() == "APP_PORT=3000\n" and not list(
+        root.glob(".tomo-secret-*")
+    )
