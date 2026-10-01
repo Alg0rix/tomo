@@ -448,21 +448,9 @@ def sync_skills_to_db(conn: Any, home_root: Path | None = None) -> list[dict[str
                 conn.execute("DELETE FROM skills WHERE id=?", (row["id"],))
 
     conn.commit()
-    rows = conn.execute("SELECT * FROM skills ORDER BY name ASC").fetchall()
-    return [
-        {
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "version": r["version"],
-            "enabled": bool(r["enabled"]),
-            "tool_count": int(r["tool_count"] or 0),
-            "path": r["path"] if "path" in r.keys() else "",
-            "source": r["source"] if "source" in r.keys() else "",
-            "created_at": r["created_at"],
-        }
-        for r in rows
-    ]
+    from app.models.mixins.skills import list_skills
+
+    return list_skills(conn)
 
 
 def _library_skill_dir(skill_id: str, home_root: Path | None = None) -> Path:
@@ -714,6 +702,59 @@ def write_skill_support_file(
     return target
 
 
+def merge_library_skills(
+    source_id: str,
+    target_id: str,
+    *,
+    body: str,
+    description: str | None = None,
+    home_root: Path | None = None,
+) -> DiscoveredSkill:
+    """Distill into an existing umbrella; keep the entire source for recovery.
+
+    Support files retain their relative paths. Conflicting files are refused
+    before any write so the reviewer must resolve them explicitly first.
+    """
+    source = find_discovered_skill(slugify_skill_id(source_id), home_root)
+    target = find_discovered_skill(slugify_skill_id(target_id), home_root)
+    if not source or not target or any(s.source != "library" for s in (source, target)):
+        raise ValueError("merge requires two managed library skills")
+    if source.id == target.id:
+        raise ValueError("source and target must be different skills")
+    if not body.strip():
+        raise ValueError("body must contain the distilled procedures from BOTH skills")
+    content = _compose_skill_md(
+        name=target.name, description=description or target.description,
+        body=body, version=target.version,
+    )
+    if len(content) > _MAX_SKILL_CHARS:
+        raise ValueError(f"SKILL.md exceeds {_MAX_SKILL_CHARS} characters")
+    from app.core.paths import ensure_under
+
+    copies: list[tuple[Path, Path]] = []
+    for directory in sorted(_ALLOWED_SUPPORT_DIRS):
+        root = source.path / directory
+        if not root.is_dir():
+            continue
+        for file in sorted(root.rglob("*")):
+            if not file.is_file():
+                continue
+            rel = file.relative_to(source.path)
+            src = ensure_under(source.path, rel)
+            dest = ensure_under(target.path, rel)
+            if dest.exists():
+                if not dest.is_file() or dest.read_bytes() != src.read_bytes():
+                    raise ValueError(f"support file conflict: {rel}; resolve before merging")
+            else:
+                copies.append((src, dest))
+    for src, dest in copies:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    return edit_library_skill(
+        target.id, body=body, description=description, home_root=home_root,
+    )
+
+
 def delete_library_skill(skill_id: str, home_root: Path | None = None) -> bool:
     """Delete a managed library skill directory."""
     return uninstall_library_skill(skill_id, home_root)
@@ -738,6 +779,7 @@ __all__ = [
     "patch_library_skill",
     "write_skill_support_file",
     "delete_library_skill",
+    "merge_library_skills",
     "snapshot_skill_revision",
     "list_skill_revisions",
 ]

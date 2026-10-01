@@ -94,7 +94,7 @@ async def _lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title=BRAND,
-        version="0.1.0",
+        version="0.3.2",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

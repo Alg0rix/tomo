@@ -1,7 +1,7 @@
 ---
 name: secret-store
 description: "Request any private inputs through a dynamic secure form: tokens, env keys, account fields, passwords, signing/private keys, or other operator values. Store encrypted bundles without returning values to the model; no HTTP connection required."
-version: 1.1
+version: 1.2
 ---
 
 # Dynamic private input and secret bundles
@@ -18,7 +18,8 @@ option is never separately echoed.
 
 ## Request exactly the inputs needed
 
-Run from a **foreground local coordinator bash tool in an owned web chat**.
+Run from a **foreground bash tool in an owned web chat**, locally or through
+an updated tunnel connector with the `tomo` CLI installed on that host.
 Use `bash` timeout **120 seconds** while waiting for the secure form. Tomo gives
 the shell a temporary, session-scoped broker capability, not stored private
 values. Do not print/persist/copy that capability or read encryption keys/DB.
@@ -78,7 +79,9 @@ internally and must not return them through tool output, exceptions or logs.
 `tomo http` requires a separately approved origin and field-to-auth bindings;
 load `use_skill(skill_id="secure-http")`. A store-only bundle cannot be used
 for HTTP without an approved HTTP policy. The file consumer below applies
-stored fields only inside the invoking local shell's workspace.
+stored fields inside the local shell's workspace or the tunnel connector's
+configured work root. HTTP executes where the invoking bash runs: backend
+locally, connector on a tunnel, so remote-only intranet services are reachable.
 
 ## Apply private fields to app configuration
 
@@ -88,10 +91,10 @@ CLI arguments nor stdin contain values; mappings contain **names only**.
 
 ```bash
 # After defining/requesting whichever fields this app actually needs:
-tomo secret apply workspace --file .env --format compose \\
+tomo secret apply workspace --file .env --format compose \
   --map '{"API_TOKEN":"ACCESS_KEY","APP_ACCOUNT":"ACCOUNT_NAME"}'
 tomo secret apply workspace --file signing.pem --format text --field SIGNING_KEY
-tomo secret apply workspace --file config.json --format json \\
+tomo secret apply workspace --file config.json --format json \
   --map '{"apiKey":"ACCESS_KEY"}'
 ```
 
@@ -108,7 +111,7 @@ tomo secret apply workspace --file config.json --format json \\
 - Without `--map`, env/JSON output keys use the form's field names. Map names
   containing hyphens to valid env keys. `--map -` reads metadata from stdin.
 - Paths resolve from CLI cwd and must stay inside the shell's initial local
-  workspace. Create parent directories first. Symlink targets, directories,
+  workspace or the connector's work root. Create parent directories first. Symlink targets, directories,
   invalid existing env/JSON syntax and files over 1 MB are rejected.
 - Env updates replace all occurrences of mapped keys (including `export` and
   multiline assignments), retaining unrelated entries/comments. JSON merges
@@ -130,10 +133,31 @@ shell sourcing or `docker run --env-file`. Choose a documented supported
 consumer/format, or report the limitation; never recover values via local code
 as a fallback. Other protocols/file consumers are not implemented by a skill.
 
-Missing broker access on SSH/tunnel, background jobs, Telegram, scheduler, or a
-standalone terminal is not a reason to request raw input. Use the supported
-local web-chat path or report the limitation. Cancellation/timeouts are not
-successful storage; never claim external verification from `ready` alone.
+## Tunnel prerequisites and failure handling
+
+Use the same commands without manually setting broker URLs/tokens. Update both
+Tomo and the connector binary; install the matching `tomo` CLI on the remote
+host. The connector advertises `secret-broker` and runs a loopback-only bridge
+forwarding broker metadata to the paired server's HTTPS endpoint. Private file
+and HTTP consumer payloads use authenticated WebSocket RPC, never command text
+or agent environment. Server HTTPS/WSS is required (loopback HTTP is allowed
+for local tests); do not disable TLS verification. The paired server must allow
+both connector WebSocket and broker HTTPS routes through its reverse proxy.
+
+Capabilities are scoped to session/user/workplace and revoked on shell exit,
+timeout or session stop. File apply uses the same backend renderer in both
+locations and an optimistic content check before atomic remote replacement;
+a concurrent edit fails rather than silently overwriting it. Private read/HTTP
+replies are cached only in bounded connector memory, not the persistent replay
+journal. After a connector restart, an interrupted operation can have uncertain
+status: do not blindly retry HTTP mutations or file application. Verify effects
+without printing private values first. Revocation still does not erase files.
+
+Missing access on old/insecure/offline tunnels, SSH, background jobs, Telegram,
+scheduler, or standalone terminals is not a reason to request raw input.
+Report the prerequisite/limitation, never recover credentials through local
+code. Cancellation/timeouts are not successful storage; never claim external
+verification from `ready` alone.
 
 ## Security boundary
 

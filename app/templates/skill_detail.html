@@ -7,7 +7,10 @@
       <h1 class="page-title">{{ skill.name }}</h1>
       <p class="page-sub">v{{ skill.version }} · {{ skill.tool_count }} tools{% if skill.source %} · {{ skill.source }}{% endif %}</p>
     </div>
-    <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'enabled' if skill.enabled else 'disabled' }}</span>
+    <div>
+      <span class="badge {{ 'ok' if skill.enabled else 'muted' }}">{{ 'archived' if skill.archived_at else ('enabled' if skill.enabled else 'disabled') }}</span>
+      {% if skill.archived_at %}<button class="btn ghost sm" type="button" id="restoreSkill">Restore skill</button>{% endif %}
+    </div>
   </div>
 
   <div class="card" style="margin-bottom:16px">
@@ -18,6 +21,11 @@
       {% endif %}
       <div class="config-row"><div class="lbl">ID</div><div class="mono">{{ skill.id }}</div></div>
       <div class="config-row"><div class="lbl">Agents using</div><div>{{ skill.agent_count }}</div></div>
+      <div class="config-row"><div class="lbl">Chat loads</div><div>{{ skill.use_count }}</div></div>
+      <div class="config-row"><div class="lbl">Last loaded</div><div id="skillLastUsed" data-ts="{{ skill.last_used_at }}">Never</div></div>
+      {% if skill.merged_into %}
+      <div class="config-row"><div class="lbl">Merged into</div><div><a href="/skills/{{ skill.merged_into }}">{{ skill.merged_into }}</a></div></div>
+      {% endif %}
       {% if skill.path %}
       <div class="config-row"><div class="lbl">Path</div><div class="mono faint" style="word-break:break-all">{{ skill.path }}</div></div>
       {% endif %}
@@ -52,6 +60,26 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script>
+(function () {
+  var last = document.getElementById('skillLastUsed');
+  var ts = Number(last.dataset.ts);
+  if (ts > 0) last.textContent = new Date(ts * 1000).toLocaleString();
+  var restore = document.getElementById('restoreSkill');
+  if (restore) restore.addEventListener('click', async function () {
+    restore.disabled = true;
+    try {
+      await Tomo.api('/api/skills/' + encodeURIComponent({{ skill.id|tojson }}), {
+        method: 'PUT', body: { enabled: true }
+      });
+      window.location.reload();
+    } catch (err) {
+      restore.disabled = false;
+      Tomo.toast(err.message || 'Could not restore skill', 'error');
+    }
+  });
+})();
+</script>
 {% if skill_body %}
 {% include 'partials/chat_assets.html' %}
 <script>

@@ -59,7 +59,15 @@ func runExec(timeout int, cwd string, env map[string]string, bin, flag, stdin st
 	cmd.Cancel = func() error { return terminateProcess(cmd) }
 	cmd.Dir = cwd
 	cmd.Stdin = bytes.NewBufferString(stdin)
-	cmd.Env = os.Environ()
+	// Do not inherit broker/master-key credentials from the connector daemon.
+	for _, entry := range os.Environ() {
+		key := strings.SplitN(entry, "=", 2)[0]
+		switch key {
+		case "TOMO_BROKER_URL", "TOMO_BROKER_TOKEN", "TOMO_HTTP_BROKER", "TOMO_HTTP_TOKEN", "TOMO_SECRET_KEY":
+			continue
+		}
+		cmd.Env = append(cmd.Env, entry)
+	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

@@ -28,7 +28,7 @@ def _skill_line(skill: dict[str, Any]) -> str:
         label += f": {name}"
     description = _compact_description(skill.get("description"))
     suffix = f" — {description}" if description else ""
-    return f"{label} [{source}]{suffix}"
+    return f"{label} [{source}; {int(skill.get('use_count') or 0)} loads]{suffix}"
 
 
 def _paginate_text(text: str, *, offset: int, limit: int) -> tuple[str, bool]:
@@ -188,6 +188,12 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     sid = slugify_skill_id(skill_id)
     skill = store.get_skill(sid) or store.get_skill(skill_id)
     discovered = find_discovered_skill(sid)
+    from app.runtime.agent.learning.state import in_review_scope
+
+    if skill and skill.get("archived_at") and not in_review_scope():
+        target = skill.get("merged_into")
+        hint = f" Use '{target}' instead." if target else " Restore it from its Skills page first."
+        return f"Error: skill '{sid}' is archived.{hint}"
     if file_path:
         try:
             content = read_skill_file(sid, file_path)
@@ -209,10 +215,6 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     body = read_skill_body(sid)
     if body is None and skill is None and discovered is None:
         return f"Error: unknown skill {skill_id!r}"
-    try:
-        store.bump_skill_use(sid)
-    except Exception:
-        pass
     name = (skill or {}).get("name") or (discovered.name if discovered else skill_id)
     version = (skill or {}).get("version") or (discovered.version if discovered else "")
     source = (skill or {}).get("source") or (discovered.source if discovered else "")
@@ -238,6 +240,11 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     body_page, invalid_offset = _paginate_text(body_text, offset=offset, limit=limit)
     if invalid_offset:
         return body_page
+    if offset == 0 and not in_review_scope():
+        try:
+            store.bump_skill_use(sid)
+        except Exception:
+            pass
     parts.append(body_page)
     return "\n".join(parts)
 
@@ -345,6 +352,7 @@ def manage_skill_run(arguments: dict[str, Any]) -> str:
                 file_path=str(arguments.get("file_path") or "SKILL.md"),
             )
             store.sync_skills()
+            store.update_skill(skill.id, {})
             return f"Patched skill '{skill.id}'."
 
         if action == "write_file":
@@ -357,9 +365,25 @@ def manage_skill_run(arguments: dict[str, Any]) -> str:
             path = skills_ext.write_skill_support_file(
                 skill_id, file_path=file_path, content=content
             )
+            store.update_skill(skills_ext.slugify_skill_id(skill_id), {})
             return f"Wrote support file {path.name} under skill '{skills_ext.slugify_skill_id(skill_id)}'."
 
+        if action == "merge":
+            target_id = str(arguments.get("target_skill_id") or "").strip()
+            body = arguments.get("body")
+            if not skill_id or not target_id or not isinstance(body, str) or not body.strip():
+                return "Error: merge requires skill_id, target_skill_id and a distilled body covering BOTH skills"
+            target = store.merge_skills(
+                skill_id, target_id, body=body,
+                description=str(arguments["description"]).strip() if arguments.get("description") else None,
+            )
+            return f"Merged skill '{skills_ext.slugify_skill_id(skill_id)}' into '{target['id']}'. Source archived; original package retained."
+
         if action == "delete":
+            from app.runtime.agent.learning.state import in_review_scope
+
+            if in_review_scope():
+                return "Error: background review cannot delete skills; use merge to archive absorbed skills safely"
             if not skill_id:
                 return "Error: skill_id is required"
             sid = skills_ext.slugify_skill_id(skill_id)
@@ -373,7 +397,7 @@ def manage_skill_run(arguments: dict[str, Any]) -> str:
             return f"Deleted skill '{sid}'."
 
         return (
-            "Error: action must be one of create, edit, patch, write_file, delete"
+            "Error: action must be one of create, edit, patch, write_file, merge, delete"
         )
     except FileExistsError as exc:
         return f"Error: {exc}"

@@ -66,7 +66,7 @@
         originLabel.appendChild(origin); fieldsHost.appendChild(originLabel);
         var policy = document.createElement('pre');
         policy.className = 'connection-policy';
-        policy.textContent = 'HTTP authentication: ' + JSON.stringify(usage.auth, null, 2);
+        policy.textContent = 'HTTP execution: ' + (usage.workplace_name || 'Tomo backend') + '\nHTTP authentication: ' + JSON.stringify(usage.auth, null, 2);
         fieldsHost.appendChild(policy);
       }
       (definition.fields || []).forEach(function (field) {

@@ -262,7 +262,27 @@ def _call_tunnel(
                 "(connector not connected)"
             ),
         }
-    return hub.call(wid, method, dict(params), timeout=timeout, on_progress=on_progress)
+    token = None
+    wire = dict(params)
+    if method in ("exec_bash", "bash"):
+        from app.runtime.artifacts.fs import current_session_id
+        from app.runtime.tools.user_ctx import current_user_id
+        from app.services import secret_store, secret_tunnel
+
+        sid = current_session_id()
+        if sid and secret_tunnel.available(wid):
+            try:
+                token = secret_store.issue_capability(
+                    sid, current_user_id(), ttl=timeout + 5, workplace_id=wid
+                )
+                wire["broker_token"] = token
+            except ValueError:
+                pass
+    try:
+        return hub.call(wid, method, wire, timeout=timeout, on_progress=on_progress)
+    finally:
+        if token:
+            secret_store.revoke_capability(token)
 
 
 def _call_ssh(
@@ -305,9 +325,7 @@ def try_remote(
             return None
         if kind not in ("tunnel", "ssh"):
             return None
-        to = _timeout_seconds(
-            timeout if timeout is not None else params.get("timeout")
-        )
+        to = _timeout_seconds(timeout if timeout is not None else params.get("timeout"))
         if kind == "tunnel":
             # Live terminal output for the bash tool card (connector exec-stream).
             sink = progress.current() if method in ("exec_bash", "bash") else None
@@ -335,9 +353,7 @@ def try_tunnel_rpc(
     timeout: float | None = None,
     workplace_hint: str | None = None,
 ) -> str | None:
-    return try_remote(
-        method, params, timeout=timeout, workplace_hint=workplace_hint
-    )
+    return try_remote(method, params, timeout=timeout, workplace_hint=workplace_hint)
 
 
 def agent_tunnel_workplace_id(agent_id: str | None = None) -> str | None:

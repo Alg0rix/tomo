@@ -137,6 +137,8 @@ async def test_cancel_stops_question_wait_and_coordinator_review(tmp_path, monke
     real_turn = swarm.run_turn
     async def turn(message, **kw):
         if kw["agent_id"] == "main":
+            # Start quietly after the stream has drained the worker's output.
+            await asyncio.sleep(0.01)
             reviewing.set()
             try:
                 await asyncio.Future()
@@ -148,9 +150,15 @@ async def test_cancel_stops_question_wait_and_coordinator_review(tmp_path, monke
     monkeypatch.setattr(swarm, "run_turn", turn)
     plan = {"tasks": [{"key": "check", "agent_id": "research", "brief": "Check", "tools": []}]}
     gen = swarm.run_swarm_turn("Check", session_id=sid, coordinator_id="main", history=[], initial_plan=plan)
-    while not reviewing.is_set():
-        await asyncio.wait_for(anext(gen), 3)
-    await gen.aclose()
+    async def consume():
+        async for _ in gen:
+            pass
+    consumer = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(reviewing.wait(), 3)
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
     assert stopped.is_set()
     run = store.with_db(lambda c: db.list_runs(c, sid))[0]
     assert run["status"] == "cancelled"

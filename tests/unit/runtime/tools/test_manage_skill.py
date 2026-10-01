@@ -200,3 +200,102 @@ def test_snapshot_exposes_counters() -> None:
     snap = snapshot("snap")
     assert snap["turns_since_memory"] == 1
     assert snap["iters_since_skill"] == 1
+
+
+def test_usage_counts_foreground_not_pagination_review_or_history_replay() -> None:
+    from app.runtime.agent.learning.state import enter_review_scope, exit_review_scope
+    from app.services.chat import expand_slash_skill
+
+    for sid in ("popular", "unused"):
+        execute("manage_skill", {"action": "create", "skill_id": sid,
+                "description": "Usage demo", "body": "Use pytest. " * 20})
+    execute("use_skill", {"skill_id": "popular", "limit": 20})
+    execute("use_skill", {"skill_id": "popular", "offset": 20})
+    execute("use_skill", {"skill_id": "popular", "offset": 99999})
+    token = enter_review_scope()
+    try:
+        execute("use_skill", {"skill_id": "popular"})
+        assert execute("manage_skill", {"action": "delete", "skill_id": "popular"}).startswith("Error")
+    finally:
+        exit_review_scope(token)
+    assert store.get_skill("popular")["use_count"] == 1
+    session = store.create_home_session("web")
+    sid = session.get("session_id") or session["id"]
+    store.append_session_history(sid, {"type": "user", "content": "/popular run tests"})
+    expand_slash_skill("/popular run tests")
+    expand_slash_skill("/popular run tests")
+    store.sync_skills()
+    assert store.get_skill("popular")["use_count"] == 2
+    assert store.get_skill("unused")["use_count"] == 0
+    top = store.companion_snapshot()["most_used_skills"]
+    assert top[0]["id"] == "popular"
+    assert top[0]["use_count"] == 2
+    assert top[0]["last_used_at"] > 0
+    assert "unused" not in [s["id"] for s in top]
+
+
+def test_merge_preserves_package_and_assignment_and_refuses_file_conflicts() -> None:
+    from app.extensions.skills import read_skill_body, read_skill_file
+
+    for sid, body in (("python-tests", "Run pytest."), ("python-fixtures", "Use fixtures.")):
+        execute("manage_skill", {"action": "create", "skill_id": sid,
+                "description": "Python testing", "body": body})
+        execute("manage_skill", {"action": "write_file", "skill_id": sid,
+                "file_path": "references/example.md", "content": body})
+    execute("manage_skill", {"action": "write_file", "skill_id": "python-fixtures",
+            "file_path": "scripts/check.py", "content": "print('fixture')"})
+    agent = store.list_agents()[0]
+    store.set_agent_skills(agent["id"], ["python-fixtures"])
+    execute("use_skill", {"skill_id": "python-fixtures"})
+    args = {"action": "merge", "skill_id": "python-fixtures", "target_skill_id": "python-tests",
+            "body": "Run pytest. Use fixtures. See references/example.md and scripts/check.py."}
+    assert "conflict" in execute("manage_skill", args)
+    assert read_skill_body("python-tests") == "Run pytest."
+    assert store.get_skill("python-fixtures")["enabled"]
+    execute("manage_skill", {"action": "write_file", "skill_id": "python-tests",
+            "file_path": "references/example.md", "content": "Use fixtures."})
+    assert execute("manage_skill", args).startswith("Merged skill")
+    store.sync_skills()
+    source = store.get_skill("python-fixtures")
+    assert not source["enabled"] and source["archived_at"] > 0
+    assert source["merged_into"] == "python-tests" and source["use_count"] == 1
+    assert read_skill_body("python-fixtures") == "Use fixtures."
+    assert "Use fixtures" in read_skill_body("python-tests")
+    assert "print('fixture')" in read_skill_file("python-tests", "scripts/check.py")
+    assigned = [s["id"] for s in store.get_agent_skills(agent["id"]) if s["assigned"]]
+    assert assigned == ["python-tests"]
+    assert store.get_agent(agent["id"])["skill_count"] == 1
+    assert "is archived" in execute("use_skill", {"skill_id": "python-fixtures"})
+    assert execute("list_skills", {"query": "python-fixtures"}).startswith("No skills matched")
+    restored = store.update_skill("python-fixtures", {"enabled": True})
+    assert restored["enabled"] and restored["archived_at"] == 0
+    assert restored["use_count"] == 1
+
+
+def test_stale_archive_respects_age_assignments_ownership_and_restore(monkeypatch) -> None:
+    import time
+    from app.services.chat import resolve_slash_skill
+
+    execute("manage_skill", {"action": "create", "skill_id": "old-local",
+            "description": "Old local", "body": "Old procedure."})
+    execute("manage_skill", {"action": "create", "skill_id": "assigned-local",
+            "description": "Assigned local", "body": "Protected procedure."})
+    agent = store.list_agents()[0]
+    store.set_agent_skills(agent["id"], ["assigned-local"])
+    execute("use_skill", {"skill_id": "old-local"})
+    future = time.time() + 91 * 86400
+    monkeypatch.setattr(time, "time", lambda: future)
+    execute("manage_skill", {"action": "create", "skill_id": "new-local",
+            "description": "New local", "body": "Recent procedure."})
+    assert store.maintain_skills() == ["old-local"]
+    assert store.get_skill("old-local")["use_count"] == 1
+    assert store.get_skill("assigned-local")["enabled"]
+    assert store.get_skill("new-local")["enabled"]
+    assert all(s["enabled"] for s in store.list_skills() if s["source"] == "internal")
+    assert resolve_slash_skill("/old-local") is None
+    store.update_skill("old-local", {"enabled": True})
+    assert store.maintain_skills() == []
+    assert resolve_slash_skill("/old-local") is not None
+    internal = next(s for s in store.list_skills() if s["source"] == "internal")
+    assert execute("manage_skill", {"action": "merge", "skill_id": internal["id"],
+                   "target_skill_id": "new-local", "body": "Merged."}).startswith("Error")

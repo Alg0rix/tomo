@@ -402,7 +402,17 @@ class Store:
     def append_session_history(self, session_id: str, entry: dict[str, Any]) -> str | None:
         """Append history. Returns new session title when auto-resolved from first user message."""
         with self._lock:
-            return messages_store.append_session_history(self._conn, session_id, entry)
+            title = messages_store.append_session_history(self._conn, session_id, entry)
+            # Count explicit /skill activations once at ingress, never when old
+            # messages are expanded again to rebuild the model's context.
+            content = str(entry.get("content") or "")
+            if entry.get("type") == "user" and content.lstrip().startswith("/"):
+                from app.services.chat import resolve_slash_skill
+
+                hit = resolve_slash_skill(content)
+                if hit:
+                    self.bump_skill_use(hit[0]["id"])
+            return title
 
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
@@ -1484,6 +1494,32 @@ class Store:
             return mem_layers.upsert_session_summary(
                 self._conn, session_id, summary, message_count=message_count
             )
+
+    def maintain_skills(self) -> list[str]:
+        from app.extensions.skills import sync_skills_to_db
+        from app.models.mixins.skills import archive_stale_skills
+
+        with self._lock:
+            sync_skills_to_db(self._conn)
+            return archive_stale_skills(self._conn)
+
+    def merge_skills(
+        self, source_id: str, target_id: str, *, body: str, description: str | None = None,
+    ) -> dict[str, Any]:
+        from app.extensions.skills import merge_library_skills, slugify_skill_id, sync_skills_to_db
+        from app.models.mixins.skills import archive_skill, get_skill
+
+        source_id, target_id = slugify_skill_id(source_id), slugify_skill_id(target_id)
+        with self._lock:
+            sync_skills_to_db(self._conn)
+            for sid in (source_id, target_id):
+                skill = get_skill(self._conn, sid)
+                if not skill or skill["source"] != "library" or not skill["enabled"]:
+                    raise ValueError("merge requires two enabled managed library skills")
+            merge_library_skills(source_id, target_id, body=body, description=description)
+            sync_skills_to_db(self._conn)
+            archive_skill(self._conn, source_id, merged_into=target_id)
+            return get_skill(self._conn, target_id)
 
     def bump_skill_use(self, skill_id: str) -> None:
         with self._lock:

@@ -290,9 +290,14 @@ def companion_snapshot(
     first_seen = first_activity_at(conn, user_id=uid)
     days_active = distinct_active_days(conn, user_id=uid)
     try:
-        library_skills = len(skills_store.list_skills(conn) or [])
+        skills = skills_store.list_skills(conn) or []
     except Exception:
-        library_skills = 0
+        skills = []
+    library_skills = len(skills)
+    most_used = sorted(
+        (s for s in skills if s["use_count"] > 0 and s["enabled"]),
+        key=lambda s: (-s["use_count"], -s["last_used_at"], s["id"]),
+    )[:5]
 
     preview, user_entry_count, user_chars = _user_profile(uid)
 
@@ -337,6 +342,10 @@ def companion_snapshot(
         "heatmap": heatmap,
         "recent_events": recent,
         "user_profile_preview": preview,
+        "most_used_skills": [
+            {key: skill[key] for key in ("id", "name", "use_count", "last_used_at")}
+            for skill in most_used
+        ],
         "diagnostics": diagnostics,
         "generated_at": time.time(),
     }

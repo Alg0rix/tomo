@@ -164,6 +164,10 @@ def apply_file(scope: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     row = secret_store.scoped_bundle(scope, data.get("bundle"))
     names = [field["name"] for field in json.loads(row["form_json"])["fields"]]
     mapping = _bindings(data, names, fmt)
+    if scope.get("workplace_id"):
+        from app.services import secret_tunnel
+
+        return secret_tunnel.apply_file(scope, data, row, mapping, fmt)
     temporary = None
     try:
         with _LOCK:

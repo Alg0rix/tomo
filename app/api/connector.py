@@ -67,18 +67,12 @@ async def connector_pair_http(request: Request) -> JSONResponse:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    code = str(
-        data.get("pairing_code") or data.get("code") or ""
-    ).strip()
-    hostname = str(
-        data.get("device_name") or data.get("hostname") or ""
-    ).strip()
+    code = str(data.get("pairing_code") or data.get("code") or "").strip()
+    hostname = str(data.get("device_name") or data.get("hostname") or "").strip()
     platform = str(data.get("platform") or "").strip()
     version = str(data.get("version") or "").strip()
     # Prefer device-reported LAN IP over TCP peer (peer is often 127.0.0.1).
-    device_ip = str(
-        data.get("local_ip") or data.get("device_ip") or ""
-    ).strip()
+    device_ip = str(data.get("local_ip") or data.get("device_ip") or "").strip()
     peer = ip if ip not in ("", "unknown") else ""
     stored_ip = device_ip or (peer if peer not in ("127.0.0.1", "::1") else "")
     if not code:
@@ -127,14 +121,8 @@ async def connector_ws(websocket: WebSocket) -> None:
         or websocket.headers.get("x-tomo-platform")
         or ""
     ).strip()
-    version = (
-        websocket.headers.get("x-tomo-connector-version")
-        or ""
-    ).strip()
-    caps = (
-        websocket.headers.get("x-tomo-caps")
-        or ""
-    ).strip()
+    version = (websocket.headers.get("x-tomo-connector-version") or "").strip()
+    caps = (websocket.headers.get("x-tomo-caps") or "").strip()
     device_ip = (
         websocket.headers.get("x-tomo-local-ip")
         or websocket.headers.get("x-device-ip")
@@ -142,7 +130,9 @@ async def connector_ws(websocket: WebSocket) -> None:
     ).strip()
     peer = client_host or ""
     # Device LAN IP preferred; never treat loopback peer as "the" device IP.
-    stored_ip = device_ip or (peer if peer not in ("127.0.0.1", "::1", "unknown") else "")
+    stored_ip = device_ip or (
+        peer if peer not in ("127.0.0.1", "::1", "unknown") else ""
+    )
 
     workplace_id: str | None = None
     session: ConnectorSession | None = None
@@ -220,7 +210,9 @@ async def connector_ws(websocket: WebSocket) -> None:
                     await websocket.close(code=4408)
                     return
                 code = str(raw.get("code") or raw.get("pairing_code") or "").strip()
-                hostname = str(raw.get("hostname") or raw.get("device_name") or "").strip()
+                hostname = str(
+                    raw.get("hostname") or raw.get("device_name") or ""
+                ).strip()
                 version = str(raw.get("version") or "").strip()
                 platform = str(raw.get("platform") or "").strip()
                 msg_ip = str(raw.get("local_ip") or raw.get("device_ip") or "").strip()
@@ -381,11 +373,16 @@ async def _bind_session(
         remote_ip=remote_ip,
         replay_ok=replay_ok,
         stream_ok=client_supports_stream(caps),
+        secret_broker="secret-broker" in caps.split(","),
     )
     prev = hub.register(session)
     if prev is not None and prev.websocket is not websocket:
         # Hand off in-flight RPCs when both sides support replay.
-        if replay_ok and prev.replay_ok:
+        if (
+            replay_ok
+            and prev.replay_ok
+            and (not prev.secret_broker or session.secret_broker)
+        ):
             pending = prev.take_pending_for_replay()
             if pending:
                 await session.adopt_pending(pending)

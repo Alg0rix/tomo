@@ -118,6 +118,69 @@ def test_cooldown_does_not_burn_nudge() -> None:
     assert p3 is not None and p3.review_memory
 
 
+async def test_skill_review_automatically_merges_without_inflating_usage() -> None:
+    from app.runtime.tools.registry import execute
+
+    for sid, body in (("python-testing", "Run pytest."), ("python-fixtures", "Use fixtures.")):
+        execute("manage_skill", {"action": "create", "skill_id": sid,
+                "description": "Python testing", "body": body})
+    client = ScriptedLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="blind", name="manage_skill", arguments={
+                "action": "merge", "skill_id": "python-fixtures",
+                "target_skill_id": "python-testing", "body": "Unverified replacement.",
+            },
+        )]),
+        LLMResponse(content=None, tool_calls=[
+            ToolCall(id="read1", name="use_skill", arguments={"skill_id": "python-testing"}),
+            ToolCall(id="read2", name="use_skill", arguments={"skill_id": "python-fixtures"}),
+        ]),
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="merge", name="manage_skill", arguments={
+                "action": "merge", "skill_id": "python-fixtures",
+                "target_skill_id": "python-testing", "body": "Run pytest. Use fixtures.",
+            },
+        )]),
+        text_reply("Merged testing procedures.\nDiary: I consolidated testing knowledge."),
+    ])
+    result = await run_learning_review(
+        client=client, messages=[{"role": "user", "content": "run the tests"}],
+        metrics=TurnMetrics(agent_id="main", ended_kind="final", tool_calls=4),
+        user_message="run the tests", final_content="Tests passed.",
+    )
+    assert result and result["saved"]
+    assert any("Merged skill" in a for a in result["actions"])
+    assert any("read BOTH" in item["summary"] for item in result["extract"]["items"])
+    assert store.get_skill("python-fixtures")["merged_into"] == "python-testing"
+    assert store.get_skill("python-testing")["use_count"] == 0
+    assert store.get_skill("python-fixtures")["use_count"] == 0
+    assert any(e["saved"] for e in store.list_learning_events(limit=5))
+
+
+async def test_review_archives_inactive_skills_but_keeps_recent_support_edits(monkeypatch) -> None:
+    import time
+    from app.runtime.tools.registry import execute
+
+    for sid in ("inactive", "recent-edit"):
+        execute("manage_skill", {"action": "create", "skill_id": sid,
+                "description": "Local workflow", "body": "A reusable procedure."})
+    future = time.time() + 91 * 86400
+    monkeypatch.setattr(time, "time", lambda: future)
+    execute("manage_skill", {"action": "write_file", "skill_id": "recent-edit",
+            "file_path": "references/new.md", "content": "An updated procedure."})
+    result = await run_learning_review(
+        client=ScriptedLLM([text_reply("Nothing to save.")]),
+        messages=[{"role": "user", "content": "run the tests"}],
+        metrics=TurnMetrics(agent_id="main", ended_kind="final", tool_calls=4),
+        user_message="run the tests", final_content="Tests passed.",
+    )
+    assert result and result["saved"]
+    assert any("Archived inactive skill 'inactive'" in a for a in result["actions"])
+    assert store.get_skill("inactive")["archived_at"] > 0
+    assert store.get_skill("recent-edit")["enabled"]
+    assert any("Archived inactive skill" in str(e["actions"]) for e in store.list_learning_events(limit=5))
+
+
 async def test_review_saves_via_memory_tool() -> None:
     client = ScriptedLLM(
         [

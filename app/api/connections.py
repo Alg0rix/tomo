@@ -37,7 +37,7 @@ def broker_scope(request: Request) -> dict:
     if not scope:
         raise HTTPException(
             401,
-            "Broker access missing or expired; run from a local Tomo chat bash tool",
+            "Broker access missing or expired; run from a local or updated tunnel Tomo chat bash tool",
         )
     return {**scope, "token": token}
 

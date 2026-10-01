@@ -54,6 +54,43 @@ Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
 State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).  
 Jail: `$TOMO_CONNECTOR_ROOT` or `$TOMO_CONNECTOR_HOME/work`.
 
+## Private-input broker in tunnel chats
+
+With an updated Tomo server, this connector advertises `secret-broker` on
+HTTPS/WSS pairings (loopback HTTP is permitted for local testing). Install the
+matching `tomo` Python CLI on this host as well; the Go connector alone does not
+install it. Existing foreground web-chat bash commands work unchanged:
+
+```bash
+tomo secret request app --form '{"fields":[{"name":"API_KEY"}]}'
+tomo secret list
+tomo secret apply app --file .env --format compose
+tomo connection request api --url https://api.example --auth bearer
+tomo http --connection api /status
+tomo secret revoke app
+```
+
+Input stays in the browser form and encrypted backend store. A loopback-only
+HTTP bridge forwards CLI broker metadata to the paired server's HTTPS API.
+Private consumer inputs use internal authenticated connector RPC, not shell
+commands or environment variables. HTTP executes on this host, so its intranet
+network/DNS is used. Files are rendered by the same backend logic and atomically
+written inside `TOMO_CONNECTOR_ROOT`, with a content check against concurrent
+edits. Results/errors contain only metadata; normal filesystem access remains
+unchanged. Add generated secret files to the application's `.gitignore`.
+
+The server/proxy must permit broker HTTPS paths as well as the connector WS
+path. No public listener is added on this host. Ephemeral broker access is bound
+to the web-chat session and workplace and ends when its bash call exits/stops.
+Old/offline/public-plaintext connectors, SSH, background jobs and standalone
+terminals do not get this capability. Do not print/copy broker tokens.
+
+Private read/HTTP replies stay only in bounded memory for same-process replay;
+only the intent fingerprint is journaled. After restart, those intents return
+uncertain status rather than rerunning an HTTP mutation. Verify effects before
+retrying; never inspect/print secret contents to recover. Revoking a bundle does
+not remove files already materialized or credentials already used by an app.
+
 ## systemd service
 
 Keep the connector online across reboots/logouts (Linux). Install mode depends

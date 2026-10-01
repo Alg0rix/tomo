@@ -232,7 +232,14 @@ func (s *rpcStore) executeWithProgress(msg envelope, progress executor.Progress)
 	record.Completed = true
 	record.Expires = time.Now().Add(rpcCacheTTL)
 	record.Response = raw
-	if err := s.save(key, record); err != nil {
+	diskRecord := record
+	if msg.Method == "secret_file_read" || msg.Method == "secret_http" {
+		// Keep private replies only in bounded process memory. A restart leaves
+		// an uncertain intent, rather than leaking a response or executing again.
+		diskRecord.Completed = false
+		diskRecord.Response = nil
+	}
+	if err := s.save(key, diskRecord); err != nil {
 		out = rpcError(msg.ID, "execution status uncertain: could not persist result; inspect effects before issuing a new request")
 	} else {
 		entry.record = record
@@ -246,7 +253,26 @@ func executeRPC(msg envelope, progress executor.Progress) (out envelope) {
 	// A handler panic must not strand duplicate requests forever.
 	out = rpcError(msg.ID, "execution status uncertain: handler panicked; inspect effects before issuing a new request")
 	defer func() { _ = recover() }()
-	result, err := executor.HandleWithProgress(msg.Method, msg.Params, progress)
+	params := msg.Params
+	if msg.BrokerURL != "" && (msg.Method == "exec_bash" || msg.Method == "bash") {
+		if token, ok := params["broker_token"].(string); ok && token != "" {
+			// Runtime bridge address is not part of the replay fingerprint.
+			params = make(map[string]any, len(msg.Params)+1)
+			for key, value := range msg.Params {
+				params[key] = value
+			}
+			env := make(map[string]any)
+			if original, ok := params["env"].(map[string]any); ok {
+				for k, v := range original {
+					env[k] = v
+				}
+			}
+			env["TOMO_BROKER_URL"] = msg.BrokerURL
+			env["TOMO_BROKER_TOKEN"] = token
+			params["env"] = env
+		}
+	}
+	result, err := executor.HandleWithProgress(msg.Method, params, progress)
 	if err != nil {
 		return rpcError(msg.ID, err.Error())
 	}

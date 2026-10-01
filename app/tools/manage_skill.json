@@ -1,24 +1,28 @@
 {
   "id": "manage_skill",
   "name": "Manage Skill",
-  "description": "Create or update reusable skill playbooks distilled from experience.",
+  "description": "Create, refine or merge reusable skill playbooks distilled from experience.",
   "backend": "app.runtime.tools.skills_tools",
   "schema": {
     "type": "function",
     "function": {
       "name": "manage_skill",
-      "description": "Create, edit, patch, or delete a reusable skill (SKILL.md playbook) in the local skill library. Use after multi-step work when a durable procedure, fix pattern, or user preference about how to do a *class* of tasks should persist. Prefer patching an existing class-level skill over creating narrow one-off skills.\n\nActions:\n- create: new skill (skill_id, description, body required)\n- edit: replace SKILL.md fields or full content\n- patch: unique find-and-replace in SKILL.md or a support file\n- write_file: add references/templates/scripts/assets support file\n- delete: remove a library skill you created\n\nWhen NOT to use: greetings, one-shot Q&A, environment glitches ('command not found'), or transient failures that already resolved. Capture the durable FIX pattern, not 'tool X is broken'.",
+      "description": "Create, edit, patch, merge, or delete a reusable skill (SKILL.md playbook) in the local skill library. Use after multi-step work when a durable procedure, fix pattern, or user preference about how to do a *class* of tasks should persist. Prefer patching an existing class-level skill over creating narrow one-off skills.\n\nActions:\n- create: new skill (skill_id, description, body required)\n- edit: replace SKILL.md fields or full content\n- patch: unique find-and-replace in SKILL.md or a support file\n- write_file: add references/templates/scripts/assets support file\n- merge: distill skill_id into target_skill_id (existing library umbrella), with body covering BOTH procedures; preserves support files, archives the source reversibly and migrates agent assignments. Read both first; internal/external or conflicting support files are refused.\n- delete: remove a library skill you created (not allowed in background review)\n\nWhen NOT to use: greetings, one-shot Q&A, environment glitches ('command not found'), or transient failures that already resolved. Capture the durable FIX pattern, not 'tool X is broken'.",
       "parameters": {
         "type": "object",
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["create", "edit", "patch", "write_file", "delete"],
+            "enum": ["create", "edit", "patch", "write_file", "merge", "delete"],
             "description": "Mutation to perform."
           },
           "skill_id": {
             "type": "string",
             "description": "Skill id / directory slug (e.g. python-testing)."
+          },
+          "target_skill_id": {
+            "type": "string",
+            "description": "merge only: existing managed library umbrella to absorb skill_id into."
           },
           "display_name": {
             "type": "string",
@@ -30,7 +34,7 @@
           },
           "body": {
             "type": "string",
-            "description": "Markdown procedure after frontmatter (create/edit)."
+            "description": "Markdown procedure after frontmatter (create/edit); merge requires a full distilled body covering both source and target."
           },
           "content": {
             "type": "string",

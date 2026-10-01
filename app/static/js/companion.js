@@ -66,6 +66,18 @@
     }
   }
 
+  function renderMostUsedSkills(skills) {
+    var rows = (skills || []).map(function (skill) {
+      return '<li><a href="/skills/' + encodeURIComponent(skill.id) + '" title="Last loaded: ' +
+        esc(fmtDate(skill.last_used_at)) + '"><span>' + esc(skill.name) +
+        '</span><span class="mono faint">' + esc(skill.use_count) + ' loads</span></a></li>';
+    }).join('');
+    return '<div class="cp-skills-head"><h4>Most-used skills</h4>' +
+      '<span class="faint">Shared library · chat loads</span></div>' +
+      (rows ? '<ol class="cp-skills-list">' + rows + '</ol>' :
+        '<p class="faint">No skill loads recorded yet.</p>');
+  }
+
   function fmtDay(iso) {
     if (!iso) return '';
     try {
@@ -555,6 +567,7 @@
       '<a class="btn ghost sm" href="/skills">Skills</a>' +
       '<a class="btn ghost sm" href="/system#memory">Memory</a></div></div>' +
       profileHtml +
+      renderMostUsedSkills(data.most_used_skills) +
       '</section></div>' +
       /* Growth log */
       '<section class="cp-bento cp-bento-pad cp-growth-card">' +

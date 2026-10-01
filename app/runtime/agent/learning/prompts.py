@@ -68,6 +68,25 @@ Only save memory if a clear durable preference/correction appeared.
 Prefs/persona never go into manage_skill create — use memory.
 """
 
+_SKILL_MAINTENANCE = """
+Also curate the library automatically, not only the latest turn:
+- Scan enabled library skills for overlapping procedures or narrow siblings that
+  belong in one class-level umbrella. Use list_skills(query=...) to see more
+  than the digest catalog. Internal/external skills are not merge candidates.
+- Read BOTH candidates with use_skill before merging. Distill unique procedures,
+  pitfalls and verification into a concise umbrella body; do not concatenate stories.
+- Call manage_skill action=merge with skill_id=<absorbed source>,
+  target_skill_id=<existing umbrella>, body=<complete revised umbrella body>,
+  and optionally description=<broader trigger>. Create an umbrella first if needed.
+- Inspect support files; merge preserves their paths and refuses conflicting files.
+  Keep complex/conflicting packages separate rather than losing working references.
+- Merge archives the source reversibly and migrates agent assignments. Never delete.
+- Usage counts measure foreground body loads, not usefulness. Zero alone is NOT
+  a reason to prune. Unassigned local skills inactive for 90 days are already
+  soft-archived deterministically; their bodies and usage remain recoverable.
+- One well-grounded merge is enough for a pass. If no overlap exists, do nothing.
+"""
+
 _FOCUS_BOTH = """
 Focus this pass: BOTH memory and skills — but they are different jobs.
 Memory first for who the user is: memory entity=user/profile.
@@ -90,6 +109,7 @@ def system_prompt(*, review_memory: bool, review_skills: bool) -> str:
         + lanes_prompt_block()
         + "\n\n"
         + focus.strip()
+        + (_SKILL_MAINTENANCE if review_skills else "")
         + "\n"
     )
 

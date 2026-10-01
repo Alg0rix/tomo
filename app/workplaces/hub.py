@@ -84,9 +84,11 @@ class ConnectorSession:
         remote_ip: str = "",
         replay_ok: bool = False,
         stream_ok: bool = False,
+        secret_broker: bool = False,
     ) -> None:
         self.workplace_id = workplace_id
         self.stream_ok = stream_ok
+        self.secret_broker = secret_broker
         self.websocket = websocket
         self.loop = loop
         self.hostname = hostname

@@ -31,6 +31,7 @@ type envelope struct {
 	Error       string         `json:"error,omitempty"`
 	Message     string         `json:"message,omitempty"`
 	WorkplaceID string         `json:"workplace_id,omitempty"`
+	BrokerURL   string         `json:"-"`
 }
 
 type heartbeatConfig struct{ interval, readTimeout, writeTimeout time.Duration }
@@ -69,6 +70,14 @@ func Run() error {
 	defer store.close()
 	dispatcher := newRPCDispatcher(store)
 	defer dispatcher.close()
+	broker, brokerURL, err := startBroker(st.ServerURL)
+	if err != nil {
+		return fmt.Errorf("start broker bridge: %w", err)
+	}
+	if broker != nil {
+		defer broker.Close()
+	}
+	dispatcher.brokerURL = brokerURL
 	return runReconnectLoop(st, dispatcher)
 }
 
@@ -196,7 +205,11 @@ func connectBearer(st *state.State, dispatcher *rpcDispatcher) (time.Duration, e
 	header.Set("X-Device-Name", hostname())
 	header.Set("X-Platform", runtime.GOOS)
 	header.Set("X-Tomo-Connector-Version", version.Version)
-	header.Set("X-Tomo-Caps", "idempotent-replay,exec-stream")
+	caps := "idempotent-replay,exec-stream"
+	if dispatcher.brokerURL != "" {
+		caps += ",secret-broker"
+	}
+	header.Set("X-Tomo-Caps", caps)
 	if lip != "" {
 		header.Set("X-Tomo-Local-IP", lip)
 		header.Set("X-Device-IP", lip)
@@ -219,7 +232,7 @@ func connectBearer(st *state.State, dispatcher *rpcDispatcher) (time.Duration, e
 		return 0, fmt.Errorf("dial: %w (HTTP %d)", err, code)
 	}
 	defer conn.Close()
-	conn.SetReadLimit(512 * 1024)
+	conn.SetReadLimit(8 << 20)
 	clog.Event("ws.connected",
 		"workplace_id", st.WorkplaceID,
 		"url", wsURL,
@@ -291,6 +304,7 @@ func serveLoop(conn *websocket.Conn, st *state.State, dispatcher *rpcDispatcher,
 			}
 			clog.Event("ws.hello_ok", "workplace_id", st.WorkplaceID)
 		case "rpc_request":
+			msg.BrokerURL = dispatcher.brokerURL
 			dispatcher.submit(writer, msg)
 		case "error":
 			clog.Event("ws.server_error")

@@ -89,11 +89,24 @@ def _prune() -> None:
 
 
 def issue_capability(
-    session_id: str, user_id: str, ttl: float = 120, *, work_root: str | None = None
+    session_id: str,
+    user_id: str,
+    ttl: float = 120,
+    *,
+    work_root: str | None = None,
+    workplace_id: str | None = None,
 ) -> str:
     session = store.get_owned_session(session_id, user_id)
     if not session or session.get("channel") != "web":
         raise ValueError("Secure input requires an owned web chat session")
+    if workplace_id:
+        from app.services.secret_tunnel import available
+
+        wp = store.get_workplace(workplace_id)
+        if not wp or wp.get("kind") != "tunnel" or not available(workplace_id):
+            raise ValueError(
+                "Secure broker requires an online updated tunnel connector"
+            )
     token = secrets.token_urlsafe(32)
     with _LOCK:
         _prune()
@@ -102,6 +115,7 @@ def issue_capability(
             "user_id": user_id,
             "expires_at": time.time() + min(max(ttl, 1), 300),
             "work_root": work_root,
+            "workplace_id": workplace_id,
         }
     return token
 

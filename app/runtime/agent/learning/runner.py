@@ -314,6 +314,7 @@ async def _run_review_llm(
     review_skills: bool,
     user_id: str | None = None,
 ) -> dict[str, Any]:
+    from app.extensions.skills import slugify_skill_id
     from app.runtime.agent.retry import with_llm_retry
     from app.runtime.agent.learning.memory_types import (
         classify_actions,
@@ -343,8 +344,8 @@ async def _run_review_llm(
     ]
     actions: list[str] = []
     classified: list[dict[str, Any]] = []
+    reviewed_skills: set[str] = set()
     note = ""
-    loop = asyncio.get_running_loop()
 
     async def _one_complete(
         msgs: list[dict[str, Any]], tools: list[dict[str, Any]] | None
@@ -403,19 +404,30 @@ async def _run_review_llm(
             for i, call in enumerate(resp.tool_calls):
                 cid = tool_calls_payload[i]["id"]
                 args = dict(call.arguments or {})
+                merge_ids = set()
+                if call.name == "manage_skill" and args.get("action") == "merge":
+                    merge_ids = {
+                        slugify_skill_id(str(args.get(key) or ""))
+                        for key in ("skill_id", "target_skill_id")
+                    }
                 if call.name not in _ALLOWED_REVIEW_TOOLS:
                     result = f"Error: tool '{call.name}' is not allowed in learning review"
+                elif merge_ids and not merge_ids <= reviewed_skills:
+                    result = "Error: read BOTH skills with use_skill before merging them in this review"
                 else:
                     if call.name in {"manage_skill", "agent_state", "memory"} and agent_id:
                         if "agent_id" not in args:
                             args["agent_id"] = agent_id
                     try:
-                        result = await loop.run_in_executor(
-                            None, execute, call.name, args
-                        )
+                        # to_thread propagates the review/agent/user ContextVars;
+                        # run_in_executor silently dropped this isolation scope.
+                        result = await asyncio.to_thread(execute, call.name, args)
                     except Exception as exc:  # pragma: no cover
                         result = f"Error: {exc}"
                 result_s = str(result)
+                if call.name == "use_skill" and result_s.startswith("Skill:"):
+                    sid = args.get("skill_id") or args.get("id") or args.get("name") or ""
+                    reviewed_skills.add(slugify_skill_id(str(sid)))
                 classified.append(
                     classify_review_action(
                         call.name, arguments=args, result_text=result_s
@@ -505,6 +517,18 @@ async def run_learning_review(
         )
         return None
 
+    maintenance_actions: list[str] = []
+    if plan.review_skills:
+        try:
+            from app.services import store
+
+            archived = await asyncio.to_thread(store.maintain_skills)
+            maintenance_actions = [
+                f"manage_skill: Archived inactive skill '{sid}'." for sid in archived
+            ]
+        except Exception as exc:
+            _logger.warning("skill maintenance failed: %s", exc)
+
     review_client, routed = _resolve_review_client(client)
     review_user_id = "web"
     if metrics.session_id:
@@ -578,11 +602,22 @@ async def run_learning_review(
         # spam the growth log. Release the review claim and skip this round.
         _logger.warning("learning review LLM request failed: %s", exc)
         result["note"] = "Provider returned no output — review skipped."
-        record_event = False
+        record_event = bool(maintenance_actions)
     except Exception as exc:
         _logger.warning("learning review failed: %s", exc)
         result["note"] = f"error: {exc}"
     finally:
+        if maintenance_actions:
+            from app.runtime.agent.learning.memory_types import classify_actions
+
+            result["actions"] = maintenance_actions + result["actions"]
+            result["saved"] = True
+            result["extract"] = classify_actions(
+                result["actions"],
+                classified=classify_actions(maintenance_actions)["items"]
+                + list(result["extract"].get("items") or []),
+            )
+            result["note"] = "Archived inactive library skills. " + result["note"]
         finish_review(metrics.agent_id, saved=bool(result.get("saved")))
         if record_event:
             result["diary"] = _record_learning_event(

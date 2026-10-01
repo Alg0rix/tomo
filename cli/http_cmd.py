@@ -155,7 +155,7 @@ def _client():
         valid = False
     if not valid or not token:
         raise ValueError(
-            "Run from a foreground local Tomo web-chat bash tool; broker access is session-scoped"
+            "Run from a foreground Tomo web-chat bash tool (local or updated tunnel connector); broker access is session-scoped"
         )
     with httpx.Client(
         base_url=base,
@@ -302,5 +302,5 @@ def run(args: argparse.Namespace) -> int:
         print("Error: " + str(exc), file=sys.stderr)
         return 1
     except httpx.HTTPError:
-        print("Error: could not reach the Tomo connection broker", file=sys.stderr)
+        print("Error: could not reach the Tomo secret broker", file=sys.stderr)
         return 1

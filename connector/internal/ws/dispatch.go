@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -37,18 +38,24 @@ type rpcTask struct {
 	writer *socketWriter
 }
 type rpcDispatcher struct {
-	store   *rpcStore
-	queue   chan rpcTask
-	workers sync.WaitGroup
+	store        *rpcStore
+	queue        chan rpcTask
+	privateQueue chan rpcTask
+	brokerURL    string
+	workers      sync.WaitGroup
 }
 
 func newRPCDispatcher(store *rpcStore) *rpcDispatcher {
-	d := &rpcDispatcher{store: store, queue: make(chan rpcTask, rpcQueueSize)}
-	for i := 0; i < rpcWorkers; i++ {
+	d := &rpcDispatcher{store: store, queue: make(chan rpcTask, rpcQueueSize), privateQueue: make(chan rpcTask, rpcQueueSize)}
+	for i := 0; i < rpcWorkers+2; i++ {
+		queue := d.queue
+		if i >= rpcWorkers {
+			queue = d.privateQueue
+		} // A waiting bash must not starve its consumer.
 		d.workers.Add(1)
 		go func() {
 			defer d.workers.Done()
-			for task := range d.queue {
+			for task := range queue {
 				t0 := time.Now()
 				id, writer := task.msg.ID, task.writer
 				out := d.store.executeWithProgress(task.msg, func(chunk string) {
@@ -66,10 +73,14 @@ func newRPCDispatcher(store *rpcStore) *rpcDispatcher {
 	return d
 }
 func (d *rpcDispatcher) submit(writer *socketWriter, msg envelope) {
+	queue := d.queue
+	if strings.HasPrefix(msg.Method, "secret_") {
+		queue = d.privateQueue
+	}
 	select {
-	case d.queue <- rpcTask{msg: msg, writer: writer}:
+	case queue <- rpcTask{msg: msg, writer: writer}:
 	default:
 		_ = writer.send(rpcError(msg.ID, "busy: RPC queue is full"))
 	}
 }
-func (d *rpcDispatcher) close() { close(d.queue); d.workers.Wait() }
+func (d *rpcDispatcher) close() { close(d.queue); close(d.privateQueue); d.workers.Wait() }

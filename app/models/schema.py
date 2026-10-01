@@ -695,6 +695,13 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE skills ADD COLUMN last_used_at REAL NOT NULL DEFAULT 0"
         )
 
+    if "updated_at" not in skill_cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN updated_at REAL NOT NULL DEFAULT 0")
+    if "archived_at" not in skill_cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN archived_at REAL NOT NULL DEFAULT 0")
+    if "merged_into" not in skill_cols:
+        conn.execute("ALTER TABLE skills ADD COLUMN merged_into TEXT NOT NULL DEFAULT ''")
+
     # plugins → modules rename (Alpha catalog rename).
     table_names = {
         r[0]

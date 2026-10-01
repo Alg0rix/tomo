@@ -1,7 +1,7 @@
 ---
 name: secure-http
 description: "Connect to authenticated HTTP APIs (Zabbix, monitoring, SaaS, internal services) without asking for credentials in chat. Use Tomo's secure connection form and curl-like tomo http CLI."
-version: 1.0
+version: 1.1
 ---
 
 # Secure HTTP connections
@@ -13,16 +13,24 @@ Never use `tomo config` to retrieve credentials, decrypt the store, or print env
 
 ## Execution location
 
-These commands run from a **foreground local coordinator bash tool in an owned
-web chat session**. Tomo injects a temporary broker capability automatically.
+These commands run from a **foreground bash tool in an owned web chat**,
+locally or through an updated tunnel connector. Tomo injects a temporary broker
+capability automatically; on tunnels it also binds the selected workplace.
 It is not an upstream API credential and cannot read credential values. It
 expires when that shell exits, times out, or the chat is stopped. Do not print,
 persist, or copy it. A later bash call gets fresh access to the same session.
 
-SSH/tunnel workplaces, background commands, Telegram, scheduled/standalone CLI
-execution do not receive broker access. Do not work around missing access with
-raw credentials or an admin API key. Use the coordinator's local work directory;
-if it is unavailable, report the limitation instead of claiming a connection.
+On a tunnel, HTTP executes on the connector host, including its DNS/network
+access to intranet services. Install the matching `tomo` CLI there and update
+the connector binary (`secret-broker` capability). Its loopback bridge forwards
+broker metadata to the paired HTTPS server; private HTTP inputs travel over
+connector WebSocket RPC. HTTPS/WSS is required except for loopback tests.
+No manual token/URL copying is needed. Offline/old/insecure connectors fail;
+do not silently fall back to the backend's network.
+
+SSH workplaces, background commands, Telegram, scheduled/standalone execution
+still do not receive broker access. Do not work around missing access with raw
+credentials or an admin API key. Report the prerequisite/limitation instead.
 
 ## Secret store versus HTTP usage
 
@@ -95,8 +103,11 @@ tomo connection request basic-api --url https://api.example --auth basic
   it sends credentials unencrypted. Never disable TLS verification.
 - Timeout/cancel is not a successful connection. Retry the secure form only
   when appropriate; never ask for the token in chat.
-- Connections are **session-local**, not global names. A new chat needs its own
-  approved connection. Requesting the same name again replaces that connection.
+- Connections are **session-local and execution-location-bound**, not global
+  names. The form shows the backend or tunnel workplace that will execute HTTP.
+  A backend-approved `localhost` origin must not become a remote `localhost`
+  destination (or vice versa); request approval at the current location instead.
+  A new chat needs its own connection. Requesting the same name replaces it.
 
 ## Make requests
 
@@ -139,9 +150,13 @@ in skill files, memories, artifacts, tool arguments, or final answers.
 
 ## Security boundary (do not overclaim)
 
-The CLI never opens the secret database or decrypts credentials. Backend `httpx`
-requests inject auth only for the approved origin, with no environment proxies
-or redirects. Stored credentials use Tomo's existing Fernet encryption. Response
+The CLI never opens the secret database or decrypts credentials. The backend
+validates the approved origin/auth bindings for local and tunnel requests.
+Local `httpx` or the remote connector's HTTP consumer sends the request, with
+no upstream environment proxies or redirects. Known private echoes are withheld
+by the backend before reaching the CLI. Connector private HTTP/read replies are
+never written to its replay journal; after restart, interrupted operations may
+have uncertain status, so never blindly repeat a mutation. Stored credentials use Tomo's existing Fernet encryption. Response
 headers and authenticated exception details are not returned; responses echoing
 known raw/URL-encoded/JSON-escaped/base64 credential forms are withheld.
 

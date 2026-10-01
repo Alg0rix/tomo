@@ -713,3 +713,284 @@ def test_private_file_application_errors_are_private_and_leave_files_unchanged(
     assert target.read_text() == "APP_PORT=3000\n" and not list(
         root.glob(".tomo-secret-*")
     )
+
+
+@pytest.fixture()
+def tunnel(environment, tmp_path):
+    import os
+    import shutil
+    import subprocess
+    from app.workplaces.hub import hub
+
+    if not shutil.which("go"):
+        pytest.skip("Real connector integration requires Go")
+    binary = tmp_path / "tomo-connector"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), "./cmd/tomo-connector"],
+        cwd=ROOT / "connector",
+        check=True,
+        timeout=120,
+    )
+    client, _, _, _, _, _ = environment
+    wp = store.create_workplace(
+        {"id": "wp_secrets", "name": "Secret tunnel", "kind": "tunnel"}
+    )
+    paired = store.pair_connector(wp["pairing_code"])
+    home = tmp_path / "connector-home"
+    root = tmp_path / "remote-work"
+    home.mkdir()
+    root.mkdir()
+    (home / "state.json").write_text(
+        json.dumps(
+            {
+                "server_url": str(client.base_url).rstrip("/"),
+                "workplace_id": wp["id"],
+                "token": paired["token"],
+            }
+        )
+    )
+    log = tmp_path / "connector.log"
+    with log.open("wb") as output:
+        proc = subprocess.Popen(
+            [str(binary), "run"],
+            env={
+                **os.environ,
+                "TOMO_CONNECTOR_HOME": str(home),
+                "TOMO_CONNECTOR_ROOT": str(root),
+            },
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while (
+                not hub.is_online(wp["id"])
+                and proc.poll() is None
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
+            assert hub.is_online(wp["id"]), log.read_text()
+            assert hub.get(wp["id"]).secret_broker
+            store.update_agent("main", {"workplace_id": wp["id"]})
+            yield root, home, log, wp["id"]
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+
+
+def test_real_tunnel_cli_forms_files_http_and_privacy(environment, tunnel):
+    from dotenv import dotenv_values
+    from app.runtime.tools import sandbox
+
+    client, origin, upstream, sid, uid, _ = environment
+    root, home, log, wid = tunnel
+    (root / ".env").write_text("# public\nAPP_PORT=3000\n")
+    values = {"KEY": SECRET, "PEM": "synthetic tunnel key\r\nsecond line\n"}
+    session_token = artifacts_fs.bind_session(sid)
+    user_token = user_ctx.bind_user(uid)
+    agent_token = sandbox.bind_agent("main")
+    try:
+
+        def remote(args, timeout=30):
+            command = "PYTHONPATH=" + shlex.quote(str(ROOT)) + " " + _command(args)
+            result = bash.run({"command": command, "timeout": timeout})
+            assert SECRET not in result and values["PEM"] not in result
+            return result
+
+        def request(args, submitted):
+            with ThreadPoolExecutor(1) as pool:
+                future = pool.submit(copy_context().run, remote, args, 120)
+                deadline = time.monotonic() + 10
+                pending = []
+                while not pending and time.monotonic() < deadline:
+                    pending = (
+                        client.get(f"/api/sessions/{sid}/pending")
+                        .json()
+                        .get("secrets", [])
+                    )
+                    time.sleep(0.05)
+                assert len(pending) == 1
+                saved = client.post(
+                    f"/api/sessions/{sid}/secrets/requests/{pending[0]['id']}",
+                    json=submitted,
+                )
+                assert saved.status_code == 200, saved.text
+                assert SECRET not in saved.text
+                result = future.result(timeout=15)
+                assert json.loads(result.splitlines()[0])["status"] == "ready"
+
+        form = {"fields": [{"name": "KEY"}, {"name": "PEM", "type": "textarea"}]}
+        request(
+            "secret request deployment --form " + shlex.quote(json.dumps(form)),
+            {"values": values},
+        )
+        assert json.loads(remote("secret list"))["bundles"][0]["name"] == "deployment"
+        assert json.loads(
+            remote(
+                'secret apply deployment --file .env --format dotenv --map \'{"API_KEY":"KEY"}\''
+            )
+        )["ok"]
+        assert dotenv_values(root / ".env", interpolate=False) == {
+            "APP_PORT": "3000",
+            "API_KEY": SECRET,
+        }
+        assert json.loads(
+            remote("secret apply deployment --file key.pem --format text --field PEM")
+        )["ok"]
+        assert (root / "key.pem").read_bytes() == values["PEM"].encode()
+        (root / "config.json").write_text('{"port":3000}')
+        assert json.loads(
+            remote(
+                'secret apply deployment --file config.json --format json --map \'{"key":"KEY"}\''
+            )
+        )["ok"]
+        assert json.loads((root / "config.json").read_text()) == {
+            "port": 3000,
+            "key": SECRET,
+        }
+        (root / "app").mkdir()
+        assert json.loads(
+            remote(
+                'secret apply deployment --file app/.env --format compose --map \'{"TOKEN":"KEY"}\''
+            )
+        )["ok"]
+        assert SECRET in (root / "app" / ".env").read_text()
+        unchanged = (root / ".env").read_bytes()
+        assert "exit code: 1" in remote("secret apply deployment --file ../outside.env")
+        assert (root / ".env").read_bytes() == unchanged
+        http_form = {
+            "fields": [{"name": "KEY"}],
+            "auth": {"type": "bearer", "token_field": "KEY"},
+        }
+        request(
+            "connection request gateway --url "
+            + origin
+            + " --form "
+            + shlex.quote(json.dumps(http_form)),
+            {"values": {"KEY": SECRET}, "allow_http": True},
+        )
+        assert len(json.loads(remote("connection list"))["connections"]) == 1
+        # Saturate all ordinary RPC workers; consumers must have their own lane.
+        with ThreadPoolExecutor(8) as pool:
+            futures = [
+                pool.submit(copy_context().run, remote, "http --connection gateway /")
+                for _ in range(8)
+            ]
+            assert all(
+                json.loads(f.result(timeout=40))["result"][0]["hostid"] == "42"
+                for f in futures
+            )
+        assert all(r["auth"] == "Bearer " + SECRET for r in upstream)
+        echoed = remote("http --connection gateway /reflect")
+        assert "withheld" in echoed and "exit code: 22" in echoed
+        before = len(upstream)
+        assert "Redirect refused" in remote("http --connection gateway /redirect")
+        assert len(upstream) == before + 1
+        # Origin approval also pins execution location (localhost is not portable).
+        local = secret_store.issue_capability(sid, uid)
+        local_headers = {"Authorization": "Bearer " + local}
+        pending = client.post(
+            "/api/connection-broker/requests",
+            headers=local_headers,
+            json={"name": "backend-only", "base_url": origin, "auth_type": "bearer"},
+        ).json()
+        assert _approve(client, sid, pending).status_code == 200
+        before = len(upstream)
+        assert "different execution location" in remote(
+            "http --connection backend-only /"
+        )
+        assert len(upstream) == before
+        secret_store.revoke_capability(local)
+        assert json.loads(remote("connection revoke backend-only"))["ok"]
+        assert json.loads(remote("secret revoke deployment"))["ok"]
+        assert json.loads(remote("connection revoke gateway"))["ok"]
+        assert json.loads(remote("secret list"))["bundles"] == []
+        assert "exit code: 1" in remote("http --connection gateway /")
+        assert client.get(f"/api/sessions/{sid}/chat").json()["entries"] == []
+        assert SECRET not in log.read_text() and values["PEM"] not in log.read_text()
+        assert "method=secret_http" in log.read_text()
+        # Persistent replay responses must not contain private reads/HTTP echoes.
+        import base64
+
+        for record in (home / "rpc-journal").rglob("*.json"):
+            text = record.read_text()
+            assert (
+                SECRET not in text
+                and base64.b64encode(SECRET.encode()).decode() not in text
+            )
+            response = json.loads(text).get("response", {}).get("result", {})
+            if isinstance(response, dict):
+                assert "content_b64" not in response and "body_b64" not in response
+        assert not list(root.rglob(".tomo-secret-*"))
+    finally:
+        sandbox.reset_agent(agent_token)
+        artifacts_fs.reset_session(session_token)
+        user_ctx.reset_user(user_token)
+
+
+def test_tunnel_broker_cross_session_expiry_and_cancel(environment, tunnel):
+    from app.runtime.tools import sandbox
+
+    client, _, _, sid, uid, _ = environment
+    root, _, _, wid = tunnel
+    token = secret_store.issue_capability(sid, uid, workplace_id=wid)
+    headers = {"Authorization": "Bearer " + token}
+    _private_file_bundle(client, sid, headers, {"TOKEN": SECRET})
+    other_sid = store.create_swarm_session(["main"], user_id=uid)
+    other = secret_store.issue_capability(other_sid, uid, workplace_id=wid)
+    result = client.post(
+        "/api/secret-broker/apply",
+        headers={"Authorization": "Bearer " + other},
+        json={"bundle": "deployment", "file": ".env"},
+    )
+    assert result.status_code == 404 and SECRET not in result.text
+    assert not (root / ".env").exists()
+    secret_store.revoke_capability(other)
+    expired = secret_store.issue_capability(sid, uid, workplace_id=wid, ttl=1)
+    time.sleep(1.05)
+    assert (
+        client.get(
+            "/api/secret-broker/bundles", headers={"Authorization": "Bearer " + expired}
+        ).status_code
+        == 401
+    )
+    session_token = artifacts_fs.bind_session(sid)
+    user_token = user_ctx.bind_user(uid)
+    agent_token = sandbox.bind_agent("main")
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            command = (
+                "PYTHONPATH="
+                + shlex.quote(str(ROOT))
+                + " "
+                + _command(
+                    'secret request cancelled --form \'{"fields":[{"name":"TOKEN"}]}\''
+                )
+            )
+            future = pool.submit(
+                copy_context().run, bash.run, {"command": command, "timeout": 120}
+            )
+            deadline = time.monotonic() + 10
+            pending = []
+            while not pending and time.monotonic() < deadline:
+                pending = (
+                    client.get(f"/api/sessions/{sid}/pending").json().get("secrets", [])
+                )
+                time.sleep(0.05)
+            assert len(pending) == 1
+            response = client.post(
+                f"/api/sessions/{sid}/secrets/requests/{pending[0]['id']}",
+                json={"cancel": True},
+            )
+            assert response.status_code == 200
+            output = future.result(timeout=10)
+            assert (
+                "cancelled" in output
+                and "exit code: 1" in output
+                and SECRET not in output
+            )
+        assert not (root / ".env").exists()
+    finally:
+        sandbox.reset_agent(agent_token)
+        artifacts_fs.reset_session(session_token)
+        user_ctx.reset_user(user_token)

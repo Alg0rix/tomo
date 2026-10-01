@@ -88,6 +88,8 @@ def format_skill_catalog(
     if not skills:
         return "(empty catalog)"
     lines: list[str] = []
+    skills = [s for s in skills if isinstance(s, dict) and s.get("enabled", True)]
+    skills = sorted(skills, key=lambda s: s.get("source") != "library")
     for s in skills[: max(1, limit)]:
         if not isinstance(s, dict):
             continue
@@ -97,7 +99,9 @@ def format_skill_catalog(
         desc = (s.get("description") or "").strip().replace("\n", " ")
         if len(desc) > 80:
             desc = desc[:77] + "…"
-        lines.append(f"- {sid}: {desc}" if desc else f"- {sid}")
+        source = s.get("source") or "catalog"
+        count = int(s.get("use_count") or 0)
+        lines.append(f"- {sid} [{source}; {count} loads]: {desc}")
     text = "\n".join(lines) if lines else "(empty catalog)"
     if len(text) > _MAX_CATALOG_CHARS:
         text = text[: _MAX_CATALOG_CHARS - 20] + "\n…(truncated)"

@@ -9,7 +9,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from app.services import secret_store
+from app.services import secret_store, store
 from app.services.connection_forms import preset_form, relative_path, validate_auth
 from app.services.secret_forms import validate_form
 
@@ -93,6 +93,12 @@ def list_connections(session_id: str, user_id: str) -> list[dict[str, Any]]:
 
 def create_request(token: str, data: dict[str, Any]) -> dict[str, Any]:
     config = validate_config(data)
+    scope = secret_store.capability_scope(token)
+    if scope and scope.get("workplace_id"):
+        wid = scope["workplace_id"]
+        config["usage"]["workplace_id"] = wid
+        wp = store.get_workplace(wid)
+        config["usage"]["workplace_name"] = (wp or {}).get("name") or wid
     return secret_store.create_request(
         token, {"name": config["name"], "form": config["form"]}, usage=config["usage"]
     )
@@ -115,7 +121,12 @@ def resolve_request(
             },
             saving=True,
         )
-        usage = config["usage"]
+        target = {
+            key: usage[key]
+            for key in ("workplace_id", "workplace_name")
+            if key in usage
+        }
+        usage = {**config["usage"], **target}
     # The shared submit route also handles store-only forms, without HTTP requirements.
     result = secret_store.resolve_request(pid, session_id, user_id, data, usage=usage)
     if result.get("bundle") and usage.get("type") == "http":
@@ -139,6 +150,10 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
     if usage.get("type") != "http":
         raise ValueError(
             "This bundle has no approved HTTP usage; secure storage is not an execution grant"
+        )
+    if usage.get("workplace_id") != scope.get("workplace_id"):
+        raise ValueError(
+            "Connection approved for a different execution location; request approval here"
         )
     method = data.get("method", "GET")
     if not isinstance(method, str) or method.upper() not in {
@@ -222,8 +237,16 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
         headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
         headers["Content-Type"] = "application/json"
     try:
+        transport = None
+        if scope.get("workplace_id"):
+            from app.services.secret_tunnel import HTTPTransport
+
+            transport = HTTPTransport(scope, timeout)
         async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=False, trust_env=False
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+            transport=transport,
         ) as client:
             async with client.stream(
                 method.upper(),
@@ -254,5 +277,5 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
     except (httpx.HTTPError, ValueError):
         return {
             "status_code": 502,
-            "body": "Upstream request failed (connection, TLS or timeout)",
+            "body": "Upstream request failed (connection, TLS or timeout); a mutation may have completed, verify before retrying",
         }

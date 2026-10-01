@@ -656,7 +656,7 @@ def resolve_slash_skill(message: str) -> tuple[dict[str, Any], str] | None:
             if str(row.get("name") or "").lower() == needle:
                 skill = row
                 break
-    if not skill:
+    if not skill or not skill.get("enabled", True):
         return None
     return skill, arg
 

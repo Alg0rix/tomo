@@ -609,6 +609,34 @@
   display: flex;
   gap: 8px;
 }
+.cp-skills-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.cp-skills-head h4 { margin: 0; font-size: 13px; }
+.cp-skills-head > span { font-size: 10px; }
+.cp-skills-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.cp-skills-list a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 12px;
+}
+.cp-skills-list a > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.cp-skills-list a > span:last-child { flex-shrink: 0; }
+.cp-skills-list a:hover { color: var(--accent); }
+.cp-skills-list a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 .cp-profile-list {
   margin: 0;
   padding: 0;

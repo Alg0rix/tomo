@@ -39,6 +39,12 @@ func HandleWithProgress(method string, params map[string]any, progress Progress)
 		result, err = execBash(params, progress)
 	case "exec_python":
 		result, err = execPython(params)
+	case "secret_file_read":
+		result, err = secretFileRead(params)
+	case "secret_file_write":
+		result, err = secretFileWrite(params)
+	case "secret_http":
+		result, err = secretHTTP(params)
 	case "read_file":
 		result, err = readFile(params)
 	case "write_file":
