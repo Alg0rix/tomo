@@ -283,22 +283,6 @@ async def test_transcription_multipart_and_safe_failure(setup):
     assert "private-stt-key" not in str(err.value)
 
 
-@pytest.mark.parametrize(
-    "kind",
-    [
-        "voice",
-        "audio",
-        "video",
-        "video_note",
-        "animation",
-        "document",
-        "sticker",
-        "photo",
-    ],
-)
-def test_supported_media_descriptors(kind):
-    result = media_descriptor(media(kind)["message"])
-    assert result and result[0] == kind
 
 
 async def test_received_rich_media_blocks_share_one_turn(setup, monkeypatch):

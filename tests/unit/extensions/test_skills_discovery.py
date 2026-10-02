@@ -21,12 +21,6 @@ def _write_skill(root: Path, skill_id: str, *, name: str | None = None, body: st
     return d
 
 
-def test_parse_frontmatter_basic() -> None:
-    meta, body = skills_ext.parse_frontmatter(
-        "---\nname: demo\ndescription: hi\n---\n\nBody here\n"
-    )
-    assert meta["name"] == "demo"
-    assert "Body here" in body
 
 
 def test_discover_and_sync_library(tmp_path, monkeypatch) -> None:

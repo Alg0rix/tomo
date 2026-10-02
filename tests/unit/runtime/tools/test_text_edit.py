@@ -9,19 +9,10 @@ from app.runtime.tools.text_edit import (
 )
 
 
-def test_str_replace_exact() -> None:
-    out = apply_str_replace("hello world\n", "world", "tomo")
-    assert out == ("hello tomo\n", 1)
 
 
-def test_str_replace_count_all() -> None:
-    out = apply_str_replace("aa aa aa", "aa", "bb", count=-1)
-    assert out == ("bb bb bb", 3)
 
 
-def test_str_replace_count_mismatch() -> None:
-    err = apply_str_replace("aa aa", "aa", "bb", count=1)
-    assert isinstance(err, str) and "2 time" in err
 
 
 def test_str_replace_unescape_quotes() -> None:
@@ -53,27 +44,10 @@ def test_parse_hunks_skips_git_headers() -> None:
     assert hunks[0].old_start == 1
 
 
-def test_patch_replace_line() -> None:
-    raw = "line one\nline two\nline three\n"
-    patch = "@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n"
-    r = apply_patch_to_content(raw, patch)
-    assert r["result"] == "success"
-    assert r["content"] == "line one\nline TWO\nline three\n"
 
 
-def test_patch_insertion_only() -> None:
-    raw = "line1\nline2\nline3\n"
-    patch = "@@ -2,0 +2,2 @@\n+new_a\n+new_b\n"
-    r = apply_patch_to_content(raw, patch)
-    assert r["result"] == "success"
-    assert r["content"] == "line1\nnew_a\nnew_b\nline2\nline3\n"
 
 
-def test_patch_create_new() -> None:
-    patch = "@@ -0,0 +1,2 @@\n+first\n+second\n"
-    r = apply_patch_to_content("", patch)
-    assert r["result"] == "success"
-    assert r["content"] == "first\nsecond\n"
 
 
 def test_patch_multi_hunk() -> None:

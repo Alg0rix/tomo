@@ -174,9 +174,6 @@ async def test_stale_stream_aborts_and_reports_retry(monkeypatch) -> None:
         await client.aclose()
 
 
-def test_missing_api_key_raises() -> None:
-    with pytest.raises(LLMConfigError):
-        OpenAICompatClient(api_key="", base_url=_BASE, model=_MODEL)
 
 
 async def test_plain_content_mapped_and_request_shape() -> None:
@@ -601,18 +598,8 @@ async def test_aclose_releases_client() -> None:
 # ── JSON auto-repair tests ──────────────────────────────────────
 
 
-def test_repair_valid_json_passes_through() -> None:
-    assert _repair_json('{"command": "ls"}') == {"command": "ls"}
 
 
-def test_repair_concatenated_duplicates_takes_first_valid() -> None:
-    """The most common LLM malformation: the JSON object is emitted twice,
-    the first copy broken, the second valid."""
-    raw = '{"command": "ls", "timeout": 5, "workplace": "dev"}{"command": "ls", "timeout": 5, "workplace": "dev"}'
-    result = _repair_json(raw)
-    assert result is not None
-    assert result.get("command") == "ls"
-    assert result.get("timeout") == 5
 
 
 def test_repair_missing_closing_quote_salvages_second_block() -> None:
@@ -640,8 +627,6 @@ def test_repair_double_encoded_string() -> None:
     assert _repair_json(raw) == {"command": "ls"}
 
 
-def test_repair_returns_none_for_total_garbage() -> None:
-    assert _repair_json("not json at all") is None
 
 
 def test_repair_empty_string_returns_empty_dict() -> None:

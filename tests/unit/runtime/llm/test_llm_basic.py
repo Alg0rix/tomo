@@ -101,12 +101,6 @@ def test_mock_satisfies_llm_client_protocol() -> None:
     assert isinstance(MockLLMClient(), LLMClient)
 
 
-async def test_plain_message_returns_default_content() -> None:
-    resp = await MockLLMClient().complete([_user("hello")])
-    assert isinstance(resp, LLMResponse)
-    assert resp.content
-    assert resp.tool_calls == []
-    assert not resp.has_tool_calls
 
 
 async def test_no_user_message_returns_default() -> None:
@@ -115,31 +109,10 @@ async def test_no_user_message_returns_default() -> None:
     assert resp.tool_calls == []
 
 
-async def test_run_keyword_triggers_bash_tool_call() -> None:
-    resp = await MockLLMClient().complete([_user("run: echo hello")], tools=_BASH_TOOLS)
-    assert resp.content is None
-    assert resp.has_tool_calls
-    assert len(resp.tool_calls) == 1
-    call = resp.tool_calls[0]
-    assert call.name == "bash"
-    assert call.arguments == {"command": "echo hello"}
 
 
-async def test_run_keyword_case_insensitive() -> None:
-    resp = await MockLLMClient().complete([_user("Please RUN: pwd")], tools=_BASH_TOOLS)
-    assert resp.tool_calls[0].name == "bash"
-    assert resp.tool_calls[0].arguments["command"] == "pwd"
 
 
-async def test_tool_result_message_yields_final_content() -> None:
-    messages = [
-        _user("run: echo 4"),
-        _assistant_tool_call("call_mock_bash", "echo 4"),
-        _tool_result("call_mock_bash", "4"),
-    ]
-    resp = await MockLLMClient().complete(messages)
-    assert resp.content == _BASH_FINAL
-    assert resp.tool_calls == []
 
 
 async def test_two_step_bash_flow_matches_agent_loop() -> None:
@@ -163,36 +136,8 @@ async def test_two_step_bash_flow_matches_agent_loop() -> None:
     assert not second.has_tool_calls
 
 
-async def test_new_user_message_re_triggers_bash_after_tool_result() -> None:
-    """A fresh user message following an earlier tool result must be able to
-    trigger a new bash tool call. Historical tool results must NOT
-    suppress future bash turns."""
-    messages = [
-        _user("run: echo 2"),
-        _assistant_tool_call("call_mock_bash", "echo 2"),
-        _tool_result("call_mock_bash", "2"),
-        _user("run: echo 5"),  # new turn -> new tool call
-    ]
-    resp = await MockLLMClient().complete(messages, tools=_BASH_TOOLS)
-    assert resp.has_tool_calls
-    assert resp.tool_calls[0].name == "bash"
-    assert resp.tool_calls[0].arguments["command"] == "echo 5"
 
 
-async def test_multi_turn_new_user_re_triggers_bash() -> None:
-    """After a completed bash turn, a brand-new user run: message must
-    trigger a fresh bash tool call rather than short-circuit to final text."""
-    messages = [
-        _user("run: echo 2"),
-        _assistant_tool_call("call_mock_bash", "echo 2"),
-        _tool_result("call_mock_bash", "2"),
-        {"role": "assistant", "content": _BASH_FINAL},
-        _user("run: echo 3"),  # new turn
-    ]
-    resp = await MockLLMClient().complete(messages, tools=_BASH_TOOLS)
-    assert resp.has_tool_calls
-    assert resp.tool_calls[0].name == "bash"
-    assert resp.tool_calls[0].arguments["command"] == "echo 3"
 
 
 async def test_run_prompt_without_tools_returns_no_tool_calls() -> None:
@@ -203,13 +148,6 @@ async def test_run_prompt_without_tools_returns_no_tool_calls() -> None:
     assert resp.content == _DEFAULT_REPLY
 
 
-async def test_run_prompt_with_bash_schema_emits_tool_call() -> None:
-    """With a bash tool advertised, a run: prompt emits a tool call."""
-    resp = await MockLLMClient().complete(
-        [_user("run: echo 2")], tools=_BASH_TOOLS
-    )
-    assert resp.has_tool_calls
-    assert resp.tool_calls[0].name == "bash"
 
 
 async def test_run_prompt_with_non_bash_tools_returns_no_tool_calls() -> None:

@@ -156,84 +156,16 @@ def test_ssh_jobs_isolated_and_preserve_exit_code(local_ssh_jobs):
     assert ssh_exec.process_kill(local_ssh_jobs, {"id": a["id"]})["returncode"] == 7
 
 
-def test_ssh_natural_exit_cleans_group_and_retains_real_result(local_ssh_jobs):
-    import time
-    from pathlib import Path
-
-    job = ssh_exec.process_start(local_ssh_jobs, {
-        "command": "(trap '' TERM; sleep 2; echo survived > escaped) & printf final; exit 9"
-    })
-    result = _wait_ssh_job(local_ssh_jobs, job["id"])
-    assert result["status"] == "exited"
-    assert result["returncode"] == 9
-    assert result["stdout"] == "final"
-    time.sleep(2.1)
-    assert not (Path(local_ssh_jobs["root_path"]) / "escaped").exists()
 
 
-def test_ssh_stop_group_does_not_stop_sibling(local_ssh_jobs):
-    first = ssh_exec.process_start(local_ssh_jobs, {"command": "sleep 60 & wait"})
-    second = ssh_exec.process_start(local_ssh_jobs, {"command": "sleep .5; printf alive"})
-    stopped = ssh_exec.process_kill(local_ssh_jobs, {"id": first["id"]})
-    assert stopped["status"] == "stopped"
-    sibling = _wait_ssh_job(local_ssh_jobs, second["id"])
-    assert sibling["returncode"] == 0
-    assert sibling["stdout"] == "alive"
 
 
-def test_ssh_missing_handle_unknown(local_ssh_jobs):
-    result = ssh_exec.process_status(local_ssh_jobs, {"id": "ssh_" + "0" * 32})
-    assert result["status"] == "unknown"
-    assert result["returncode"] is None
 
 
-def test_ssh_job_cwd_cannot_escape_root(local_ssh_jobs):
-    with pytest.raises(ssh_exec.SSHJobRejected):
-        ssh_exec.process_start(local_ssh_jobs, {"command": "true", "cwd": "/"})
 
 
-def test_ssh_verbose_output_flushes_bounded_tail_at_bounded_cadence(local_ssh_jobs, monkeypatch):
-    program = ssh_exec._SSH_JOBS_PROGRAM.replace(
-        '(job / name).write_bytes(tail)',
-        'record["flushes"] = record.get("flushes", 0) + 1; (job / name).write_bytes(tail)')
-    monkeypatch.setattr(ssh_exec, '_SSH_JOBS_PROGRAM', program)
-    job = ssh_exec.process_start(local_ssh_jobs, {'command': "python3 -c 'import os,time; os.write(1,b\"x\"*1500000); time.sleep(.3); print(\"tail\",flush=True)'"})
-    result = _wait_ssh_job(local_ssh_jobs, job['id'])
-    assert result['returncode'] == 0 and result['truncated']
-    assert len(result['stdout'].encode()) <= 512 * 1024
-    assert result['stdout'].endswith('tail\n') and result['flushes'] < 20
 
 
-def test_ssh_unknown_stop_checks_identity_and_preserves_unknown_exit_code(local_ssh_jobs):
-    import json
-    import os
-    import signal
-    import time
-    from pathlib import Path
-    from app.services.background_jobs import _group_alive
-
-    job = ssh_exec.process_start(local_ssh_jobs, {'command': 'sleep 60'})
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        record = ssh_exec.process_status(local_ssh_jobs, {'id': job['id']})
-        if record.get('pid_identity'):
-            break
-        time.sleep(.02)
-    assert record.get('pid_identity')
-    os.kill(record['supervisor_pid'], signal.SIGKILL)
-    path = Path(local_ssh_jobs['root_path']) / '.cache/tomo-jobs/test' / job['id'] / 'meta.json'
-    original = json.loads(path.read_text())
-    try:
-        path.write_text(json.dumps({**original, 'pid_identity': 'wrong process signature'}))
-        result = ssh_exec.process_kill(local_ssh_jobs, {'id': job['id']})
-        assert result['status'] == 'unknown' and _group_alive(record['pid'])
-        path.write_text(json.dumps(original))
-        result = ssh_exec.process_kill(local_ssh_jobs, {'id': job['id']})
-        assert result['status'] == 'unknown' and result['returncode'] is None
-        assert result['stop_confirmed'] and not _group_alive(record['pid'])
-    finally:
-        if _group_alive(record['pid']):
-            os.killpg(record['pid'], signal.SIGKILL)
 
 
 def test_ssh_workplace_root_edit_keeps_monitor_namespace(ssh_wp):

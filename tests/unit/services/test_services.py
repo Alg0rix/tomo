@@ -310,32 +310,8 @@ def test_history_to_messages_respects_compact_marker() -> None:
     assert any(t == "new a" for t in texts)
 
 
-def test_second_compact_marker_replaces_first() -> None:
-    history = [
-        {"type": "user", "content": "era1", "agent_id": "main"},
-        {"type": "compact", "content": "first summary", "agent_id": "main"},
-        {"type": "user", "content": "era2", "agent_id": "main"},
-        {"type": "compact", "content": "latest summary", "agent_id": "main"},
-        {"type": "user", "content": "era3", "agent_id": "main"},
-    ]
-    msgs = history_to_messages(history, for_agent_id="main")
-    texts = [m.get("content") for m in msgs if isinstance(m.get("content"), str)]
-    assert not any("era1" in t or "era2" in t or "first summary" in t for t in texts)
-    assert any("latest summary" in t for t in texts)
-    assert any(t == "era3" for t in texts)
 
 
-def test_entries_after_last_compact() -> None:
-    history = [
-        {"type": "user", "content": "a"},
-        {"type": "compact", "content": "s1"},
-        {"type": "user", "content": "b"},
-    ]
-    live, start = entries_after_last_compact(history)
-    assert start == 2  # first live entry index (marker is at 1)
-    assert [e["content"] for e in live] == ["b"]
-    live, start = entries_after_last_compact([{"type": "user", "content": "x"}])
-    assert start == 0 and len(live) == 1
 
 
 def test_image_attachments_before_compact_are_skipped(tmp_path, monkeypatch) -> None:

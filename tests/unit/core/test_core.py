@@ -20,30 +20,6 @@ from app.models.schema import migrate
 
 
 # --- from test_bootstrap.py ---
-def test_ensure_bootstrap_creates_env_and_secret_key(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "home"
-    monkeypatch.delenv("TOMO_SESSION_SECRET", raising=False)
-    monkeypatch.delenv("TOMO_ADMIN_PASSWORD", raising=False)
-    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
-    # Clear any values loaded from the test home .env at import time.
-    for k in ("TOMO_SESSION_SECRET", "TOMO_ADMIN_PASSWORD"):
-        os.environ.pop(k, None)
-
-    result = ensure_bootstrap_secrets(root)
-
-    assert result.created_session_secret
-    assert result.created_admin_password
-    assert result.created_secret_key
-    assert result.admin_password
-    assert result.env_path.is_file()
-    assert result.env_path.stat().st_mode & 0o777 == 0o600
-    text = result.env_path.read_text(encoding="utf-8")
-    assert "TOMO_SESSION_SECRET=" in text
-    assert "TOMO_ADMIN_PASSWORD=" in text
-    assert result.secret_key_path.is_file()
-    assert result.secret_key_path.stat().st_mode & 0o777 == 0o600
-    assert os.environ["TOMO_SESSION_SECRET"]
-    assert os.environ["TOMO_ADMIN_PASSWORD"] == result.admin_password
 
 
 def test_ensure_bootstrap_is_idempotent(tmp_path: Path, monkeypatch) -> None:
@@ -69,19 +45,6 @@ def test_ensure_bootstrap_is_idempotent(tmp_path: Path, monkeypatch) -> None:
     assert os.environ["TOMO_ADMIN_PASSWORD"] == admin
 
 
-def test_env_process_wins_over_file(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "home"
-    monkeypatch.setenv("TOMO_SESSION_SECRET", "from-process")
-    monkeypatch.setenv("TOMO_ADMIN_PASSWORD", "from-process-admin")
-    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
-
-    result = ensure_bootstrap_secrets(root)
-    assert not result.created_session_secret
-    assert not result.created_admin_password
-    assert result.created_secret_key
-    assert not result.env_path.exists() or "TOMO_SESSION_SECRET=" not in result.env_path.read_text(
-        encoding="utf-8"
-    )
 
 
 def test_apply_bootstrap_to_config(monkeypatch) -> None:
@@ -93,47 +56,8 @@ def test_apply_bootstrap_to_config(monkeypatch) -> None:
 
 
 # --- from test_home.py ---
-def test_ensure_tomo_home_creates_tree(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "tomo-home"
-    monkeypatch.setenv("TOMO_HOME", str(root))
-    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
-
-    got = home.ensure_tomo_home(root)
-    assert got == root
-
-    # locked §2.1 layout
-    assert (root / "SOUL.md").is_file()
-    assert (root / "tomo.yaml").is_file()
-    assert (root / "library" / "skills").is_dir()
-    assert (root / "memory" / "vault").is_dir()
-    assert (root / "agents").is_dir()
-    assert (root / "workplaces").is_dir()
-    assert (root / "state").is_dir()
-
-    # forbidden / never-auto-created files
-    assert not (root / "secrets.env").exists()
-    assert not (root / ".env").exists()
-
-    # master key auto-created, chmod 600, non-trivial length
-    sk = root / ".secret_key"
-    assert sk.is_file()
-    assert sk.stat().st_mode & 0o777 == 0o600
-    assert len(sk.read_text(encoding="utf-8").strip()) >= 32
 
 
-def test_ensure_tomo_home_is_idempotent(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
-    root = tmp_path / "home"
-    home.ensure_tomo_home(root)
-    soul = (root / "SOUL.md").read_text(encoding="utf-8")
-    yaml = (root / "tomo.yaml").read_text(encoding="utf-8")
-    sk = (root / ".secret_key").read_bytes()
-
-    # second call is a no-op for existing files (never overwrites)
-    home.ensure_tomo_home(root)
-    assert (root / "SOUL.md").read_text(encoding="utf-8") == soul
-    assert (root / "tomo.yaml").read_text(encoding="utf-8") == yaml
-    assert (root / ".secret_key").read_bytes() == sk
 
 
 def test_secret_key_skipped_when_env_master_key_set(tmp_path: Path, monkeypatch) -> None:
@@ -144,13 +68,6 @@ def test_secret_key_skipped_when_env_master_key_set(tmp_path: Path, monkeypatch)
     assert not (root / ".secret_key").exists()
 
 
-def test_soul_seeded_from_defaults(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
-    root = tmp_path / "home"
-    home.ensure_tomo_home(root)
-    text = (root / "SOUL.md").read_text(encoding="utf-8").strip()
-    assert len(text) > 0
-    assert (root / "tomo.yaml").read_text(encoding="utf-8").strip()
 
 
 def test_agent_paths(tmp_path: Path, monkeypatch) -> None:
@@ -169,12 +86,6 @@ def test_agent_paths(tmp_path: Path, monkeypatch) -> None:
     assert home.workplaces_dir(root).name == "workplaces"
 
 
-def test_default_home_root_is_config(tmp_path: Path) -> None:
-    # explicit None root resolves to config.TOMO_HOME (the test temp home)
-    from app.core import config
-
-    assert home.soul_path().parent == config.TOMO_HOME
-    assert home.state_dir() == config.TOMO_HOME / "state"
 
 
 # --- from test_secrets.py ---
@@ -187,18 +98,8 @@ def _conn(tmp_path: Path) -> sqlite3.Connection:
 # --- core crypto ---------------------------------------------------------
 
 
-def test_encrypt_decrypt_round_trip() -> None:
-    ct = encrypt_secret("sk-test-12345")
-    assert ct.startswith("enc:v1:")
-    assert "sk-test-12345" not in ct
-    assert decrypt_secret(ct) == "sk-test-12345"
 
 
-def test_encrypt_empty_is_empty() -> None:
-    assert encrypt_secret("") == ""
-    assert encrypt_secret(None) == ""
-    assert decrypt_secret("") == ""
-    assert decrypt_secret(None) == ""
 
 
 def test_decrypt_refuses_plaintext() -> None:

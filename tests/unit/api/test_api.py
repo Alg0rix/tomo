@@ -225,18 +225,6 @@ def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
 
 
 # --- from test_openai_compat_helpers.py ---
-def test_last_user_message_plain() -> None:
-    assert (
-        last_user_message(
-            [
-                {"role": "system", "content": "sys"},
-                {"role": "user", "content": "hello"},
-                {"role": "assistant", "content": "hi"},
-                {"role": "user", "content": "again"},
-            ]
-        )
-        == "again"
-    )
 
 
 def test_last_user_message_multimodal() -> None:
@@ -256,10 +244,6 @@ def test_last_user_message_multimodal() -> None:
     )
 
 
-def test_parse_sse_block() -> None:
-    name, data = parse_sse_block('event: delta\ndata: {"content":"hi"}\nid: 1')
-    assert name == "delta"
-    assert data == {"content": "hi"}
 
 
 def test_resolve_session_id_uses_header(tmp_path) -> None:

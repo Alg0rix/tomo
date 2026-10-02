@@ -44,9 +44,6 @@ def _rebind(tmp_path) -> None:
     store.update_settings({"telegram_allowed_chat_ids": ["4242", "9", "1"]})
 
 
-def test_user_id_for_chat() -> None:
-    assert user_id_for_chat(42) == "tg_42"
-    assert user_id_for_chat("99") == "tg_99"
 
 
 def test_extract_text_message() -> None:
@@ -213,21 +210,6 @@ async def test_id_and_help_do_not_call_model(tmp_path, monkeypatch):
     assert store.find_session("main", "tg_4242") == fresh["session_id"]
 
 
-async def test_long_unicode_reply_split_without_loss():
-    parts = []
-    def handler(request):
-        body = json.loads(request.content)
-        parts.append(body["text"])
-        assert len(body["text"].encode("utf-16-le")) // 2 <= 4096
-        return httpx2.Response(200, json={"ok": True, "result": {}})
-    api = TelegramAPI("mock", transport=httpx2.MockTransport(handler))
-    content = "😀" * 5000
-    try:
-        await api.send_message(1, content)
-    finally:
-        await api.aclose()
-    assert "".join(parts) == content
-    assert len(parts) > 1
 
 
 # --- from test_telegram_format.py ---

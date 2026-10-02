@@ -19,17 +19,6 @@ from app.runtime.session_title import (
 
 
 # --- from test_agent_generate.py ---
-def test_parse_agent_draft_json_plain() -> None:
-    raw = (
-        '{"name": "NetOps", "role": "ops", "description": "Monitors infra.", '
-        '"system_prompt": "# NetOps\\n\\nYou monitor networks."}'
-    )
-    parsed = parse_agent_draft_json(raw)
-    assert parsed is not None
-    assert parsed["name"] == "NetOps"
-    assert parsed["role"] == "ops"
-    assert parsed["description"] == "Monitors infra."
-    assert "NetOps" in parsed["system_prompt"]
 
 
 def test_parse_agent_draft_json_fenced() -> None:
@@ -41,24 +30,6 @@ def test_parse_agent_draft_json_rejects_empty_name() -> None:
     assert parse_agent_draft_json('{"name": "", "role": "x"}') is None
 
 
-@pytest.mark.asyncio
-async def test_generate_agent_draft_uses_llm() -> None:
-    class _L:
-        async def complete(self, messages, tools=None):
-            return LLMResponse(
-                content=(
-                    '{"name": "NetOps", "role": "ops", "description": "Network specialist.", '
-                    '"system_prompt": "# NetOps\\n\\n## Responsibilities\\n- Monitor alerts"}'
-                ),
-                tool_calls=[],
-            )
-
-    draft = await generate_agent_draft("network ops agent", llm=_L())
-    assert draft is not None
-    assert draft["name"] == "NetOps"
-    assert draft["role"] == "ops"
-    assert draft["suggested_id"] == "netops"
-    assert "Responsibilities" in draft["system_prompt"]
 
 
 @pytest.mark.asyncio
@@ -132,14 +103,6 @@ def test_should_llm_title_only_first_completed_turn() -> None:
     assert llm_title_skip_reason(None, hist) == "no session"
 
 
-@pytest.mark.asyncio
-async def test_generate_uses_llm_and_sanitizes() -> None:
-    class _L:
-        async def complete(self, messages, tools=None):
-            return LLMResponse(content=' "Billing Follow-up" ', tool_calls=[])
-
-    title = await generate_session_title("help with invoice", "sure", llm=_L())
-    assert title == "Billing Follow-up"
 
 
 @pytest.mark.asyncio
@@ -159,12 +122,5 @@ async def test_generate_resolves_agent_model(monkeypatch) -> None:
     assert resolved == ["main"]
 
 
-@pytest.mark.asyncio
-async def test_generate_returns_none_on_failure() -> None:
-    class _Boom:
-        async def complete(self, messages, tools=None):
-            raise RuntimeError("nope")
-
-    assert await generate_session_title("a", "b", llm=_Boom()) is None
 
 

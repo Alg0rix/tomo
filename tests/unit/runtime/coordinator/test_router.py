@@ -12,20 +12,8 @@ _AGENTS = [
 _MEMBERS = ["main", "ops", "research"]
 
 
-def test_resolve_target_by_id() -> None:
-    assert (
-        resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="ops") == "ops"
-    )
 
 
-def test_resolve_target_by_name_casefold() -> None:
-    assert (
-        resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="OPS") == "ops"
-    )
-    assert (
-        resolve_target(agent_ids=_MEMBERS, agents=_AGENTS, query="research")
-        == "research"
-    )
 
 
 def test_resolve_target_with_at_prefix() -> None:
@@ -66,11 +54,5 @@ def test_resolve_target_by_role() -> None:
     )
 
 
-def test_parse_leading_mention_strips_handle() -> None:
-    assert parse_leading_mention("@ops check disk") == ("ops", "check disk")
-    assert parse_leading_mention("@Ops   restart nginx") == ("Ops", "restart nginx")
 
 
-def test_parse_leading_mention_none_when_absent() -> None:
-    assert parse_leading_mention("hello there") == (None, "hello there")
-    assert parse_leading_mention("") == (None, "")

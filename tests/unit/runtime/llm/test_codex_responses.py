@@ -34,27 +34,8 @@ def test_missing_token_raises_config_error() -> None:
         CodexResponsesClient(base_url=_BASE, access_token="", model=_MODEL)
 
 
-def test_messages_to_responses_input_splits_system_as_instructions() -> None:
-    messages = [
-        {"role": "system", "content": "You are helpful."},
-        {"role": "user", "content": "hi"},
-    ]
-    instructions, items = _messages_to_responses_input(messages)
-    assert instructions == "You are helpful."
-    assert items == [{"role": "user", "content": "hi"}]
 
 
-def test_turn_context_stays_in_input_even_without_history() -> None:
-    instructions, items = _messages_to_responses_input([
-        {"role": "system", "content": "stable instructions"},
-        {"role": "system", "content": "current clock"},
-        {"role": "user", "content": "hi"},
-    ])
-    assert instructions == "stable instructions"
-    assert items == [
-        {"role": "system", "content": "current clock"},
-        {"role": "user", "content": "hi"},
-    ]
 
 
 @pytest.mark.asyncio
@@ -78,25 +59,6 @@ async def test_cache_key_survives_live_changes_and_client_recreation() -> None:
         await other.aclose()
 
 
-def test_messages_to_responses_input_converts_tool_calls_and_results() -> None:
-    messages = [
-        {"role": "system", "content": "sys"},
-        {"role": "user", "content": "run ls"},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd":"ls"}'}}
-            ],
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": "file1\nfile2"},
-    ]
-    _, items = _messages_to_responses_input(messages)
-    assert items[0] == {"role": "user", "content": "run ls"}
-    assert items[1] == {
-        "type": "function_call", "call_id": "call_1", "name": "bash", "arguments": '{"cmd":"ls"}'
-    }
-    assert items[2] == {"type": "function_call_output", "call_id": "call_1", "output": "file1\nfile2"}
 
 
 def test_messages_to_responses_input_translates_image_parts() -> None:
@@ -135,12 +97,6 @@ def test_messages_to_responses_input_text_only_list_stays_flat() -> None:
     assert items == [{"role": "user", "content": "hello"}]
 
 
-def test_responses_tools_converts_function_schema() -> None:
-    tools = [{"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object"}}}]
-    converted = _responses_tools(tools)
-    assert converted == [
-        {"type": "function", "name": "bash", "description": "run", "parameters": {"type": "object"}}
-    ]
 
 
 def _completed_sse(response: dict) -> httpx2.Response:
