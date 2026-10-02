@@ -10,6 +10,7 @@ from .platform import router as platform_router
 from .rest import router as rest_router
 from .self_update import router as self_update_router
 from .stream import router as stream_router
+from .terminals import router as terminals_router
 
 router = APIRouter()
 router.include_router(rest_router)
@@ -20,5 +21,6 @@ router.include_router(connector_router)
 router.include_router(connections_router)
 router.include_router(approvals_router)
 router.include_router(openai_compat_router)
+router.include_router(terminals_router)
 
 __all__ = ["router"]

@@ -131,6 +131,16 @@ uv run python -m app.main   # http://127.0.0.1:8787
 
 Do not edit the managed install tree for day-to-day development — use a normal clone. `tomo update` always targets `~/.local/share/tomo/app`.
 
+### Chat workspace & local terminals
+
+Open **Workspace** in a chat to browse files/artifact previews or use **Terminal → New terminal**. Each chat owns up to eight independent shells. They run directly on the **Tomo host**, never through a tunnel/connector; a remote browser does not run commands on its own device. The starting directory is the chat's local workplace, or `$TOMO_HOME/sessions/<id>/workspace` when no local workplace is selected.
+
+Switching chats, closing the panel, or reloading the browser keeps shells and their recent output alive. A visible countdown closes terminals after **30 minutes idle**: input/output resets it, and running foreground commands pause it. Closing a terminal manually, deleting its chat, or shutting down Tomo stops the shell and its jobs. Shell exit is shown in the tab; use New terminal to start another. Terminals do not survive a Tomo restart.
+
+Local terminals require a POSIX host and Tomo's default **single server worker**. Access requires the chat owner's login; commands have the permissions of the Tomo process. xterm.js and its fit addon are bundled locally, so the renderer needs no CDN connection.
+
+Browser regression: with Playwright/Chromium installed, run `node tests/browser/local_terminals.cjs`. It starts an isolated Tomo instance with a temporary database; `CHROME_PATH` can select an existing Chromium binary and `TOMO_BROWSER_ARTIFACTS` selects the screenshot folder.
+
 ### Configuration
 
 **Tomo Home (`$TOMO_HOME`)** — writable config/state root (default `~/.tomo`).

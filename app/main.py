@@ -80,6 +80,9 @@ async def _lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        from app.services.terminals import terminal_manager
+
+        await terminal_manager.close_all()
         await suspend_session_turns()
         await stop_scheduler()
         await stop_telegram_supervisor()

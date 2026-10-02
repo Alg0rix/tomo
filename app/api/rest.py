@@ -425,6 +425,9 @@ async def delete_session_api(session_id: str, request: Request, _: AuthDep):
     require_owned_session(request, session_id)
     if not store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    from app.services.terminals import terminal_manager
+
+    await terminal_manager.close_session(session_id)
     return {"success": True}
 
 
@@ -436,6 +439,10 @@ async def prune_draft_sessions(
     deleted = store.prune_empty_draft_sessions(
         keep_id=keep_id or None, user_id=session_user_id(request)
     )
+    from app.services.terminals import terminal_manager
+
+    for session_id in deleted:
+        await terminal_manager.close_session(session_id)
     return {"deleted": deleted}
 
 

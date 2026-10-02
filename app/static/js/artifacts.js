@@ -70,7 +70,7 @@
   };
 
   var _state = {
-    view: "home", // home | files | preview
+    view: "home", // home | files | preview | terminal
     art: null,
     sessionId: "",
     openTabs: [],
@@ -81,6 +81,26 @@
     userCollapsed: false,
     previewMode: "render", // render | source (html/csv/md)
   };
+
+  var sessionStates = new Map();
+
+  function activateSession(wrap) {
+    var sid = (wrap && wrap.dataset.sessionId) || "";
+    if (_state.sessionId === sid) return;
+    if (_state.sessionId) sessionStates.set(_state.sessionId, _state);
+    var keepOpen = !!(wrap && wrap.querySelector('.chat-agent-panel[data-cap-open="1"]'));
+    var keepTerminal = _state.view === "terminal";
+    _state = sessionStates.get(sid) || {
+      view: keepTerminal ? "terminal" : "home", art: null, sessionId: sid,
+      openTabs: [], panelOpen: keepOpen, maximized: false,
+      userCollapsed: false, previewMode: "render",
+    };
+    if (wrap) {
+      wrap.classList.remove("is-artifact-max");
+      var panel = wrap.querySelector(".chat-agent-panel");
+      if (panel) panel.classList.remove("is-maximized");
+    }
+  }
 
   function category(filename) {
     var name = filename || "";
@@ -515,15 +535,15 @@
     if (!panel) {
       panel = document.createElement("aside");
       panel.className = "chat-agent-panel";
-      panel.setAttribute("aria-label", "Artifacts");
+      panel.setAttribute("aria-label", "Chat workspace");
       panel.dataset.capOpen = "0";
       panel.innerHTML =
         '<div class="cap-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" title="Drag to resize" tabindex="0"></div>' +
-        '<button type="button" class="cap-expand-strip" title="Open artifacts" aria-label="Open artifacts panel">' +
+        '<button type="button" class="cap-expand-strip" title="Open workspace" aria-label="Open workspace panel">' +
         '<span class="cap-expand-ico" aria-hidden="true">' +
         ICO_FILE +
         "</span>" +
-        '<span class="cap-expand-label">Artifacts</span>' +
+        '<span class="cap-expand-label">Workspace</span>' +
         "</button>" +
         '<div class="cap-body" data-cap-root></div>';
       wrap.appendChild(panel);
@@ -885,6 +905,7 @@
   }
 
   function closePanel() {
+    if (global.TomoTerminals) global.TomoTerminals.detach();
     _state.view = "home";
     _state.art = null;
     _state.panelOpen = false;
@@ -1176,15 +1197,12 @@
 
     root.innerHTML =
       '<div class="cap-home">' +
-      '<div class="cap-panel-head">' +
-      '<span class="cap-panel-title">Files</span>' +
-      '<button type="button" class="cap-icon-btn cap-collapse" title="Close panel" aria-label="Close">✕</button>' +
-      "</div>" +
+      '<div class="workspace-section-head"><h3>Files &amp; artifacts</h3><span class="faint">Saved outputs stay with this conversation.</span></div>' +
       (tabsHtml
         ? '<section class="cap-section"><h3 class="cap-section-title">Open</h3><div class="cap-rows">' + tabsHtml + "</div></section>"
         : "") +
       '<section class="cap-section">' +
-      '<h3 class="cap-section-title">In this chat <span class="cap-count" data-cap-count></span></h3>' +
+      '<h3 class="cap-section-title">Recent <span class="cap-count" data-cap-count></span></h3>' +
       '<div class="cap-rows" data-cap-list><div class="cap-empty-hint">Loading…</div></div>' +
       "</section>" +
       '<button type="button" class="cap-all-files" data-cap-nav="files">Browse all files <span aria-hidden="true">→</span></button>' +
@@ -1206,9 +1224,6 @@
       });
     }
 
-    root.querySelector(".cap-collapse").addEventListener("click", function () {
-      closePanel();
-    });
     root.querySelectorAll("[data-cap-nav='files']").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         e.preventDefault();
@@ -1424,16 +1439,40 @@
 
   function renderPanel(wrap) {
     if (!wrap) return;
+    activateSession(wrap);
     var panel = ensurePanel(wrap);
-    var root = panel.querySelector("[data-cap-root]") || panel;
+    var shell = panel.querySelector("[data-cap-root]") || panel;
     setPanelOpen(wrap, true);
+    setMaximized(wrap, _state.maximized);
+    if (global.TomoTerminals) global.TomoTerminals.detach();
+    shell.innerHTML =
+      '<header class="workspace-header"><div><span class="workspace-eyebrow">THIS CHAT</span><h2>Workspace</h2></div>' +
+      '<div class="workspace-actions"><button type="button" class="cap-art-btn" data-cap-max-toggle aria-label="Expand panel">' + ICO_EXPAND + '</button>' +
+      '<button type="button" class="cap-art-btn" data-workspace-close aria-label="Close workspace" title="Close workspace">' + ICO_CLOSE + '</button></div></header>' +
+      '<nav class="workspace-nav" aria-label="Workspace views">' +
+      '<button type="button" data-workspace-view="home">Files</button>' +
+      (_state.art ? '<button type="button" data-workspace-view="preview">Preview</button>' : '') +
+      '<button type="button" data-workspace-view="terminal"><span aria-hidden="true">&gt;_</span> Terminal</button></nav>' +
+      '<div class="workspace-content"></div>';
+    var root = shell.querySelector(".workspace-content");
+    shell.querySelector("[data-workspace-close]").onclick = closePanel;
+    shell.querySelectorAll("[data-workspace-view]").forEach(function (button) {
+      var name = button.dataset.workspaceView;
+      var selected = name === _state.view || (name === "home" && _state.view === "files");
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.onclick = function () { _state.view = name; renderPanel(wrap); };
+    });
+    wireMaxToggle(shell, wrap);
 
     // Remove legacy preview pane if present
     wrap.querySelectorAll(".artifact-preview-pane").forEach(function (p) {
       p.remove();
     });
 
-    if (_state.view === "files") {
+    if (_state.view === "terminal") {
+      if (global.TomoTerminals) global.TomoTerminals.mount(root, _state.sessionId);
+    } else if (_state.view === "files") {
       renderDrill(root, wrap, "files");
     } else if (_state.view === "preview" && _state.art && _state.art.url) {
       renderDrill(root, wrap, "preview");
@@ -1446,6 +1485,7 @@
   function openFilesPane(opts) {
     opts = opts || {};
     var wrap = opts.wrap || findChatWrap();
+    activateSession(wrap);
     var sid =
       opts.session_id ||
       (wrap ? (wrap.dataset && wrap.dataset.sessionId) : _state.sessionId) ||
@@ -1482,12 +1522,15 @@
       }
       return;
     }
-    if (opts.userGesture) _state.userCollapsed = false;
     var wrap = findChatWrap();
     if (!wrap) {
       window.open(art.url, "_blank", "noopener");
       return;
     }
+    activateSession(wrap);
+    if (opts.userGesture) _state.userCollapsed = false;
+    if (art.session_id && wrap.dataset.sessionId && art.session_id !== wrap.dataset.sessionId) return;
+    if (!opts.userGesture && _state.view === "terminal") return;
     _state.art = {
       url: art.url,
       filename: art.filename || "file",
@@ -1508,6 +1551,7 @@
     opts = opts || {};
     var wrap = opts.wrap || findChatWrap();
     if (!wrap) return;
+    activateSession(wrap);
     if (opts.userGesture !== false) _state.userCollapsed = false;
     var sid =
       opts.session_id ||
@@ -1541,6 +1585,7 @@
   function maybeAutoOpen(art) {
     if (!art || !art.url) return;
     // History replay and post-collapse turns must not yank the panel open.
+    activateSession(findChatWrap());
     if (_state.userCollapsed) return;
     try {
       openPreview(art);
@@ -1552,6 +1597,7 @@
     if (!btn) return;
     e.preventDefault();
     var wrap = btn.closest(".chat-wrap") || findChatWrap();
+    activateSession(wrap);
     var sid =
       (wrap && wrap.dataset && wrap.dataset.sessionId) ||
       (btn.closest("[data-session-id]") &&
@@ -1583,6 +1629,7 @@
     if (!strip) return;
     e.preventDefault();
     var wrap = strip.closest(".chat-wrap") || findChatWrap();
+    activateSession(wrap);
     var sid = (wrap && wrap.dataset && wrap.dataset.sessionId) || "";
     if (sid) _state.sessionId = sid;
     openHome({ wrap: wrap, session_id: sid });
@@ -1593,6 +1640,18 @@
       wirePanelResize(p);
       applyStoredPanelWidth(p);
     });
+    // Sessions reuse one chat DOM. Switch its panel state atomically with its id
+    // so previews, tabs and PTYs cannot remain attached to the previous chat.
+    new MutationObserver(function (records) {
+      records.forEach(function (record) {
+        var wrap = record.target;
+        if (!wrap.classList.contains("chat-wrap")) return;
+        if (global.TomoTerminals) global.TomoTerminals.detach();
+        activateSession(wrap);
+        if (_state.panelOpen && wrap.dataset.sessionId) renderPanel(wrap);
+        else setPanelOpen(wrap, false);
+      });
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-session-id"] });
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootPanels);
