@@ -215,6 +215,16 @@
   var fEnabled = document.getElementById('profEnabled');
   var defaultId = '';
 
+  // Presets only need a token: endpoint, catalog and efforts come from the provider.
+  function syncProviderFields() {
+    var preset = fProvider.value !== 'custom';
+    formCard.querySelectorAll('[data-custom-only]').forEach(function (el) { el.hidden = preset; });
+    fBase.readOnly = preset; fModel.readOnly = preset;
+    document.getElementById('profKeyLabel').textContent = preset ? 'Token' : 'API key';
+    document.getElementById('profModelLabel').textContent = preset ? 'Default model' : 'Model';
+    modelSelect.hidden = preset && !modelSelect.options.length;
+  }
+
   function esc(s) { return Tomo.escapeHtml(s); }
 
   function parseReasoningEfforts(value) {
@@ -229,7 +239,8 @@
     b += p.enabled ? (p.api_key_set ? ' <span class="badge ok sm">key set</span>' : ' <span class="badge muted">no key</span>') : ' <span class="badge muted">disabled</span>';
     var def = p.id === defaultId ? '' : ' <button class="btn ghost sm" type="button" data-act="default">Set default</button>';
     var efforts = Array.isArray(p.reasoning_efforts) ? p.reasoning_efforts.length : 0;
-    var effortLabel = efforts ? (efforts + ' effort' + (efforts === 1 ? '' : 's')) : 'no custom effort';
+    var preset = Object.keys(providerPresets).some(function (id) { return providerPresets[id].base_url === String(p.base_url || '').replace(/\/$/, ''); });
+    var effortLabel = preset ? 'effort follows model' : efforts ? (efforts + ' effort' + (efforts === 1 ? '' : 's')) : 'no custom effort';
     return '<div class="row" data-id="' + esc(p.id) + '"><div class="meta"><div class="title">' + esc(p.name) + ' <span class="faint mono">' + esc(p.id) + '</span></div><div class="desc">' + esc(p.model || '—') + ' · ' + esc(p.base_url || 'default host') + ' · ' + esc(effortLabel) + '</div></div><div class="machine-row-actions">' + b + def + ' <button class="btn ghost sm" type="button" data-act="delete">Delete</button></div></div>';
   }
 
@@ -250,6 +261,7 @@
         select.appendChild(group);
       });
     });
+    renderMainModel(profiles);
     if (!listEl) return;
     if (!profiles.length) { listEl.innerHTML = '<div class="empty">No profiles yet — add one to enable chat.</div>'; }
     else { listEl.innerHTML = profiles.map(rowHtml).join(''); }
@@ -264,6 +276,37 @@
       node.setAttribute('data-state', ready ? 'ok' : (profiles.length ? 'warn' : 'off'));
     }
   }
+
+  var mainField = document.getElementById('mainModelField');
+  var mainSelect = document.getElementById('mainModelSelect');
+
+  function renderMainModel(profiles) {
+    if (!mainSelect) return;
+    var usable = profiles.filter(function (p) { return p.enabled; });
+    mainField.hidden = !usable.length;
+    mainSelect.innerHTML = defaultId ? '' : '<option value="">Choose a model…</option>';
+    usable.forEach(function (p) {
+      var group = document.createElement('optgroup'); group.label = p.name;
+      (p.available_models && p.available_models.length ? p.available_models : [p.model]).forEach(function (model) {
+        var option = document.createElement('option');
+        option.value = JSON.stringify({ profile_id: p.id, model: model }); option.textContent = usable.length > 1 ? model + ' · ' + p.name : model;
+        option.selected = p.id === defaultId && model === p.model;
+        group.appendChild(option);
+      });
+      mainSelect.appendChild(group);
+    });
+  }
+
+  if (mainSelect) mainSelect.addEventListener('change', async function () {
+    if (!mainSelect.value) return;
+    var pick = JSON.parse(mainSelect.value);
+    mainSelect.disabled = true;
+    try {
+      await Tomo.api('/api/llm-profiles/' + encodeURIComponent(pick.profile_id) + '/default', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: pick.model }) });
+      Tomo.toast('Main model: ' + pick.model, 'ok');
+    } catch (er) { Tomo.toast((er && er.message) || 'Could not set main model', 'err'); }
+    finally { mainSelect.disabled = false; loadProfiles(); }
+  });
 
   async function loadProfiles() {
     try {
@@ -284,10 +327,11 @@
       markSelected(listEl, p.id);
     }
     fProvider.value = Object.keys(providerPresets).find(function (id) { return providerPresets[id].base_url === fBase.value.replace(/\/$/, ''); }) || 'custom';
-    fBase.readOnly = fProvider.value !== 'custom';
-    fModel.readOnly = fProvider.value !== 'custom';
+    var keyStatus = document.getElementById('profKeyStatus');
+    if (keyStatus) keyStatus.hidden = mode === 'add';
     fillModelSelect((p && p.available_models) || []);
-    if (catalogStatus) catalogStatus.textContent = 'Pick a default model. All saved catalog models are available in chat.';
+    if (catalogStatus) catalogStatus.textContent = fProvider.value === 'custom' ? 'Pick a default model, or type a model ID.' : 'Every catalog model is available in chat; thinking effort follows the model.';
+    syncProviderFields();
     formCard.classList.remove('hidden');
     if (fProvider.value !== 'custom') fKey.focus();
     else if (fName) fName.focus();
@@ -321,7 +365,8 @@
   var saveProf = document.getElementById('profSave');
   if (saveProf) {
     saveProf.addEventListener('click', async function () {
-      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: parseReasoningEfforts(fReasoning.value), enabled: fEnabled.checked };
+      var preset = fProvider.value !== 'custom';
+      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: preset ? [] : parseReasoningEfforts(fReasoning.value), enabled: fEnabled.checked };
       var key = fKey.value;
       if (key && key.indexOf('•') === -1) body.api_key = key;
       saveProf.disabled = true;
@@ -348,7 +393,7 @@
 
   function resetModelSelect() {
     if (!modelSelect) return;
-    modelSelect.innerHTML = '<option value="">Custom (type below)</option>';
+    modelSelect.innerHTML = fProvider.value === 'custom' ? '<option value="">Custom (type below)</option>' : '';
   }
 
   if (modelSelect) {
@@ -385,7 +430,8 @@
       if (fingerprint !== [fProvider.value, fKey.value, fId.value].join('\n')) return;
       var models = (d && d.models) || [];
       fillModelSelect(models);
-      if (catalogStatus) catalogStatus.textContent = models.length + ' models loaded. Save to make them available in chat.';
+      syncProviderFields();
+      if (catalogStatus) catalogStatus.textContent = models.length + ' models loaded — all available in chat. Thinking effort follows the model.';
     } catch (er) {
       if (fingerprint !== [fProvider.value, fKey.value, fId.value].join('\n')) return;
       if (catalogStatus) catalogStatus.textContent = (er && er.message) || 'Could not load models.';
@@ -396,9 +442,9 @@
   if (fetchModelsBtn) fetchModelsBtn.addEventListener('click', fetchProfileModels);
   if (fProvider) fProvider.addEventListener('change', function () {
     var preset = providerPresets[fProvider.value];
-    fBase.readOnly = !!preset; fModel.readOnly = !!preset;
     fBase.value = preset ? preset.base_url : '';
     fModel.value = ''; resetModelSelect();
+    syncProviderFields();
     if (preset) { fName.value = preset.name; fKey.focus(); }
     if (catalogStatus) catalogStatus.textContent = preset ? 'Paste your token, then save. The model catalog loads automatically.' : 'Enter your custom endpoint and model ID.';
     if (preset && fKey.value.trim()) fetchProfileModels();

@@ -4,6 +4,13 @@
     <button class="btn ghost sm" type="button" id="codexLoginBtn">Sign in with ChatGPT</button>
     <button class="btn primary sm" type="button" id="addProfileBtn">New profile</button>
   </div>
+  <div class="machine-field" id="mainModelField" hidden>
+    <div class="machine-field-copy">
+      <label class="machine-field-name" for="mainModelSelect">Main model</label>
+      <p class="machine-field-hint">Every chat and background task uses this unless you pick another model.</p>
+    </div>
+    <div class="machine-field-control"><select class="input machine-input-mid" id="mainModelSelect"></select></div>
+  </div>
   <p class="machine-note">Click a unit to inspect it on the bench. The catalog stays put.</p>
   <div class="machine-ledger" id="profileList">
     <div class="empty">Loading…</div>
@@ -47,7 +54,7 @@
           <input class="input machine-input-mid" id="profName" required placeholder="Default">
         </div>
       </div>
-      <div class="machine-field">
+      <div class="machine-field" data-custom-only>
         <div class="machine-field-copy"><div class="machine-field-name">Base URL</div></div>
         <div class="machine-field-control machine-field-control-wide">
           <input class="input" type="url" id="profBaseUrl" placeholder="https://api.openai.com/v1" spellcheck="false">
@@ -55,7 +62,7 @@
       </div>
       <div class="machine-field">
         <div class="machine-field-copy">
-          <div class="machine-field-name">API key</div>
+          <div class="machine-field-name" id="profKeyLabel">API key</div>
           <p class="machine-field-hint" id="profKeyStatus">Leave blank on edit to keep the existing key.</p>
         </div>
         <div class="machine-field-control machine-field-control-wide">
@@ -64,18 +71,18 @@
       </div>
       <div class="machine-field machine-field-stack">
         <div class="machine-field-copy">
-          <div class="machine-field-name">Model</div>
+          <div class="machine-field-name" id="profModelLabel">Model</div>
           <p class="machine-field-hint" id="profCatalogStatus" role="status">Pick a default model. Custom endpoints can also use a typed model ID.</p>
         </div>
         <div class="machine-field-control machine-field-control-wide">
           <select class="input machine-input-mid" id="profModelSelect">
             <option value="">Custom (type below)</option>
           </select>
-          <button class="btn ghost sm" type="button" id="profFetchModelsBtn">Fetch models</button>
-          <input class="input machine-input-mid" id="profModel" placeholder="gpt-4o-mini" spellcheck="false">
+          <button class="btn ghost sm" type="button" id="profFetchModelsBtn" data-custom-only>Fetch models</button>
+          <input class="input machine-input-mid" id="profModel" placeholder="gpt-4o-mini" spellcheck="false" data-custom-only>
         </div>
       </div>
-      <div class="machine-field machine-field-stack">
+      <div class="machine-field machine-field-stack" data-custom-only>
         <div class="machine-field-copy">
           <div class="machine-field-name">Reasoning efforts</div>
           <p class="machine-field-hint">One provider value per line. The last value is the default / highest effort.</p>

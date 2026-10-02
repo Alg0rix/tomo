@@ -406,6 +406,11 @@
       if (reasoningModel) reasoningModel.textContent = model;
       if (reasoningTriggerEffort) { reasoningTriggerEffort.textContent = active; reasoningTriggerEffort.hidden = !active; }
       if (reasoningTrigger) reasoningTrigger.title = model + (active ? ' · ' + active : '');
+      if (reasoningReset) {
+        // Already following: nothing to reset to.
+        reasoningReset.hidden = !payload.selected_model_profile_id;
+        reasoningReset.querySelector('.composer-reasoning-reset-label').textContent = 'Follow main model' + (payload.main_model ? ' · ' + payload.main_model : '');
+      }
       fillChatModels();
       if (effortSelect) {
         effortSelect.innerHTML = '';

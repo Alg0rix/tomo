@@ -26,7 +26,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
     const p = profiles[0];
     const model = chosen || p?.model || '';
     const efforts = model.startsWith('gpt-') ? ['low', 'medium', 'high'] : [];
-    return { profile_id: p?.id, profile_name: p?.name, model, model_profiles: profiles.map(p => ({ id: p.id, name: p.name, models: p.available_models })), reasoning_efforts: efforts, default_reasoning_effort: efforts.at(-1), reasoning_effort: effort || efforts.at(-1), selected_reasoning_effort: effort || null };
+    return { profile_id: p?.id, profile_name: p?.name, model, main_model: p?.model, selected_model_profile_id: chosen ? p?.id : '', model_profiles: profiles.map(p => ({ id: p.id, name: p.name, models: p.available_models })), reasoning_efforts: efforts, default_reasoning_effort: efforts.at(-1), reasoning_effort: effort || efforts.at(-1), selected_reasoning_effort: effort || null };
   }
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
@@ -41,6 +41,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
     }
     if (pages[url.pathname]) { res.setHeader('Content-Type', 'text/html'); res.end(pages[url.pathname]); return; }
     if (url.pathname === '/api/llm-profiles/provider-models') return json({ models });
+    if (url.pathname === '/api/llm-profiles/go/default') { profiles[0].model = body.model; return json({ default_id: 'go' }); }
     if (url.pathname === '/api/llm-profiles/chat-options') return json(state());
     if (url.pathname === '/api/llm-profiles') {
       if (req.method === 'POST') {
@@ -85,11 +86,19 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       await page.goto(base + '/system#models');
       await page.locator('#addProfileBtn').click();
       await page.locator('#profProvider').selectOption('opencode-go');
+      for (const id of ['#profBaseUrl', '#profModel', '#profModelSelect', '#profFetchModelsBtn', '#profReasoningEfforts']) assert.equal(await page.locator(id).isVisible(), false, `${id} hidden for presets`);
       await page.locator('#profApiKey').fill('test-token');
       await page.locator('#profApiKey').press('Tab');
-      await page.waitForFunction(() => document.querySelector('#profModelSelect').options.length === 4);
+      await page.waitForFunction(() => document.querySelector('#profModelSelect').options.length === 3);
+      assert.equal(await page.locator('#profModelSelect').isVisible(), true);
+      assert.equal(await page.locator('#profReasoningEfforts').isVisible(), false);
       await page.locator('#profSave').click();
       await page.waitForFunction(() => document.querySelector('#profileFormCard').classList.contains('hidden'));
+      await page.locator('#mainModelSelect').waitFor({ state: 'visible' });
+      await page.locator('#mainModelSelect').selectOption(JSON.stringify({ profile_id: 'go', model: 'minimax-m2.7' }));
+      await page.waitForFunction(() => document.querySelector('#map-models-val').textContent === 'minimax-m2.7');
+      await page.locator('#mainModelSelect').selectOption(JSON.stringify({ profile_id: 'go', model: 'kimi-k2.5' }));
+      await page.waitForFunction(() => document.querySelector('#map-models-val').textContent === 'kimi-k2.5');
       await page.locator('#systemNav a[data-section="general"]').click();
       assert.equal(await page.locator('#aux-session_title option').count(), 4);
       assert.equal(await page.locator('#aux-memory_extraction').inputValue(), '');
@@ -104,6 +113,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       await trigger.click();
       const picker = page.locator('.composer-reasoning-popover');
       await picker.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('.composer-reasoning-reset').isVisible(), false, 'New chat already follows main');
       assert.equal(await page.locator('.composer-effort-select').isDisabled(), true);
       await page.locator('.composer-model-search').fill('gpt');
       assert.equal(await page.locator('.composer-model-select option').count(), 2, 'Search keeps the current model');
@@ -131,8 +141,10 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       await page.keyboard.press('Escape');
       assert.equal(await picker.isVisible(), false);
       await trigger.click();
+      assert.equal(await page.locator('.composer-reasoning-reset').textContent(), 'Follow main model · kimi-k2.5 ↻');
       await page.locator('.composer-reasoning-reset').click();
       await page.waitForFunction(() => document.querySelector('.composer-reasoning-model').textContent === 'kimi-k2.5');
+      assert.equal(await page.locator('.composer-reasoning-reset').isVisible(), false, 'Reset hides once following main');
       await page.locator('.composer-picker-close').click();
       assert.deepEqual(errors, []);
       console.log(`${width}px: provider token/catalog, auxiliary defaults, new-chat picker, model/effort saves, failure recovery, viewport and reset passed`);

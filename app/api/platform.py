@@ -617,10 +617,21 @@ async def delete_llm_profile(profile_id: str, _: AuthDep):
     return {"success": True}
 
 
+class DefaultProfileIn(BaseModel):
+    model: str | None = None
+
+
 @router.post("/llm-profiles/{profile_id}/default")
-async def set_default_llm_profile(profile_id: str, _: AuthDep):
-    if not store.get_llm_profile(profile_id):
+async def set_default_llm_profile(
+    profile_id: str, _: AuthDep, body: DefaultProfileIn | None = None
+):
+    profile = store.get_llm_profile(profile_id)
+    if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    if body and body.model:
+        if body.model not in (profile.get("available_models") or [profile["model"]]):
+            raise HTTPException(status_code=400, detail="Model is not in this profile's catalog")
+        store.update_llm_profile(profile_id, {"model": body.model})
     store.set_default_llm_profile(profile_id)
     return {"success": True, "default_id": profile_id}
 

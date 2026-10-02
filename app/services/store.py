@@ -376,12 +376,16 @@ class Store:
         stored = (session.get("reasoning_effort") or "").strip()
         effective = llm_profiles_store.effective_reasoning_effort(profile, stored)
         selected = stored if stored in efforts else ""
+        main = llm_profiles_store.resolve_profile(
+            self._conn, session.get("coordinator_id") or session.get("agent_id")
+        )
         return {
             "session_id": session.get("id") or "",
             "profile_id": (profile or {}).get("id") or "",
             "profile_name": (profile or {}).get("name") or "",
             "model": (profile or {}).get("model") or "",
             "selected_model_profile_id": session.get("model_profile_id") or "",
+            "main_model": (main or {}).get("model") or "",
             "model_profiles": [
                 {"id": p["id"], "name": p["name"], "models": p["available_models"] or [p["model"]]}
                 for p in llm_profiles_store.list_profiles(self._conn) if p["enabled"]

@@ -117,6 +117,11 @@ async def test_connect_select_and_follow_main(tmp_path, monkeypatch):
                 "api_key": "zen-token",
             },
         ).json()
+        rejected = api.post(f"/api/llm-profiles/{go['id']}/default", json={"model": "not-listed"})
+        assert rejected.status_code == 400
+        main = api.post(f"/api/llm-profiles/{go['id']}/default", json={"model": "gpt-5.4"})
+        assert main.status_code == 200
+        assert store.resolve_llm_profile(None)["model"] == "gpt-5.4"
         sid = store.create_swarm_session(["main"])
         for pid, model, suffix in [
             (go["id"], "minimax-m2.7", "/messages"),
@@ -128,6 +133,7 @@ async def test_connect_select_and_follow_main(tmp_path, monkeypatch):
                 f"/api/sessions/{sid}/model", json={"profile_id": pid, "model": model}
             )
             assert selected.status_code == 200
+            assert selected.json()["main_model"] == "gpt-5.4"
             assert (
                 api.get(f"/api/sessions/{sid}/reasoning-effort").json()["model"]
                 == model
