@@ -368,6 +368,14 @@ class SessionModelIn(BaseModel):
     model: str = Field(default="", max_length=200)
 
 
+async def _warm_session_model_metadata(session_id: str) -> None:
+    from app.runtime.llm.provider_catalog import ensure_model_metadata
+
+    profile = store.resolve_session_llm_profile(session_id)
+    if profile:
+        await ensure_model_metadata(profile.get("base_url") or "")
+
+
 @router.put("/sessions/{session_id}/model")
 async def set_session_model_api(session_id: str, body: SessionModelIn, request: Request, _: AuthDep):
     require_owned_session(request, session_id)
@@ -377,7 +385,8 @@ async def set_session_model_api(session_id: str, body: SessionModelIn, request: 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if state is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return state
+    await _warm_session_model_metadata(session_id)
+    return store.get_session_reasoning_effort(session_id)
 
 
 @router.get("/sessions/{session_id}/reasoning-effort")
@@ -385,6 +394,7 @@ async def get_session_reasoning_effort_api(
     session_id: str, request: Request, _: AuthDep
 ):
     require_owned_session(request, session_id)
+    await _warm_session_model_metadata(session_id)
     state = store.get_session_reasoning_effort(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -399,6 +409,7 @@ async def set_session_reasoning_effort_api(
     _: AuthDep,
 ):
     require_owned_session(request, session_id)
+    await _warm_session_model_metadata(session_id)
     try:
         state = store.set_session_reasoning_effort(
             session_id, body.reasoning_effort

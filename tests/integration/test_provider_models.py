@@ -1,6 +1,7 @@
 """Provider setup → persisted chat selection → real runtime wire routing."""
 
 import json
+import time
 
 import httpx2
 import pytest
@@ -11,6 +12,19 @@ from app.main import app
 from app.runtime.agent.loop import run_turn
 from app.runtime.llm import get_auxiliary_llm, get_llm
 from app.services import store
+
+
+@pytest.fixture(autouse=True)
+def model_metadata(monkeypatch):
+    from app.runtime.llm import provider_catalog
+
+    models = {
+        "deepseek-v4.1-flash": {"reasoning_options": [{"type": "effort", "values": ["low", "high", "max"]}]},
+        "deepseek-v4-pro": {"reasoning_options": [{"type": "effort", "values": ["high", "max"]}]},
+        "gpt-5.4": {"reasoning_options": [{"type": "effort", "values": ["low", "medium", "high"]}]},
+    }
+    monkeypatch.setattr(provider_catalog, "_metadata", {"opencode-go": {"models": models}})
+    monkeypatch.setattr(provider_catalog, "_metadata_fetched_at", time.time())
 
 
 def sse(*events):

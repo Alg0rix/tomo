@@ -308,7 +308,9 @@ class CodexResponsesClient:
             payload["tools"] = responses_tools
         if self._reasoning_effort:
             # The Codex backend rejects "minimal" (400) — clamp to "low".
-            effort = "low" if self._reasoning_effort == "minimal" else self._reasoning_effort
+            effort = self._reasoning_effort
+            if effort == "minimal" and endpoint.hostname == "chatgpt.com":
+                effort = "low"
             payload["reasoning"] = {"effort": effort, "summary": "auto"}
         elif (urlparse(self._base_url).hostname == "api.openai.com"
               and self._model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))):

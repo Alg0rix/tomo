@@ -308,6 +308,27 @@ async def test_complete_clamps_minimal_effort_to_low() -> None:
 
 
 @pytest.mark.asyncio
+async def test_opencode_preserves_catalog_minimal_effort() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert body["reasoning"]["effort"] == "minimal"
+        return _completed_sse({"id": "resp_1", "status": "completed", "output": [
+            {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+             "content": [{"type": "output_text", "text": "hi"}]},
+        ]})
+
+    client = CodexResponsesClient(
+        base_url="https://opencode.ai/zen/go/v1", access_token=_TOKEN,
+        model="muse-spark-1.3-contributor", reasoning_effort="minimal",
+        transport=httpx2.MockTransport(handler),
+    )
+    try:
+        await client.complete([{"role": "user", "content": "hi"}])
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_complete_omits_reasoning_when_not_configured() -> None:
     captured = {}
 
