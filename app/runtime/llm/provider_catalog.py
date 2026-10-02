@@ -13,6 +13,14 @@ PRESETS = {
     "opencode-zen": {"name": "OpenCode Zen", "base_url": "https://opencode.ai/zen/v1"},
 }
 
+# Effort values published at https://models.opencode.ai/api.json (2026-10-02).
+_DEEPSEEK_EFFORTS = {
+    "deepseek-v4-flash": ["low", "high", "max"],
+    "deepseek-v4-flash-vision-exp": ["low", "high", "max"],
+    "deepseek-v4.1-flash": ["low", "high", "max"],
+    "deepseek-v4-pro": ["high", "max"],
+}
+
 
 def provider_for_url(base_url: str) -> str:
     url = urlparse(base_url)
@@ -45,11 +53,14 @@ def profile_efforts(profile: dict | None) -> list[str]:
     if not profile:
         return []
     if provider_for_url(profile.get("base_url") or ""):
+        model = profile.get("model", "")
+        if model in _DEEPSEEK_EFFORTS:
+            return list(_DEEPSEEK_EFFORTS[model])
         # Only advertise effort values on models that accept them. Other
         # native protocols still expose their streamed thinking, if supplied.
         return (
             ["low", "medium", "high"]
-            if profile.get("model", "").startswith("gpt-")
+            if model.startswith("gpt-")
             else []
         )
     return list(profile.get("reasoning_efforts") or [])

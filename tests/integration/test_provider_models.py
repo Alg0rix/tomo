@@ -22,6 +22,53 @@ def sse(*events):
 
 
 @pytest.mark.asyncio
+async def test_deepseek_session_effort_reaches_runtime(tmp_path, monkeypatch):
+    store.rebind(tmp_path / "deepseek.db")
+    app.dependency_overrides[require_auth] = lambda: None
+    wire = []
+
+    def provider(request):
+        wire.append(json.loads(request.content))
+        return sse({"choices": [{"delta": {"content": "Hello"}, "finish_reason": "stop"}]})
+
+    real_client = httpx2.AsyncClient
+    monkeypatch.setattr(
+        httpx2, "AsyncClient",
+        lambda *a, **kw: real_client(*a, **{**kw, "transport": httpx2.MockTransport(provider)}),
+    )
+    profile = store.create_llm_profile({
+        "name": "Go", "base_url": "https://opencode.ai/zen/go/v1",
+        "api_key": "go-token", "model": "deepseek-v4.1-flash",
+        "available_models": ["deepseek-v4.1-flash", "deepseek-v4-pro", "kimi-k2.6"],
+    })
+    store.set_default_llm_profile(profile["id"])
+    sid = store.create_swarm_session(["main"])
+    api = TestClient(app)
+    try:
+        state = api.get(f"/api/sessions/{sid}/reasoning-effort")
+        assert state.json()["reasoning_efforts"] == ["low", "high", "max"]
+        for effort in ("low", "high", "max"):
+            selected = api.put(f"/api/sessions/{sid}/reasoning-effort", json={"reasoning_effort": effort})
+            assert selected.status_code == 200
+            events = [e async for e in run_turn(
+                "hello", agent_id="main", session_id=sid, tools=[], system_prompt="Be helpful.",
+            )]
+            assert not [e for e in events if e.get("kind") == "error"]
+            assert wire[-1]["model"] == "deepseek-v4.1-flash"
+            assert wire[-1]["reasoning_effort"] == effort
+        assert api.put(
+            f"/api/sessions/{sid}/reasoning-effort", json={"reasoning_effort": "medium"},
+        ).status_code == 400
+        pro = api.put(f"/api/sessions/{sid}/model", json={"profile_id": profile["id"], "model": "deepseek-v4-pro"})
+        assert pro.json()["reasoning_efforts"] == ["high", "max"]
+        kimi = api.put(f"/api/sessions/{sid}/model", json={"profile_id": profile["id"], "model": "kimi-k2.6"})
+        assert kimi.json()["reasoning_efforts"] == []
+    finally:
+        api.close()
+        app.dependency_overrides.pop(require_auth, None)
+
+
+@pytest.mark.asyncio
 async def test_connect_select_and_follow_main(tmp_path, monkeypatch):
     store.rebind(tmp_path / "provider.db")
     app.dependency_overrides[require_auth] = lambda: None
