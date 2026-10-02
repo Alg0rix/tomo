@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from app.runtime.agent.loop import _truncate_result, run_turn
+from app.runtime.agent.compress import estimate_prompt_tokens, prompt_budget
 from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import store
@@ -30,6 +31,104 @@ from tests.fakes.llm import ScriptedLLM, bash_call, memory_search_call, text_rep
 _DEFAULT_REPLY = "Ready to help."
 _BASH_FINAL = "The command finished."
 _RECALL_FINAL = "I found the relevant knowledge base entry."
+
+
+class ContextCapturingLLM(ScriptedLLM):
+    context_window = 128_000
+
+    def __init__(self, *, failures=0):
+        super().__init__([text_reply("Fits now.")])
+        self.failures = failures
+        self.prompts = []
+
+    async def complete(self, messages, tools=None):
+        self.prompts.append([dict(message) for message in messages])
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("context_length_exceeded: prompt is too long")
+        return await super().complete(messages, tools)
+
+
+async def test_500k_history_compacts_before_first_request():
+    llm = ContextCapturingLLM()
+    history = [{"type": "user", "content": "X" * 2_000_000},
+               {"type": "final", "content": "Earlier response"}]
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions", history=history)
+    assert _final(events)["metrics"]["compressed"] is True
+    assert any("Compacted" in event.get("message", "") for event in events)
+    assert len(llm.prompts) == 1
+    assert estimate_prompt_tokens(llm.prompts[0]) <= prompt_budget(llm.context_window)
+    assert any(message.get("content") == "Continue." for message in llm.prompts[0])
+    assert len(history[0]["content"]) == 2_000_000
+
+
+async def test_oversized_latest_request_never_reaches_provider():
+    llm = ContextCapturingLLM()
+    events = await _collect("X" * 2_000_000, llm=llm, tools=[], system_prompt="Instructions")
+    assert _kinds(events) == ["error"]
+    assert "prompt budget" in events[0]["message"]
+    assert llm.prompts == []
+
+
+async def test_context_rejection_compacts_and_retries_once():
+    llm = ContextCapturingLLM(failures=1)
+    history = [{"type": "user", "content": "X" * 100_000},
+               {"type": "final", "content": "Old response"}]
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions", history=history)
+    assert _final(events)["content"] == "Fits now."
+    assert _final(events)["metrics"]["llm_retries"] == 1
+    assert len(llm.prompts) == 2
+    assert estimate_prompt_tokens(llm.prompts[1]) < estimate_prompt_tokens(llm.prompts[0])
+    assert any("compacting conversation and retrying" in event.get("message", "") for event in events)
+
+
+async def test_repeated_context_rejection_stops_after_one_retry():
+    llm = ContextCapturingLLM(failures=2)
+    history = [{"type": "user", "content": "X" * 100_000},
+               {"type": "final", "content": "Old response"}]
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions", history=history)
+    assert events[-1]["kind"] == "error"
+    assert len(llm.prompts) == 2
+
+
+async def test_context_error_after_streaming_is_not_replayed():
+    class PartialLLM(ContextCapturingLLM):
+        async def stream_complete(self, messages, tools=None):
+            self.prompts.append(messages)
+            yield {"type": "delta", "content": "Started"}
+            raise RuntimeError("context_length_exceeded")
+
+    llm = PartialLLM()
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions")
+    assert len(llm.prompts) == 1
+    assert _kinds(events) == ["delta", "error"]
+
+
+async def test_context_resolution_uses_frozen_client_profile(monkeypatch):
+    llm = ContextCapturingLLM()
+    llm.context_window = None
+    llm.context_profile = {"model": "actual-running-model", "base_url": "https://actual.test/v1"}
+    seen = []
+
+    async def resolve(agent_id, *, session_id, profile):
+        seen.append(profile)
+        return 128_000
+
+    monkeypatch.setattr("app.runtime.llm.context_window.resolve_context_window", resolve)
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions")
+    assert _final(events)["content"] == "Fits now."
+    assert seen == [llm.context_profile]
+
+
+async def test_minimal_slotted_llm_client_remains_supported():
+    class SlottedLLM:
+        __slots__ = ()
+
+        async def complete(self, messages, tools=None):
+            return text_reply("Works.")
+
+    events = await _collect("Hello", llm=SlottedLLM(), tools=[], system_prompt="Instructions")
+    assert _final(events)["content"] == "Works."
 
 
 def test_tool_result_caps_are_tool_appropriate() -> None:
@@ -346,7 +445,7 @@ async def test_repeated_tool_calls_keep_results_adjacent_before_loop_nudge() -> 
         if message.get("tool_calls"):
             ids = [call["id"] for call in message["tool_calls"]]
             assert [m["tool_call_id"] for m in messages[index + 1:index + 1 + len(ids)]] == ids
-    assert any("repeating" in str(m.get("content")) for m in messages if m["role"] == "user")
+    assert any("repeating" in str(m.get("content")) for m in messages if m["role"] == "system")
 
 
 async def test_max_iterations_force_final_when_budget_exhausted() -> None:
@@ -587,7 +686,38 @@ async def test_turn_records_goal_from_input_or_history(
     assert extraction[0][2] == expected
     assert reviews[0]["user_message"] == expected
     users = [m for m in llm.captured[-1] if m["role"] == "user"]
-    assert len(users) == (3 if direct_request else 2) + int(at_limit)
+    assert len(users) == (3 if direct_request else 2)
+    if at_limit:
+        assert llm.captured[-1][-1]["role"] == "system"
+
+
+async def test_provider_reported_smaller_window_controls_retry():
+    class SmallerWindowLLM(ContextCapturingLLM):
+        context_window = 1_000_000
+
+        async def complete(self, messages, tools=None):
+            if not self.prompts:
+                self.prompts.append(list(messages))
+                raise RuntimeError("This model's maximum context length is 128,000 tokens; requested 500000 tokens")
+            return await super().complete(messages, tools)
+
+    llm = SmallerWindowLLM()
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions",
+                            history=[{"type": "user", "content": "X" * 2_000_000}])
+    assert _final(events)["content"] == "Fits now."
+    assert len(llm.prompts) == 2
+    assert llm.context_window == 128_000
+    assert estimate_prompt_tokens(llm.prompts[1]) <= prompt_budget(128_000)
+
+
+async def test_forced_final_also_compacts_before_request():
+    llm = ContextCapturingLLM()
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions",
+                            history=[{"type": "user", "content": "X" * 2_000_000}], max_iterations=0)
+    assert _final(events)["metrics"]["compressed"] is True
+    assert len(llm.prompts) == 1
+    assert estimate_prompt_tokens(llm.prompts[0]) <= prompt_budget(128_000)
+    assert any(message.get("content") == "Continue." for message in llm.prompts[0])
 
 
 async def test_error_flag_requires_error_colon_prefix(monkeypatch) -> None:

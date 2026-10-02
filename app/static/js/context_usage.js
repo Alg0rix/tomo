@@ -34,6 +34,7 @@
     var popover = null;
     var open = false;
     var disposed = false;
+    var refreshRevision = 0;
 
     function closePopover() {
       open = false;
@@ -58,6 +59,7 @@
         '</div>' +
         '<div class="ctx-pop-bar" aria-hidden="true"></div>' +
         '<ul class="ctx-pop-legend"></ul>' +
+        '<p class="ctx-pop-budget ctx-usage-note"></p>' +
         '<div class="ctx-pop-usage"></div>';
       // Mount on the visible composer card so the popover sits over the ring.
       var host =
@@ -147,16 +149,23 @@
       renderBar(data.sections || [], data.used || 0, data.limit || 0);
       renderLegend(data.sections || []);
       renderUsage(data.usage);
+      popover.querySelector(".ctx-pop-budget").textContent = data.blocked
+        ? (data.compaction_error || "The latest request and instructions cannot fit this model.")
+        : (data.compressed ? "Older conversation is compacted to fit this model. " : "")
+          + (data.prompt_budget != null ? "Prompt budget: " + fmtTokens(data.prompt_budget) + " tokens; remaining space reserved for the reply and token estimates." : "");
       updateTrigger(data);
     }
 
     function refresh() {
+      var revision = ++refreshRevision;
       var url = contextUrl(wrap);
       if (!url) return;
       Tomo.api(url).then(function (data) {
-        if (!disposed && contextUrl(wrap) === url && data) render(data);
+        if (!disposed && revision === refreshRevision && contextUrl(wrap) === url && data) render(data);
       }).catch(function () {});
     }
+
+    wrap._tomoContextUsageRefresh = refresh;
 
     function onTriggerClick(e) {
       e.stopPropagation();
@@ -201,6 +210,7 @@
       if (popover) popover.remove();
       popover = null;
       delete wrap._tomoContextUsageDestroy;
+      delete wrap._tomoContextUsageRefresh;
       delete wrap.dataset.ctxInit;
     };
 
@@ -209,6 +219,9 @@
 
   window.TomoContextUsage = {
     init: initContextUsage,
+    refresh: function (wrap) {
+      if (wrap && wrap._tomoContextUsageRefresh) wrap._tomoContextUsageRefresh();
+    },
     destroy: function (wrap) {
       if (wrap && wrap._tomoContextUsageDestroy) wrap._tomoContextUsageDestroy();
     },

@@ -78,6 +78,7 @@ async def test_native_tool_roundtrip_and_truncated_stream(protocol):
         timeout=30,
         transport=httpx2.MockTransport(wire),
     )
+    client.context_window = 4096
     tools = [
         {
             "type": "function",
@@ -105,6 +106,8 @@ async def test_native_tool_roundtrip_and_truncated_stream(protocol):
     ]
     try:
         response = await client.complete(history, tools)
+        output_limit = requests[0].get("max_tokens") if protocol == "messages" else requests[0]["generationConfig"]["maxOutputTokens"]
+        assert output_limit == 1024
         call = response.tool_calls[0]
         assert call.name == "lookup" and call.arguments == {"q": "hello"}
         history.extend(

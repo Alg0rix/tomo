@@ -62,14 +62,21 @@ def get_llm(
             raise LLMConfigError("Selected model is not in the profile's catalog")
         profile = {**profile, "model": model}
     effective_effort = effective_reasoning_effort(profile, reasoning_effort)
+
+    def configured(client):
+        # Freeze the actual route/model so a mid-turn picker change cannot
+        # resolve a context window for a different client.
+        client.context_profile = dict(profile)
+        return client
+
     if profile.get("auth_mode") == "subscription":
-        return CodexResponsesClient(
+        return configured(CodexResponsesClient(
             base_url=profile.get("base_url") or "",
             access_token=profile.get("access_token") or "",
             model=profile.get("model") or "gpt-5-codex",
             reasoning_effort=effective_effort,
             timeout=default_llm_timeout_seconds(),
-        )
+        ))
     base_url = (profile.get("base_url") or "").strip() or "https://api.openai.com/v1"
     model = (profile.get("model") or "").strip() or "gpt-4o-mini"
     from app.runtime.llm.provider_catalog import model_protocol, provider_for_url
@@ -79,26 +86,26 @@ def get_llm(
     if protocol in ("messages", "google"):
         from app.runtime.llm.native import NativeMessagesClient
 
-        return NativeMessagesClient(
+        return configured(NativeMessagesClient(
             base_url=base_url, api_key=profile.get("api_key") or "", model=model,
             protocol=protocol, timeout=default_llm_timeout_seconds(),
-        )
+        ))
     if protocol == "responses" or urlparse(base_url).hostname == "api.openai.com":
-        return CodexResponsesClient(
+        return configured(CodexResponsesClient(
             base_url=base_url,
             access_token=profile.get("api_key") or "",
             model=model,
             reasoning_effort=effective_effort,
             timeout=default_llm_timeout_seconds(),
-        )
+        ))
     # OpenAICompatClient raises LLMConfigError when the API key is empty.
-    return OpenAICompatClient(
+    return configured(OpenAICompatClient(
         base_url=base_url,
         api_key=profile.get("api_key") or "",
         model=model,
         reasoning_effort=effective_effort,
         timeout=default_llm_timeout_seconds(),
-    )
+    ))
 
 
 def resolve_main_profile(agent_id: str | None = None, *, session_id: str | None = None) -> dict | None:

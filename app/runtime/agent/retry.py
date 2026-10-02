@@ -3,11 +3,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Awaitable, Callable, TypeVar
 
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+def is_context_window_error(exc: BaseException) -> bool:
+    """Input overflow only; generic output/max_tokens errors are not retryable."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "context_length_exceeded", "context_window_exceeded", "maximum context length",
+        "exceeds the context window", "exceeded the model context", "prompt is too long",
+        "input is too long", "input tokens exceed", "too many tokens", "context length limit",
+        "context window limit", "context limit exceeded",
+    ))
+
+
+def context_window_from_error(exc: BaseException) -> int | None:
+    """Read a provider-reported maximum, never the submitted prompt token count."""
+    match = re.search(
+        r"(?:maximum context length|context (?:window|length)(?: limit)?|max(?:imum)? input tokens)"
+        r"\s*(?:is|of|:|=)?\s*([\d,]+)\s*tokens?", str(exc), re.IGNORECASE,
+    )
+    if match:
+        value = int(match[1].replace(",", ""))
+        if 1024 <= value <= 50_000_000:
+            return value
+    return None
 
 # Default: one retry after the initial attempt (2 attempts total).
 _DEFAULT_ATTEMPTS = 2

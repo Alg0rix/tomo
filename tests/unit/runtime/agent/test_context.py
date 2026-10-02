@@ -443,7 +443,7 @@ def test_compression_preserves_turn_context() -> None:
     messages = [{"role": "system", "content": "base"},
                 {"role": "user", "content": "old request"}, clock,
                 *[{"role": "user", "content": "followup " * 100} for _ in range(20)]]
-    compressed = maybe_compress_messages(messages, soft_limit_tokens=100, keep_recent=4)
+    compressed = maybe_compress_messages(messages, soft_limit_tokens=1000, keep_recent=4)
     assert len(compressed) < len(messages)
     assert clock in compressed
 

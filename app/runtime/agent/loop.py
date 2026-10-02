@@ -57,7 +57,7 @@ import logging
 import re
 from typing import Any, AsyncIterator
 
-from app.runtime.agent.compress import maybe_compress_messages
+from app.runtime.agent.compress import estimate_prompt_tokens, maybe_compress_messages, prompt_budget
 from app.runtime.agent.context import (
     build_messages,
     build_system_prompt,
@@ -65,7 +65,7 @@ from app.runtime.agent.context import (
     reset_prompt_clock,
 )
 from app.runtime.agent.metrics import TurnMetrics
-from app.runtime.agent.retry import is_transient_llm_error
+from app.runtime.agent.retry import context_window_from_error, is_context_window_error, is_transient_llm_error
 from app.runtime.agent.subagent import (
     MAX_TOOL_RESULT_CHARS,
     current_depth,
@@ -266,6 +266,7 @@ async def _llm_round_with_retry(
     tool_schemas: list[dict[str, Any]],
     *,
     metrics: TurnMetrics | None = None,
+    context_window: int | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Like ``_llm_round`` but retries the whole round on transient failures.
 
@@ -279,7 +280,16 @@ async def _llm_round_with_retry(
     restarting the round.
     """
     last_exc: BaseException | None = None
-    for attempt in range(2):
+    if context_window is not None:
+        compressed = maybe_compress_messages(messages, context_window=context_window, tools=tool_schemas)
+        if compressed is not messages:
+            messages[:] = compressed
+            if metrics is not None:
+                metrics.compressed = True
+            yield {"kind": "status", "message": "Compacted conversation to fit the active model's context window."}
+    transient_retried = False
+    context_retried = False
+    for _attempt in range(3):
         forwarded = False
         try:
             async for piece in _llm_round(client, messages, tool_schemas):
@@ -289,7 +299,28 @@ async def _llm_round_with_retry(
             return
         except Exception as exc:
             last_exc = exc
-            if attempt == 0 and not forwarded and is_transient_llm_error(exc):
+            if not forwarded and not context_retried and context_window and is_context_window_error(exc):
+                reported_window = context_window_from_error(exc)
+                if reported_window is not None:
+                    context_window = min(context_window, reported_window)
+                    try:
+                        client.context_window = context_window
+                    except AttributeError:
+                        pass  # The minimal LLMClient protocol allows slotted clients.
+                tighter_budget = min(prompt_budget(context_window), int(estimate_prompt_tokens(messages, tool_schemas) * 0.65))
+                compressed = maybe_compress_messages(messages, tools=tool_schemas, soft_limit_tokens=tighter_budget)
+                if compressed is messages or estimate_prompt_tokens(compressed, tool_schemas) >= estimate_prompt_tokens(messages, tool_schemas):
+                    raise
+                messages[:] = compressed
+                context_retried = True
+                if metrics is not None:
+                    metrics.llm_retries += 1
+                    metrics.compressed = True
+                yield {"kind": "status", "message": "Model context limit reached — compacting conversation and retrying…",
+                       "context_window": context_window}
+                continue
+            if not forwarded and not transient_retried and is_transient_llm_error(exc):
+                transient_retried = True
                 if metrics is not None:
                     metrics.llm_retries += 1
                 _logger.warning("LLM round transient failure — retrying: %s", exc)
@@ -907,6 +938,17 @@ async def run_turn(
                     image_descriptions=image_plan["descriptions"],
                     live_context=live_context,
                 )
+            from app.runtime.llm.context_window import _DEFAULT, resolve_context_window
+
+            context_window = getattr(client, "context_window", None)
+            if context_window is None:
+                client_profile = getattr(client, "context_profile", None)
+                context_window = (await resolve_context_window(agent_id, session_id=session_id, profile=client_profile)
+                                  if client_profile is not None else _DEFAULT)
+            try:
+                client.context_window = context_window
+            except AttributeError:
+                pass
         except Exception as exc:
             metrics.ended_kind = "error"
             metrics.log_summary()
@@ -948,7 +990,7 @@ async def run_turn(
                         metrics.atg_status = ev.get("status")
                 if atg_summary:
                     messages.append(
-                        {"role": "user", "content": f"[SYSTEM] {atg_summary}"}
+                        {"role": "system", "content": f"[SYSTEM] {atg_summary}"}
                     )
             else:
                 metrics.atg_status = "compile_failed"
@@ -971,15 +1013,11 @@ async def run_turn(
             streamed = False
             reasoning_streamed = False
             metrics.mark_llm_round()
-            before_len = len(messages)
-            compressed = maybe_compress_messages(messages)
-            if compressed is not messages:
-                messages = compressed
-                metrics.compressed = True
-            _logger.info("LLM round %d agent=%s msgs=%d…", iteration, agent_id, len(messages))
             try:
+                context_window = min(context_window, getattr(client, "context_window", None) or context_window)
+                _logger.info("LLM round %d agent=%s msgs=%d…", iteration, agent_id, len(messages))
                 async for piece in _llm_round_with_retry(
-                    client, messages, tool_schemas, metrics=metrics
+                    client, messages, tool_schemas, metrics=metrics, context_window=context_window
                 ):
                     if piece["kind"] == "delta":
                         streamed = True
@@ -989,6 +1027,9 @@ async def run_turn(
                         yield piece
                     elif piece["kind"] == "_response":
                         resp = piece["response"]
+                    elif piece["kind"] == "status":
+                        context_window = min(context_window, piece.get("context_window") or context_window)
+                        yield piece
                     else:
                         yield piece
             except Exception as exc:
@@ -1000,7 +1041,6 @@ async def run_turn(
                 _logger.exception("LLM round failed agent=%s: %s", agent_id, msg)
                 yield {"kind": "error", "message": msg}
                 return
-            _ = before_len  # kept for readability / future delta metrics
 
             if resp is None:
                 metrics.ended_kind = "error"
@@ -1110,7 +1150,7 @@ async def run_turn(
                         sig[:80],
                     )
                     loop_nudge = {
-                        "role": "user",
+                        "role": "system",
                         "content": (
                             "[SYSTEM] You are repeating the same tool call "
                             f"({call.name}) without progress. Stop calling "
@@ -1407,7 +1447,7 @@ async def run_turn(
         metrics.force_final = True
         messages.append(
             {
-                "role": "user",
+                "role": "system",
                 "content": (
                     "[SYSTEM] You have reached the maximum number of tool "
                     f"iterations ({limit}). Do NOT call any more tools. "
@@ -1420,7 +1460,8 @@ async def run_turn(
             resp_final: LLMResponse | None = None
             streamed_final = False
             async for piece in _llm_round_with_retry(
-                client, messages, [], metrics=metrics
+                client, messages, [], metrics=metrics,
+                context_window=min(context_window, getattr(client, "context_window", None) or context_window)
             ):
                 if piece["kind"] == "delta":
                     streamed_final = True

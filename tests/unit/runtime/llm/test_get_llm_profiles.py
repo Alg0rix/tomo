@@ -45,6 +45,9 @@ def test_get_llm_uses_agent_profile_when_assigned(tmp_path) -> None:
     client = get_llm(agent_id="main")
     assert isinstance(client, OpenAICompatClient)
     assert client.endpoint == "https://f/v1/chat/completions"
+    store.update_llm_profile("fast", {"model": "new-model"})
+    assert client.context_profile["model"] == "mf"
+    assert client.context_profile["base_url"] == "https://f/v1"
 
 
 def test_get_llm_falls_back_to_default_when_agent_model_empty(tmp_path) -> None:

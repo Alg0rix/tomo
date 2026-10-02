@@ -6,6 +6,7 @@ client and monkeypatched store for seed lookups.
 from __future__ import annotations
 
 import httpx2
+import pytest
 
 from app.runtime.llm.openai_compat import (
     OpenAICompatClient,
@@ -484,3 +485,66 @@ async def test_public_catalog_reads_exact_context_without_credentials(monkeypatc
 
 async def _return_none():
     return None
+
+
+@pytest.fixture
+def context_lookup(monkeypatch):
+    import app.runtime.llm.context_window as mod
+
+    clock = [0.0]
+    profile = {"model": "custom-model", "base_url": _BASE, "api_key": _KEY, "access_token": _KEY}
+    results = []
+
+    async def fetch(*_args):
+        return results.pop(0)
+
+    clear_context_window_cache()
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(mod, "_get_profile", lambda *_args, **_kwargs: profile.copy())
+    monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", fetch)
+    monkeypatch.setattr(mod, "_fetch_codex_context", fetch)
+    monkeypatch.setattr(mod, "_resolve_seed", lambda _model: None)
+    monkeypatch.setattr(mod, "_fetch_public_catalog_context", lambda _model: _return_none())
+    yield mod, clock, profile, results
+    clear_context_window_cache()
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "subscription"])
+async def test_metadata_fallback_retries_without_waiting_an_hour(context_lookup, auth_mode):
+    mod, clock, profile, results = context_lookup
+    profile["auth_mode"] = auth_mode
+    results.extend([None, 1_000_000])
+
+    assert await resolve_context_window("main") == _DEFAULT
+    clock[0] = mod._CATALOG_RETRY_S - 1
+    assert await resolve_context_window("main") == _DEFAULT
+    assert results == [1_000_000]
+    clock[0] += 2
+    assert await resolve_context_window("main") == 1_000_000
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "subscription"])
+async def test_metadata_outage_preserves_provider_limit_and_recovers(context_lookup, auth_mode):
+    mod, clock, profile, results = context_lookup
+    profile["auth_mode"] = auth_mode
+    results.extend([1_000_000, None, 800_000])
+
+    assert await resolve_context_window("main") == 1_000_000
+    clock[0] = mod._CACHE_TTL_S + 1
+    assert await resolve_context_window("main") == 1_000_000
+    clock[0] += mod._CATALOG_RETRY_S + 1
+    assert await resolve_context_window("main") == 800_000
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "subscription"])
+async def test_switch_model_does_not_reuse_another_models_limit(context_lookup, auth_mode):
+    mod, clock, profile, results = context_lookup
+    profile["auth_mode"] = auth_mode
+    results.extend([1_000_000, 128_000, None])
+
+    assert await resolve_context_window("main") == 1_000_000
+    profile["model"] = "smaller-model"
+    assert await resolve_context_window("main") == 128_000
+    profile["model"] = "custom-model"
+    clock[0] = mod._CACHE_TTL_S + 1
+    assert await resolve_context_window("main") == 1_000_000

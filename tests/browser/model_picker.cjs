@@ -66,6 +66,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       return json(snapshot);
     }
     if (url.pathname.endsWith('/model')) { chosen = body.model || ''; effort = ''; return json(state()); }
+    if (url.pathname.endsWith('/context')) return json({ used: 10_000, limit: state().model === 'gpt-5.4' ? 1_000_000 : 262_144, percent: 1 });
     if (url.pathname.endsWith('/chat/stream')) { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end('event: state\ndata: {"busy":false}\n\n'); return; }
     if (url.pathname.endsWith('/chat')) return json({ entries: [] });
     if (url.pathname.endsWith('/approval-mode')) return json({ mode: 'smart' });
@@ -121,6 +122,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       try { await page.waitForFunction(() => !document.querySelector('.composer-effort-select').disabled, null, { timeout: 5000 }); }
       catch (e) { console.error({ chosen, sessions, errors, status: await page.locator('.composer-picker-status').textContent() }); throw e; }
       assert.equal(sessions.length, 1, 'First selection creates a chat once');
+      await page.waitForFunction(() => document.querySelector('.ctx-usage-trigger').title === '10K / 1M tokens');
       await page.waitForTimeout(200);
       assert.equal(await page.locator('.composer-reasoning-model').textContent(), 'gpt-5.4', 'Late reads cannot overwrite a saved selection');
       await page.locator('.composer-effort-select').selectOption('low');
@@ -144,6 +146,7 @@ print(json.dumps({p: client.get(p).text.replace('http://testserver', '') for p i
       assert.equal(await page.locator('.composer-reasoning-reset').textContent(), 'Follow main model · kimi-k2.5 ↻');
       await page.locator('.composer-reasoning-reset').click();
       await page.waitForFunction(() => document.querySelector('.composer-reasoning-model').textContent === 'kimi-k2.5');
+      await page.waitForFunction(() => document.querySelector('.ctx-usage-trigger').title === '10K / 262.1K tokens');
       assert.equal(await page.locator('.composer-reasoning-reset').isVisible(), false, 'Reset hides once following main');
       await page.locator('.composer-picker-close').click();
       assert.deepEqual(errors, []);

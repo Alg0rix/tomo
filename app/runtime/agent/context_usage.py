@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.runtime.agent.compress import maybe_compress_messages
+from app.runtime.agent.compress import (
+    ContextBudgetError, _estimate_tokens, _msg_tokens, maybe_compress_messages, prompt_budget,
+)
 from app.runtime.agent.context import (
     _skills_prompt_section,
     _swarm_agents_prompt_section,
@@ -19,9 +21,8 @@ from app.runtime.agent.context import (
     history_to_messages,
 )
 from app.runtime.llm.context_window import (
-    _KNOWN_WINDOWS_SORTED,
     _DEFAULT,
-    _agent_model,
+    resolve_context_window_sync,
 )
 from app.services import store
 
@@ -45,53 +46,12 @@ _SUMMARY_PREFIX = "[SYSTEM] Earlier conversation was compressed"
 
 def estimate_tokens(text: str) -> int:
     """Rough token count (~4 chars per token)."""
-    if not text:
-        return 0
-    return max(1, len(text) // 4)
-
-
-def _msg_tokens(msg: dict[str, Any]) -> int:
-    """Token estimate for a single message — mirrors compress._msg_tokens."""
-    parts: list[str] = []
-    content = msg.get("content")
-    if isinstance(content, str):
-        parts.append(content)
-    elif content is not None:
-        parts.append(str(content))
-    if msg.get("tool_calls"):
-        parts.append(str(msg["tool_calls"]))
-    return estimate_tokens("\n".join(parts))
+    return _estimate_tokens(text)
 
 
 def _resolve_context_limit(agent_id: str | None, *, session_id: str | None = None) -> int:
-    """Context window for the agent's resolved model profile (sync).
-
-    Resolution order (no network):
-      1. ``store.list_models()`` seed match (project-specific, most specific)
-      2. ``_KNOWN_WINDOWS`` prefix match (longest prefix first)
-      3. ``_DEFAULT_CONTEXT``
-    """
-    model_id = _agent_model(agent_id, session_id=session_id)
-    if not model_id:
-        return _DEFAULT_CONTEXT
-
-    # Seed models (user-configured, most specific)
-    models = sorted(
-        store.list_models(), key=lambda m: len(m.get("id") or ""), reverse=True
-    )
-    for m in models:
-        mid = m.get("id") or ""
-        if mid and (mid == model_id or model_id.startswith(mid)):
-            ctx = int(m.get("context") or 0)
-            if ctx > 0:
-                return ctx
-
-    # Known table (prefix match, longest first)
-    for prefix, ctx in _KNOWN_WINDOWS_SORTED:
-        if model_id.startswith(prefix):
-            return ctx
-
-    return _DEFAULT_CONTEXT
+    """Use the same route-aware fallback as runtime callers."""
+    return resolve_context_window_sync(agent_id, session_id=session_id)
 
 
 def _system_core_prompt(agent_id: str) -> str:
@@ -170,23 +130,6 @@ def compute_context_usage(
     if user_message:
         messages.append({"role": "user", "content": user_message})
 
-    # Run the same compression the agent loop applies before every LLM call.
-    compressed = maybe_compress_messages(messages)
-    did_compress = compressed is not messages
-
-    # ── Classify compressed conversation messages ──
-    summarized_tokens = 0
-    conversation_tokens = 0
-    for msg in compressed:
-        # Skip system messages — they're counted in the system_prompt section.
-        if msg.get("role") == "system":
-            continue
-        tokens = _msg_tokens(msg)
-        if _is_summary_message(msg):
-            summarized_tokens += tokens
-        else:
-            conversation_tokens += tokens
-
     # ── Assemble all sections ──
     counts: dict[str, int] = {
         "system_prompt": estimate_tokens(_system_core_prompt(agent_id)),
@@ -197,12 +140,32 @@ def compute_context_usage(
         "subagent_definitions": estimate_tokens(
             _swarm_agents_prompt_section(agent_id)
         ),
-        "summarized_conversation": summarized_tokens,
-        "conversation": conversation_tokens,
+        "summarized_conversation": 0,
+        "conversation": 0,
     }
 
     if limit is None:
         limit = _resolve_context_limit(agent_id)
+    budget = prompt_budget(limit)
+    conversation_budget = budget - sum(counts.values())
+    compaction_error = None
+    try:
+        if conversation_budget <= 0:
+            raise ContextBudgetError("Instructions and tools exceed the model's prompt budget.")
+        # Previewing the next turn may compact a request that already received
+        # its final answer. An unanswered/current request must stay intact.
+        completed = bool(history and history[-1].get("type") == "final" and not user_message)
+        compressed = maybe_compress_messages(messages, soft_limit_tokens=conversation_budget,
+                                             protect_latest_user=not completed)
+    except ContextBudgetError as exc:
+        compressed = messages
+        compaction_error = str(exc)
+    did_compress = compressed is not messages
+    for msg in compressed:
+        if msg.get("role") in {"system", "developer"}:
+            continue
+        section = "summarized_conversation" if _is_summary_message(msg) else "conversation"
+        counts[section] += _msg_tokens(msg)
     used = sum(counts.values())
 
     sections: list[dict[str, Any]] = []
@@ -229,6 +192,9 @@ def compute_context_usage(
         "percent": min(percent, 100),
         "over_limit": used > limit,
         "compressed": did_compress,
+        "prompt_budget": budget,
+        "blocked": compaction_error is not None,
+        "compaction_error": compaction_error,
         "sections": sections,
     }
 

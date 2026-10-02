@@ -104,9 +104,10 @@ def test_long_history_triggers_compression(monkeypatch) -> None:
     _stub_prompt_builders(monkeypatch)
 
     history = _big_history()
-    result = compute_context_usage("main", history=history)
+    result = compute_context_usage("main", history=history, limit=32_000)
 
     assert result["compressed"] is True
+    assert result["used"] <= result["prompt_budget"]
 
     sum_sec = next((s for s in result["sections"] if s["id"] == "summarized_conversation"), None)
     assert sum_sec is not None
@@ -171,12 +172,13 @@ def test_over_limit_flag(monkeypatch) -> None:
     monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {"model": "tiny"})
     monkeypatch.setattr(store, "list_models", lambda: [{"id": "tiny", "context": 500}])
 
-    history = _big_history(20)
+    history = _history({"type": "user", "content": "A" * 4000})
     result = compute_context_usage("main", history=history)
 
     assert result["over_limit"] is True
     assert result["percent"] == 100  # clamped for ring
     assert result["used"] > result["limit"]
+    assert result["blocked"] is True
 
 
 # ── _resolve_context_limit ──────────────────────────────────────────────
@@ -255,9 +257,42 @@ def test_explicit_limit_over_limit_flag(monkeypatch) -> None:
     _noop_store(monkeypatch)
     _stub_prompt_builders(monkeypatch)
 
-    history = _big_history(20)
+    history = _history({"type": "user", "content": "A" * 4000})
     result = compute_context_usage("main", history=history, limit=500)
 
     assert result["over_limit"] is True
     assert result["limit"] == 500
     assert result["used"] > 500
+    assert result["blocked"] is True
+
+
+def test_large_window_does_not_compact_at_old_24k_threshold(monkeypatch):
+    _noop_store(monkeypatch)
+    _stub_prompt_builders(monkeypatch)
+    result = compute_context_usage("main", history=_big_history(), limit=1_000_000)
+    assert result["compressed"] is False
+    assert result["blocked"] is False
+
+
+def test_short_500k_history_compacts_for_128k_model(monkeypatch):
+    _noop_store(monkeypatch)
+    _stub_prompt_builders(monkeypatch)
+    history = _history({"type": "user", "content": "A" * 2_000_000},
+                       {"type": "final", "content": "Earlier reply"},
+                       {"type": "user", "content": "Continue from earlier."})
+    result = compute_context_usage("main", history=history, limit=128_000)
+    assert result["compressed"] is True
+    assert result["used"] <= result["prompt_budget"] < result["limit"]
+    assert result["over_limit"] is False
+    assert result["blocked"] is False
+
+
+def test_completed_500k_request_can_compact_after_model_switch(monkeypatch):
+    _noop_store(monkeypatch)
+    _stub_prompt_builders(monkeypatch)
+    history = _history({"type": "user", "content": "A" * 2_000_000},
+                       {"type": "final", "content": "Completed the request."})
+    result = compute_context_usage("main", history=history, limit=128_000)
+    assert result["compressed"] is True
+    assert result["blocked"] is False
+    assert result["used"] <= result["prompt_budget"]

@@ -1,11 +1,12 @@
-"""Resolve model context window: provider API → seed → catalog → known table → default.
+"""Resolve model context window from provider metadata and fallbacks.
 
 Central async resolver with TTL cache.  Used by the context-usage API
 endpoints so the UI shows the real provider context when available.
 
 Resolution order:
-  1. In-memory cache (TTL 1 h)
+  1. In-memory cache (TTL 1 h for live metadata, 5 min for fallbacks)
   2. ``OpenAICompatClient.fetch_model_context_window()`` (live /models API)
+     or the last provider-confirmed limit during a metadata outage
   3. ``store.list_models()`` seed data (project-specific, user-configured)
   4. Public model catalog for models whose proxy omits context metadata
   5. ``_KNOWN_WINDOWS`` prefix match (static fallback)
@@ -34,6 +35,8 @@ _CATALOG_URL = "https://models.dev/api.json"
 
 # (base_url, model, credential fingerprint) → (context_limit, monotonic_expiry)
 _cache: dict[tuple[str, str, str], tuple[int, float]] = {}
+# Retain provider-confirmed limits through temporary metadata outages.
+_provider_windows: dict[tuple[str, str, str], int] = {}
 _catalog: dict[str, dict[str, int]] = {}
 _catalog_expiry = 0.0
 
@@ -221,12 +224,12 @@ def _resolve_seed(model_id: str) -> int | None:
     return None
 
 
-def resolve_context_window_sync(agent_id: str | None = None) -> int:
+def resolve_context_window_sync(agent_id: str | None = None, *, session_id: str | None = None) -> int:
     """Sync fallback: seed → known table → default (no network).
 
     Used when the async path is unavailable (e.g. tests, sync callers).
     """
-    profile = _get_profile(agent_id)
+    profile = _get_profile(agent_id, session_id=session_id)
     model_id = ((profile or {}).get("model") or "").strip()
     if model_id:
         if (profile or {}).get("auth_mode") == "subscription":
@@ -240,11 +243,15 @@ def resolve_context_window_sync(agent_id: str | None = None) -> int:
     return _DEFAULT
 
 
-async def resolve_context_window(agent_id: str | None = None, *, session_id: str | None = None) -> int:
+async def resolve_context_window(
+    agent_id: str | None = None, *, session_id: str | None = None,
+    profile: dict[str, Any] | None = None,
+) -> int:
     """Resolve context window for the agent's LLM profile.
 
     1. Cache hit (base_url, model, credential)
-    2. Codex route catalog or ``OpenAICompatClient.fetch_model_context_window()``
+    2. Codex route catalog or ``OpenAICompatClient.fetch_model_context_window()``;
+       retain the last provider-confirmed limit if metadata is unavailable
     3. ``store.list_models()`` seed match (project-specific)
     4. Public model catalog exact match
     5. ``_KNOWN_WINDOWS`` prefix match (static fallback)
@@ -252,7 +259,7 @@ async def resolve_context_window(agent_id: str | None = None, *, session_id: str
     """
     from app.runtime.llm.openai_compat import LLMConfigError, OpenAICompatClient
 
-    profile = _get_profile(agent_id, session_id=session_id)
+    profile = profile if profile is not None else _get_profile(agent_id, session_id=session_id)
     base_url = (profile or {}).get("base_url") or "https://api.openai.com/v1"
     model_id = (profile or {}).get("model") or ""
     base_url = base_url.rstrip("/")
@@ -273,7 +280,9 @@ async def resolve_context_window(agent_id: str | None = None, *, session_id: str
     if (profile or {}).get("auth_mode") == "subscription":
         result = await _fetch_codex_context(profile, model_id)
         ttl = _CACHE_TTL_S if result is not None else _CATALOG_RETRY_S
-        result = result or _lookup_codex(model_id) or _DEFAULT
+        if result is not None:
+            _provider_windows[cache_key] = result
+        result = result or _provider_windows.get(cache_key) or _lookup_codex(model_id) or _DEFAULT
         _cache[cache_key] = (result, time.monotonic() + ttl)
         return result
 
@@ -294,6 +303,12 @@ async def resolve_context_window(agent_id: str | None = None, *, session_id: str
     except Exception as exc:
         _logger.info("provider context lookup failed: %s", exc)
 
+    ttl = _CACHE_TTL_S if result is not None else _CATALOG_RETRY_S
+    if result is not None:
+        _provider_windows[cache_key] = result
+    else:
+        result = _provider_windows.get(cache_key)
+
     # 3. Seed (project-specific, user-configured)
     if result is None:
         result = _resolve_seed(model_id)
@@ -311,7 +326,7 @@ async def resolve_context_window(agent_id: str | None = None, *, session_id: str
         result = _DEFAULT
 
     # Cache
-    _cache[cache_key] = (result, time.monotonic() + _CACHE_TTL_S)
+    _cache[cache_key] = (result, time.monotonic() + ttl)
     return result
 
 
@@ -319,6 +334,7 @@ def clear_context_window_cache() -> None:
     """Reset the in-memory cache (for tests)."""
     global _catalog_expiry
     _cache.clear()
+    _provider_windows.clear()
     _catalog.clear()
     _catalog_expiry = 0.0
 
