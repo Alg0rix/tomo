@@ -45,3 +45,7 @@ connector/tomo-connector
 
 # Landing page (separate repo, not shipped with the app)
 landing/
+
+# coverage artifacts
+.coverage
+coverage.xml
