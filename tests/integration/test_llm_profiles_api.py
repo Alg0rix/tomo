@@ -49,7 +49,7 @@ def test_profile_crud_via_api(tmp_path) -> None:
         assert res.status_code == 200
         data = res.json()
         assert len(data["profiles"]) == 1
-        assert data["default_id"] == ""
+        assert data["default_id"] == "default", "first profile becomes the main model"
 
         res = client.post("/api/llm-profiles/default/default")
         assert res.status_code == 200

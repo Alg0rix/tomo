@@ -575,7 +575,12 @@ async def get_provider_models(body: ProviderModelsIn, _: AuthDep):
 async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
     try:
         data = await _profile_catalog_data(body.model_dump(exclude_none=True))
-        return store.create_llm_profile(data)
+        profile = store.create_llm_profile(data)
+        current = store.get_llm_profile(store.get_default_llm_profile_id())
+        # The first usable profile becomes the main model instead of a silent fallback.
+        if profile and profile.get("enabled") and not (current and current.get("enabled")):
+            store.set_default_llm_profile(profile["id"])
+        return profile
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

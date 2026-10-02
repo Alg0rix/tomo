@@ -117,6 +117,7 @@ async def test_connect_select_and_follow_main(tmp_path, monkeypatch):
                 "api_key": "zen-token",
             },
         ).json()
+        assert store.get_default_llm_profile_id() == go["id"], "a second profile keeps the main model"
         rejected = api.post(f"/api/llm-profiles/{go['id']}/default", json={"model": "not-listed"})
         assert rejected.status_code == 400
         main = api.post(f"/api/llm-profiles/{go['id']}/default", json={"model": "gpt-5.4"})
