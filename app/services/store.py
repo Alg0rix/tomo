@@ -12,12 +12,14 @@ never shown as a global agent flag across chats.
 from __future__ import annotations
 
 import threading
+from contextlib import ExitStack
 import time
 from pathlib import Path
 from typing import Any
 
 from app.core.config import ADMIN_PASSWORD, DB_PATH
 from app.models.db import get_connection
+from app.models.mixins import background_jobs as background_jobs_store
 from app.models.mixins import agents as agents_store
 from app.models.mixins import attachments as attachments_store
 from app.models.mixins import messages as messages_store
@@ -87,6 +89,11 @@ class Store:
 
     def rebind(self, path: str | Path | None) -> None:
         """Reopen against ``path`` (temp DB in tests); re-migrate + re-seed."""
+        # A supervisor must finish against the old database before rebinding.
+        import sys
+        module = sys.modules.get("app.services.background_jobs")
+        if module is not None and getattr(module, "manager", None) is not None:
+            module.manager.reset()
         with self._lock:
             try:
                 self._conn.close()
@@ -216,10 +223,24 @@ class Store:
 
     def delete_agent(self, agent_id: str) -> bool:
         with self._lock:
-            ok = agents_store.delete_agent(self._conn, agent_id)
-            if ok:
-                self._busy.clear_agent(agent_id)
-            return ok
+            solo = self._conn.execute(
+                'SELECT s.id FROM sessions s WHERE EXISTS '
+                '(SELECT 1 FROM session_agents sa WHERE sa.session_id=s.id AND sa.agent_id=?) '
+                'AND (SELECT COUNT(*) FROM session_agents sa WHERE sa.session_id=s.id)=1',
+                (agent_id,),
+            ).fetchall()
+        from app.services.background_jobs import manager
+
+        with ExitStack() as cleanup:
+            for session in solo:
+                cleanup.enter_context(manager.closing_session(session['id']))
+            for session in solo:
+                manager.stop_session(session['id'])
+            with self._lock:
+                ok = agents_store.delete_agent(self._conn, agent_id)
+                if ok:
+                    self._busy.clear_agent(agent_id)
+                return ok
 
     def set_busy(self, agent_id: str, busy: bool, *, session_id: str) -> None:
         """Mark agent busy for ``session_id`` only (not cross-session UI)."""
@@ -386,8 +407,14 @@ class Store:
             return sessions_store.find_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
 
     def delete_session(self, session_id: str) -> bool:
-        with self._lock:
-            return sessions_store.delete_session(self._conn, session_id)
+        from app.services.background_jobs import manager
+        # Cleanup runs outside the DB lock so supervisor final drains can commit.
+        with manager.closing_session(session_id):
+            if self.get_session(session_id):
+                self.set_background_jobs_paused(session_id, True)
+                manager.stop_session(session_id)
+            with self._lock:
+                return sessions_store.delete_session(self._conn, session_id)
 
     def prune_empty_draft_sessions(
         self, *, keep_id: str | None = None, user_id: str | None = None
@@ -396,6 +423,35 @@ class Store:
             return sessions_store.prune_empty_draft_sessions(
                 self._conn, keep_id=keep_id, user_id=user_id
             )
+
+    # -- durable background processes -----------------------------------
+    def create_background_job(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return background_jobs_store.create_background_job(self._conn, data)
+
+    def get_background_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return background_jobs_store.get_background_job(self._conn, job_id)
+
+    def list_background_jobs(self, session_id: str | None = None, **filters) -> list[dict[str, Any]]:
+        with self._lock:
+            return background_jobs_store.list_background_jobs(self._conn, session_id, **filters)
+
+    def update_background_job(self, job_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            return background_jobs_store.update_background_job(self._conn, job_id, updates)
+
+    def claim_background_jobs(self, ids: list[str]) -> bool:
+        with self._lock:
+            return background_jobs_store.claim_background_jobs(self._conn, ids)
+
+    def set_background_jobs_paused(self, sid: str, paused: bool) -> None:
+        with self._lock:
+            background_jobs_store.set_background_jobs_paused(self._conn, sid, paused)
+
+    def background_jobs_paused(self, sid: str) -> bool:
+        with self._lock:
+            return background_jobs_store.background_jobs_paused(self._conn, sid)
 
     # -- messages / history (SQLite) -------------------------------------
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
@@ -419,6 +475,12 @@ class Store:
 
     def clear_session_by_id(self, session_id: str) -> None:
         with self._lock:
+            if sessions_store.get_session(self._conn, session_id):
+                background_jobs_store.set_background_jobs_paused(self._conn, session_id, True)
+                for item in background_jobs_store.list_background_jobs(self._conn, session_id):
+                    background_jobs_store.update_background_job(self._conn, item['id'], {
+                        'continuation_suppressed': True, 'continuation_status': 'cancelled',
+                    })
             messages_store.clear_session_history(self._conn, session_id)
 
     # -- attachments (SQLite) --------------------------------------------
@@ -474,7 +536,7 @@ class Store:
             sid = sessions_store.find_session(self._conn, agent_id, user_id)
             if sid is None:
                 return
-            messages_store.clear_session_history(self._conn, sid)
+            self.clear_session_by_id(sid)
 
     # -- stats / dashboard -----------------------------------------------
     def _stats_from(

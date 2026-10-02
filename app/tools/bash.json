@@ -21,14 +21,16 @@
           },
           "background": {
             "type": "boolean",
-            "description": "If true, start without waiting and return a process job id."
+            "description": "Start a session-owned job without waiting. Runtime retains bounded logs and automatically returns completion to this conversation after the turn ends."
           },
           "workplace": {
             "type": "string",
             "description": "Optional workplace id/name/host when the agent has multiple (e.g. aio-serv)."
           }
         },
-        "required": ["command"]
+        "required": [
+          "command"
+        ]
       }
     }
   }

@@ -3,9 +3,13 @@
 package executor
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -35,4 +39,43 @@ func terminateProcess(cmd *exec.Cmd) error {
 		return nil
 	}
 	return err
+}
+
+func backgroundJobContract() int { return 1 }
+
+// A command owns all live members of its group, even after the shell exits.
+func cleanupBackgroundGroup(cmd *exec.Cmd) error {
+	if err := terminateProcess(cmd); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		probe := exec.CommandContext(ctx, "ps", "-eo", "pgid=,stat=")
+		probe.WaitDelay = time.Second
+		rows, err := probe.Output()
+		cancel()
+		if err != nil {
+			return err
+		}
+		alive := false
+		for _, row := range strings.Split(string(rows), "\n") {
+			fields := strings.Fields(row)
+			if len(fields) != 2 {
+				continue
+			}
+			group, err := strconv.Atoi(fields[0])
+			if err == nil && group == cmd.Process.Pid && !strings.HasPrefix(fields[1], "Z") {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("process group cleanup could not be confirmed")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }

@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at     REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS background_jobs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    continuation_status TEXT NOT NULL DEFAULT 'none',
+    monitoring_closed INTEGER NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_session ON background_jobs(session_id);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_pending ON background_jobs(continuation_status, session_id);
+CREATE TABLE IF NOT EXISTS background_job_logs (
+    job_id TEXT PRIMARY KEY REFERENCES background_jobs(id) ON DELETE CASCADE,
+    stdout TEXT NOT NULL DEFAULT '',
+    stderr TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS background_job_admission (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    paused INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS session_agents (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     agent_id   TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,

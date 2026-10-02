@@ -149,16 +149,33 @@ def test_tunnel_rpc_files_via_mock_hub() -> None:
 
 def test_tunnel_background_process_start() -> None:
     _tunnel_agent()
+    from app.runtime.artifacts.fs import bind_session, reset_session
+    from app.runtime.tools.user_ctx import bind_user, reset_user
+    from app.services.background_jobs import manager
+
+    sid = store.get_or_create_session('ops', 'web')
+    tokens = bind_session(sid), bind_user('web')
+    calls = []
 
     def _fake_call(wid, method, params=None, timeout=60.0, **_kw):
+        calls.append((wid, method, params))
+        if method == 'process_status':
+            assert params['id'] == '__contract__'
+            return {'ok': True, 'result': {'process_contract': 1}}
         assert method == "process_start"
-        return {"ok": True, "result": {"id": "job_9", "status": "running"}}
+        return {"ok": True, "result": {"id": params['id'], "status": "running", 'process_contract': 1}}
 
-    with patch.object(hub, "is_online", return_value=True), patch.object(
-        hub, "call", side_effect=_fake_call
-    ):
-        result = bash.run({"command": "sleep 99", "background": True})
-    assert "job_9" in result
+    try:
+        with patch.object(hub, "is_online", return_value=True), patch.object(
+            hub, "call", side_effect=_fake_call
+        ), patch.object(manager, '_watch_remote'):
+            result = bash.run({"command": "sleep 99", "background": True})
+        job = store.list_background_jobs(sid)[0]
+        assert job['id'] in result and job['backend_handle'] == calls[-1][2]['id']
+        assert [(wid, method) for wid, method, _ in calls] == [('wp_tun', 'process_status'), ('wp_tun', 'process_start')]
+    finally:
+        reset_session(tokens[0])
+        reset_user(tokens[1])
 
 
 def test_local_workplace_unchanged(tmp_path: Path) -> None:

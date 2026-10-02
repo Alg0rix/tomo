@@ -414,6 +414,7 @@ async def stream_turn_sse(
     acquire_lock: bool = True,
     origin: str | None = None,
     resume: bool = False,
+    background_jobs: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
@@ -466,7 +467,7 @@ async def stream_turn_sse(
     try:
         from app.runtime.permissions.slash import handle_approval_slash
 
-        slash_notice = None if resume else handle_approval_slash(message or "", session_id)
+        slash_notice = None if resume or background_jobs else handle_approval_slash(message or "", session_id)
         if (
             slash_notice is None
             and not resume
@@ -565,7 +566,7 @@ async def stream_turn_sse(
         approved_plan: dict[str, Any] | None = None
         from app.models.mixins import swarm as swarm_store
 
-        pending = None if resume else store.with_db(lambda conn: swarm_store.get_proposal(conn, session_id))
+        pending = None if resume or background_jobs else store.with_db(lambda conn: swarm_store.get_proposal(conn, session_id))
         answer = (message or "").strip().casefold().strip(".! ")
         if pending and answer in {"gas", "ya", "iya", "yes", "go", "go ahead", "lanjut", "setuju"}:
             use_swarm = True
@@ -578,7 +579,7 @@ async def stream_turn_sse(
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
         elif pending:
             store.with_db(lambda conn: swarm_store.clear_proposal(conn, session_id))
-        if resume:
+        if resume or background_jobs:
             # Let the agent reconcile interrupted swarm work from history; do
             # not blindly submit the original team request a second time.
             use_swarm = False
@@ -737,7 +738,19 @@ async def stream_turn_sse(
                 if not clean and meta:
                     # Empty caption — keep content blank; UI shows chips only.
                     user_entry["content"] = ""
-            new_title = None if resume else store.append_session_history(session_id, user_entry)
+            if background_jobs:
+                from app.services.background_continuation import evidence
+
+                ids = [job["id"] for job in background_jobs]
+                entry = {"type": "background_job", "content": "Background jobs completed: " + ", ".join(ids),
+                         "agent_id": coordinator_id, "background_job_ids": ids,
+                         "params": {"jobs": evidence(background_jobs)}, "ts": now()}
+                store.append_session_history(session_id, entry)
+                seq += 1
+                yield fmt_sse({"event": "background_job", "data": entry, "seq": seq})
+                new_title = None
+            else:
+                new_title = None if resume else store.append_session_history(session_id, user_entry)
             if new_title:
                 logger.info(
                     "session title provisional session_id=%s title=%r",

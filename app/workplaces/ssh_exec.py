@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import hashlib
+import uuid
 import shlex
 import time
 from pathlib import Path
@@ -380,102 +383,270 @@ def search_files(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str,
     return {"matches": lines, "count": len(lines), "capped": len(lines) >= 50}
 
 
+# This program runs on the SSH host. A detached supervisor owns one command
+# process group and private spool; no OS-wide jobs are adopted by Tomo.
+_SSH_JOBS_PROGRAM = r"""
+import fcntl, json, os, pathlib, selectors, shutil, signal, subprocess, sys, time
+
+request = json.loads(sys.argv[1])
+base = pathlib.Path.home() / ".cache" / "tomo-jobs" / request["namespace"]
+base.mkdir(mode=0o700, parents=True, exist_ok=True)
+os.chmod(base, 0o700)
+job_id = request.get("id", "")
+job = base / job_id
+cap = 512 * 1024
+
+def publish(record):
+    target = job / "meta.json"
+    temporary = job / ("meta." + str(os.getpid()) + ".tmp")
+    temporary.write_text(json.dumps(record))
+    temporary.replace(target)
+
+def snapshot(path):
+    try:
+        record = json.loads((path / "meta.json").read_text())
+    except FileNotFoundError:
+        return {"id": path.name, "status": "unknown", "returncode": None,
+                "reason": "remote job handle missing", "process_contract": 1}
+    for name in ("stdout", "stderr"):
+        try:
+            record[name] = (path / name).read_bytes()[-cap:].decode("utf-8", "replace")
+        except FileNotFoundError:
+            record[name] = ""
+    if record["status"] in ("starting", "running", "stopping"):
+        try:
+            os.kill(record["supervisor_pid"], 0)
+        except KeyError:
+            if record["status"] != "starting" or time.time() - record["started_at"] > 10:
+                record.update(status="unknown", reason="remote supervisor lost")
+        except ProcessLookupError:
+            record.update(status="unknown", reason="remote supervisor lost")
+    return record
+
+def members_alive(pgid):
+    # Zombies are no longer running and may await init reaping. Do not mistake
+    # those for surviving children; check every non-zombie group member.
+    rows = subprocess.check_output(["ps", "-eo", "pgid=,stat="], text=True, timeout=.5)
+    return any(int(parts[0]) == pgid and not parts[1].startswith("Z")
+               for line in rows.splitlines() if len(parts := line.split()) == 2)
+
+def cleanup(pgid):
+    for sig, duration in ((signal.SIGTERM, .3), (signal.SIGKILL, 1.0)):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return True
+        end = time.monotonic() + duration
+        while time.monotonic() < end:
+            if not members_alive(pgid):
+                return True
+            time.sleep(.025)
+    return not members_alive(pgid)
+
+def process_identity(pid):
+    try:
+        return subprocess.check_output(["ps", "-p", str(pid), "-o", "lstart="], text=True, timeout=.5).strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ''
+
+def supervise():
+    record = json.loads((job / "meta.json").read_text())
+    record["supervisor_pid"] = os.getpid()
+    try:
+        child = subprocess.Popen(["bash", "-lc", record["command"]],
+            cwd=record["cwd"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True)
+    except Exception as exc:
+        record.update(status="failed", returncode=-1, reason=str(exc), finished_at=time.time())
+        publish(record)
+        return
+    record.update(status="running", pid=child.pid, pid_identity=process_identity(child.pid))
+    publish(record)
+    selector = selectors.DefaultSelector()
+    tails = {"stdout": bytearray(), "stderr": bytearray()}
+    for stream, name in ((child.stdout, "stdout"), (child.stderr, "stderr")):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+    stopped = False
+    cleanup_ok = True
+    next_flush = [0.0]
+    try:
+        while child.poll() is None:
+            if (job / "stop").exists():
+                # poll again: a late stop must preserve the command result.
+                if child.poll() is None:
+                    record["status"] = "stopping"
+                    publish(record)
+                    stopped = True
+                    cleanup_ok = cleanup(child.pid)
+                break
+            drain(selector, tails, record, .05, next_flush)
+        rc = child.wait(timeout=2)
+        cleanup_ok = cleanup(child.pid) and cleanup_ok
+        deadline = time.monotonic() + .5
+        while selector.get_map() and time.monotonic() < deadline:
+            drain(selector, tails, record, .025, next_flush)
+        for name, tail in tails.items():
+            (job / name).write_bytes(tail)
+        record.update(status=("stopped" if stopped and rc < 0 else "exited") if cleanup_ok else "unknown",
+                      returncode=rc if cleanup_ok else None, finished_at=time.time())
+        if not cleanup_ok:
+            record["reason"] = "process group cleanup could not be confirmed"
+        publish(record)
+    except Exception as exc:
+        try:
+            cleanup(child.pid)
+        except Exception:
+            pass
+        record.update(status="unknown", returncode=None, reason=str(exc))
+        publish(record)
+    finally:
+        selector.close()
+        child.stdout.close()
+        child.stderr.close()
+
+def drain(selector, tails, record, timeout, next_flush):
+    changed = False
+    for key, _ in selector.select(timeout):
+        data = os.read(key.fileobj.fileno(), 65536)
+        if not data:
+            selector.unregister(key.fileobj)
+            continue
+        name = key.data
+        tail = tails[name]
+        tail.extend(data)
+        if len(tail) > cap:
+            del tail[:-cap]
+            record["truncated"] = True
+        changed = True
+    if changed and time.monotonic() >= next_flush[0]:
+        for name, tail in tails.items():
+            (job / name).write_bytes(tail)
+        publish(record)
+        next_flush[0] = time.monotonic() + .15
+
+op = request["op"]
+if op == "supervise":
+    supervise()
+elif op == "contract":
+    print(json.dumps({"process_contract": 1}))
+elif op == "start":
+    with (base / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if job.exists():
+            record = snapshot(job)
+            if record.get("command") != request["command"]:
+                raise ValueError("job id already belongs to a different command")
+        else:
+            retained = []
+            for path in base.iterdir():
+                if not path.is_dir() or not path.name.startswith("ssh_"):
+                    continue
+                record = snapshot(path)
+                if record["status"] in ("exited", "failed", "stopped") and record.get("finished_at") and time.time() - record["finished_at"] >= 900:
+                    shutil.rmtree(path)
+                else:
+                    retained.append(record)
+            if len(retained) >= 128 or sum(r["status"] in ("starting", "running", "stopping", "unknown") for r in retained) >= 16:
+                raise ValueError("busy: background job limit reached")
+            root = pathlib.Path(request["root"]).expanduser().resolve(strict=True)
+            cwd = pathlib.Path(request.get("cwd") or str(root)).expanduser()
+            if str(cwd) == request["root"]:
+                cwd = root
+            if not cwd.is_absolute():
+                cwd = root / cwd
+            cwd = cwd.resolve(strict=True)
+            cwd.relative_to(root)
+            if not cwd.is_dir():
+                raise ValueError("cwd is not a directory")
+            job.mkdir(mode=0o700)
+            record = {"id": job_id, "status": "starting", "returncode": None,
+                      "command": request["command"], "cwd": str(cwd), "started_at": time.time(),
+                      "process_contract": 1, "truncated": False}
+            publish(record)
+            child_request = dict(request, op="supervise")
+            supervisor = subprocess.Popen([sys.executable, "-c", request["program"], json.dumps(child_request)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            record["supervisor_pid"] = supervisor.pid
+            # The supervisor publishes its own pid. Do not overwrite its state.
+        print(json.dumps(record))
+elif op == "list":
+    print(json.dumps([snapshot(path) for path in base.iterdir()
+                     if path.is_dir() and path.name.startswith("ssh_")]))
+elif op in ("status", "kill"):
+    record = snapshot(job)
+    if op == "kill" and record["status"] in ("starting", "running", "stopping"):
+        (job / "stop").touch()
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            record = snapshot(job)
+            if record["status"] not in ("starting", "running", "stopping"):
+                break
+            time.sleep(.05)
+    if op == "kill" and record["status"] == "unknown" and record.get("pid"):
+        # A stale PID alone is never authority to stop an unrelated new process.
+        pid = record['pid']
+        if record.get('pid_identity') and process_identity(pid) == record['pid_identity']:
+            stopped = cleanup(pid)
+            record.update(stop_confirmed=stopped, reason='Process group stopped; original exit code unavailable' if stopped else 'Process group cleanup could not be confirmed')
+            publish(record)
+    print(json.dumps(record))
+"""
+
+
+class SSHJobRejected(RuntimeError):
+    """Remote job operation was rejected before start acknowledgment."""
+
+
+def _ssh_job_call(workplace: dict[str, Any], op: str, params: dict[str, Any]) -> Any:
+    jid = str(params.get("id") or "")
+    if op == "start" and not jid:
+        jid = "ssh_" + uuid.uuid4().hex
+    if op not in ("list", "contract"):
+        import re
+
+        if not re.fullmatch(r"ssh_[0-9a-f]{32}", jid):
+            raise ValueError("invalid SSH background job handle")
+    namespace = hashlib.sha256(
+        str(workplace.get("id") or "").encode()
+    ).hexdigest()[:24]
+    request = dict(params, op=op, id=jid, namespace=namespace, root=_remote_root(workplace))
+    if op == "start":
+        request["program"] = _SSH_JOBS_PROGRAM
+    wrapped = "python3 -c " + shlex.quote(_SSH_JOBS_PROGRAM) + " " + shlex.quote(json.dumps(request))
+    client = connect(workplace)
+    try:
+        _stdin, stdout, stderr = client.exec_command(wrapped, timeout=10)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        rc = stdout.channel.recv_exit_status()
+        if rc:
+            raise SSHJobRejected(err.strip() or "SSH background job operation failed")
+        return json.loads(out)
+    finally:
+        client.close()
+
+
 def process_start(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     command = (params.get("command") or params.get("script") or "").strip()
     if not command:
         raise ValueError("'command' is required")
-    cwd = (params.get("cwd") or "").strip() or _remote_root(workplace)
-    # Detached job with pid-named logs under /tmp.
-    script = (
-        f"cd {shlex.quote(cwd)} || exit 1\n"
-        f"nohup bash -lc {shlex.quote(command)} "
-        f">/tmp/tomo_bg_new.out 2>/tmp/tomo_bg_new.err &\n"
-        f"PID=$!\n"
-        f"mv /tmp/tomo_bg_new.out /tmp/tomo_bg_$PID.out 2>/dev/null || true\n"
-        f"mv /tmp/tomo_bg_new.err /tmp/tomo_bg_$PID.err 2>/dev/null || true\n"
-        f"echo $PID\n"
-    )
-    client = connect(workplace)
-    try:
-        _stdin, stdout, stderr = client.exec_command(script, timeout=30)
-        out = stdout.read().decode("utf-8", errors="replace").strip().splitlines()
-        err = stderr.read().decode("utf-8", errors="replace")
-        pid = out[-1].strip() if out else ""
-        if not pid.isdigit():
-            raise RuntimeError(err or f"failed to start background job: {out!r}")
-    finally:
-        client.close()
-    return {"id": f"ssh_{pid}", "status": "running", "command": command, "pid": pid}
+    return _ssh_job_call(workplace, "start", dict(params, command=command))
 
 
 def process_list(workplace: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]]:
-    _ = params
-    result = exec_bash(
-        workplace,
-        {
-            "script": "ps -eo pid,cmd | grep -E '[b]ash -lc' | head -20 || true",
-            "timeout": 15,
-        },
-    )
-    jobs = []
-    for line in (result.get("stdout") or "").splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            jobs.append(
-                {
-                    "id": f"ssh_{parts[0]}",
-                    "status": "running",
-                    "command": parts[1],
-                    "returncode": None,
-                }
-            )
-    return jobs
+    return _ssh_job_call(workplace, "list", params)
 
 
 def process_status(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    jid = str(params.get("id") or "")
-    pid = jid.removeprefix("ssh_")
-    if not pid.isdigit():
-        raise ValueError(f"unknown job id {jid!r}")
-    result = exec_bash(
-        workplace,
-        {
-            "script": (
-                f"if kill -0 {pid} 2>/dev/null; then echo RUNNING; "
-                f"else echo EXITED; fi; "
-                f"echo '---stdout---'; cat /tmp/tomo_bg_{pid}.out 2>/dev/null; "
-                f"echo '---stderr---'; cat /tmp/tomo_bg_{pid}.err 2>/dev/null"
-            ),
-            "timeout": 15,
-        },
-    )
-    out = result.get("stdout") or ""
-    status = "running" if out.startswith("RUNNING") else "exited"
-    stdout = ""
-    stderr = ""
-    if "---stdout---" in out:
-        rest = out.split("---stdout---", 1)[1]
-        if "---stderr---" in rest:
-            stdout, stderr = rest.split("---stderr---", 1)
-        else:
-            stdout = rest
-    return {
-        "id": jid,
-        "status": status,
-        "returncode": None if status == "running" else 0,
-        "command": "",
-        "stdout": _clip(stdout.strip()),
-        "stderr": _clip(stderr.strip()),
-    }
+    if params.get("id") == "__contract__":
+        return _ssh_job_call(workplace, "contract", {})
+    return _ssh_job_call(workplace, "status", params)
 
 
 def process_kill(workplace: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    jid = str(params.get("id") or "")
-    pid = jid.removeprefix("ssh_")
-    if not pid.isdigit():
-        raise ValueError(f"unknown job id {jid!r}")
-    exec_bash(workplace, {"script": f"kill {pid} 2>/dev/null || true", "timeout": 10})
-    return process_status(workplace, {"id": jid})
+    return _ssh_job_call(workplace, "kill", params)
 
 
 def _mkdir_p(sftp: paramiko.SFTPClient, remote_dir: str) -> None:

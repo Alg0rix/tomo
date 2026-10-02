@@ -73,7 +73,9 @@ async def _lifespan(_app: FastAPI):
     from app.channels.telegram import start_telegram_supervisor, stop_telegram_supervisor
     from app.scheduler import start_scheduler, stop_scheduler
     from app.services.chat import recover_web_turns, suspend_session_turns
+    from app.services import background_continuation
 
+    background_continuation.start()
     await recover_web_turns()
     start_telegram_supervisor()
     start_scheduler()
@@ -84,6 +86,7 @@ async def _lifespan(_app: FastAPI):
 
         await terminal_manager.close_all()
         await suspend_session_turns()
+        await background_continuation.stop()
         await stop_scheduler()
         await stop_telegram_supervisor()
         try:

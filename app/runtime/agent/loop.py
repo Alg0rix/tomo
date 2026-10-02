@@ -519,10 +519,12 @@ async def _execute_streaming(
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str] = asyncio.Queue()
     token = tool_progress.bind(lambda chunk: loop.call_soon_threadsafe(queue.put_nowait, chunk))
+    origin_token = tool_progress.bind_call_id(call_id)
     try:
         task = asyncio.ensure_future(_execute_authorized(call, decision))
     finally:
         tool_progress.reset(token)
+        tool_progress.reset_call_id(origin_token)
 
     def _drain() -> str:
         parts: list[str] = []
