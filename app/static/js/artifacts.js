@@ -1077,7 +1077,7 @@
 
   function renderFilesList(body, sid, current) {
     if (!sid) {
-      body.innerHTML = '<div class="cap-msg">No session yet.</div>';
+      body.innerHTML = '<div class="cap-msg">No files yet. Saved artifacts will appear here after you send a message.</div>';
       return;
     }
     body.innerHTML = '<div class="cap-msg faint">Loading files…</div>';
@@ -1448,19 +1448,12 @@
     var wrap = opts.wrap || findChatWrap();
     var sid =
       opts.session_id ||
-      (wrap && wrap.dataset && wrap.dataset.sessionId) ||
-      _state.sessionId ||
+      (wrap ? (wrap.dataset && wrap.dataset.sessionId) : _state.sessionId) ||
       "";
     if (opts.userGesture !== false) {
       _state.userCollapsed = false;
     }
     setPanelOpen(wrap, true);
-    if (!sid) {
-      if (typeof Tomo !== "undefined" && Tomo.toast) {
-        Tomo.toast("No active session yet", "err");
-      }
-      return;
-    }
     // Toggle off if already on Files
     if (
       _state.panelOpen &&
@@ -1566,10 +1559,6 @@
       "";
 
     if (!_state.panelOpen) {
-      if (!sid) {
-        if (typeof Tomo !== "undefined" && Tomo.toast) Tomo.toast("No active session yet", "err");
-        return;
-      }
       _state.sessionId = sid;
       openFilesPane({ session_id: sid, wrap: wrap, toggle: false });
       return;

@@ -225,6 +225,7 @@
     const bindings = new AbortController();
     let destroyed = false;
     let sessionId = wrap.dataset.sessionId || '';
+    let sessionCreation = null;
     function on(target, type, listener) {
       if (destroyed) return;
       target.addEventListener(type, function (event) {
@@ -266,7 +267,7 @@
       return;
     }
 
-    /** @type {{id: string, name: string, size: number}[]} */
+    /** @type {{id: string, name: string, size: number, file?: File}[]} */
     let uploadedAttachments = [];
     let uploading = false;
     const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
@@ -292,6 +293,7 @@
     var MODE_CYCLE = ['manual', 'smart', 'off'];
     var MODE_LABEL = { manual: 'Manual', smart: 'Smart', off: 'Auto' };
     var reasoningState = null;
+    var draftApprovalMode = null;
 
     function currentSessionId() { return sessionId; }
 
@@ -472,24 +474,27 @@
 
     async function refreshApprovalMode() {
       var sid = currentSessionId();
-      if (!sid || !modeBtn) return;
+      if (!sid || !modeBtn || modeBtn.disabled) return;
       try {
         var data = await Tomo.api(
           '/api/sessions/' + encodeURIComponent(sid) + '/approval-mode'
         );
-        if (data) paintApprovalMode(data);
+        if (data && !modeBtn.disabled) paintApprovalMode(data);
       } catch (e) { /* ignore */ }
     }
 
     async function cycleApprovalMode() {
-      var sid = currentSessionId();
-      if (!sid) {
-        if (window.Tomo && Tomo.toast) Tomo.toast('Open a chat first', 'err');
-        return;
-      }
+      if (modeBtn && modeBtn.disabled) return;
       var cur = modeBtn ? modeBtn.dataset.mode || 'smart' : 'smart';
       var idx = MODE_CYCLE.indexOf(cur);
       var next = MODE_CYCLE[(idx < 0 ? 0 : idx + 1) % MODE_CYCLE.length];
+      var sid = currentSessionId();
+      if (!sid) {
+        draftApprovalMode = next;
+        paintApprovalMode({ mode: next });
+        return;
+      }
+      if (modeBtn) modeBtn.disabled = true;
       try {
         var data = await Tomo.api(
           '/api/sessions/' + encodeURIComponent(sid) + '/approval-mode',
@@ -512,10 +517,14 @@
         if (window.Tomo && Tomo.toast) {
           Tomo.toast('Could not change permission mode', 'err');
         }
+      } finally {
+        if (!destroyed && modeBtn) modeBtn.disabled = false;
       }
     }
 
     if (modeBtn) {
+      modeBtn.disabled = false;
+      if (!currentSessionId()) paintApprovalMode({ mode: 'smart' });
       on(modeBtn, 'click', function (e) {
         e.preventDefault();
         cycleApprovalMode();
@@ -1103,31 +1112,8 @@
       });
     }
 
-    async function resolveUploadSessionId() {
-      var sid = currentSessionId();
-      if (sid) return sid;
-      try {
-        sid = await ensureSession();
-      } catch (e) {
-        sid = '';
-      }
-      return sid || currentSessionId() || '';
-    }
-
-    async function uploadFiles(files) {
-      if (!files.length) return;
-      const sid = await resolveUploadSessionId();
-      if (destroyed) return;
-      if (!sid) {
-        Tomo.toast('Open or start a chat before uploading files.', 'err');
-        return;
-      }
-      uploading = true;
-      refreshSendBtn();
-      setStatus('amber', 'uploading…');
-      for (let i = 0; i < files.length; i++) {
-        if (destroyed) return;
-        const file = files[i];
+    function stageFiles(files) {
+      for (const file of files) {
         if (file.size > MAX_ATTACH_BYTES) {
           Tomo.toast(file.name + ' is too large (max 20MB)', 'err');
           continue;
@@ -1136,33 +1122,51 @@
           Tomo.toast(file.name + ' is empty', 'err');
           continue;
         }
-        const form = new FormData();
-        form.append('file', file);
-        form.append('name', file.name);
-        try {
+        uploadedAttachments.push({ id: '', name: file.name, size: file.size, file: file });
+      }
+      renderAttachmentPreview();
+      refreshSendBtn();
+    }
+
+    async function prepareAttachments() {
+      if (!uploadedAttachments.some(function (att) { return att.file; })) return true;
+      uploading = true;
+      refreshSendBtn();
+      setStatus('amber', 'uploading…');
+      try {
+        const sid = await ensureSession();
+        if (destroyed) return false;
+        for (const att of uploadedAttachments) {
+          if (!att.file) continue;
+          const form = new FormData();
+          form.append('file', att.file);
+          form.append('name', att.name);
           const resp = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/attachments', {
-            method: 'POST',
-            body: form,
-            credentials: 'same-origin',
+            method: 'POST', body: form, credentials: 'same-origin',
           });
           if (!resp.ok) {
             const err = await resp.json().catch(function () { return {}; });
             var detail = err.detail;
             if (Array.isArray(detail)) detail = detail.map(function (d) { return d.msg || d; }).join('; ');
-            Tomo.toast('Upload failed: ' + (detail || resp.statusText), 'err');
-            continue;
+            throw new Error('Upload failed: ' + (detail || resp.statusText));
           }
-          const att = await resp.json();
-          if (destroyed) return;
-          uploadedAttachments.push({ id: att.id, name: att.original_name || att.filename, size: att.size_bytes || 0 });
-        } catch (e) {
-          Tomo.toast('Upload error: ' + (e && e.message ? e.message : String(e)), 'err');
+          const saved = await resp.json();
+          if (destroyed) return false;
+          att.id = saved.id;
+          delete att.file;
+        }
+        return true;
+      } catch (e) {
+        if (!destroyed) Tomo.toast(e.message || 'Could not upload files', 'err');
+        return false;
+      } finally {
+        uploading = false;
+        if (!destroyed) {
+          renderAttachmentPreview();
+          refreshSendBtn();
+          syncBusyStatus();
         }
       }
-      uploading = false;
-      renderAttachmentPreview();
-      refreshSendBtn();
-      syncBusyStatus();
     }
 
     function busyStatusLabel() {
@@ -1545,8 +1549,29 @@
 
     async function ensureSession() {
       const existing = currentSessionId();
-      if (existing) return existing;
-      if (agentId) return '';
+      if (existing && !draftApprovalMode) return existing;
+      if (!existing && agentId) return '';
+      if (!sessionCreation) sessionCreation = (async function () {
+        const sid = existing || await createSession();
+        while (draftApprovalMode) {
+          const mode = draftApprovalMode;
+          const data = await Tomo.api('/api/sessions/' + encodeURIComponent(sid) + '/approval-mode', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode }),
+          });
+          if (draftApprovalMode === mode) draftApprovalMode = null;
+          paintApprovalMode(data);
+        }
+        return sid;
+      })();
+      try {
+        return await sessionCreation;
+      } finally {
+        sessionCreation = null;
+      }
+    }
+
+    async function createSession() {
       const agents = pendingAgentIds();
       if (!agents.length) throw new Error('No agents');
       var workplaceId = (wrap.dataset.workplaceId || '').trim();
@@ -1574,7 +1599,7 @@
           workplace_id: data.workplace_id || workplaceId || '',
         },
       }));
-      refreshApprovalMode();
+      if (!draftApprovalMode) refreshApprovalMode();
       refreshReasoningEffort();
       return data.session_id;
     }
@@ -1748,6 +1773,12 @@
     async function send(text) {
       if (destroyed) return;
       const value = (text != null ? String(text) : input.value).trim();
+      if (uploading) {
+        Tomo.toast('Wait for uploads to finish', 'err');
+        return;
+      }
+      if (uploadedAttachments.some(function (att) { return att.file; }) && !await prepareAttachments()) return;
+      if (destroyed) return;
       const attachMeta = uploadedAttachments.map(function (a) {
         return { id: a.id, name: a.name, size: a.size };
       });
@@ -1755,10 +1786,6 @@
       var hasQueue = messageQueue.length > 0;
       // Empty Enter is allowed when steering an existing queue into the turn.
       if (!value && !attachIds.length && !(sending && hasQueue)) return;
-      if (uploading) {
-        Tomo.toast('Wait for uploads to finish', 'err');
-        return;
-      }
       hidePopups();
       closeMoreMenu();
       input.value = '';
@@ -1799,7 +1826,7 @@
       on(attachBtn, 'click', function () { attachInput.click(); });
       on(attachInput, 'change', function () {
         if (attachInput.files && attachInput.files.length) {
-          uploadFiles(Array.from(attachInput.files));
+          stageFiles(Array.from(attachInput.files));
           attachInput.value = '';
         }
       });
@@ -1817,7 +1844,7 @@
     on(dragTarget, 'drop', function (e) {
       dragTarget.classList.remove('dragover');
       const files = Array.from(e.dataTransfer.files || []);
-      if (files.length) uploadFiles(files);
+      if (files.length) stageFiles(files);
     });
     // Ctrl+V / Cmd+V straight into the composer — same upload path as
     // drag-drop/the attach button. Files land in clipboardData.items on
@@ -1836,7 +1863,7 @@
       const files = pastedFiles(e);
       if (!files.length) return; // let normal text paste through untouched
       e.preventDefault();
-      uploadFiles(files);
+      stageFiles(files);
     });
     // Paste only fires on the focused element — without this, Ctrl+V does
     // nothing when the transcript (not the textarea) holds focus. Wrap-level
@@ -1849,7 +1876,7 @@
       const files = pastedFiles(e);
       if (!files.length) return;
       e.preventDefault();
-      uploadFiles(files);
+      stageFiles(files);
     });
     on(input, 'keydown', function (e) {
       if (slashOpen && slashMatches.length) {
@@ -1905,6 +1932,7 @@
         if (sending) {
           e.preventDefault();
           (async function () {
+            if (uploading || !await prepareAttachments() || destroyed) return;
             var value = input.value.trim();
             var attachMeta = uploadedAttachments.map(function (a) {
               return { id: a.id, name: a.name, size: a.size };

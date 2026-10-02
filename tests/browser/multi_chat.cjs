@@ -24,7 +24,7 @@ print(response.text)
   const sessions = ['a', 'b'].map(id => ({ id, title: 'Chat ' + id.toUpperCase(), agent_id: 'main', agent_ids: ['main'], active_turn: false, message_count: 1, updated_at: 1 }));
   const histories = new Map(sessions.map(s => [s.id, [{ type: 'user', agent_id: 'main', content: 'History ' + s.id }, { type: 'final', agent_id: 'main', content: 'Ready' }]]));
   const subscribers = new Map();
-  const sends = [], stops = [], listens = [];
+  const sends = [], stops = [], listens = [], uploads = [], permissions = [];
   let releaseCreate, delayCreate = false;
   const event = (res, type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   const server = http.createServer(async (req, res) => {
@@ -55,6 +55,10 @@ print(response.text)
           let raw = ''; for await (const chunk of req) raw += chunk;
           const body = JSON.parse(raw);
           sends.push({ id, message: body.message });
+          if (body.attachment_ids?.length) {
+            assert.deepEqual(body.attachment_ids, ['image-1']);
+            assert.equal(session.mode, 'off', 'Draft permission must apply before the first agent turn');
+          }
           session.active_turn = true;
           histories.get(id).push({ type: 'user', content: body.message, agent_id: 'main' });
           event(res, 'turn.start', { agent_id: 'main', turn_id: id });
@@ -71,7 +75,21 @@ print(response.text)
       }
       if (action === 'chat') return json({ entries: histories.get(id) || [] });
       if (action === 'pending') return json({ active_turn: session.active_turn, approvals: [], clarifications: [] });
-      if (action === 'approval-mode') return json({ mode: 'smart' });
+      if (action === 'approval-mode') {
+        if (req.method === 'PUT') {
+          let raw = ''; for await (const chunk of req) raw += chunk;
+          session.mode = JSON.parse(raw).mode;
+          permissions.push({ id, mode: session.mode });
+        }
+        return json({ mode: session.mode || 'smart' });
+      }
+      if (action === 'reasoning-effort') return json({ model: 'Test model', reasoning_efforts: ['low', 'high'], reasoning_effort: 'high' });
+      if (action === 'artifacts') return json({ artifacts: [] });
+      if (action === 'attachments' && req.method === 'POST') {
+        for await (const chunk of req) {} // Consume the real multipart upload.
+        uploads.push(id);
+        return json({ id: 'image-1', original_name: 'image.png', size_bytes: 68 });
+      }
       if (action === 'chat/stop') {
         stops.push(id); session.active_turn = false;
         histories.get(id).push({ type: 'error', content: 'Stopped', agent_id: 'main' });
@@ -97,15 +115,46 @@ print(response.text)
     await page.waitForFunction(() => document.querySelector('.composer').classList.contains('is-generating'));
     await page.locator('.session-group-running [data-id="a"]').waitFor();
     await page.waitForFunction(() => document.querySelector('.chat-scroll').textContent.includes('Working in a'));
+    const imageFile = {
+      name: 'image.png', mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT4sAAAAASUVORK5CYII=', 'base64'),
+    };
     await page.locator('#newChatBtn').click();
     await page.locator('#newChatConfirm').click();
+    await page.locator('.composer-mode').click();
+    await page.locator('.attachment-input').setInputFiles(imageFile);
+    await page.locator('.composer-mobile-more-btn').click();
+    await page.locator('.chat-files-btn').click();
+    await page.waitForFunction(() => document.querySelector('.composer-mode-key').textContent === 'Auto', null, { timeout: 3000 });
+    await page.locator('.attachment-preview .attachment-chip').waitFor();
+    assert.match(await page.locator('.chat-agent-panel').textContent(), /No files yet/);
+    await page.locator('.chat-agent-panel .cap-collapse').click();
+    assert.equal(sessions.length, 2, 'Unsent settings and attachments must not create a session');
+    assert.deepEqual(uploads, [], 'Images stay local until Send');
+    assert.deepEqual(permissions, []);
+    assert.equal(sends.length, 1, 'No dummy message');
+    if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'new-chat-draft.png') });
+    // Abandon the draft, then confirm neither files nor permissions leak to the next one.
+    await page.locator('#newChatBtn').click(); await page.locator('#newChatConfirm').click();
+    assert.equal(await page.locator('.composer-mode-key').textContent(), 'Smart');
+    assert.equal(await page.locator('.attachment-preview .attachment-chip').count(), 0);
+    assert.equal(sessions.length, 2, 'Cancelled New chat leaves no session in history');
     assert.equal(await input.inputValue(), '');
     assert.equal(await page.locator('.composer.is-generating').count(), 0, 'Draft must not inherit running/Stop state');
+    await page.locator('.composer-mode').click();
+    await page.locator('.attachment-input').setInputFiles(imageFile);
+    delayCreate = true;
     await input.fill('Run new'); await input.press('Enter');
+    while (!releaseCreate) await new Promise(resolve => setTimeout(resolve, 10));
+    releaseCreate(); delayCreate = false; releaseCreate = null;
     await page.waitForFunction(() => (document.querySelector('#sessionChat').dataset.sessionId || '').startsWith('new-'));
     await page.locator('.session-group-running [data-id^="new-"]').waitFor();
     assert.deepEqual(sends, [{ id: 'a', message: 'Run A' }, { id: 'new-2', message: 'Run new' }], 'Enter sends once, only to the new chat');
     assert.equal(sessions.filter(s => s.active_turn).length, 2);
+    assert.equal(sessions.length, 3, 'First Send creates only one session');
+    assert.deepEqual(permissions, [{ id: 'new-2', mode: 'off' }]);
+    assert.deepEqual(uploads, ['new-2']);
+    await page.waitForFunction(() => document.querySelector('.composer-reasoning-model').textContent === 'Test model');
     assert.doesNotMatch(await page.locator('#sessionList').textContent(), /\bmsgs\b/, 'Sidebar omits message counts');
     assert.doesNotMatch(await page.locator('.chat-scroll').textContent(), /Run A|Working in a/);
     await input.fill('Unsent new draft');
@@ -155,7 +204,7 @@ print(response.text)
     assert.equal(await page.locator('html.is-rail-open').count(), 0, 'Mobile switching closes the drawer');
     await page.waitForTimeout(300);
     if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'multi-chat-mobile.png') });
-    console.log('Multi-chat passed: isolated sends, concurrent running, resume, scoped stop, drafts, late create, reduced motion');
+    console.log('Multi-chat passed: local draft attachments/permissions, cancelled drafts, first-send upload, isolated sends, resume, scoped stop, late create, reduced motion');
   } finally {
     await browser.close();
     server.closeAllConnections();
