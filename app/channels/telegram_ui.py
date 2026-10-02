@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from app.services.store import store
 
 if TYPE_CHECKING:
     from app.channels.telegram import TelegramAPI
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +57,7 @@ class TelegramTurnUI:
         self.failed = 0
         self.todos: list[dict] = []
         self.finished = False
+        self._final_delivered = False
         self.stop_requested = False
         self.recent: list[str] = []
         self.prompts: dict[str, Prompt] = {}
@@ -195,6 +199,8 @@ class TelegramTurnUI:
 
     async def refresh(self) -> None:
         async with self._io_lock:
+            if self.finished:
+                return
             for token, prompt in list(self.prompts.items()):
                 if self.pending_payload(prompt) is None:
                     self.prompts.pop(token, None)
@@ -756,12 +762,44 @@ class TelegramTurnUI:
         self.phase = "Thinking"
         return True
 
+    async def _stop_ticker(self) -> None:
+        # Let an in-flight preview finish recording its message ID before canceling.
+        async with self._io_lock:
+            if self._ticker:
+                self._ticker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._ticker
+
+    async def _cleanup_messages(self) -> None:
+        for attr in ("answer_id", "status_id"):
+            message_id = getattr(self, attr)
+            if message_id is None:
+                continue
+            try:
+                await self.api.delete_message(self.chat_id, message_id)
+            except Exception:
+                logger.warning(
+                    "Telegram temporary message cleanup failed chat_id=%s message_id=%s",
+                    self.chat_id,
+                    message_id,
+                )
+                # Keep the ID for another cleanup attempt in close(). If deletion
+                # is unavailable, replace the preview so the answer isn't doubled.
+                if attr == "answer_id":
+                    with contextlib.suppress(Exception):
+                        await self.api.edit_answer(
+                            self.chat_id,
+                            message_id,
+                            "✓ Response delivered below.",
+                            thread_id=self.thread_id,
+                            preview=True,
+                        )
+            else:
+                setattr(self, attr, None)
+
     async def finish(self, reply: str) -> None:
         self.finished = True
-        if self._ticker:
-            self._ticker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._ticker
+        await self._stop_ticker()
         # All controls become inert, even if delivery of the final answer fails.
         for prompt in list(self.prompts.values()):
             with contextlib.suppress(Exception):
@@ -787,20 +825,13 @@ class TelegramTurnUI:
             thread_id=self.thread_id,
             reply_to=self.reply_to,
         )
-        if self.answer_id is not None:
-            with contextlib.suppress(Exception):
-                await self.api.delete_message(self.chat_id, self.answer_id)
-            self.answer_id = None
-        if self.status_id is not None:
-            with contextlib.suppress(Exception):
-                await self.api.delete_message(self.chat_id, self.status_id)
-                self.status_id = None
+        self._final_delivered = True
+        await self._cleanup_messages()
 
     async def close(self) -> None:
-        if self._ticker and not self._ticker.done():
-            self._ticker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._ticker
+        await self._stop_ticker()
+        if self._final_delivered:
+            await self._cleanup_messages()
         for prompt in list(self.prompts.values()):
             with contextlib.suppress(Exception):
                 await self.api.remove_keyboard(self.chat_id, prompt.message_id)

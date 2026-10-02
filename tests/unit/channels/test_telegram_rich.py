@@ -1,5 +1,6 @@
 """Native rich messages, streaming drafts, and conservative compatibility fallback."""
 
+import asyncio
 import json
 
 import httpx
@@ -233,10 +234,94 @@ async def test_failed_final_delivery_keeps_streaming_preview(settings):
         fail_final = True
         with pytest.raises(TelegramAPIError):
             await ui.finish("Final")
+        await ui.close()
         assert "Preview" in bot.messages[preview_id]["rich_message"]["html"]
         assert status_id in bot.messages
         assert not any(m == "deleteMessage" for m, _ in bot.calls)
     finally:
+        await ui.close()
+        await api.aclose()
+
+
+@pytest.mark.parametrize("rich", [False, True])
+async def test_finish_waits_for_accepted_preview_before_sending_final(settings, rich):
+    store.update_settings({"telegram_rich_messages": rich})
+    bot = RichBot()
+    accepted = asyncio.Event()
+    release = asyncio.Event()
+    reply = "Connector updated."
+
+    async def handler(request):
+        response = bot.transport(request)
+        payload = json.loads(request.content)
+        text = payload.get("text") or payload.get("rich_message", {}).get("html", "")
+        if (
+            request.url.path.rsplit("/", 1)[-1] in {"sendMessage", "sendRichMessage"}
+            and "…" in text
+        ):
+            accepted.set()
+            await release.wait()
+        return response
+
+    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
+    ui.answer = reply
+    finish_task = None
+    try:
+        await ui.start()
+        await asyncio.wait_for(accepted.wait(), 2)
+        finish_task = asyncio.create_task(ui.finish(reply))
+        await until(lambda: ui.finished)
+        release.set()
+        await asyncio.wait_for(finish_task, 2)
+        await ui.refresh()  # A late refresh must not recreate the preview.
+        await ui.close()
+        assert len(bot.messages) == 1
+        final = next(iter(bot.messages.values()))
+        assert reply in (final.get("text") or final["rich_message"]["html"])
+        assert final["reply_parameters"]["message_id"] == 7
+        assert final["message_thread_id"] == 8
+    finally:
+        release.set()
+        if finish_task and not finish_task.done():
+            await finish_task
+        await ui.close()
+        await api.aclose()
+
+
+async def test_failed_preview_delete_removes_duplicate_text_and_retries_on_close(
+    settings,
+):
+    bot = RichBot()
+    fail_delete = True
+
+    def handler(request):
+        if fail_delete and request.url.path.endswith("/deleteMessage"):
+            return httpx.Response(503, json={"ok": False, "error_code": 503})
+        return bot.transport(request)
+
+    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid)
+    ui.answer = "Connector updated."
+    try:
+        await ui.start()
+        await ui.refresh()
+        await ui.finish("Connector updated. Complete.")
+        answers = [
+            p["rich_message"]["html"]
+            for p in bot.messages.values()
+            if "rich_message" in p
+        ]
+        assert sum("Connector updated." in text for text in answers) == 1
+        assert any("Response delivered below." in text for text in answers)
+        fail_delete = False
+        await ui.close()
+        assert len(bot.messages) == 1
+        assert "Complete." in next(iter(bot.messages.values()))["rich_message"]["html"]
+    finally:
+        fail_delete = False
         await ui.close()
         await api.aclose()
 
