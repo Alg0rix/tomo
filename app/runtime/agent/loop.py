@@ -57,7 +57,7 @@ import logging
 import re
 from typing import Any, AsyncIterator
 
-from app.runtime.agent.compress import estimate_prompt_tokens, maybe_compress_messages, prompt_budget
+from app.runtime.agent.compress import estimate_prompt_tokens, fallback_prompt_budget, maybe_compress_messages, prompt_budget
 from app.runtime.agent.context import (
     build_messages,
     build_system_prompt,
@@ -280,13 +280,17 @@ async def _llm_round_with_retry(
     restarting the round.
     """
     last_exc: BaseException | None = None
-    if context_window is not None:
-        compressed = maybe_compress_messages(messages, context_window=context_window, tools=tool_schemas)
-        if compressed is not messages:
-            messages[:] = compressed
-            if metrics is not None:
-                metrics.compressed = True
-            yield {"kind": "status", "message": "Compacted conversation to fit the active model's context window."}
+    compressed = maybe_compress_messages(
+        messages, context_window=context_window, tools=tool_schemas,
+        soft_limit_tokens=fallback_prompt_budget(messages, tool_schemas),
+    )
+    if compressed is not messages:
+        messages[:] = compressed
+        if metrics is not None:
+            metrics.compressed = True
+        message = ("Compacted conversation to fit the active model's context window."
+                   if context_window else "Context limit unavailable; compacted conversation using the default prompt budget.")
+        yield {"kind": "status", "message": message}
     transient_retried = False
     context_retried = False
     for _attempt in range(3):
@@ -299,15 +303,22 @@ async def _llm_round_with_retry(
             return
         except Exception as exc:
             last_exc = exc
-            if not forwarded and not context_retried and context_window and is_context_window_error(exc):
+            if not forwarded and not context_retried and is_context_window_error(exc):
                 reported_window = context_window_from_error(exc)
                 if reported_window is not None:
-                    context_window = min(context_window, reported_window)
+                    context_window = min(context_window, reported_window) if context_window else reported_window
+                    profile = getattr(client, "context_profile", None)
+                    if profile is not None:
+                        from app.runtime.llm.context_window import record_context_window
+
+                        record_context_window(profile, context_window)
                     try:
                         client.context_window = context_window
                     except AttributeError:
                         pass  # The minimal LLMClient protocol allows slotted clients.
-                tighter_budget = min(prompt_budget(context_window), int(estimate_prompt_tokens(messages, tool_schemas) * 0.65))
+                tighter_budget = int(estimate_prompt_tokens(messages, tool_schemas) * 0.65)
+                if context_window:
+                    tighter_budget = min(prompt_budget(context_window), tighter_budget)
                 compressed = maybe_compress_messages(messages, tools=tool_schemas, soft_limit_tokens=tighter_budget)
                 if compressed is messages or estimate_prompt_tokens(compressed, tool_schemas) >= estimate_prompt_tokens(messages, tool_schemas):
                     raise
@@ -938,13 +949,13 @@ async def run_turn(
                     image_descriptions=image_plan["descriptions"],
                     live_context=live_context,
                 )
-            from app.runtime.llm.context_window import _DEFAULT, resolve_context_window
+            from app.runtime.llm.context_window import resolve_context_window
 
             context_window = getattr(client, "context_window", None)
             if context_window is None:
                 client_profile = getattr(client, "context_profile", None)
                 context_window = (await resolve_context_window(agent_id, session_id=session_id, profile=client_profile)
-                                  if client_profile is not None else _DEFAULT)
+                                  if client_profile is not None else None)
             try:
                 client.context_window = context_window
             except AttributeError:
@@ -1014,7 +1025,7 @@ async def run_turn(
             reasoning_streamed = False
             metrics.mark_llm_round()
             try:
-                context_window = min(context_window, getattr(client, "context_window", None) or context_window)
+                context_window = getattr(client, "context_window", None) or context_window
                 _logger.info("LLM round %d agent=%s msgs=%d…", iteration, agent_id, len(messages))
                 async for piece in _llm_round_with_retry(
                     client, messages, tool_schemas, metrics=metrics, context_window=context_window
@@ -1028,7 +1039,7 @@ async def run_turn(
                     elif piece["kind"] == "_response":
                         resp = piece["response"]
                     elif piece["kind"] == "status":
-                        context_window = min(context_window, piece.get("context_window") or context_window)
+                        context_window = piece.get("context_window") or context_window
                         yield piece
                     else:
                         yield piece
@@ -1461,7 +1472,7 @@ async def run_turn(
             streamed_final = False
             async for piece in _llm_round_with_retry(
                 client, messages, [], metrics=metrics,
-                context_window=min(context_window, getattr(client, "context_window", None) or context_window)
+                context_window=getattr(client, "context_window", None) or context_window
             ):
                 if piece["kind"] == "delta":
                     streamed_final = True

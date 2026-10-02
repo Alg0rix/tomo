@@ -11,7 +11,7 @@ import json
 from typing import Any
 
 from app.runtime.agent.compress import (
-    ContextBudgetError, _estimate_tokens, _msg_tokens, maybe_compress_messages, prompt_budget,
+    ContextBudgetError, _DEFAULT_SOFT_LIMIT_TOKENS, _estimate_tokens, _msg_tokens, maybe_compress_messages, prompt_budget,
 )
 from app.runtime.agent.context import (
     _skills_prompt_section,
@@ -21,7 +21,6 @@ from app.runtime.agent.context import (
     history_to_messages,
 )
 from app.runtime.llm.context_window import (
-    _DEFAULT,
     resolve_context_window_sync,
 )
 from app.services import store
@@ -38,8 +37,6 @@ _SECTION_META: list[tuple[str, str, str]] = [
     ("conversation", "Conversation", "#f87171"),
 ]
 
-_DEFAULT_CONTEXT = _DEFAULT
-
 # Prefix used by compress.py's summary message (role=="user").
 _SUMMARY_PREFIX = "[SYSTEM] Earlier conversation was compressed"
 
@@ -49,8 +46,8 @@ def estimate_tokens(text: str) -> int:
     return _estimate_tokens(text)
 
 
-def _resolve_context_limit(agent_id: str | None, *, session_id: str | None = None) -> int:
-    """Use the same route-aware fallback as runtime callers."""
+def _resolve_context_limit(agent_id: str | None, *, session_id: str | None = None) -> int | None:
+    """Use the same route-aware metadata as runtime callers."""
     return resolve_context_window_sync(agent_id, session_id=session_id)
 
 
@@ -110,6 +107,7 @@ def compute_context_usage(
     history: list[dict[str, Any]] | None = None,
     *,
     user_message: str | None = None,
+    session_id: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Return context budget breakdown for the next turn.
@@ -122,8 +120,7 @@ def compute_context_usage(
     ----------
     limit:
         Pre-resolved context window (e.g. from the live ``/models`` API).
-        When ``None``, falls back to the sync resolver (known table → seed
-        → default).
+        When ``None``, reads cached metadata; unresolved limits stay unknown.
     """
     # ── Build conversation messages the same way the loop does ──
     messages = history_to_messages(history, for_agent_id=agent_id)
@@ -145,8 +142,11 @@ def compute_context_usage(
     }
 
     if limit is None:
-        limit = _resolve_context_limit(agent_id)
-    budget = prompt_budget(limit)
+        limit = _resolve_context_limit(agent_id, session_id=session_id)
+    required = next((msg for msg in reversed(messages) if msg.get("role") == "user"), None)
+    required_tokens = _msg_tokens(required) if required is not None else 0
+    budget = (prompt_budget(limit) if limit else
+              max(_DEFAULT_SOFT_LIMIT_TOKENS, sum(counts.values()) + required_tokens))
     conversation_budget = budget - sum(counts.values())
     compaction_error = None
     try:
@@ -190,9 +190,10 @@ def compute_context_usage(
         "limit": limit,
         "used": used,
         "percent": min(percent, 100),
-        "over_limit": used > limit,
+        "over_limit": used > limit if limit else None,
         "compressed": did_compress,
         "prompt_budget": budget,
+        "limit_known": limit is not None,
         "blocked": compaction_error is not None,
         "compaction_error": compaction_error,
         "sections": sections,

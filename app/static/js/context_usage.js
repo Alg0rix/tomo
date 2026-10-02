@@ -131,27 +131,29 @@
       var pct = data.percent || 0;
       var pctEl = trigger.querySelector(".ctx-usage-pct");
       var ring = trigger.querySelector(".ctx-usage-ring");
-      if (pctEl) pctEl.textContent = pct + "%";
+      if (pctEl) pctEl.textContent = data.limit == null ? "?" : pct + "%";
       if (ring) {
         ring.style.setProperty("--ctx-pct", String(pct));
         ring.classList.toggle("warn", pct >= 75);
         ring.classList.toggle("full", pct >= 90);
       }
-      trigger.title = fmtTokens(data.used) + " / " + fmtTokens(data.limit) + " tokens";
+      trigger.title = fmtTokens(data.used) + (data.limit == null ? " tokens · context limit unknown" : " / " + fmtTokens(data.limit) + " tokens");
     }
 
     function render(data) {
       ensurePopover();
       var pct = data.percent || 0;
-      popover.querySelector(".ctx-pop-pct").textContent = pct + "% Full";
+      popover.querySelector(".ctx-pop-pct").textContent = data.limit == null ? "Context limit unknown" : pct + "% Full";
       popover.querySelector(".ctx-pop-tokens").textContent =
-        "~" + fmtTokens(data.used) + " / " + fmtTokens(data.limit) + " Tokens";
+        "~" + fmtTokens(data.used) + (data.limit == null ? " Tokens" : " / " + fmtTokens(data.limit) + " Tokens");
       renderBar(data.sections || [], data.used || 0, data.limit || 0);
       renderLegend(data.sections || []);
       renderUsage(data.usage);
       popover.querySelector(".ctx-pop-budget").textContent = data.blocked
         ? (data.compaction_error || "The latest request and instructions cannot fit this model.")
-        : (data.compressed ? "Older conversation is compacted to fit this model. " : "")
+        : data.limit == null
+          ? "Provider context metadata unavailable. Using a default prompt budget for compaction."
+          : (data.compressed ? "Older conversation is compacted to fit this model. " : "")
           + (data.prompt_budget != null ? "Prompt budget: " + fmtTokens(data.prompt_budget) + " tokens; remaining space reserved for the reply and token estimates." : "");
       updateTrigger(data);
     }

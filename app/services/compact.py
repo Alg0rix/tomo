@@ -182,6 +182,8 @@ async def maybe_auto_compact(
     )
 
     limit = _resolve_context_limit(agent_id, session_id=session_id)
+    if limit is None:
+        return None
     threshold = float(settings.get("auto_compact_threshold") or 0.9)
     threshold = min(max(threshold, 0.5), 0.99)
     # Cheap gate first — rough live-segment size before paying for the full
@@ -193,7 +195,7 @@ async def maybe_auto_compact(
     )
     if rough < limit * max(0.4, threshold - 0.25):
         return None
-    usage = compute_context_usage(agent_id, history, limit=limit)
+    usage = compute_context_usage(agent_id, history, limit=limit, session_id=session_id)
     if usage["used"] < usage["limit"] * threshold:
         return None
     result = await compact_session(session_id, agent_id=agent_id)

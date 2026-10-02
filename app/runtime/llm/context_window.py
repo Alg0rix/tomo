@@ -1,24 +1,15 @@
-"""Resolve model context window from provider metadata and fallbacks.
+"""Resolve route-specific context limits from metadata, never model-name guesses.
 
-Central async resolver with TTL cache.  Used by the context-usage API
-endpoints so the UI shows the real provider context when available.
-
-Resolution order:
-  1. In-memory cache (TTL 1 h for live metadata, 5 min for fallbacks)
-  2. ``OpenAICompatClient.fetch_model_context_window()`` (live /models API)
-     or the last provider-confirmed limit during a metadata outage
-  3. ``store.list_models()`` seed data (project-specific, user-configured)
-  4. Public model catalog for models whose proxy omits context metadata
-  5. ``_KNOWN_WINDOWS`` prefix match (static fallback)
-  6. ``_DEFAULT`` (128 000)
+Confirmed limits survive outages and restarts. Unknown limits remain None.
 """
-
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx2
 
@@ -26,92 +17,87 @@ from app.runtime.llm.codex_models import _extract_chatgpt_account_id
 from app.runtime.llm.openai_compat import extract_context_window
 
 _logger = logging.getLogger(__name__)
-
-_DEFAULT = 128_000
 _CACHE_TTL_S = 3600.0
 _CATALOG_TTL_S = 4 * 3600.0
 _CATALOG_RETRY_S = 300.0
 _CATALOG_URL = "https://models.dev/api.json"
-
-# (base_url, model, credential fingerprint) → (context_limit, monotonic_expiry)
-_cache: dict[tuple[str, str, str], tuple[int, float]] = {}
-# Retain provider-confirmed limits through temporary metadata outages.
-_provider_windows: dict[tuple[str, str, str], int] = {}
+_cache: dict[tuple[str, str, str], tuple[int | None, float]] = {}
+_provider_windows: dict[str, int] = {}
 _catalog: dict[str, dict[str, int]] = {}
+_catalog_routes: dict[str, str] = {}
 _catalog_expiry = 0.0
-
-# ChatGPT Codex advertises a smaller route-specific window than the direct API.
-# Used only when its authenticated catalog cannot be reached.
-_CODEX_WINDOWS: list[tuple[str, int]] = [
-    ("gpt-5.3-codex-spark", 128_000),
-    ("gpt-6-", 272_000),
-    ("gpt-5.6-", 272_000),
-    ("gpt-5.5", 272_000),
-    ("gpt-5.4", 272_000),
-    ("gpt-5.3-codex", 272_000),
-    ("gpt-5.2-codex", 272_000),
-    ("gpt-5.1-codex", 272_000),
-    ("gpt-5-codex", 272_000),
-    ("gpt-5", 272_000),
-]
-
-# Known windows for providers that don't expose context on /models.
-# Matched by prefix (longest prefix first).
-_KNOWN_WINDOWS: list[tuple[str, int]] = [
-    ("gpt-4.1-mini", 1_047_576),
-    ("gpt-4.1-nano", 1_047_576),
-    ("gpt-4.1", 1_047_576),
-    ("gpt-4o-mini", 128_000),
-    ("gpt-4o", 128_000),
-    ("gpt-4-turbo", 128_000),
-    ("gpt-4-32k", 32_768),
-    ("gpt-4", 8192),
-    ("gpt-3.5-turbo-16k", 16_385),
-    ("gpt-3.5-turbo", 16_385),
-    ("o3-mini", 200_000),
-    ("o3", 200_000),
-    ("o1-mini", 128_000),
-    ("o1", 200_000),
-    ("claude-3-7-sonnet", 200_000),
-    ("claude-3-5-sonnet", 200_000),
-    ("claude-3-5-haiku", 200_000),
-    ("claude-3-opus", 200_000),
-    ("claude-sonnet-4", 200_000),
-    ("claude-opus-4", 200_000),
-    ("deepseek-chat", 1_000_000),
-    ("deepseek-reasoner", 1_000_000),
-    ("deepseek-flash", 1_000_000),
-    ("deepseek-v4-flash", 1_000_000),
-    ("deepseek-v4-pro", 1_000_000),
-    ("gemini-2.0-flash", 1_048_576),
-    ("gemini-1.5-pro", 2_097_152),
-    ("gemini-1.5-flash", 1_048_576),
-]
-
-# Pre-sorted longest-prefix-first for matching.
-_KNOWN_WINDOWS_SORTED = sorted(_KNOWN_WINDOWS, key=lambda t: len(t[0]), reverse=True)
+_catalog_fetched_at = 0.0
+_state_loaded = False
 
 
-def _lookup_known(model_id: str) -> int | None:
-    """Prefix-match *model_id* against the known-windows table."""
-    model_id = _canonical_model_id(model_id)
-    for prefix, ctx in _KNOWN_WINDOWS_SORTED:
-        if model_id.startswith(prefix):
-            return ctx
-    return None
+def _state_path():
+    from app.core.config import VAR_DIR
+
+    return VAR_DIR / "cache" / "context_metadata.json"
+
+
+def _load_state() -> None:
+    global _state_loaded, _catalog, _catalog_routes, _catalog_fetched_at
+    if _state_loaded:
+        return
+    _state_loaded = True
+    try:
+        data = json.loads(_state_path().read_text(encoding="utf-8"))
+        catalog, routes, confirmed = data["catalog"], data["routes"], data["confirmed"]
+        if not all(isinstance(v, dict) for v in (catalog, routes, confirmed)):
+            return
+        _catalog = {
+            provider: {model: ctx for model, ctx in models.items()
+                       if isinstance(ctx, int) and not isinstance(ctx, bool) and ctx > 0}
+            for provider, models in catalog.items() if isinstance(models, dict)
+        }
+        _catalog_routes = {url: provider for url, provider in routes.items()
+                           if isinstance(url, str) and isinstance(provider, str)}
+        _provider_windows.update({key: ctx for key, ctx in confirmed.items()
+                                  if isinstance(ctx, int) and not isinstance(ctx, bool) and ctx > 0})
+        _catalog_fetched_at = float(data.get("fetched_at", 0))
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+
+
+def _save_state() -> None:
+    try:
+        path = _state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({
+            "catalog": _catalog, "routes": _catalog_routes,
+            "fetched_at": _catalog_fetched_at, "confirmed": _provider_windows,
+        }), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass
 
 
 def _canonical_model_id(model_id: str) -> str:
-    """Drop a proxy namespace such as ``cline-pass/`` or ``openai/``."""
     return model_id.rsplit("/", 1)[-1].lstrip("~").strip()
 
 
-def _lookup_codex(model_id: str) -> int | None:
-    model = _canonical_model_id(model_id)
-    for prefix, ctx in _CODEX_WINDOWS:
-        if model.startswith(prefix):
-            return ctx
-    return None
+def _cache_key(profile: dict[str, Any]) -> tuple[str, str, str]:
+    credential = profile.get("access_token") if profile.get("auth_mode") == "subscription" else profile.get("api_key")
+    fingerprint = hashlib.sha256((credential or "").encode()).hexdigest()[:16]
+    return (profile.get("base_url", "").rstrip("/"), profile.get("model", ""),
+            f"{profile.get('auth_mode', 'api_key')}:{fingerprint}")
+
+
+def _confirmed_key(key: tuple[str, str, str]) -> str:
+    return hashlib.sha256(json.dumps(key).encode()).hexdigest()
+
+
+def record_context_window(profile: dict[str, Any], context_window: int) -> None:
+    """Retain a limit reported by the active route, including overflow errors."""
+    _load_state()
+    if extract_context_window({"context_window": context_window}) is None:
+        return
+    key = _cache_key(profile)
+    _provider_windows[_confirmed_key(key)] = context_window
+    _cache[key] = (context_window, time.monotonic() + _CACHE_TTL_S)
+    _save_state()
 
 
 async def _fetch_codex_context(profile: dict[str, Any], model_id: str) -> int | None:
@@ -146,35 +132,50 @@ async def _fetch_codex_context(profile: dict[str, Any], model_id: str) -> int | 
     return None
 
 
-def _catalog_context(catalog: dict[str, dict[str, int]], model_id: str) -> int | None:
-    """Use an exact catalog model, preferring its original model provider."""
+def _catalog_context(
+    catalog: dict[str, dict[str, int]], model_id: str, *, provider_id: str | None = None,
+) -> int | None:
+    """Use exact route metadata; never borrow a different provider's limit."""
     model = _canonical_model_id(model_id)
     if not model:
         return None
-    provider = (
-        "openai" if model.startswith(("gpt-", "o1", "o3", "o4")) else
-        "anthropic" if model.startswith("claude-") else
-        "deepseek" if model.startswith("deepseek-") else ""
-    )
-    if provider:
-        found = catalog.get(provider, {}).get(model)
-        if found is not None:
-            return found
-    matches = {models[model] for models in catalog.values() if model in models}
+    if provider_id:
+        models = catalog.get(provider_id, {})
+        exact = models.get(model_id) or models.get(model)
+        if exact is not None:
+            return exact
+        matches = {ctx for mid, ctx in models.items() if _canonical_model_id(mid) == model}
+        return next(iter(matches)) if len(matches) == 1 else None
+    matches = {ctx for models in catalog.values()
+               for mid, ctx in models.items() if mid in {model_id, model}}
     return next(iter(matches)) if len(matches) == 1 else None
 
 
-async def _fetch_public_catalog_context(model_id: str) -> int | None:
-    """Look up exact model metadata without sending credentials or prompts."""
-    global _catalog, _catalog_expiry
+def _catalog_provider(base_url: str) -> str | None:
+    selected = urlsplit(base_url)
+    matches = []
+    for api, provider in _catalog_routes.items():
+        route = urlsplit(api)
+        path = route.path.rstrip("/")
+        if (selected.scheme == route.scheme and selected.netloc == route.netloc
+                and (selected.path.rstrip("/") == path or selected.path.startswith(path + "/"))):
+            matches.append((len(path), provider))
+    return max(matches)[1] if matches else None
+
+
+async def _fetch_public_catalog_context(model_id: str, *, base_url: str = "") -> int | None:
+    """Fetch public endpoint/model metadata without credentials or prompts."""
+    global _catalog, _catalog_expiry, _catalog_routes, _catalog_fetched_at
+    _load_state()
     now = time.monotonic()
-    if now >= _catalog_expiry:
+    if now >= _catalog_expiry and (not _catalog or time.time() - _catalog_fetched_at >= _CATALOG_TTL_S):
         try:
             async with httpx2.AsyncClient(timeout=8.0) as client:
                 response = await client.get(_CATALOG_URL)
                 response.raise_for_status()
                 payload = response.json()
             catalog: dict[str, dict[str, int]] = {}
+            routes: dict[str, str] = {}
             if isinstance(payload, dict):
                 for provider_id, provider in payload.items():
                     if not isinstance(provider, dict):
@@ -182,164 +183,101 @@ async def _fetch_public_catalog_context(model_id: str) -> int | None:
                     models = provider.get("models")
                     if not isinstance(models, dict):
                         continue
+                    api = provider.get("api")
+                    if isinstance(api, str) and api:
+                        routes[api] = provider_id
                     known = {}
                     for mid, info in models.items():
-                        if not isinstance(info, dict):
-                            continue
-                        limit = info.get("limit")
-                        if not isinstance(limit, dict):
-                            continue
-                        ctx = extract_context_window({"context_window": limit.get("context")})
+                        ctx = extract_context_window(info)
                         if ctx is not None:
                             known[mid] = ctx
                     catalog[provider_id] = known
             if not any(catalog.values()):
                 raise ValueError("empty public model catalog")
-            _catalog = catalog
+            _catalog, _catalog_routes = catalog, routes
+            _catalog_fetched_at = time.time()
+            _save_state()
             _catalog_expiry = now + _CATALOG_TTL_S
         except Exception as exc:
             _logger.debug("public model catalog unavailable: %s", exc)
             _catalog_expiry = now + _CATALOG_RETRY_S
-    return _catalog_context(_catalog, model_id)
+    return _catalog_context(_catalog, model_id, provider_id=_catalog_provider(base_url))
 
 
-def _resolve_seed(model_id: str) -> int | None:
-    """Look up *model_id* in the platform seed models (``store.list_models``)."""
-    try:
-        from app.services import store
-
-        models = sorted(
-            store.list_models(),
-            key=lambda m: len(m.get("id") or ""),
-            reverse=True,
-        )
-        for m in models:
-            mid = m.get("id") or ""
-            if mid and (mid == model_id or model_id.startswith(mid)):
-                ctx = int(m.get("context") or 0)
-                if ctx > 0:
-                    return ctx
-    except Exception:
-        pass
-    return None
-
-
-def resolve_context_window_sync(agent_id: str | None = None, *, session_id: str | None = None) -> int:
-    """Sync fallback: seed → known table → default (no network).
-
-    Used when the async path is unavailable (e.g. tests, sync callers).
-    """
-    profile = _get_profile(agent_id, session_id=session_id)
-    model_id = ((profile or {}).get("model") or "").strip()
-    if model_id:
-        if (profile or {}).get("auth_mode") == "subscription":
-            return _lookup_codex(model_id) or _DEFAULT
-        ctx = _resolve_seed(model_id)
-        if ctx is not None:
-            return ctx
-        ctx = _lookup_known(model_id)
-        if ctx is not None:
-            return ctx
-    return _DEFAULT
+def resolve_context_window_sync(agent_id: str | None = None, *, session_id: str | None = None) -> int | None:
+    """Read explicit overrides and cached metadata without network I/O."""
+    profile = _get_profile(agent_id, session_id=session_id) or {}
+    _load_state()
+    explicit = extract_context_window(profile)
+    if explicit is not None:
+        return explicit
+    key = _cache_key(profile)
+    cached = _cache.get(key)
+    if cached and cached[0] is not None:
+        return cached[0]
+    confirmed = _provider_windows.get(_confirmed_key(key))
+    if confirmed is not None or profile.get("auth_mode") == "subscription":
+        return confirmed
+    return _catalog_context(_catalog, profile.get("model") or "",
+                            provider_id=_catalog_provider(profile.get("base_url") or ""))
 
 
 async def resolve_context_window(
     agent_id: str | None = None, *, session_id: str | None = None,
-    profile: dict[str, Any] | None = None,
-) -> int:
-    """Resolve context window for the agent's LLM profile.
-
-    1. Cache hit (base_url, model, credential)
-    2. Codex route catalog or ``OpenAICompatClient.fetch_model_context_window()``;
-       retain the last provider-confirmed limit if metadata is unavailable
-    3. ``store.list_models()`` seed match (project-specific)
-    4. Public model catalog exact match
-    5. ``_KNOWN_WINDOWS`` prefix match (static fallback)
-    6. ``_DEFAULT``
-    """
+    profile: dict[str, Any] | None = None, refresh_unknown: bool = False,
+) -> int | None:
+    """Resolve the selected route. Reasoning changes share the same model cache."""
     from app.runtime.llm.openai_compat import LLMConfigError, OpenAICompatClient
 
     profile = profile if profile is not None else _get_profile(agent_id, session_id=session_id)
-    base_url = (profile or {}).get("base_url") or "https://api.openai.com/v1"
-    model_id = (profile or {}).get("model") or ""
-    base_url = base_url.rstrip("/")
-
+    profile = profile or {}
+    _load_state()
+    explicit = extract_context_window(profile)
+    if explicit is not None:
+        return explicit
+    key = _cache_key(profile)
+    base_url, model_id, _ = key
     if not model_id:
-        return _DEFAULT
-
-    credential = (profile or {}).get("access_token") if (profile or {}).get("auth_mode") == "subscription" else (profile or {}).get("api_key")
-    fingerprint = hashlib.sha256((credential or "").encode()).hexdigest()[:16]
-    cache_key = (base_url, model_id, fingerprint)
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        ctx, expiry = cached
-        if time.monotonic() < expiry:
-            return ctx
-        del _cache[cache_key]
-
-    if (profile or {}).get("auth_mode") == "subscription":
+        return None
+    cached = _cache.get(key)
+    if cached and time.monotonic() < cached[1] and (cached[0] is not None or not refresh_unknown):
+        return cached[0]
+    result = None
+    if profile.get("auth_mode") == "subscription":
         result = await _fetch_codex_context(profile, model_id)
-        ttl = _CACHE_TTL_S if result is not None else _CATALOG_RETRY_S
-        if result is not None:
-            _provider_windows[cache_key] = result
-        result = result or _provider_windows.get(cache_key) or _lookup_codex(model_id) or _DEFAULT
-        _cache[cache_key] = (result, time.monotonic() + ttl)
-        return result
-
-    # 2. Live /models API
-    result: int | None = None
-    try:
-        client = OpenAICompatClient(
-            base_url=base_url,
-            api_key=(profile or {}).get("api_key") or "",
-            model=model_id,
-        )
-        try:
-            result = await client.fetch_model_context_window()
-        finally:
-            await client.aclose()
-    except LLMConfigError:
-        _logger.debug("no API key; skipping provider context lookup")
-    except Exception as exc:
-        _logger.info("provider context lookup failed: %s", exc)
-
-    ttl = _CACHE_TTL_S if result is not None else _CATALOG_RETRY_S
-    if result is not None:
-        _provider_windows[cache_key] = result
     else:
-        result = _provider_windows.get(cache_key)
-
-    # 3. Seed (project-specific, user-configured)
-    if result is None:
-        result = _resolve_seed(model_id)
-
-    # 4. Public catalog (proxies often list models without context metadata).
-    if result is None:
-        result = await _fetch_public_catalog_context(model_id)
-
-    # 5. Known table when the public catalog is unavailable or lacks this model.
-    if result is None:
-        result = _lookup_known(model_id)
-
-    # 6. Default
-    if result is None:
-        result = _DEFAULT
-
-    # Cache
-    _cache[cache_key] = (result, time.monotonic() + ttl)
+        try:
+            client = OpenAICompatClient(base_url=base_url, api_key=profile.get("api_key") or "", model=model_id)
+            try:
+                result = await client.fetch_model_context_window()
+            finally:
+                await client.aclose()
+        except LLMConfigError:
+            _logger.debug("no API key; skipping provider context lookup")
+        except Exception as exc:
+            _logger.info("provider context lookup failed: %s", exc)
+    confirmed_key = _confirmed_key(key)
+    if result is not None:
+        record_context_window(profile, result)
+    else:
+        result = _provider_windows.get(confirmed_key)
+    if result is None and profile.get("auth_mode") != "subscription":
+        result = await _fetch_public_catalog_context(model_id, base_url=base_url)
+    ttl = _CACHE_TTL_S if result is not None else _CATALOG_RETRY_S
+    _cache[key] = (result, time.monotonic() + ttl)
     return result
 
 
 def clear_context_window_cache() -> None:
-    """Reset the in-memory cache (for tests)."""
-    global _catalog_expiry
+    """Reset process state; persisted metadata remains available after restart."""
+    global _catalog_expiry, _catalog_fetched_at, _state_loaded
     _cache.clear()
     _provider_windows.clear()
     _catalog.clear()
+    _catalog_routes.clear()
     _catalog_expiry = 0.0
-
-
-# ── internal helpers ──────────────────────────────────────────────
+    _catalog_fetched_at = 0.0
+    _state_loaded = False
 
 
 def _get_profile(agent_id: str | None, *, session_id: str | None = None) -> dict[str, Any] | None:
@@ -354,13 +292,3 @@ def _get_profile(agent_id: str | None, *, session_id: str | None = None) -> dict
 def _agent_model(agent_id: str | None, *, session_id: str | None = None) -> str:
     profile = _get_profile(agent_id, session_id=session_id)
     return ((profile or {}).get("model") or "").strip()
-
-
-__all__ = [
-    "resolve_context_window",
-    "resolve_context_window_sync",
-    "clear_context_window_cache",
-    "extract_context_window",
-    "_DEFAULT",
-    "_KNOWN_WINDOWS",
-]

@@ -54,6 +54,7 @@ _CONTEXT_NEST_KEYS = (
     "metadata",
     "info",
     "architecture",
+    "limit",
 )
 
 _MIN_CTX = 1024
@@ -101,39 +102,19 @@ def extract_context_window(obj: dict) -> int | None:
 
 
 def _match_model_context(items: list[Any], model: str) -> int | None:
-    """Find the context window for *model* in a /models response list.
-
-    Match order:
-      1. exact ``id == model``
-      2. ``id`` endswith ``/{model}`` or ``:{model}``
-      3. ``model`` startswith ``id`` or ``id`` startswith ``model``
-         (longest id wins — items should be pre-sorted by id length desc)
-    """
-    # Sort longest id first so specific matches beat short prefixes.
-    sorted_items: list[tuple[str, dict]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        mid = str(item.get("id") or "")
-        if mid:
-            sorted_items.append((mid, item))
-    sorted_items.sort(key=lambda t: len(t[0]), reverse=True)
-
-    for mid, item in sorted_items:
-        if mid == model:
+    """Match exact model IDs or unambiguous namespace aliases, never prefixes."""
+    rows = [item for item in items if isinstance(item, dict)]
+    for item in rows:
+        if item.get("id") == model:
             return extract_context_window(item)
-
-    model_suffix = "/" + model
-    model_colon = ":" + model
-    for mid, item in sorted_items:
-        if mid.endswith(model_suffix) or mid.endswith(model_colon):
-            return extract_context_window(item)
-
-    for mid, item in sorted_items:
-        if model.startswith(mid) or mid.startswith(model):
-            return extract_context_window(item)
-
-    return None
+    canonical = model.rsplit("/", 1)[-1]
+    matches = {
+        ctx for item in rows
+        if (str(item.get("id") or "") == canonical
+            or ("/" not in model and str(item.get("id") or "").endswith(("/" + model, ":" + model))))
+        and (ctx := extract_context_window(item)) is not None
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 class LLMConfigError(RuntimeError):

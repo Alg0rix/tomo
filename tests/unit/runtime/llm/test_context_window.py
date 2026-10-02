@@ -1,4 +1,4 @@
-"""Tests for the context window resolver: API fetch, cache, known table, fallbacks.
+"""Tests for route metadata, caching and unknown context limits.
 
 All tests are pure (no real network). Mock transport for OpenAI-compat
 client and monkeypatched store for seed lookups.
@@ -14,9 +14,7 @@ from app.runtime.llm.openai_compat import (
     _match_model_context,
 )
 from app.runtime.llm.context_window import (
-    _DEFAULT,
     _catalog_context,
-    _lookup_known,
     clear_context_window_cache,
     resolve_context_window,
     resolve_context_window_sync,
@@ -205,46 +203,33 @@ async def test_fetch_context_list_format_without_data_key() -> None:
 
 
 
-def test_catalog_prefers_original_provider_and_rejects_ambiguous_unknown() -> None:
+def test_catalog_requires_selected_provider_when_limits_differ() -> None:
     catalog = {
         "deepseek": {"deepseek-v4-flash": 1_000_000},
         "proxy": {"deepseek-v4-flash": 128_000, "custom-model": 32_000},
         "other": {"custom-model": 64_000},
     }
-    assert _catalog_context(catalog, "cline-pass/deepseek-v4-flash") == 1_000_000
+    assert _catalog_context(catalog, "cline-pass/deepseek-v4-flash") is None
+    assert _catalog_context(catalog, "deepseek-v4-flash", provider_id="proxy") == 128_000
     assert _catalog_context(catalog, "custom-model") is None
 
 
 # ── resolve_context_window_sync ───────────────────────────────────
 
 
-def test_sync_uses_known_table(monkeypatch) -> None:
+def test_sync_unknown_model_does_not_guess_from_name_or_seed(monkeypatch):
     from app.services import store
 
     monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {"model": "gpt-4o"})
-    monkeypatch.setattr(store, "list_models", lambda: [])
-    assert resolve_context_window_sync("main") == 128_000
+    monkeypatch.setattr(store, "list_models", lambda: [{"id": "gpt-4o", "context": 128000}])
+    assert resolve_context_window_sync("main") is None
 
 
-def test_sync_falls_back_to_seed(monkeypatch) -> None:
-    from app.services import store
+def test_sync_explicit_override(monkeypatch):
+    import app.runtime.llm.context_window as mod
 
-    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {"model": "custom-model"})
-    monkeypatch.setattr(store, "list_models", lambda: [{"id": "custom-model", "context": 65536}])
+    monkeypatch.setattr(mod, "_get_profile", lambda *a, **kw: {"model": "custom", "context_window": 65536})
     assert resolve_context_window_sync("main") == 65536
-
-
-
-
-
-
-def test_sync_codex_uses_route_limit(monkeypatch) -> None:
-    from app.services import store
-
-    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
-        "auth_mode": "subscription", "model": "gpt-5.6-sol",
-    })
-    assert resolve_context_window_sync("main") == 272_000
 
 
 # ── resolve_context_window (async) caching ────────────────────────
@@ -289,8 +274,8 @@ async def test_async_caches_result(monkeypatch) -> None:
     clear_context_window_cache()
 
 
-async def test_async_known_table_fallback(monkeypatch) -> None:
-    """API returns no context → known table match."""
+async def test_async_missing_metadata_stays_unknown(monkeypatch) -> None:
+    """API and public catalog lack context → unknown."""
     from app.services import store
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -303,7 +288,7 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
     clear_context_window_cache()
     import app.runtime.llm.context_window as context_mod
 
-    async def no_catalog(_model_id):
+    async def no_catalog(_model_id, **_kwargs):
         return None
 
     monkeypatch.setattr(context_mod, "_fetch_public_catalog_context", no_catalog)
@@ -320,7 +305,7 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
     monkeypatch.setattr(OpenAICompatClient, "__init__", patched_init)
 
     result = await resolve_context_window("main")
-    assert result == 128_000
+    assert result is None
 
     clear_context_window_cache()
 
@@ -334,7 +319,7 @@ async def test_codex_subscription_uses_its_own_catalog(monkeypatch) -> None:
         assert model_id == "gpt-5.6-sol"
         return 272_000
 
-    async def unexpected_public(_model_id):
+    async def unexpected_public(_model_id, **_kwargs):
         raise AssertionError("Codex must not use the public API catalog")
 
     clear_context_window_cache()
@@ -388,7 +373,7 @@ async def test_unknown_model_uses_public_catalog(monkeypatch) -> None:
     monkeypatch.setattr(store, "list_models", lambda: [])
     monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", lambda self: _return_none())
 
-    async def catalog(_model_id):
+    async def catalog(_model_id, **_kwargs):
         return 262_144
 
     monkeypatch.setattr(context_mod, "_fetch_public_catalog_context", catalog)
@@ -439,8 +424,7 @@ def context_lookup(monkeypatch):
     monkeypatch.setattr(mod, "_get_profile", lambda *_args, **_kwargs: profile.copy())
     monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", fetch)
     monkeypatch.setattr(mod, "_fetch_codex_context", fetch)
-    monkeypatch.setattr(mod, "_resolve_seed", lambda _model: None)
-    monkeypatch.setattr(mod, "_fetch_public_catalog_context", lambda _model: _return_none())
+    monkeypatch.setattr(mod, "_fetch_public_catalog_context", lambda _model, **_kwargs: _return_none())
     yield mod, clock, profile, results
     clear_context_window_cache()
 
@@ -451,9 +435,9 @@ async def test_metadata_fallback_retries_without_waiting_an_hour(context_lookup,
     profile["auth_mode"] = auth_mode
     results.extend([None, 1_000_000])
 
-    assert await resolve_context_window("main") == _DEFAULT
+    assert await resolve_context_window("main") is None
     clock[0] = mod._CATALOG_RETRY_S - 1
-    assert await resolve_context_window("main") == _DEFAULT
+    assert await resolve_context_window("main") is None
     assert results == [1_000_000]
     clock[0] += 2
     assert await resolve_context_window("main") == 1_000_000
@@ -461,3 +445,94 @@ async def test_metadata_fallback_retries_without_waiting_an_hour(context_lookup,
 
 
 
+
+@pytest.fixture(autouse=True)
+def isolated_context_state(monkeypatch, tmp_path):
+    import app.runtime.llm.context_window as mod
+
+    monkeypatch.setattr(mod, "_state_path", lambda: tmp_path / "context.json")
+    clear_context_window_cache()
+    yield
+    clear_context_window_cache()
+
+
+async def test_switches_use_endpoint_metadata_and_survive_restart(monkeypatch):
+    import app.runtime.llm.context_window as mod
+
+    # Identical model IDs advertise different route limits, including a
+    # namespaced ID. Output limits must never replace context limits.
+    payload = {
+        "route-a": {"api": "https://proxy.test/v1", "models": {
+            "deepseek-v4.1-flash": {"limit": {"context": 765432, "output": 20000}},
+        }},
+        "route-b": {"api": "https://proxy.test/go/v1", "models": {
+            "deepseek-v4.1-flash": {"limit": {"context": 345678, "output": 10000}},
+            "next-model": {"limit": {"context": 543210}},
+        }},
+        "namespaced": {"api": "https://namespace.test/v1", "models": {
+            "vendor/deepseek-v4.1-flash": {"limit": {"context": 876543}},
+        }},
+    }
+    catalog_calls = []
+    real_client = httpx2.AsyncClient
+
+    def handler(request):
+        assert "authorization" not in request.headers
+        catalog_calls.append(request)
+        return httpx2.Response(200, json=payload)
+
+    monkeypatch.setattr(mod.httpx2, "AsyncClient", lambda **kw: real_client(transport=httpx2.MockTransport(handler), **kw))
+    monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", lambda self: _return_none())
+    profile = {"base_url": "https://proxy.test/v1", "model": "deepseek-v4.1-flash", "api_key": _KEY}
+    monkeypatch.setattr(mod, "_get_profile", lambda *a, **kw: profile.copy())
+    assert await resolve_context_window(profile=profile) == 765432
+    profile.update(base_url="https://proxy.test/go/v1", reasoning_effort="high")
+    assert await resolve_context_window(profile=profile) == 345678
+    profile.update(model="next-model")
+    assert await resolve_context_window(profile=profile) == 543210
+    profile.update(base_url="https://namespace.test/v1", model="vendor/deepseek-v4.1-flash")
+    assert await resolve_context_window(profile=profile) == 876543
+    assert await resolve_context_window(profile={**profile, "model": "deepseek-v4.1-flash"}) == 876543
+    profile.update(base_url="https://proxy.test/v1", model="deepseek-v4.1-flash", reasoning_effort="low")
+    assert await resolve_context_window(profile=profile) == 765432
+    assert resolve_context_window_sync(session_id="selected-session") == 765432
+    clear_context_window_cache()
+    assert await resolve_context_window(profile=profile) == 765432
+    assert len(catalog_calls) == 1  # Disk metadata survived the process reset.
+
+
+async def test_confirmed_limit_survives_restart_but_not_route_or_credential_change(monkeypatch):
+    import app.runtime.llm.context_window as mod
+
+    profile = {"base_url": _BASE, "model": "custom-model", "api_key": _KEY}
+    results = [654321, None, None, None]
+
+    async def fetch(self):
+        return results.pop(0)
+
+    monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", fetch)
+    monkeypatch.setattr(mod, "_fetch_public_catalog_context", lambda *a, **kw: _return_none())
+    assert await resolve_context_window(profile=profile) == 654321
+    clear_context_window_cache()
+    assert await resolve_context_window(profile=profile) == 654321
+    assert await resolve_context_window(profile={**profile, "api_key": "different"}) is None
+    assert await resolve_context_window(profile={**profile, "base_url": "https://another.test/v1"}) is None
+
+
+async def test_picker_retries_unknown_metadata_immediately(context_lookup):
+    mod, clock, profile, results = context_lookup
+    results.extend([None, 432100])
+    assert await resolve_context_window(profile=profile) is None
+    assert await resolve_context_window(profile=profile, refresh_unknown=True) == 432100
+
+
+def test_provider_model_prefixes_and_ambiguous_aliases_are_not_context_matches():
+    rows = [{"id": "gpt-4", "context_window": 8192},
+            {"id": "gpt-4.1", "context_window": 1000000}]
+    assert _match_model_context(rows, "gpt-4.1-new-version") is None
+    assert _match_model_context(rows, "gpt-4") == 8192
+    assert _match_model_context(rows, "vendor/gpt-4.1") == 1000000
+    assert _match_model_context([
+        {"id": "one/model", "context_window": 32000},
+        {"id": "two/model", "context_window": 64000},
+    ], "model") is None

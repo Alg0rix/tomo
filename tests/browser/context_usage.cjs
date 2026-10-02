@@ -45,14 +45,22 @@ const { chromium } = require('playwright');
     });
     assert.equal(await trigger.getAttribute('title'), '500K / 128K tokens');
 
+    // Missing metadata must never masquerade as a 128K context window.
+    await page.evaluate(() => window.TomoContextUsage.refresh(document.querySelector('#chat')));
+    await page.evaluate(() => window.requests[4].resolve({ used: 20000, limit: null, percent: 0, prompt_budget: 24000 }));
+    await page.waitForFunction(() => document.querySelector('.ctx-usage-trigger').title === '20K tokens · context limit unknown');
+    assert.equal(await page.locator('.ctx-usage-pct').textContent(), '?');
+    assert.equal(await page.locator('.ctx-pop-pct').textContent(), 'Context limit unknown');
+    assert.match(await page.locator('.ctx-pop-budget').textContent(), /metadata unavailable/);
+
     await page.evaluate(() => {
       const wrap = document.querySelector('#chat');
       window.TomoContextUsage.refresh(wrap);
       window.TomoContextUsage.destroy(wrap);
-      window.requests[4].resolve({ used: 10, limit: 1000, percent: 1 });
+      window.requests[5].resolve({ used: 10, limit: 1000, percent: 1 });
       window.TomoContextUsage.refresh(wrap);
     });
-    assert.equal(await page.evaluate(() => window.requests.length), 5);
+    assert.equal(await page.evaluate(() => window.requests.length), 6);
     assert.equal(await page.locator('.ctx-usage-popover').count(), 0);
     console.log('Context refresh, out-of-order responses, smaller windows, session changes and cleanup passed');
   } finally {

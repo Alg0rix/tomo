@@ -66,6 +66,19 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]], tools: list[dict] | N
     return sum(_msg_tokens(message) for message in messages) + tool_tokens
 
 
+def fallback_prompt_budget(messages: list[dict[str, Any]], tools: list[dict] | None = None) -> int:
+    """A soft compaction target, not a claim about an unknown model's limit.
+
+    Keep required input even when it exceeds the default target. Only a known
+    provider limit can justify rejecting instructions, images or a new request.
+    """
+    required = [message for message in messages if message.get("role") in {"system", "developer"}]
+    latest = next((message for message in reversed(messages) if message.get("role") == "user"), None)
+    if latest is not None:
+        required.append(latest)
+    return max(_DEFAULT_SOFT_LIMIT_TOKENS, estimate_prompt_tokens(required, tools))
+
+
 def _summarize_prefix(messages: list[dict[str, Any]]) -> str:
     lines = [
         "[SYSTEM] Earlier conversation was compressed to save context. "

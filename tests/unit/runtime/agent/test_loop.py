@@ -992,3 +992,24 @@ async def test_nested_worker_leaves_composer_steer_for_parent(monkeypatch) -> No
     assert len(steers) == 1
     assert steers[0]["content"] == "Keep production safe"
     assert _final(parent_events)["content"] == "Parent applied the guidance"
+
+
+async def test_unknown_context_learns_limit_from_overflow_and_retries():
+    class UnknownLimitLLM(ContextCapturingLLM):
+        context_window = None
+
+        async def complete(self, messages, tools=None):
+            self.prompts.append([dict(message) for message in messages])
+            if len(self.prompts) == 1:
+                raise RuntimeError("maximum context length is 8192 tokens")
+            return text_reply("Fits now.")
+
+    llm = UnknownLimitLLM()
+    events = await _collect("Continue.", llm=llm, tools=[], system_prompt="Instructions", history=[
+        {"type": "user", "content": "X" * 40000},
+        {"type": "final", "content": "Old reply"},
+    ])
+    assert _final(events)["content"] == "Fits now."
+    assert llm.context_window == 8192
+    assert len(llm.prompts) == 2
+    assert estimate_prompt_tokens(llm.prompts[1]) <= prompt_budget(8192)

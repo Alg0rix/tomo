@@ -370,10 +370,12 @@ class SessionModelIn(BaseModel):
 
 async def _warm_session_model_metadata(session_id: str) -> None:
     from app.runtime.llm.provider_catalog import ensure_model_metadata
+    from app.runtime.llm.context_window import resolve_context_window
 
     profile = store.resolve_session_llm_profile(session_id)
     if profile:
         await ensure_model_metadata(profile.get("base_url") or "")
+        await resolve_context_window(profile=profile, refresh_unknown=True)
 
 
 @router.put("/sessions/{session_id}/model")
@@ -648,7 +650,7 @@ async def session_context_usage(session_id: str, request: Request, _: AuthDep):
     limit = await resolve_context_window(agent_id, session_id=session_id)
     from app.runtime.agent.metrics import session_usage
 
-    return {**compute_context_usage(agent_id, history, limit=limit), "usage": session_usage(history)}
+    return {**compute_context_usage(agent_id, history, limit=limit, session_id=session_id), "usage": session_usage(history)}
 
 
 @router.post("/sessions/{session_id}/chat/clear")
