@@ -1,5 +1,6 @@
 """Real subprocess coverage of lifecycle and live bounded output."""
 import asyncio
+import shlex
 import time
 
 import pytest
@@ -49,11 +50,23 @@ def test_multiple_jobs_survive_turn_and_capture_real_origin(sid):
     assert a['continuation_status'] == b['continuation_status'] == 'pending'
 
 
-def test_drains_running_pipes_and_combined_cap(sid):
-    item = manager.start("python3 -c 'import os,time; os.write(1,b\"x\"*1500000); os.write(2,b\"y\"*1500000); print(\"tail\",flush=True); time.sleep(.5)'")
-    time.sleep(.3)
-    running = manager.get_job(sid, item['id'])
-    assert running['log_cursor'] > 0
+def test_drains_running_pipes_and_combined_cap(sid, tmp_path):
+    release = tmp_path / 'release'
+    code = ('import os,time; from pathlib import Path; '
+            'os.write(1,b"x"*1500000); os.write(2,b"y"*1500000); '
+            f'print("tail",flush=True)\nwhile not Path({str(release)!r}).exists(): time.sleep(.02)')
+    item = manager.start(f'python3 -c {shlex.quote(code)}')
+    try:
+        deadline = time.monotonic() + 10
+        running = manager.get_job(sid, item['id'])
+        while 'tail' not in running['stdout'] and time.monotonic() < deadline:
+            time.sleep(.02)
+            running = manager.get_job(sid, item['id'])
+        assert 'tail' in running['stdout']
+        assert running['status'] == 'running'
+        assert running['log_cursor'] >= 3000000
+    finally:
+        release.touch()
     done = wait_terminal(sid, item['id'])
     assert done['status'] == 'succeeded'
     assert done['truncated']
