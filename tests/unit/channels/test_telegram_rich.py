@@ -225,6 +225,8 @@ async def test_failed_final_delivery_keeps_streaming_preview(settings):
     sid = store.get_or_create_session("main", "tg_-100")
     ui = TelegramTurnUI(api, -100, sid)
     try:
+        await ui.start()
+        status_id = ui.status_id
         ui.answer = "Preview"
         await ui.refresh()
         preview_id = max(bot.messages)
@@ -232,29 +234,33 @@ async def test_failed_final_delivery_keeps_streaming_preview(settings):
         with pytest.raises(TelegramAPIError):
             await ui.finish("Final")
         assert "Preview" in bot.messages[preview_id]["rich_message"]["html"]
+        assert status_id in bot.messages
         assert not any(m == "deleteMessage" for m, _ in bot.calls)
     finally:
         await ui.close()
         await api.aclose()
 
 
-async def test_private_streaming_preview_keeps_approval_status_card(settings):
+async def test_private_streaming_preview_removes_status_after_final_delivery(settings):
     bot = RichBot()
     api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_42")
     ui = TelegramTurnUI(api, 42, sid, actor_id=42)
     ui.answer = "# Preview\n\nText"
     await ui.start()
+    status_id = ui.status_id
     try:
         await ui.refresh()
+        assert status_id in bot.messages
         await ui.refresh()
         await ui.finish("# Final\n\nComplete answer")
+        await ui.close()
         assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
         assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 2
         answers = [p for p in bot.messages.values() if "rich_message" in p]
         assert len(answers) == 1
         assert "Complete answer" in answers[0]["rich_message"]["html"]
-        assert bot.messages[ui.status_id]["reply_markup"]["inline_keyboard"] == []
+        assert status_id not in bot.messages
     finally:
         await ui.close()
         await api.aclose()

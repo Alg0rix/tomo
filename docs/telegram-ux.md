@@ -9,7 +9,7 @@ Telegram progress card.
 Each model round streams into one quiet editable preview. Tool commentary turns
 that preview into a single progress message, then the next round starts fresh.
 The completed answer is sent as a new message below progress and approval cards;
-its temporary preview is removed only after successful delivery. Overflow arrives
+its temporary preview and activity card are removed only after successful delivery. Overflow arrives
 in additional messages with notifications disabled. Markdown supports headings,
 emphasis, lists, links, quotes, inline code, and fenced code; tables become labeled
 rows for mobile screens. Each long-answer chunk preserves Unicode, escaped

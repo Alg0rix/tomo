@@ -791,6 +791,10 @@ class TelegramTurnUI:
             with contextlib.suppress(Exception):
                 await self.api.delete_message(self.chat_id, self.answer_id)
             self.answer_id = None
+        if self.status_id is not None:
+            with contextlib.suppress(Exception):
+                await self.api.delete_message(self.chat_id, self.status_id)
+                self.status_id = None
 
     async def close(self) -> None:
         if self._ticker and not self._ticker.done():

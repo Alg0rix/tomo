@@ -219,7 +219,8 @@ async def test_stop_button_interrupts_approval_wait_and_releases_lease(
         await dispatcher.dispatch(message("inspect"))
         await until(lambda: 42 in dispatcher.uis and bool(dispatcher.uis[42].prompts))
         ui = dispatcher.uis[42]
-        await dispatcher.dispatch(bot.callback(f"ts:{ui.token}", ui.status_id))
+        status_id = ui.status_id
+        await dispatcher.dispatch(bot.callback(f"ts:{ui.token}", status_id))
         await until(lambda: not dispatcher.tasks)
         assert hitl.list_pending_for_session(ui.session_id) == {
             "approvals": [],
@@ -231,7 +232,7 @@ async def test_stop_button_interrupts_approval_wait_and_releases_lease(
             for m, p in bot.calls
             if m in {"sendMessage", "editMessageText"}
         )
-        assert bot.messages[ui.status_id]["reply_markup"]["inline_keyboard"] == []
+        assert status_id not in bot.messages
     finally:
         await dispatcher.close()
         await api.aclose()
