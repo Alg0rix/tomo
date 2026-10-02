@@ -804,6 +804,46 @@ async def delete_user(user_id: str, request: Request, _: AuthDep):
     return {"success": True}
 
 
+def _require_link_account(request: Request, user_id: str) -> None:
+    if session_user_id(request) != user_id and not can_manage_telegram(request):
+        raise HTTPException(status_code=403, detail="Cannot manage another account's Telegram links")
+    if not store.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+@router.get("/users/{user_id}/telegram")
+async def list_telegram_links(user_id: str, request: Request, _: AuthDep):
+    _require_link_account(request, user_id)
+    from app.services.telegram_accounts import list_links
+
+    return {"links": list_links(user_id)}
+
+
+@router.post("/users/{user_id}/telegram/link-code")
+async def create_telegram_link_code(user_id: str, request: Request, _: AuthDep):
+    _require_link_account(request, user_id)
+    from app.services.telegram_accounts import create_code
+
+    try:
+        return create_code(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/users/{user_id}/telegram/{chat_id}")
+async def unlink_telegram(user_id: str, chat_id: str, request: Request, _: AuthDep):
+    _require_link_account(request, user_id)
+    from app.services.telegram_accounts import unlink
+
+    try:
+        removed = unlink(user_id, chat_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail="Telegram link not found")
+    return {"success": True}
+
+
 @router.get("/api-keys")
 async def list_api_keys(_: AuthDep, user_id: str | None = None):
     return {"keys": store.list_api_keys(user_id)}

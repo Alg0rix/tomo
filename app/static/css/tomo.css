@@ -5535,6 +5535,7 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
   flex-wrap: wrap;
   padding: 8px 0 10px;
 }
+.machine-reveal[hidden] { display: none; }
 .machine-reveal code {
   flex: 1;
   min-width: 0;

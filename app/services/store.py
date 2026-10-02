@@ -286,6 +286,8 @@ class Store:
         user_id: str = "web",
         coordinator_id: str | None = None,
         workplace_id: str | None = None,
+        *,
+        telegram_chat_id: str | None = None,
     ) -> str:
         with self._lock:
             return sessions_store.create_swarm_session(
@@ -294,6 +296,7 @@ class Store:
                 user_id,
                 coordinator_id,
                 workplace_id=workplace_id,
+                telegram_chat_id=telegram_chat_id,
             )
 
     def set_session_workplace(
@@ -374,13 +377,13 @@ class Store:
         with self._lock:
             return sessions_store.set_session_title(self._conn, session_id, title)
 
-    def get_or_create_session(self, agent_id: str, user_id: str) -> str:
+    def get_or_create_session(self, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str:
         with self._lock:
-            return sessions_store.get_or_create_session(self._conn, agent_id, user_id)
+            return sessions_store.get_or_create_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
 
-    def find_session(self, agent_id: str, user_id: str) -> str | None:
+    def find_session(self, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str | None:
         with self._lock:
-            return sessions_store.find_session(self._conn, agent_id, user_id)
+            return sessions_store.find_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
 
     def delete_session(self, session_id: str) -> bool:
         with self._lock:

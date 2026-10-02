@@ -58,6 +58,25 @@
           <label class="toggle"><input type="checkbox" id="userEnabled" checked><span class="track"></span></label>
         </div>
       </div>
+      <div id="userTelegram" hidden>
+        <div class="machine-field">
+          <div class="machine-field-copy">
+            <div class="machine-field-name">Telegram identity</div>
+            <p class="machine-field-hint">Link your private DM to share this account’s memory. Conversations stay separate. The chat must also be in Channels → Allowed chat IDs.</p>
+          </div>
+          <div class="machine-field-control">
+            <button class="btn ghost sm" type="button" id="telegramLinkBtn">Link Telegram</button>
+            <button class="btn ghost sm" type="button" id="telegramLinksRefresh">Refresh links</button>
+          </div>
+        </div>
+        <div class="machine-reveal" id="telegramLinkCode" hidden role="status" aria-live="polite">
+          <p class="machine-note">Send this command in a private DM to your bot within 10 minutes. Keep it private. A new code replaces the previous one.</p>
+          <code class="mono" id="telegramLinkCommand"></code>
+          <button class="btn ghost sm" type="button" id="telegramLinkCopy">Copy command</button>
+        </div>
+        <div class="machine-ledger" id="telegramAccountLinks" aria-live="polite"></div>
+        <p class="machine-note">Existing Telegram memory is merged with a backup. Unlinking stops sharing; merged memory and history stay on this account.</p>
+      </div>
       <div class="machine-sheet-foot">
         <button class="btn ghost" type="button" id="userCancel">Cancel</button>
         <button class="btn primary sm" type="button" id="userSave">Save account</button>

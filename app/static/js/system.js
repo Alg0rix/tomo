@@ -476,7 +476,69 @@
     } catch (e) { if (userList) userList.innerHTML = '<div class="empty">Could not load accounts.</div>'; }
   }
 
+  var telegramLinkTimer;
+  var telegramSection = document.getElementById('userTelegram');
+  var telegramLinks = document.getElementById('telegramAccountLinks');
+  var telegramCode = document.getElementById('telegramLinkCode');
+  var telegramCommand = document.getElementById('telegramLinkCommand');
+
+  function clearTelegramCode() {
+    clearTimeout(telegramLinkTimer);
+    if (telegramCode) telegramCode.hidden = true;
+    if (telegramCommand) telegramCommand.textContent = '';
+  }
+
+  async function loadTelegramLinks() {
+    var uid = uId.value;
+    if (!uid || !telegramLinks) return;
+    telegramLinks.textContent = 'Loading…';
+    try {
+      var data = await Tomo.api('/api/users/' + encodeURIComponent(uid) + '/telegram');
+      if (uId.value !== uid) return;
+      telegramLinks.innerHTML = (data.links || []).map(function (link) {
+        return '<div class="row"><div class="meta"><div class="title">Private Telegram DM</div><div class="desc mono">' + esc(link.chat_id) + '</div></div><button class="btn ghost sm" type="button" data-unlink-chat="' + esc(link.chat_id) + '">Unlink</button></div>';
+      }).join('') || '<div class="empty">No Telegram account linked.</div>';
+      if ((data.links || []).length) clearTelegramCode();
+    } catch (err) {
+      if (uId.value === uid) telegramLinks.textContent = err.message || 'Could not load Telegram links.';
+    }
+  }
+
+  var telegramLinkBtn = document.getElementById('telegramLinkBtn');
+  if (telegramLinkBtn) telegramLinkBtn.addEventListener('click', async function () {
+    var uid = uId.value;
+    telegramLinkBtn.disabled = true;
+    clearTelegramCode();
+    try {
+      var data = await Tomo.api('/api/users/' + encodeURIComponent(uid) + '/telegram/link-code', {method: 'POST'});
+      if (uId.value !== uid || uMode.value !== 'edit') return;
+      telegramCommand.textContent = data.command;
+      telegramCode.hidden = false;
+      telegramLinkTimer = setTimeout(clearTelegramCode, Math.max(0, data.expires_at * 1000 - Date.now()));
+    } catch (err) { Tomo.toast(err.message || 'Could not generate link code', 'err'); }
+    finally { telegramLinkBtn.disabled = false; }
+  });
+  var telegramRefresh = document.getElementById('telegramLinksRefresh');
+  if (telegramRefresh) telegramRefresh.addEventListener('click', loadTelegramLinks);
+  var telegramCopy = document.getElementById('telegramLinkCopy');
+  if (telegramCopy) telegramCopy.addEventListener('click', async function () {
+    try { await navigator.clipboard.writeText(telegramCommand.textContent); Tomo.toast('Command copied', 'ok'); }
+    catch (err) { Tomo.toast('Select and copy the command manually', 'err'); }
+  });
+  if (telegramLinks) telegramLinks.addEventListener('click', async function (event) {
+    var btn = event.target.closest('[data-unlink-chat]');
+    if (!btn || !confirm('Unlink this Telegram DM? Merged memory stays on this account.')) return;
+    btn.disabled = true;
+    try {
+      await Tomo.api('/api/users/' + encodeURIComponent(uId.value) + '/telegram/' + encodeURIComponent(btn.dataset.unlinkChat), {method: 'DELETE'});
+      Tomo.toast('Telegram unlinked', 'ok');
+      loadTelegramLinks();
+    } catch (err) { Tomo.toast(err.message || 'Could not unlink Telegram', 'err'); btn.disabled = false; }
+  });
+
   function openUserForm(mode, u) {
+    clearTelegramCode();
+    if (telegramSection) telegramSection.hidden = mode !== 'edit';
     uMode.value = mode;
     document.getElementById('userFormTitle').textContent = mode === 'add' ? 'New account' : 'Inspect account';
     if (mode === 'add') {
@@ -489,6 +551,7 @@
       uPass.value = ''; uUsername.disabled = true; uEnabled.checked = !!u.enabled;
       if (uEnabledRow) uEnabledRow.style.display = '';
       markSelected(userList, u.id);
+      loadTelegramLinks();
     }
     userFormCard.classList.remove('hidden');
     var focusEl = mode === 'add' ? uUsername : uDisplay;

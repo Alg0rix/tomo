@@ -1,8 +1,8 @@
 """Telegram bot channel — long-poll getUpdates → session turn → reply.
 
 Token lives in settings (``telegram_bot_token``, Fernet at rest). Never log the
-token. Inbound text maps ``chat_id`` → ``user_id=tg_<chat_id>`` session via the
-coordinator agent, then reuses the web background turn manager and event stream.
+token. Inbound chats use a linked account (or ``tg_<chat_id>`` when unlinked),
+with a separate delivery destination. Turns reuse the web background manager.
 
 HTTP goes through :mod:`httpx` so tests inject ``MockTransport`` (no network).
 """
@@ -42,8 +42,10 @@ def telegram_status(settings: dict[str, Any] | None = None) -> str:
 
 
 def user_id_for_chat(chat_id: int | str) -> str:
-    """Stable Tomo user id for a Telegram chat."""
-    return f"tg_{chat_id}"
+    """Stable account id when linked, otherwise the chat's isolated identity."""
+    from app.services.telegram_accounts import user_id_for_chat as resolve
+
+    return resolve(chat_id)
 
 
 def extract_text_message(update: dict[str, Any]) -> tuple[int, str] | None:
@@ -553,6 +555,7 @@ class TelegramAPI:
                     {"command": "smart", "description": "Use smart tool approvals"},
                     {"command": "help", "description": "Show commands and guidance"},
                     {"command": "id", "description": "Show this chat ID"},
+                    {"command": "link", "description": "Link to your Tomo account using a code"},
                 ]
             },
         )
@@ -639,7 +642,12 @@ def chat_is_allowed(chat_id: int | str) -> bool:
         allowed = normalize_telegram_chat_ids(
             store.get_settings().get("telegram_allowed_chat_ids", [])
         )
-        return str(int(chat_id)) in allowed
+        if str(int(chat_id)) not in allowed:
+            return False
+        from app.services.telegram_accounts import linked_account
+
+        account = linked_account(chat_id)
+        return account is None or bool(account['enabled'])
     except (ValueError, TypeError):
         return False
 
@@ -663,6 +671,8 @@ async def handle_inbound_text(
     session_id: str | None = None,
     attachment_ids: list[str] | None = None,
     as_content: bool = False,
+    chat_type: str | None = None,
+    sender_id: int | None = None,
 ) -> dict[str, Any]:
     """Map chat → session, run one turn, optionally reply on Telegram.
 
@@ -686,6 +696,21 @@ async def handle_inbound_text(
         if api is not None and send_reply:
             await api.send_message(chat_id, reply)
         return {"session_id": None, "reply": reply, "agent_id": None, "denied": True}
+    if command == "/link":
+        from app.services.telegram_accounts import redeem_code
+
+        parts = text.split()
+        try:
+            if len(parts) != 2:
+                raise ValueError('Use /link <code> from Accounts → Link Telegram')
+            result = await redeem_code(int(chat_id), parts[1], chat_type=chat_type, sender_id=sender_id)
+            account = store.get_user(result['user_id'])
+            reply = f"Linked to {account['username']}. Web and Telegram now share your memory."
+        except ValueError as exc:
+            reply = str(exc)
+        if api is not None and send_reply:
+            await api.send_message(chat_id, reply)
+        return {"session_id": None, "reply": reply, "agent_id": None}
     resolved = _resolve_agent_id(agent_id)
     if not resolved:
         raise ValueError("No agent available for Telegram turns")
@@ -693,12 +718,17 @@ async def handle_inbound_text(
     if command == "/new":
         from app.runtime.permissions.modes import get_effective_mode, set_session_mode
 
-        previous = store.find_session(resolved, user_id)
+        previous = store.find_session(resolved, user_id, telegram_chat_id=str(chat_id))
         mode = get_effective_mode(previous)
-        session_id = store.create_swarm_session([resolved], user_id=user_id)
+        session_id = store.create_swarm_session([resolved], user_id=user_id, telegram_chat_id=str(chat_id))
         set_session_mode(session_id, mode)
     elif session_id is None:
-        session_id = store.get_or_create_session(resolved, user_id)
+        session_id = store.get_or_create_session(resolved, user_id, telegram_chat_id=str(chat_id))
+    else:
+        session = store.get_session(session_id)
+        if (not session or session['user_id'] != user_id
+                or session.get('telegram_chat_id') != str(chat_id)):
+            raise ValueError('Session does not belong to this Telegram chat')
     logger.info(
         "telegram inbound chat_id=%s session_id=%s agent_id=%s chars=%s",
         chat_id,
@@ -719,6 +749,7 @@ async def handle_inbound_text(
             "/new — start a fresh conversation\n/stop — stop the current task\n/status — show progress\n"
             "/compact — summarize older messages to free context\n"
             "/manual, /smart — set approval mode\n/help — show this guide\n/id — show this chat's ID\n"
+            "/link <code> — share memory with your web account (DM only)\n"
             "/steer <text> — guide the current task\n/queue <text> — run another task afterwards\n"
             "/queue list, /queue clear — manage waiting tasks\n/interrupt <text> — replace current and waiting tasks\n"
             "/mode steer|queue|interrupt — choose how extra messages behave\n"
@@ -825,6 +856,9 @@ async def process_update(
         api=api,
         agent_id=agent_id,
         send_reply=send_reply,
+        chat_type=((update.get('message') or {}).get('chat') or {}).get('type'),
+        sender_id=((update.get('message') or {}).get('from') or {}).get('id'),
+        as_content='message' not in update,
     )
 
 
@@ -862,7 +896,9 @@ class TelegramDispatcher:
                 continue
             chat_id = delivery["chat_id"]
             session = store.get_session(request["session_id"])
-            if not chat_is_allowed(chat_id) or not session or session["user_id"] != user_id_for_chat(chat_id):
+            if (not chat_is_allowed(chat_id) or not session
+                    or session["user_id"] != user_id_for_chat(chat_id)
+                    or session.get('telegram_chat_id') != str(chat_id)):
                 finish_request(request)
                 continue
             if chat_id in self.tasks or len(self.tasks) >= self.MAX_ACTIVE_CHATS:
@@ -962,7 +998,7 @@ class TelegramDispatcher:
                 thread_id=thread_id,
             )
             return
-        session_id = store.find_session(resolved, user_id_for_chat(chat_id))
+        session_id = store.find_session(resolved, user_id_for_chat(chat_id), telegram_chat_id=str(chat_id))
         if not session_id:
             await self.api.send_message(
                 chat_id,
@@ -1197,6 +1233,16 @@ class TelegramDispatcher:
                 thread_id=thread_id,
             )
             return
+        if command == "/link":
+            if busy:
+                await self.api.send_message(chat_id, 'Finish or stop the current task before linking.')
+                return
+            result = await handle_inbound_text(
+                chat_id, text, agent_id=self.agent_id, send_reply=False,
+                chat_type=(message.get('chat') or {}).get('type'), sender_id=sender_id,
+            )
+            await self.api.send_message(chat_id, result['reply'], thread_id=thread_id)
+            return
         if command == "/compact":
             if busy and (sender_id, thread_id) != self.actors.get(chat_id):
                 await self.api.send_message(
@@ -1381,7 +1427,9 @@ class TelegramDispatcher:
             )
             if not resolved:
                 raise ValueError("No coordinator")
-            sid = recovery["session_id"] if recovery else store.get_or_create_session(resolved, user_id_for_chat(chat_id))
+            sid = recovery["session_id"] if recovery else store.get_or_create_session(
+                resolved, user_id_for_chat(chat_id), telegram_chat_id=str(chat_id)
+            )
             ui = TelegramTurnUI(
                 self.api,
                 chat_id,

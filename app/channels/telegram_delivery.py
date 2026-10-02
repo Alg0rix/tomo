@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from app.channels.delivery import DeliveryBlocked
-from app.channels.telegram import TelegramAPI, chat_is_allowed
+from app.channels.telegram import TelegramAPI, chat_is_allowed, user_id_for_chat
 from app.channels.telegram_context import bind_turn, current_turn, reset_turn
 from app.channels.telegram_ui import TelegramTurnUI
 from app.services.store import store
@@ -26,6 +26,7 @@ def _check_target(target: dict[str, Any]) -> str:
         or target.get("bot") != _bot_identity(token)
         or not isinstance(target.get("chat_id"), int)
         or not chat_is_allowed(target["chat_id"])
+        or (target.get('user_id') is not None and target['user_id'] != user_id_for_chat(target['chat_id']))
     ):
         raise DeliveryBlocked(
             "Telegram destination revoked, disabled, or bot identity changed"
@@ -78,7 +79,14 @@ class TelegramDeliveryChannel:
             return None
         if ui.finished or ui.stop_requested or not chat_is_allowed(ui.chat_id):
             raise DeliveryBlocked("Telegram turn is no longer authorized")
+        session = store.get_session(ui.session_id)
+        owner = ((ui.api.target.get('user_id') or user_id_for_chat(ui.chat_id))
+                 if isinstance(ui.api, ScheduledTelegramAPI)
+                 else session['user_id'] if session else None)
+        if owner != user_id_for_chat(ui.chat_id):
+            raise DeliveryBlocked('Telegram account link changed')
         return {
+            "user_id": owner,
             "chat_id": ui.chat_id,
             "thread_id": ui.thread_id,
             "bot": _bot_identity(ui.api._token),
@@ -86,6 +94,8 @@ class TelegramDeliveryChannel:
 
     @asynccontextmanager
     async def open(self, target: dict[str, Any], session_id: str):
+        # Scheduled jobs deliberately own isolated scheduler:<job> sessions.
+        # Authorization follows the captured account, not that execution id.
         api = ScheduledTelegramAPI(target)
         ui = TelegramTurnUI(
             api, target["chat_id"], session_id, thread_id=target.get("thread_id")

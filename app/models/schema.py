@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     message_count  INTEGER NOT NULL DEFAULT 0,
     workplace_id   TEXT NOT NULL DEFAULT '',
     reasoning_effort TEXT NOT NULL DEFAULT '',
+    telegram_chat_id TEXT,
     created_at     REAL NOT NULL DEFAULT 0,
     updated_at     REAL NOT NULL DEFAULT 0
 );
@@ -225,6 +226,18 @@ CREATE TABLE IF NOT EXISTS users (
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    REAL NOT NULL DEFAULT 0,
     updated_at    REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS telegram_account_links (
+    chat_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS telegram_link_codes (
+    code_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    expires_at REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -641,6 +654,9 @@ def migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE agents ADD COLUMN artifacts_enabled INTEGER NOT NULL DEFAULT 1"
         )
     sess_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if "telegram_chat_id" not in sess_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN telegram_chat_id TEXT")
+        conn.execute("UPDATE sessions SET telegram_chat_id=substr(user_id,4) WHERE user_id GLOB 'tg_*'")
     if "workplace_id" not in sess_cols:
         conn.execute(
             "ALTER TABLE sessions ADD COLUMN workplace_id TEXT NOT NULL DEFAULT ''"

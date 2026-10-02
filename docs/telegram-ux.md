@@ -54,11 +54,47 @@ image without compression. Captions are plain text, up to 1024 characters. The
 tool is unavailable in web turns and uses the existing bot transport—no token,
 shell helper, or public tunnel needs to be given to the model.
 
+## Link a Telegram identity to a login account
+
+Login accounts have immutable internal IDs (`usr_…`), independent of usernames.
+The bootstrap admin retains its existing `usr_admin` ID. Linking uses that ID,
+not an admin role, username, or the allowlist.
+
+1. Add your private DM's `/id` to **System → Channels → Allowed chat IDs**.
+2. Open **System → Accounts**, inspect your account, and select **Link Telegram**.
+3. Copy `/link <code>` and send it in a private DM to the configured bot.
+4. Select **Refresh links** to see the linked chat ID.
+
+Codes are random, stored only as hashes, expire after 10 minutes, and can be used
+once. Generating another code invalidates the previous one. Only the account
+owner or an administrator can create codes or manage links. The bot verifies
+that the DM sender is the private chat's owner. Groups, channels, edited messages,
+and media captions cannot redeem a code. Linking does not bypass the allowlist.
+Disabled linked accounts cannot use the bot.
+
+Web and linked Telegram sessions share one account-scoped vault, episodic memory,
+and searchable history, but keep separate conversations and delivery destinations.
+Old Telegram sessions adopt the account owner without changing their IDs, messages,
+attachments, or chat destination. Existing facts and timelines are merged without
+overwriting account pages or resurrecting retired facts. Before merging, both
+vaults are snapshotted under
+`$TOMO_HOME/state/telegram-memory-backups/tg_<chat-id>-to-<account-id>/`.
+Original Telegram documents are also retained; while linked, turns use the account
+vault. If both vaults contain different live claims, both are preserved for manual
+correction in Memory rather than guessing which is true.
+
+Finish running tasks before linking or unlinking. **Unlink** stops future sharing;
+merged memory and existing history remain on the login account. Subsequent DM
+messages use a separate unlinked identity again. Scheduled Telegram deliveries
+retain their captured owner and are blocked after unlinking or linking to a
+different account; recreate those jobs from the intended conversation.
+
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
 | `/id` | Show the current chat ID without running the model |
+| `/link <code>` | Link this private DM to a login account and merge its memory |
 | `/help`, `/start` | Show guidance |
 | `/new` | Fresh history, retained approval mode; stop active work first |
 | `/stop` | Cancel the current turn, clear waiting inputs, and wake pending waiters |

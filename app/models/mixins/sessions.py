@@ -22,6 +22,11 @@ def _new_sid() -> str:
     return f"ses_{uuid.uuid4().hex[:8]}"
 
 
+def _telegram_chat_id(user_id: str, chat_id: str | None) -> str | None:
+    # Unlinked Telegram callers historically use tg_<chat_id>.
+    return str(chat_id) if chat_id is not None else (user_id[3:] if user_id.startswith("tg_") else None)
+
+
 def session_agent_ids(conn: sqlite3.Connection, session_id: str) -> list[str]:
     """Stored membership only (may lag behind live enabled agents for swarms)."""
     rows = conn.execute(
@@ -134,8 +139,8 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "coordinator_id": coord,
         "is_swarm": is_swarm,
         "user_id": row["user_id"],
-        "channel": "telegram" if str(row["user_id"]).startswith("tg_") else "web",
-        "telegram_chat_id": str(row["user_id"])[3:] if str(row["user_id"]).startswith("tg_") else None,
+        "channel": "telegram" if row["telegram_chat_id"] is not None else "web",
+        "telegram_chat_id": row["telegram_chat_id"],
         "title": row["title"],
         "message_count": row["message_count"],
         "workplace_id": workplace_id,
@@ -198,6 +203,8 @@ def create_swarm_session(
     user_id: str = "web",
     coordinator_id: str | None = None,
     workplace_id: str | None = None,
+    *,
+    telegram_chat_id: str | None = None,
 ) -> str:
     """Create a session.
 
@@ -238,8 +245,8 @@ def create_swarm_session(
     title = "New conversation"
     conn.execute(
         "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
-        "workplace_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        (sid, coord, user_id, title, 0, wid, now, now),
+        "workplace_id, created_at, updated_at, telegram_chat_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        (sid, coord, user_id, title, 0, wid, now, now, _telegram_chat_id(user_id, telegram_chat_id)),
     )
     conn.executemany(
         "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",
@@ -325,23 +332,23 @@ def set_session_title(
     return get_session(conn, session_id)
 
 
-def find_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str | None:
+def find_session(conn: sqlite3.Connection, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str | None:
     """Return the most recent single-agent session id for (agent_id, user_id), or None.
 
     Looks up — never creates — so callers can no-op when no session exists.
     """
     row = conn.execute(
         "SELECT s.id FROM sessions s "
-        "WHERE s.user_id=? AND s.coordinator_id=? "
+        "WHERE s.user_id=? AND s.coordinator_id=? AND s.telegram_chat_id IS ? "
         "AND (SELECT COUNT(*) FROM session_agents sa WHERE sa.session_id=s.id)=1 "
         "AND EXISTS (SELECT 1 FROM session_agents sa WHERE sa.session_id=s.id AND sa.agent_id=?) "
         "ORDER BY s.updated_at DESC LIMIT 1",
-        (user_id, agent_id, agent_id),
+        (user_id, agent_id, _telegram_chat_id(user_id, telegram_chat_id), agent_id),
     ).fetchone()
     return row["id"] if row else None
 
 
-def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str) -> str:
+def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str:
     """Return the most recent single-agent session for (agent_id, user_id), or create one.
 
     Raises ``ValueError`` if ``agent_id`` does not exist, mirroring
@@ -350,15 +357,15 @@ def get_or_create_session(conn: sqlite3.Connection, agent_id: str, user_id: str)
     """
     if not conn.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
         raise ValueError(f"Agent does not exist: {agent_id}")
-    existing = find_session(conn, agent_id, user_id)
+    existing = find_session(conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
     if existing:
         return existing
     sid = _new_sid()
     now = _now()
     conn.execute(
         "INSERT INTO sessions (id, coordinator_id, user_id, title, message_count, "
-        "workplace_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        (sid, agent_id, user_id, "New conversation", 0, "", now, now),
+        "workplace_id, created_at, updated_at, telegram_chat_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        (sid, agent_id, user_id, "New conversation", 0, "", now, now, _telegram_chat_id(user_id, telegram_chat_id)),
     )
     conn.execute(
         "INSERT INTO session_agents (session_id, agent_id, position) VALUES (?,?,?)",
