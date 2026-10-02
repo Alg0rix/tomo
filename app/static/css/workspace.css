@@ -83,3 +83,35 @@
 @media (prefers-reduced-motion: reduce) {
   .workspace-nav button { transition: none; }
 }
+
+/* Durable job state remains visible while the agent is idle. */
+.background-job-card { margin: 8px 0 14px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.process-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.process-command, .process-detail-command { font: 12px var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.process-id { font: 10px var(--font-mono); color: var(--text-faint); overflow-wrap: anywhere; max-width: 40%; }
+.process-status { display: block; color: var(--text-dim); font: 11px var(--font-mono); margin: 7px 0; overflow-wrap: anywhere; }
+.process-outcome, .process-note { color: var(--text-faint); font: 12px var(--font-sans); line-height: 1.5; }
+.process-note { margin: 8px 16px; }
+.process-outcome:empty, .process-note:empty { display: none; }
+.process-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.process-button { display: inline-block; cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 6px 9px; background: var(--surface-2); color: var(--text); font: 12px var(--font-sans); text-decoration: none; }
+.process-button:hover { background: var(--surface); }
+.process-button:disabled { opacity: .45; cursor: default; }
+.process-button[hidden] { display: none; }
+.process-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; flex-shrink: 0; font: 13px var(--font-sans); }
+.process-list { max-height: 30%; overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.process-row { width: 100%; display: block; text-align: left; border: none; border-top: 1px solid var(--border); padding: 10px 16px; background: transparent; color: var(--text); cursor: pointer; }
+.process-row:hover, .process-row[aria-pressed="true"] { background: var(--surface-2); }
+.process-detail { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 14px 16px; gap: 4px; overflow-y: auto; color: var(--text); }
+.process-detail .process-note { margin: 4px 0; }
+.process-log { flex: 1; min-height: 120px; margin: 8px 0; padding: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font: 11px/1.6 var(--font-mono); color: var(--text); }
+.process-origin-highlight { outline: 2px solid var(--accent); outline-offset: 4px; }
+.process-row:focus-visible, .process-button:focus-visible, .process-log:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.background-job-card[data-status="failed"], .background-job-card[data-status="unknown"] { border-left: 3px solid var(--text-dim); }
+@media (max-width: 600px) {
+  .workspace-nav { padding-inline: 8px; gap: 0; overflow-x: auto; }
+  .workspace-nav button { padding: 8px; white-space: nowrap; }
+  .process-id { max-width: 30%; }
+  .process-button { min-height: 36px; }
+  .process-detail { padding: 12px; }
+}

@@ -109,7 +109,7 @@ func TestBackgroundKillChildren(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	snap, err := killBackgroundJob(id)
-	if err != nil || snap["status"] != "exited" {
+	if err != nil || snap["status"] != "stopped" {
 		t.Fatalf("kill: %v %v", snap, err)
 	}
 	time.Sleep(2100 * time.Millisecond)
@@ -151,5 +151,75 @@ func TestJobRetentionAndAdmission(t *testing.T) {
 	jobMu.Unlock()
 	if _, err := startBackgroundJob("true", ""); err == nil {
 		t.Fatal("retained job limit ignored")
+	}
+}
+
+func waitForBackgroundJob(t *testing.T, id string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		snap, err := getBackgroundJob(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snap["status"] != "running" {
+			return snap
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("background job did not finish")
+	return nil
+}
+
+func TestBackgroundNaturalExitCleansPipeHoldingChild(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TOMO_CONNECTOR_ROOT", dir)
+	result, err := startBackgroundJob("(trap '' TERM; sleep 2; echo survived > escaped) & printf final; exit 7", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result["id"].(string)
+	snap := waitForBackgroundJob(t, id)
+	if snap["status"] != "exited" || snap["returncode"] != 7 || snap["stdout"] != "final" {
+		t.Fatalf("natural exit lost result: %v", snap)
+	}
+	snap, err = killBackgroundJob(id)
+	if err != nil || snap["status"] != "exited" || snap["returncode"] != 7 {
+		t.Fatalf("late stop overwrote exit: %v %v", snap, err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(err) {
+		t.Fatal("child survived the shell's natural exit")
+	}
+}
+
+func TestBackgroundCorrelationIDAndContract(t *testing.T) {
+	t.Setenv("TOMO_CONNECTOR_ROOT", t.TempDir())
+	contract, err := processStatus(map[string]any{"id": "__contract__"})
+	if err != nil || contract.(map[string]any)["process_contract"] != 1 {
+		t.Fatal(contract, err)
+	}
+	id := "job_0123456789abcdef0123456789abcdef"
+	params := map[string]any{"id": id, "command": "exit 3"}
+	first, err := processStart(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := processStart(params)
+	if err != nil || first.(map[string]any)["id"] != second.(map[string]any)["id"] {
+		t.Fatal(second, err)
+	}
+	snap := waitForBackgroundJob(t, id)
+	if snap["returncode"] != 3 {
+		t.Fatal(snap)
+	}
+}
+
+func TestJobOutputRetainsTail(t *testing.T) {
+	var buf jobOutputBuffer
+	_, _ = buf.Write([]byte(strings.Repeat("x", maxOutputBytes)))
+	_, _ = buf.Write([]byte("FINAL"))
+	if !buf.Truncated() || len(buf.String()) != maxOutputBytes || !strings.HasSuffix(buf.String(), "FINAL") {
+		t.Fatal("background log does not retain bounded tail")
 	}
 }

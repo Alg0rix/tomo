@@ -7,6 +7,7 @@ from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
@@ -179,7 +180,10 @@ async def attach_terminal(websocket: WebSocket, session_id: str, terminal_id: st
         terminal.listeners.discard(queue)
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        with suppress(RuntimeError, WebSocketDisconnect):
-            await websocket.close()
+        # ASGI disconnect/shutdown can cancel this scope again at every await.
+        # Finish joining both workers before allowing that cancellation through.
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
+            with suppress(RuntimeError, WebSocketDisconnect):
+                await websocket.close()
         # Detaching never kills a PTY; explicit close/session deletion/shutdown do.

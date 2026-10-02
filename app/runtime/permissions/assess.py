@@ -36,6 +36,9 @@ def _commandish(tool: str, args: dict[str, Any]) -> str:
     if tool == "runpy":
         c = args.get("code")
         return c if isinstance(c, str) else ""
+    if tool == 'process':
+        action = str(args.get('action') or '').strip().lower()
+        return f"process:{action}:{str(args.get('id') or '').strip()}"
     if tool in {
         "read_file",
         "write_file",
@@ -96,6 +99,10 @@ def assess(
                 description=f"external MCP tool {tool}",
             )
         )
+
+    if tool == 'process' and str(arguments.get('action') or '').strip().lower() in {'kill', 'close-monitoring'}:
+        findings.append(Finding(kind='dangerous', key=_commandish(tool, arguments),
+                                description='change a background process or close its monitoring'))
 
     return Assessment(findings=findings)
 

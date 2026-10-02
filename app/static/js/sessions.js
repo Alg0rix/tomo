@@ -1248,6 +1248,16 @@
 
     // ── Process entries ─────────────────────────────────────────────
     entries.forEach(function (e, entryIdx) {
+      if (e.type === 'background_job') {
+        startTurn();
+        var jobMarker = document.createElement('p');
+        jobMarker.className = 'process-note background-job-marker';
+        jobMarker.dataset.backgroundJobIds = (e.background_job_ids || []).slice().sort().join(',');
+        jobMarker.textContent = e.content || 'Background jobs completed';
+        if (e.message_id) { jobMarker.id = 'message-' + e.message_id; jobMarker.dataset.messageId = String(e.message_id); }
+        turn.appendChild(jobMarker);
+        return;
+      }
       if (e.type === 'user') {
         var queryRecord = queryRecords[queryCursor] || {
           index: queryCursor,
@@ -1368,12 +1378,17 @@
           });
           bumpSwarmProgress(key);
         } else {
-          turn.appendChild(buildHistoryToolCard(
+          var historyTool = buildHistoryToolCard(
             e.function,
             e.params,
             toolCallStillRunning(entries, entryIdx),
             e.call_id || ''
-          ));
+          );
+          if (e.message_id) {
+            historyTool.dataset.messageId = String(e.message_id);
+            historyTool.id = 'message-' + e.message_id;
+          }
+          turn.appendChild(historyTool);
         }
         return;
       }
@@ -1972,9 +1987,14 @@
       sessions = data.sessions || [];
       renderList();
       var current = sessions.find(function (s) { return s.id === activeId; });
-      if (current && current.channel === 'telegram') {
-        applyChatHeader(current);
-        refetchHistory(current.id);
+      if (current) {
+        if (current.channel === 'telegram') applyChatHeader(current);
+        var selectedSession = current.id;
+        var needsContinuation = current.active_turn;
+        refetchHistory(selectedSession, function () {
+          if (activeId === selectedSession && chatWrap.dataset.sessionId === selectedSession &&
+              needsContinuation && chatHandle && chatHandle.resume) chatHandle.resume();
+        });
       }
     } catch (_) {} finally { channelRefreshBusy = false; }
   }, 5000);

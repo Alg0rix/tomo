@@ -89,6 +89,8 @@ class TelegramDeliveryChannel:
             "user_id": owner,
             "chat_id": ui.chat_id,
             "thread_id": ui.thread_id,
+            "actor_id": ui.actor_id,
+            "reply_to": ui.reply_to,
             "bot": _bot_identity(ui.api._token),
         }
 

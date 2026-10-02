@@ -1,26 +1,46 @@
 {
   "id": "process",
   "name": "Process",
-  "description": "List, inspect, or kill background bash jobs.",
+  "description": "Inspect session-owned background jobs, logs, stop, or close unknown monitoring.",
   "backend": "app.runtime.tools.process",
   "schema": {
     "type": "function",
     "function": {
       "name": "process",
-      "description": "Manage background jobs started with bash background=true. Actions: list, status, kill.",
+      "description": "Manage background jobs started in this conversation. list/status/log are reads. kill stops only this job. close-monitoring requires explicit user intent and confirm=true; it does not stop the process.",
       "parameters": {
         "type": "object",
         "properties": {
           "action": {
             "type": "string",
-            "description": "list | status | kill"
+            "enum": [
+              "list",
+              "status",
+              "kill",
+              "log",
+              "close-monitoring"
+            ]
           },
           "id": {
             "type": "string",
-            "description": "Job id (required for status/kill)."
+            "description": "Canonical job ID, required except for list."
+          },
+          "tail": {
+            "type": "integer",
+            "description": "Maximum retained tail characters for log (default 65536, capped at 1 MiB)."
+          },
+          "cursor": {
+            "type": "integer",
+            "description": "Last observed log cursor; unchanged logs return empty text."
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "Explicit user confirmation to close Unknown monitoring; the process may still run."
           }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     }
   }

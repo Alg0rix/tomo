@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 from pathlib import Path
 from uuid import uuid4
@@ -263,7 +264,7 @@ async def update_agent(agent_id: str, body: AgentUpdate, _: AuthDep):
 
 @router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str, _: AuthDep):
-    if not store.delete_agent(agent_id):
+    if not await asyncio.to_thread(store.delete_agent, agent_id):
         raise HTTPException(status_code=404, detail="Agent not found")
     return {"success": True}
 
@@ -423,7 +424,7 @@ async def set_session_workplace_api(
 @router.delete("/sessions/{session_id}")
 async def delete_session_api(session_id: str, request: Request, _: AuthDep):
     require_owned_session(request, session_id)
-    if not store.delete_session(session_id):
+    if not await asyncio.to_thread(store.delete_session, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     from app.services.terminals import terminal_manager
 

@@ -74,3 +74,22 @@ async def test_manual_hitl_once_allows(tmp_path: Path) -> None:
     assert d.allowed
     assert d.grant is not None
     assert not d.needs_hitl
+
+
+@pytest.mark.parametrize('action', ['kill', ' KILL ', 'Close-Monitoring', ' close-monitoring '])
+async def test_process_mutations_require_current_permission(tmp_path, action):
+    set_session_mode('process-permission', 'manual')
+    decision = await decide('process', {'action': action, 'id': ' job_abc '},
+                            work_root=tmp_path, session_id='process-permission')
+    assert not decision.allowed and decision.needs_hitl
+    assert decision.findings[0].key == f'process:{action.strip().lower()}:job_abc'
+
+
+async def test_process_exact_deny_cannot_be_bypassed_by_spacing(tmp_path, monkeypatch):
+    from app.runtime.permissions import gate
+
+    set_session_mode('process-permission', 'off')
+    monkeypatch.setattr(gate, '_deny_globs', lambda: ['process:kill:job_abc'])
+    decision = await decide('process', {'action': ' KILL ', 'id': ' job_abc '},
+                            work_root=tmp_path, session_id='process-permission')
+    assert not decision.allowed and any(f.kind == 'user_deny' for f in decision.findings)

@@ -20,7 +20,7 @@ from typing import Any
 
 _NEW_SESSION_TITLES = ("New conversation", "New swarm chat")
 _TITLE_MAX_LEN = 60
-_META_KEYS = ("call_id", "delegate_call_id", "execution_mode", "metrics", "steered", "steer_id")
+_META_KEYS = ("call_id", "delegate_call_id", "execution_mode", "metrics", "steered", "steer_id", "background_job_ids")
 
 
 def _now() -> float:
@@ -85,6 +85,7 @@ def _unfold_meta(entry: dict[str, Any], params: Any) -> Any:
 def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     params = json.loads(row["params_json"]) if row["params_json"] else None
     entry = {
+        "message_id": row["id"],
         "type": row["type"],
         "content": row["content"],
         "agent_id": row["agent_id"],

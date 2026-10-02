@@ -545,6 +545,9 @@
         }
         try {
           var toolName = (d.name || d.tool || '').toString();
+          if (!d.error && window.TomoProcesses && (toolName === 'bash' || toolName === 'process')) {
+            TomoProcesses.refresh();
+          }
           var parsedArt = window.TomoArtifacts
             ? TomoArtifacts.parseSaveResult(toolName, resultText)
             : null;
@@ -895,6 +898,20 @@
         ctx.setStatus('amber', ctx.busyStatusLabel());
       }
       ctx.atBottom();
+    });
+
+    on('background_job', function (e) {
+      var d = JSON.parse(e.data || '{}');
+      var key = (d.background_job_ids || []).slice().sort().join(',');
+      if (key && Array.from(ctx.wrap.querySelectorAll('[data-background-job-ids]')).some(function (node) {
+        return node.dataset.backgroundJobIds === key;
+      })) return;
+      var marker = document.createElement('p');
+      marker.className = 'process-note background-job-marker';
+      if (key) marker.dataset.backgroundJobIds = key;
+      marker.textContent = d.content || 'Background jobs completed';
+      ctx.turn.appendChild(marker);
+      if (window.TomoProcesses) TomoProcesses.refresh();
     });
 
     if (isLive) {

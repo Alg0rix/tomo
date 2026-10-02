@@ -839,7 +839,7 @@ class TelegramTurnUI:
             reply = "Stopped. A tool already running may still finish. You can send another message or use /new."
         # Editing an old preview strands the final above progress/HITL messages.
         # Deliver at the bottom first; keep the preview if final delivery fails.
-        await self.api.send_answer(
+        self.final_receipt = await self.api.send_answer(
             self.chat_id,
             reply,
             thread_id=self.thread_id,

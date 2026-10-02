@@ -906,6 +906,7 @@
 
   function closePanel() {
     if (global.TomoTerminals) global.TomoTerminals.detach();
+    if (global.TomoProcesses) global.TomoProcesses.detachPanel();
     _state.view = "home";
     _state.art = null;
     _state.panelOpen = false;
@@ -1445,6 +1446,7 @@
     setPanelOpen(wrap, true);
     setMaximized(wrap, _state.maximized);
     if (global.TomoTerminals) global.TomoTerminals.detach();
+    if (global.TomoProcesses) global.TomoProcesses.detachPanel();
     shell.innerHTML =
       '<header class="workspace-header"><div><span class="workspace-eyebrow">THIS CHAT</span><h2>Workspace</h2></div>' +
       '<div class="workspace-actions"><button type="button" class="cap-art-btn" data-cap-max-toggle aria-label="Expand panel">' + ICO_EXPAND + '</button>' +
@@ -1452,7 +1454,8 @@
       '<nav class="workspace-nav" aria-label="Workspace views">' +
       '<button type="button" data-workspace-view="home">Files</button>' +
       (_state.art ? '<button type="button" data-workspace-view="preview">Preview</button>' : '') +
-      '<button type="button" data-workspace-view="terminal"><span aria-hidden="true">&gt;_</span> Terminal</button></nav>' +
+      '<button type="button" data-workspace-view="terminal"><span aria-hidden="true">&gt;_</span> Terminal</button>' +
+      '<button type="button" data-workspace-view="processes">Processes <span data-process-count></span></button></nav>' +
       '<div class="workspace-content"></div>';
     var root = shell.querySelector(".workspace-content");
     shell.querySelector("[data-workspace-close]").onclick = closePanel;
@@ -1472,6 +1475,8 @@
 
     if (_state.view === "terminal") {
       if (global.TomoTerminals) global.TomoTerminals.mount(root, _state.sessionId);
+    } else if (_state.view === "processes") {
+      if (global.TomoProcesses) global.TomoProcesses.mount(root, _state.sessionId);
     } else if (_state.view === "files") {
       renderDrill(root, wrap, "files");
     } else if (_state.view === "preview" && _state.art && _state.art.url) {
@@ -1530,7 +1535,7 @@
     activateSession(wrap);
     if (opts.userGesture) _state.userCollapsed = false;
     if (art.session_id && wrap.dataset.sessionId && art.session_id !== wrap.dataset.sessionId) return;
-    if (!opts.userGesture && _state.view === "terminal") return;
+    if (!opts.userGesture && (_state.view === "terminal" || _state.view === "processes")) return;
     _state.art = {
       url: art.url,
       filename: art.filename || "file",
@@ -1561,6 +1566,15 @@
     if (sid) _state.sessionId = sid;
     _state.view = "home";
     setPanelOpen(wrap, true);
+    renderPanel(wrap);
+  }
+
+  function openProcesses(opts) {
+    var wrap = opts && opts.wrap || findChatWrap();
+    if (!wrap) return;
+    activateSession(wrap);
+    _state.userCollapsed = false;
+    _state.view = "processes";
     renderPanel(wrap);
   }
 
@@ -1672,6 +1686,7 @@
     openPreview: openPreview,
     openFilesPane: openFilesPane,
     openHome: openHome,
+    openProcesses: openProcesses,
     closePreview: closePreview,
     closePanel: closePanel,
     parseSaveResult: parseSaveResult,

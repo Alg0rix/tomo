@@ -1406,6 +1406,7 @@
       sending = false;
       syncGeneratingUi();
       wrap.dispatchEvent(new CustomEvent('tomo:chat-done'));
+      if (window.TomoProcesses) TomoProcesses.refresh();
 
       // Keep pin briefly after the stream ends (layout may still settle).
       if (Tomo.stickScrollBottom) {
@@ -1590,6 +1591,7 @@
       // session into the next view; the original send still targets its owner.
       if (destroyed) return sessionId;
       wrap.dataset.sessionId = sessionId;
+      if (window.TomoProcesses) TomoProcesses.attach(wrap);
       if (data.workplace_id) wrap.dataset.workplaceId = data.workplace_id;
       delete wrap.dataset.pendingAgents;
       wrap.dispatchEvent(new CustomEvent('tomo:session-created', {
@@ -2118,6 +2120,7 @@
       destroy: function () {
         if (destroyed) return;
         destroyed = true;
+        if (window.TomoProcesses) TomoProcesses.detach(wrap);
         bindings.abort();
         messageQueue = [];
         closeStream();
@@ -2146,6 +2149,7 @@
       rehydratePending: rehydratePendingHitl,
     };
     wrap._tomoChatHandle = handle;
+    if (window.TomoProcesses) TomoProcesses.attach(wrap);
     setStatus('ok', 'online');
     refreshSendBtn();
     return handle;

@@ -18,8 +18,8 @@ import threading
 import time
 from typing import Any
 
-from app.runtime.tools import process_registry, progress
-from app.runtime.tools.sandbox import current_agent_id, resolve_work_root
+from app.runtime.tools import progress
+from app.runtime.tools.sandbox import resolve_work_root
 from app.runtime.tools.tunnel_rpc import try_tunnel_rpc
 
 _DEFAULT_TIMEOUT = 30.0
@@ -149,30 +149,18 @@ def run(arguments: dict[str, Any]) -> str:
 
     background = _truthy(arguments.get("background"))
     if background:
-        # Tunnel / SSH: start remote background job via process_start.
-        remote_bg = try_tunnel_rpc(
-            "process_start",
-            {"command": command, "cwd": ""},
-            timeout=30.0,
-            workplace_hint=wp_hint,
-        )
-        if remote_bg is not None:
-            return remote_bg
-        root = resolve_work_root()
+        from app.services.background_jobs import manager
+
         try:
-            proc = subprocess.Popen(
-                ["bash", "-lc", command],
-                cwd=str(root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        except OSError as exc:
+            job = manager.start(command, workplace_hint=wp_hint)
+        except Exception as exc:
             return f"Error: could not start background command: {exc}"
-        job = process_registry.register(
-            command, proc, agent_id=current_agent_id()
+        return (
+            f"Started background job {job['id']}\n"
+            f"status: {job['status']}\ncommand: {job['command']}\n"
+            f"backend: {job['backend']}\nworkplace: {job['workplace_id']}\n"
+            "The process continues after this turn; completion returns to this conversation."
         )
-        return f"Started background job {job.id}"
 
     # Remote exec_bash on tunnel / SSH workplaces.
     to = _timeout_seconds(arguments.get("timeout"))

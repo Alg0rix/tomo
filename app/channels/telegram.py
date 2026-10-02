@@ -574,6 +574,7 @@ async def run_channel_turn(
     ui: TelegramTurnUI | None = None,
     attachment_ids: list[str] | None = None,
     recovery: dict[str, Any] | None = None,
+    background_job_ids: list[str] | None = None,
 ) -> str:
     """Run the web turn pipeline; return the latest final (or error) text."""
     # Lazy import: chat → channels.web → channels package must not pull telegram
@@ -600,6 +601,7 @@ async def run_channel_turn(
         turn, queue = await start_session_turn(
             session_id, message, session["user_id"], attachment_ids=attachment_ids,
             delivery=delivery, recovery=recovery,
+            **({"background_job_ids": background_job_ids} if background_job_ids else {}),
         )
     finally:
         reset_turn(token)
@@ -762,7 +764,7 @@ async def handle_inbound_text(
         from app.services.chat import cancel_session_turn
 
         reply = (
-            "Stopping the current task…"
+            "Agent continuation paused. Background processes keep running; use their Stop process button to stop them."
             if cancel_session_turn(session_id)
             else "No task is running."
         )
@@ -883,6 +885,9 @@ class TelegramDispatcher:
         self.replacements: dict[int, dict] = {}
         self.closing = False
         self.running: set[int] = set()
+        from app.channels.telegram_jobs import bind_dispatcher
+
+        bind_dispatcher(self)
 
     MAX_PENDING = 10
 
@@ -893,6 +898,9 @@ class TelegramDispatcher:
 
         fingerprint = hashlib.sha256(self.api._token.encode()).hexdigest()
         for request in pending_requests():
+            if request.get("background_job_ids"):
+                finish_request(request)
+                continue
             delivery = request.get("delivery") or {}
             if delivery.get("channel") != "telegram" or delivery.get("bot") != fingerprint:
                 continue
@@ -1164,10 +1172,17 @@ class TelegramDispatcher:
             self.replacements.pop(chat_id, None)
             self.stopped.discard(chat_id)
             self.running.discard(chat_id)
+            from app.services.background_continuation import wake_pending
+
+            wake_pending()
 
     async def dispatch(self, update: dict) -> None:
         query = update.get("callback_query")
         if isinstance(query, dict):
+            from app.channels.telegram_jobs import callback as job_callback
+
+            if await job_callback(query, self.api):
+                return
             chat_id = ((query.get("message") or {}).get("chat") or {}).get("id")
             ui = self.uis.get(chat_id)
             handled = await ui.callback(query) if ui else False
@@ -1196,6 +1211,11 @@ class TelegramDispatcher:
         if not extracted:
             return
         chat_id, text = extracted
+        from app.channels.telegram_jobs import session_for_reply
+
+        reply_session = session_for_reply(message)
+        if reply_session:
+            message = {**message, "_tomo_job_session": reply_session}
         if not has_media and "text" not in message:
             message = {**message, "text": text}
         command = text.split()[0].split("@")[0].lower() if text else ""
@@ -1314,6 +1334,9 @@ class TelegramDispatcher:
                 )
                 return
             if busy:
+                if reply_session and (ui is None or ui.session_id != reply_session):
+                    await self._enqueue(chat_id, args, message, reason='Queued for the original job conversation')
+                    return
                 await self._busy_input(
                     chat_id, args, message, command[1:], has_media=False
                 )
@@ -1353,13 +1376,20 @@ class TelegramDispatcher:
                     if ui is not None:
                         ui.request_stop()
                     else:
+                        from app.services.chat import cancel_session_turn
+
+                        sid = (getattr(task, '_tomo_session_id', None) or reply_session
+                               or store.find_session(_resolve_agent_id(self.agent_id), user_id_for_chat(chat_id),
+                                                     telegram_chat_id=str(chat_id)))
+                        if sid:
+                            cancel_session_turn(sid)
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
                         self.tasks.pop(chat_id, None)
                         self.actors.pop(chat_id, None)
                         await self._discard_pending(chat_id)
                     await self.api.send_message(
-                        chat_id, "Stopping the current task…", thread_id=thread_id
+                        chat_id, "Stopping the agent. Background processes keep running; use their Stop process button to stop them.", thread_id=thread_id
                     )
                     return
             if command == "/status" and ui is not None:
@@ -1368,13 +1398,17 @@ class TelegramDispatcher:
                 )
             else:
                 result = await handle_inbound_text(
-                    chat_id, text, api=None, agent_id=self.agent_id, send_reply=False
+                    chat_id, text, api=None, agent_id=self.agent_id, send_reply=False,
+                    session_id=message.get("_tomo_job_session"),
                 )
                 await self.api.send_message(
                     chat_id, result["reply"], thread_id=thread_id
                 )
             return
         if task and not task.done():
+            if reply_session and (ui is None or ui.session_id != reply_session):
+                await self._enqueue(chat_id, text, message, reason='Queued for the original job conversation')
+                return
             album = self.albums.get(chat_id)
             if (
                 has_media
@@ -1417,6 +1451,11 @@ class TelegramDispatcher:
     ) -> dict | None:
         from app.channels.telegram_ui import TelegramTurnUI
 
+        if message.get("_tomo_background_jobs"):
+            from app.channels.telegram_jobs import run_continuation
+
+            return await run_continuation(self, message)
+
         ui = None
         try:
             # Re-check after scheduling; revoking an ID must close agent access.
@@ -1424,14 +1463,26 @@ class TelegramDispatcher:
                 return
             recovery = message.get("_tomo_recovery")
             recovered_session = store.get_session(recovery["session_id"]) if recovery else None
+            job_session = store.get_session(message.get("_tomo_job_session", ""))
+            if message.get('_tomo_job_session'):
+                from app.channels.telegram_jobs import session_for_reply
+
+                if session_for_reply(message) != message['_tomo_job_session']:
+                    raise ValueError('The original job conversation is no longer authorized')
             resolved = _resolve_agent_id(
-                recovered_session["coordinator_id"] if recovered_session else self.agent_id
+                recovered_session["coordinator_id"] if recovered_session else
+                job_session["coordinator_id"] if job_session else self.agent_id
             )
             if not resolved:
                 raise ValueError("No coordinator")
-            sid = recovery["session_id"] if recovery else store.get_or_create_session(
+            sid = recovery["session_id"] if recovery else job_session["id"] if job_session else store.get_or_create_session(
                 resolved, user_id_for_chat(chat_id), telegram_chat_id=str(chat_id)
             )
+            def authorized_session():
+                session = store.get_session(sid)
+                return (chat_is_allowed(chat_id) and session is not None
+                        and session['user_id'] == user_id_for_chat(chat_id)
+                        and session.get('telegram_chat_id') == str(chat_id))
             ui = TelegramTurnUI(
                 self.api,
                 chat_id,
@@ -1452,6 +1503,8 @@ class TelegramDispatcher:
                 await ui.start()
             if ui.stop_requested:
                 await ui.finish("Stopped.")
+                return
+            if not authorized_session():
                 return
             if recovery:
                 from app.services.turn_recovery import acknowledge_delivery
@@ -1486,7 +1539,7 @@ class TelegramDispatcher:
                 texts, notices = [], []
                 has_non_audio = False
                 for item in messages:
-                    if not chat_is_allowed(chat_id) or ui.stop_requested:
+                    if not authorized_session() or ui.stop_requested:
                         return
                     try:
                         ids, transcript, notice = await ingest_media(
@@ -1494,7 +1547,7 @@ class TelegramDispatcher:
                             sid,
                             item,
                             allowed=lambda: (
-                                chat_is_allowed(chat_id) and not ui.stop_requested
+                                authorized_session() and not ui.stop_requested
                             ),
                         )
                         attachment_ids.extend(ids)
@@ -1531,6 +1584,8 @@ class TelegramDispatcher:
                 if not text and notices and not has_non_audio:
                     from app.services.chat import attachment_meta_for_ids
 
+                    if not authorized_session() or ui.stop_requested:
+                        return
                     store.append_session_history(
                         sid,
                         {
@@ -1593,6 +1648,9 @@ class TelegramDispatcher:
 
     async def close(self) -> None:
         self.closing = True
+        from app.channels.telegram_jobs import unbind_dispatcher
+
+        unbind_dispatcher(self)
         tasks = list(self.tasks.values())
         for task in tasks:
             task.cancel()

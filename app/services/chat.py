@@ -203,9 +203,11 @@ def cancel_session_turn(session_id: str) -> bool:
     sid = (session_id or "").strip()
     if not sid:
         return False
+    store.set_background_jobs_paused(sid, True)
     turn = get_active_session_turn(sid)
     if turn is None:
-        return turn_recovery.cancel_request(sid)
+        cancelled = turn_recovery.cancel_request(sid)
+        return cancelled or bool(store.list_background_jobs(sid))
 
     # Persist Stop before cancellation, including cancellation before the
     # background coroutine's first step. A subsequent restart must not revive it.
@@ -251,6 +253,7 @@ async def start_session_turn(
     attachment_ids: list[str] | None = None, execution_mode: str = "solo",
     *, delivery: dict[str, Any] | None = None,
     recovery: dict[str, Any] | None = None,
+    background_job_ids: list[str] | None = None,
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
     """Start a background agent turn and return ``(turn, subscription_queue)``.
 
@@ -274,14 +277,31 @@ async def start_session_turn(
     if not store.try_begin_session_turn(session_id):
         raise SessionTurnBusy(session_id)
 
+    jobs = []
+    jobs_claimed = False
     try:
+        if background_job_ids:
+            jobs = [store.get_background_job(jid) for jid in background_job_ids]
+            if (store.background_jobs_paused(session_id)
+                    or any(not j or j["session_id"] != session_id
+                           or j["user_id"] != session["user_id"] for j in jobs)
+                    or not store.claim_background_jobs(background_job_ids)):
+                raise SessionTurnBusy(session_id)
+            jobs_claimed = True
+        elif recovery is None:
+            # A real user follow-up reopens admission after Stop.
+            store.set_background_jobs_paused(session_id, False)
         request = recovery or turn_recovery.save_request(session_id, {
             "message": message, "user_id": user_id, "start_seq": start_seq,
             "attachment_ids": attachment_ids, "execution_mode": execution_mode,
             "delivery": delivery,
+            "background_job_ids": background_job_ids,
         })
     except Exception:
         store.end_session_turn(session_id)
+        for job in jobs if jobs_claimed else []:
+            if job:
+                store.update_background_job(job["id"], {"continuation_status": "pending"})
         raise
     turn = _ActiveTurn(session_id=session_id, request=request)
     _active_turns[session_id] = turn
@@ -289,6 +309,10 @@ async def start_session_turn(
 
     def cleanup() -> None:
         try:
+            for job in jobs:
+                current = store.get_background_job(job['id'])
+                if current and current['continuation_status'] == 'claimed':
+                    store.update_background_job(job['id'], {'continuation_status': 'cancelled'})
             if not turn.suspended:
                 if delivery and turn.reply:
                     turn_recovery.complete_request(request, turn.reply)
@@ -299,6 +323,9 @@ async def start_session_turn(
             store.end_session_turn(session_id)
             if _active_turns.get(session_id) is turn:
                 _active_turns.pop(session_id, None)
+            from .background_continuation import wake_pending
+
+            wake_pending()
 
     async def _runner() -> None:
         nonlocal started
@@ -323,6 +350,7 @@ async def start_session_turn(
                     execution_mode=execution_mode,
                     acquire_lock=False,
                     resume=resume,
+                    **({"background_jobs": jobs, "origin": "background"} if jobs else {}),
                 )
             ) as agen:
                 async for chunk in agen:
@@ -330,7 +358,19 @@ async def start_session_turn(
             entries = turn_recovery.history_since(request)
             turn.reply = next((str(e["content"]) for e in reversed(entries)
                                if e["type"] in {"final", "error"} and e["content"]), "")
+            for job in jobs:
+                store.update_background_job(job["id"], {
+                    "continuation_status": "consumed", "result_text": turn.reply,
+                    "delivery_status": "pending" if delivery else "local",
+                    'result_event_id': request['token'],
+                })
+        except asyncio.CancelledError:
+            for job in jobs:
+                store.update_background_job(job["id"], {"continuation_status": "cancelled"})
+            raise
         except Exception as exc:
+            for job in jobs:
+                store.update_background_job(job["id"], {"continuation_status": "cancelled"})
             logger.exception("background turn failed session_id=%s", session_id)
             turn.reply = f"Turn failed: {exc}"
             turn._broadcast(
@@ -368,6 +408,9 @@ async def recover_web_turns() -> None:
     global _shutting_down
     _shutting_down = False
     for request in turn_recovery.pending_requests():
+        if request.get("background_job_ids"):
+            turn_recovery.finish_request(request)
+            continue
         if request.get("delivery"):
             continue  # Telegram dispatcher owns both execution and delivery.
         try:
