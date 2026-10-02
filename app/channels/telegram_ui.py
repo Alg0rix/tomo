@@ -63,6 +63,8 @@ class TelegramTurnUI:
         self.prompts: dict[str, Prompt] = {}
         self.status_id: int | None = None
         self.answer_id: int | None = None
+        self._draft_enabled = chat_id > 0
+        self._draft_id = secrets.randbits(49) or 1
         self.answer = ""
         self.last_preview = ""
         self.last_status = ""
@@ -221,8 +223,25 @@ class TelegramTurnUI:
                     reply_markup=self.stop_keyboard(),
                 )
                 self.last_status = text
-            # One editable bubble for user-facing deltas, never private reasoning.
-            preview = self.answer[:4000] + "\n\n…" if self.answer else ""
+            # Prefer ephemeral plain drafts in DMs; never send rich draft overlays.
+            preview = self.answer[:4000]
+            if preview and self._draft_enabled:
+                if preview == self.last_preview:
+                    return
+                try:
+                    if await self.api.send_draft(
+                        self.chat_id, self._draft_id, preview, thread_id=self.thread_id
+                    ):
+                        self.last_preview = preview
+                        return
+                except Exception:
+                    logger.debug(
+                        "Telegram draft failed chat_id=%s; using editable preview",
+                        self.chat_id,
+                    )
+                self._draft_enabled = False
+            # Groups and failed drafts retain one editable preview per model round.
+            preview = preview + "\n\n…" if preview else ""
             if preview and preview != self.last_preview:
                 if self.answer_id is None:
                     sent = await self.api.send_answer(
@@ -382,6 +401,7 @@ class TelegramTurnUI:
                     # The next model round starts a fresh stream.
                     self.answer = ""
                     self.last_preview = ""
+                    self._draft_id = secrets.randbits(49) or 1
             elif event in {"approval_required", "clarify_required"}:
                 await self.show_prompt(
                     "approval" if event == "approval_required" else "clarify", data

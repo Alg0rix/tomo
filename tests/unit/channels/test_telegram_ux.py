@@ -52,6 +52,9 @@ class Bot:
         elif method == "editMessageReplyMarkup":
             self.messages.setdefault(payload["message_id"], {}).update(payload)
             result = {}
+        elif method == "sendMessageDraft":
+            # Legacy-server fake; RichBot opts in to native DM drafts.
+            return httpx.Response(404, json={"ok": False, "error_code": 404})
         elif method == "getUpdates":
             result = []
         else:

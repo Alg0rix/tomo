@@ -228,10 +228,7 @@ class TelegramAPI:
             if exc.code not in {400, 404, 501}:
                 raise
             if exc.code in {404, 501} or "method" in exc.description.lower():
-                if method == "sendRichMessageDraft":
-                    self._draft_disabled = True
-                else:
-                    self._rich_disabled = True
+                self._rich_disabled = True
             return None
 
     async def send_file(
@@ -345,25 +342,30 @@ class TelegramAPI:
             await self.send_html(chat_id, chunk, silent=True, thread_id=thread_id)
         return result
 
-    async def send_rich_draft(
+    async def send_draft(
         self, chat_id: int, draft_id: int, text: str, *, thread_id=None
     ) -> bool:
-        from app.channels.telegram_format import render_rich_html
-
-        if chat_id <= 0 or not self.rich_enabled or self._draft_disabled:
+        """Ephemeral plain DM preview; final formatting is independent of drafts."""
+        if chat_id <= 0 or self._draft_disabled:
             return False
         payload = {
             "chat_id": chat_id,
             "draft_id": draft_id,
-            "rich_message": {"html": render_rich_html(text)},
+            # Bound UTF-16 units without splitting an emoji's surrogate pair.
+            "text": text.encode("utf-16-le")[:8192].decode("utf-16-le", errors="ignore"),
         }
         if thread_id is not None:
             payload["message_thread_id"] = thread_id
-        result = await self._rich_request("sendRichMessageDraft", payload)
-        if result is None:
-            self._draft_disabled = True
+        try:
+            result = await self._request("sendMessageDraft", payload, retry_flood=False)
+        except TelegramAPIError as exc:
+            if exc.code not in {400, 404, 501}:
+                raise
+            # A topic-specific rejection must not disable drafts in other DMs.
+            if exc.code in {404, 501}:
+                self._draft_disabled = True
             return False
-        return True
+        return result is True
 
     async def _formatted_request(self, method: str, payload: dict[str, Any]) -> Any:
         from app.channels.telegram_format import plain_text

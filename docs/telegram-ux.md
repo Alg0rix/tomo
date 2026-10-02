@@ -6,11 +6,20 @@ three results, plan progress, elapsed time, and approval mode. A Stop button sta
 available during the task. Private reasoning and raw tool output stay out of the
 Telegram progress card.
 
-Each model round streams into one quiet editable preview. Tool commentary turns
-that preview into a single progress message, then the next round starts fresh.
-The completed answer is sent as a new message below progress and approval cards;
-its temporary preview and activity card are removed only after successful delivery. Overflow arrives
-in additional messages with notifications disabled. Markdown supports headings,
+Private chats stream each model round into one ephemeral plain-text
+[`sendMessageDraft`](https://core.telegram.org/bots/api#sendmessagedraft) preview,
+reusing its draft ID for updates. Rich drafts are not used. Tool commentary is
+persisted once as a quiet progress message, then the next round gets a fresh draft
+ID. Groups and rejected/unavailable drafts fall back to one editable preview;
+a failed draft is not retried during the same turn.
+
+The completed answer is sent once below progress and approval cards, with rich
+formatting when enabled. The real send replaces the native draft; editable
+previews and the activity card are removed only after successful delivery. If
+preview deletion fails, its text is replaced with a short delivery receipt and
+cleanup is retried when the turn closes. Finalization waits for an in-flight
+preview request before stopping updates, and completed turns reject late refreshes.
+Overflow arrives in additional messages with notifications disabled. Markdown supports headings,
 emphasis, lists, links, quotes, inline code, and fenced code; tables become labeled
 rows for mobile screens. Each long-answer chunk preserves Unicode, escaped
 entities, and balanced tags. Unsupported nesting is flattened; rejected HTML gets
@@ -206,9 +215,11 @@ Enable **System → Channels → Rich answers** to use Telegram's
 [rich-message API](https://core.telegram.org/bots/api#sendrichmessage).
 Native headings, tables, lists, code, and fenced `math`/`latex` blocks keep their
 structure. Raw HTML is escaped, and Markdown images do not trigger remote
-media fetches or inject control buttons. Both private and group chats stream
-into one editable rich preview, using the same progress and final-message ordering
-as legacy formatting. Received rich text and rich media blocks are also accepted.
+media fetches or inject control buttons. Private chats use ephemeral plain drafts
+independently of this setting, then persist the complete rich answer. Groups and
+DMs where native drafts fail use one editable rich preview, with the same progress
+and final-message ordering as legacy formatting. Received rich text and rich media
+blocks are also accepted.
 
 Definite rich API rejections fall back to the existing balanced HTML formatting,
 including long-answer chunking. Unsupported rich endpoints are remembered for

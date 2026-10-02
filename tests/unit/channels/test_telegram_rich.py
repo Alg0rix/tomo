@@ -12,7 +12,7 @@ from app.channels.telegram import (
     TelegramDispatcher,
     extract_text_message,
 )
-from app.channels.telegram_format import render_rich_html
+from app.channels.telegram_format import render_rich_html, utf16_len
 from app.channels.telegram_ui import TelegramTurnUI
 from app.channels.sse_map import fmt_sse
 from app.services import store
@@ -48,24 +48,31 @@ async def test_rich_send_edit_and_draft_preserve_routing(settings):
     calls = []
 
     def handler(request):
-        calls.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+        method = request.url.path.rsplit("/", 1)[-1]
+        calls.append((method, json.loads(request.content)))
+        result = True if method == "sendMessageDraft" else {"message_id": 1}
+        return httpx.Response(200, json={"ok": True, "result": result})
 
     api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
     await api.send_answer(42, "# Native", thread_id=9, reply_to=7)
     await api.edit_answer(42, 1, "| A | B |\n|---|---|\n| 1 | 2 |")
-    assert await api.send_rich_draft(42, 123, "partial", thread_id=9)
+    assert await api.send_draft(42, 123, "partial", thread_id=9)
     assert [m for m, _ in calls] == [
         "sendRichMessage",
         "editMessageText",
-        "sendRichMessageDraft",
+        "sendMessageDraft",
     ]
     assert calls[0][1]["message_thread_id"] == 9
     assert calls[0][1]["reply_parameters"]["message_id"] == 7
     assert "<h1>" in calls[0][1]["rich_message"]["html"]
     assert "<table>" in calls[1][1]["rich_message"]["html"]
     assert "text" not in calls[1][1]
-    assert calls[2][1]["draft_id"] == 123
+    assert calls[2][1] == {
+        "chat_id": 42,
+        "draft_id": 123,
+        "text": "partial",
+        "message_thread_id": 9,
+    }
     await api.aclose()
 
 
@@ -139,33 +146,42 @@ async def test_draft_unavailable_does_not_disable_final_rich_delivery(settings):
     def handler(request):
         method = request.url.path.rsplit("/", 1)[-1]
         calls.append(method)
-        if method == "sendRichMessageDraft":
+        if method == "sendMessageDraft":
             return httpx.Response(404, json={"ok": False, "error_code": 404})
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
 
     api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
-    assert not await api.send_rich_draft(42, 123, "draft")
+    assert not await api.send_draft(42, 123, "draft")
     assert api.rich_enabled
-    assert not await api.send_rich_draft(42, 123, "another draft")
+    assert not await api.send_draft(42, 123, "another draft")
     await api.send_answer(42, "final")
-    assert calls == ["sendRichMessageDraft", "sendRichMessage"]
+    assert calls == ["sendMessageDraft", "sendRichMessage"]
     await api.aclose()
 
 
 class RichBot(Bot):
+    def __init__(self):
+        super().__init__()
+        self.drafts = {}
+
     def transport(self, request):
         method = request.url.path.rsplit("/", 1)[-1]
-        if method in {"sendRichMessage", "sendRichMessageDraft"}:
+        if method in {"sendRichMessage", "sendMessageDraft"}:
             payload = json.loads(request.content)
             self.calls.append((method, payload))
             if method == "sendRichMessage":
                 self.counter += 1
                 result = {"message_id": self.counter, **payload}
                 self.messages[self.counter] = result
+                self.drafts.pop(payload["chat_id"], None)
             else:
+                self.drafts[payload["chat_id"]] = payload
                 result = True
             return httpx.Response(200, json={"ok": True, "result": result})
-        return super().transport(request)
+        response = super().transport(request)
+        if method == "sendMessage":
+            self.drafts.pop(json.loads(request.content)["chat_id"], None)
+        return response
 
 
 @pytest.mark.parametrize("rich", [False, True])
@@ -186,9 +202,9 @@ async def test_tool_commentary_shown_once_and_final_is_newest(settings, rich):
         for content in ["Checking tunnel.", "Checking cameras."]:
             await ui.consume(fmt_sse({"event": "delta", "data": {"content": content}}))
             await ui.refresh()
-            # Each model round must start with a fresh preview.
-            assert content in visible_texts()[-1]
-            assert "…" in visible_texts()[-1]
+            # Each model round has an ephemeral draft, not a permanent preview.
+            assert bot.drafts[42]["text"] == content
+            assert not any(content in text for text in visible_texts())
             await ui.consume(
                 fmt_sse({"event": "assistant_progress", "data": {"content": content}})
             )
@@ -196,12 +212,13 @@ async def test_tool_commentary_shown_once_and_final_is_newest(settings, rich):
             assert "…" not in visible_texts()[-1]
         await ui.consume(fmt_sse({"event": "delta", "data": {"content": "All done."}}))
         await ui.refresh()
-        assert "Checking" not in visible_texts()[-1]
-        preview_id = max(bot.messages)
+        assert bot.drafts[42]["text"] == "All done."
+        drafts = [p for m, p in bot.calls if m == "sendMessageDraft"]
+        assert len({p["draft_id"] for p in drafts}) == 3
         # Another channel message must not strand the final above it.
         await api.send_message(42, "Guidance received.", thread_id=8, silent=True)
         await ui.finish("All done.")
-        assert preview_id not in bot.messages
+        assert not bot.drafts
         assert "All done." in visible_texts()[-1]
         assert sum("All done." in text for text in visible_texts()) == 1
         final = bot.messages[max(bot.messages)]
@@ -264,8 +281,8 @@ async def test_finish_waits_for_accepted_preview_before_sending_final(settings, 
         return response
 
     api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
-    sid = store.get_or_create_session("main", "tg_42")
-    ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
+    sid = store.get_or_create_session("main", "tg_-100")
+    ui = TelegramTurnUI(api, -100, sid, reply_to=7, thread_id=8)
     ui.answer = reply
     finish_task = None
     try:
@@ -302,8 +319,8 @@ async def test_failed_preview_delete_removes_duplicate_text_and_retries_on_close
         return bot.transport(request)
 
     api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
-    sid = store.get_or_create_session("main", "tg_42")
-    ui = TelegramTurnUI(api, 42, sid)
+    sid = store.get_or_create_session("main", "tg_-100")
+    ui = TelegramTurnUI(api, -100, sid)
     ui.answer = "Connector updated."
     try:
         await ui.start()
@@ -326,26 +343,79 @@ async def test_failed_preview_delete_removes_duplicate_text_and_retries_on_close
         await api.aclose()
 
 
-async def test_private_streaming_preview_removes_status_after_final_delivery(settings):
+async def test_private_plain_draft_streams_then_persists_one_complete_rich_answer(
+    settings,
+):
     bot = RichBot()
     api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_42")
-    ui = TelegramTurnUI(api, 42, sid, actor_id=42)
+    ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
     ui.answer = "# Preview\n\nText"
     await ui.start()
     status_id = ui.status_id
     try:
         await ui.refresh()
-        assert status_id in bot.messages
         await ui.refresh()
-        await ui.finish("# Final\n\nComplete answer")
+        assert list(bot.messages) == [status_id]
+        assert bot.drafts[42]["text"] == ui.answer
+        ui.answer = "🚀" * 2500 + "\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nTHE END"
+        await ui.refresh()
+        drafts = [p for m, p in bot.calls if m == "sendMessageDraft"]
+        assert len(drafts) == 2
+        assert drafts[0]["draft_id"] == drafts[1]["draft_id"] != 0
+        assert all(p["message_thread_id"] == 8 for p in drafts)
+        assert utf16_len(drafts[-1]["text"]) <= 4096
+        assert not any("rich_message" in p or "parse_mode" in p for p in drafts)
+        await ui.finish(ui.answer)
+        await ui.refresh()
         await ui.close()
+        assert not bot.drafts
         assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
-        assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 2
-        answers = [p for p in bot.messages.values() if "rich_message" in p]
-        assert len(answers) == 1
-        assert "Complete answer" in answers[0]["rich_message"]["html"]
+        assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 1
+        assert len(bot.messages) == 1
+        final = next(iter(bot.messages.values()))
+        rendered = final["rich_message"]["html"]
+        assert rendered.count("🚀") == 2500
+        assert "<table>" in rendered and "THE END" in rendered
+        assert final["reply_parameters"]["message_id"] == 7
+        assert final["message_thread_id"] == 8
         assert status_id not in bot.messages
+    finally:
+        await ui.close()
+        await api.aclose()
+
+
+@pytest.mark.parametrize("failure", [400, "network"])
+async def test_private_draft_failure_falls_back_once_without_losing_rich_final(
+    settings, failure
+):
+    bot = RichBot()
+
+    def handler(request):
+        if request.url.path.endswith("/sendMessageDraft"):
+            bot.calls.append(("sendMessageDraft", json.loads(request.content)))
+            if failure == "network":
+                raise httpx.ReadError("draft connection lost")
+            return httpx.Response(400, json={"ok": False, "error_code": 400})
+        return bot.transport(request)
+
+    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    sid = store.get_or_create_session("main", "tg_42")
+    ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
+    try:
+        ui.answer = "Checking."
+        await ui.refresh()
+        ui.answer = "Checking. Nearly done."
+        await ui.refresh()
+        assert len(bot.messages) == 1
+        await ui.finish("# Done\n\n| A | B |\n|---|---|\n| 1 | 2 |")
+        await ui.close()
+        assert len([m for m, _ in bot.calls if m == "sendMessageDraft"]) == 1
+        assert len(bot.messages) == 1
+        final = next(iter(bot.messages.values()))
+        assert "<table>" in final["rich_message"]["html"]
+        assert final["reply_parameters"]["message_id"] == 7
+        assert final["message_thread_id"] == 8
     finally:
         await ui.close()
         await api.aclose()
@@ -360,7 +430,9 @@ async def test_group_rich_final_sent_after_preview_without_private_draft(setting
     await ui.refresh()
     mid = ui.answer_id
     await ui.finish("# Final")
-    assert not any(m == "sendRichMessageDraft" for m, _ in bot.calls)
+    assert not any(
+        m in {"sendMessageDraft", "sendRichMessageDraft"} for m, _ in bot.calls
+    )
     assert len([m for m, _ in bot.calls if m == "sendRichMessage"]) == 2
     assert mid not in bot.messages
     final = bot.messages[max(bot.messages)]
@@ -408,7 +480,7 @@ async def test_long_rich_preview_rejection_keeps_single_preview_then_complete_fi
         payload = json.loads(request.content)
         calls.append((method, payload))
         if (
-            method in {"sendRichMessage", "sendRichMessageDraft"}
+            method in {"sendRichMessage", "sendMessageDraft"}
             or "rich_message" in payload
         ):
             return httpx.Response(
