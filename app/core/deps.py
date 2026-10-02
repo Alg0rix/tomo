@@ -80,13 +80,37 @@ templates.env.globals["ts"] = ts
 templates.env.globals["eval_ui_enabled"] = EVAL_UI_ENABLED
 
 # Static-asset cache buster. Hand-bumped ``?v=`` tags drift — a JS change that
-# forgets the bump ships stale code to browsers. Keyed to package version +
-# process start so every release/restart invalidates all assets automatically.
+# forgets the bump ships stale code to browsers. The tag fingerprints the files
+# themselves, so a CDN edge (Cloudflare caches /static for hours) never serves
+# old assets after a deploy, even when the server process was not restarted.
+import hashlib as _hashlib  # noqa: E402
 import time as _time  # noqa: E402
 
+from .config import STATIC_DIR  # noqa: E402
 from .self_update import package_version as _pkg_version  # noqa: E402
 
-templates.env.globals["static_ver"] = f"{_pkg_version()}-{int(_time.time())}"
+
+class _StaticVersion:
+    _TTL = 2.0
+
+    def __init__(self) -> None:
+        self._value = ""
+        self._checked = 0.0
+
+    def __str__(self) -> str:
+        now = _time.monotonic()
+        if not self._value or now - self._checked > self._TTL:
+            digest = _hashlib.sha1()
+            for path in sorted(STATIC_DIR.rglob("*")):
+                if path.is_file():
+                    st = path.stat()
+                    digest.update(f"{path.relative_to(STATIC_DIR)}:{st.st_mtime_ns}:{st.st_size}\n".encode())
+            self._value = f"{_pkg_version()}-{digest.hexdigest()[:10]}"
+            self._checked = now
+        return self._value
+
+
+templates.env.globals["static_ver"] = _StaticVersion()
 
 from modules.paths import static_url as module_static  # noqa: E402
 
