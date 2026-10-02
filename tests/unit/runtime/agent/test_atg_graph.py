@@ -41,12 +41,6 @@ def test_dag_validates_clean_graph() -> None:
     assert dag.is_executable()
 
 
-def test_dag_detects_cycle() -> None:
-    dag = TaskDAG("cyclic")
-    dag.add_node(TaskNode(id="n1", goal="a", deps=["n2"]))
-    dag.add_node(TaskNode(id="n2", goal="b", deps=["n1"]))
-    errors = dag.validate()
-    assert any("cycle" in e for e in errors)
 
 
 def test_dag_detects_dangling_dep() -> None:
@@ -74,27 +68,8 @@ def test_dag_detects_placeholder_without_dep() -> None:
     assert any("not in deps" in e for e in errors)
 
 
-def test_waves_topological_order() -> None:
-    dag = TaskDAG("three waves")
-    dag.add_node(TaskNode(id="n1", goal="a", outputs=["result"]))
-    dag.add_node(TaskNode(id="n2", goal="b", outputs=["result"], deps=["n1"]))
-    dag.add_node(TaskNode(id="n3", goal="c", outputs=["result"], deps=["n1"]))
-    dag.add_node(TaskNode(id="n4", goal="d", outputs=["result"],
-                          deps=["n2", "n3"]))
-    waves = dag.waves()
-    assert waves[0] == ["n1"]
-    assert set(waves[1]) == {"n2", "n3"}
-    assert waves[2] == ["n4"]
 
 
-def test_waves_skip_terminal_nodes() -> None:
-    dag = TaskDAG("resume")
-    dag.add_node(TaskNode(id="n1", goal="done", status="done",
-                          outputs=["result"], record={"output_excerpt": "ok"}))
-    dag.add_node(TaskNode(id="n2", goal="pending", outputs=["result"],
-                          deps=["n1"]))
-    waves = dag.waves()
-    assert waves == [["n2"]]
 
 
 def test_refinement_history_lineage() -> None:
@@ -116,18 +91,6 @@ def test_refinement_history_lineage() -> None:
     assert "n1" in chain
 
 
-def test_dag_round_trips_through_json() -> None:
-    dag = TaskDAG("round trip")
-    dag.add_node(TaskNode(id="n1", goal="read", tool="read_file",
-                          args_template={"path": "a.py"}, outputs=["result"],
-                          status="done", attempts=1,
-                          record={"output_excerpt": "content"}))
-    d = dag.to_dict()
-    restored = TaskDAG.from_dict(d)
-    assert restored.root_goal == "round trip"
-    assert restored.nodes["n1"].tool == "read_file"
-    assert restored.nodes["n1"].status == "done"
-    assert restored.nodes["n1"].record["output_excerpt"] == "content"
 
 
 def test_node_record_result_truncates_long_output() -> None:

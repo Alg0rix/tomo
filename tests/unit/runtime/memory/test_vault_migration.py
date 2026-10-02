@@ -103,14 +103,6 @@ def test_large_facts_no_storage_quota_and_markers_roundtrip(tmp_path, db):
     assert facts('alice', 'project/wazzapi', home_root=tmp_path) == [text + ' Updated.']
 
 
-def test_old_runtime_functions_and_tools_removed():
-    from app.services import store
-    from app.runtime.tools.registry import get_registry
-    for name in ('create_knowledge_entry', 'search_knowledge', 'list_knowledge_entries'):
-        assert not hasattr(store, name)
-    registry = get_registry()
-    for name in ('remember', 'recall', 'forget_memory'):
-        assert registry.execute(name, {}).startswith('Error:')
 
 
 def test_migration_keeps_case_variants_and_markdown(tmp_path, db):

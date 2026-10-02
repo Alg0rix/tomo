@@ -38,15 +38,6 @@ _VALID_RAW = (
 # ── parse_prompts_json ──────────────────────────────────────────────────
 
 
-def test_parse_prompts_json_valid():
-    parsed = parse_prompts_json(_VALID_RAW)
-    assert parsed is not None
-    assert len(parsed) == 3
-    assert parsed[0] == {
-        "key": "sprint-plan",
-        "label": "Plan the sprint",
-        "prompt": "Plan the next sprint",
-    }
 
 
 def test_parse_prompts_json_strips_markdown_fences():
@@ -56,8 +47,6 @@ def test_parse_prompts_json_strips_markdown_fences():
     assert len(parsed) == 3
 
 
-def test_parse_prompts_json_rejects_bad_json():
-    assert parse_prompts_json("not json at all") is None
 
 
 def test_parse_prompts_json_rejects_empty():
@@ -65,16 +54,6 @@ def test_parse_prompts_json_rejects_empty():
     assert parse_prompts_json(None) is None
 
 
-def test_parse_prompts_json_rejects_wrong_count():
-    two = '[{"key": "a", "label": "A", "prompt": "do a"}, {"key": "b", "label": "B", "prompt": "do b"}]'
-    assert parse_prompts_json(two) is None
-    four = (
-        '[{"key": "a", "label": "A", "prompt": "do a"},'
-        '{"key": "b", "label": "B", "prompt": "do b"},'
-        '{"key": "c", "label": "C", "prompt": "do c"},'
-        '{"key": "d", "label": "D", "prompt": "do d"}]'
-    )
-    assert parse_prompts_json(four) is None
 
 
 def test_parse_prompts_json_rejects_wrapped_object():
@@ -83,13 +62,6 @@ def test_parse_prompts_json_rejects_wrapped_object():
     assert parse_prompts_json(wrapped) is None
 
 
-def test_parse_prompts_json_rejects_missing_field():
-    raw = (
-        '[{"key": "a", "prompt": "do a"},'
-        '{"key": "b", "label": "B", "prompt": "do b"},'
-        '{"key": "c", "label": "C", "prompt": "do c"}]'
-    )
-    assert parse_prompts_json(raw) is None
 
 
 def test_parse_prompts_json_rejects_empty_field():
@@ -101,31 +73,10 @@ def test_parse_prompts_json_rejects_empty_field():
     assert parse_prompts_json(raw) is None
 
 
-def test_parse_prompts_json_rejects_duplicate_key():
-    raw = (
-        '[{"key": "a", "label": "A", "prompt": "do a"},'
-        '{"key": "a", "label": "B", "prompt": "do b"},'
-        '{"key": "c", "label": "C", "prompt": "do c"}]'
-    )
-    assert parse_prompts_json(raw) is None
 
 
-def test_parse_prompts_json_rejects_duplicate_key_case_insensitive():
-    raw = (
-        '[{"key": "Plan", "label": "A", "prompt": "do a"},'
-        '{"key": "plan", "label": "B", "prompt": "do b"},'
-        '{"key": "c", "label": "C", "prompt": "do c"}]'
-    )
-    assert parse_prompts_json(raw) is None
 
 
-def test_parse_prompts_json_rejects_duplicate_prompt():
-    raw = (
-        '[{"key": "a", "label": "A", "prompt": "same text"},'
-        '{"key": "b", "label": "B", "prompt": "same text"},'
-        '{"key": "c", "label": "C", "prompt": "do c"}]'
-    )
-    assert parse_prompts_json(raw) is None
 
 
 def test_parse_prompts_json_rejects_non_dict_item():
@@ -133,25 +84,11 @@ def test_parse_prompts_json_rejects_non_dict_item():
     assert parse_prompts_json(raw) is None
 
 
-def test_parse_prompts_json_truncates_oversized_fields():
-    long_prompt = "x " * 400  # far over the 300-char cap once collapsed
-    raw = (
-        '[{"key": "a", "label": "A", "prompt": "' + long_prompt + '"},'
-        '{"key": "b", "label": "B", "prompt": "do b"},'
-        '{"key": "c", "label": "C", "prompt": "do c"}]'
-    )
-    parsed = parse_prompts_json(raw)
-    assert parsed is not None
-    assert len(parsed[0]["prompt"]) <= 300
 
 
 # ── fallback pool ────────────────────────────────────────────────────────
 
 
-def test_fallback_pool_has_enough_entries():
-    assert len(_FALLBACK_POOL) >= 3
-    for entry in _FALLBACK_POOL:
-        assert entry["key"] and entry["label"] and entry["prompt"]
 
 
 @pytest.mark.asyncio

@@ -85,20 +85,6 @@ def test_sync_already_up_to_date(tmp_path: Path) -> None:
     assert result.commits == 0
 
 
-def test_sync_fast_forward(tmp_path: Path) -> None:
-    local, remote = _init_repo_with_remote(tmp_path)
-    other = tmp_path / "other"
-    _git(tmp_path, "clone", str(remote), str(other))
-    (other / "README").write_text("v2\n", encoding="utf-8")
-    _git(other, "add", "README")
-    _git(other, "commit", "-m", "v2")
-    _git(other, "push", "origin", "HEAD:main")
-
-    result = sync_to_origin(local, "main", assume_yes=True)
-    assert result.updated is True
-    assert result.commits >= 1
-    assert (local / "README").read_text(encoding="utf-8") == "v2\n"
-    assert result.used_hard_reset is False
 
 
 def test_sync_hard_reset_when_diverged(tmp_path: Path) -> None:

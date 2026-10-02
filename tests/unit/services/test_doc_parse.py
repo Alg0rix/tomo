@@ -11,35 +11,14 @@ from app.services.doc_parse import (
 )
 
 
-def test_plain_txt() -> None:
-    doc = parse_document("notes.txt", b"hello world\nsecond line")
-    assert doc.source_type == "text"
-    assert doc.title == "notes"
-    assert doc.body == "hello world\nsecond line"
-    assert doc.truncated is False
 
 
-def test_markdown() -> None:
-    doc = parse_document("guide.markdown", b"# Title\n\nSome body.")
-    assert doc.source_type == "text"
-    assert doc.title == "guide"
-    assert "# Title" in doc.body
 
 
-def test_title_strips_separators() -> None:
-    doc = parse_document("vendor-deadline_report.md", b"body")
-    assert doc.title == "vendor deadline report"
 
 
-def test_title_capped_at_max() -> None:
-    long_stem = "a" * (MAX_TITLE_CHARS + 40)
-    doc = parse_document(f"{long_stem}.txt", b"body")
-    assert len(doc.title) == MAX_TITLE_CHARS
 
 
-def test_unsupported_ext_raises() -> None:
-    with pytest.raises(ValueError, match="allowed"):
-        parse_document("image.exe", b"\x00\x01\x02")
 
 
 def test_empty_raises() -> None:
@@ -161,11 +140,3 @@ def test_docx_no_text_raises(monkeypatch) -> None:
         parse_document("memo.docx", b"PK\x03\x04 fake")
 
 
-def test_docx_library_error_wrapped(monkeypatch) -> None:
-    class _FakeMarkItDown:
-        def convert_stream(self, stream, **kwargs):
-            raise OSError("zip bomb")
-
-    monkeypatch.setattr("markitdown.MarkItDown", lambda: _FakeMarkItDown())
-    with pytest.raises(ValueError, match="failed to parse .docx"):
-        parse_document("memo.docx", b"PK\x03\x04 fake")

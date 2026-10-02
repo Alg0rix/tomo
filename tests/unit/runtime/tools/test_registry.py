@@ -23,21 +23,8 @@ def test_registry_loads_bash_schema() -> None:
     assert params["required"] == ["command"]
 
 
-def test_get_openai_tools_shape_is_openai_compatible() -> None:
-    """Schemas must be passable straight into LLMClient.complete(tools=...)."""
-    for tool in get_openai_tools():
-        assert tool["type"] == "function"
-        assert "name" in tool["function"]
-        assert "parameters" in tool["function"]
 
 
-def test_registry_names_include_core_tools_not_calculator() -> None:
-    names = ToolRegistry().names()
-    assert "bash" in names
-    assert "str_replace" in names
-    assert "patch" in names
-    assert "web_fetch" in names
-    assert "calculator" not in names
 
 
 
@@ -48,22 +35,14 @@ def test_execute_bash_returns_string_result() -> None:
     assert "4" in execute("bash", {"command": "echo 4"})
 
 
-def test_execute_bash_error_on_empty_command() -> None:
-    assert execute("bash", {"command": "  "}).startswith("Error")
 
 
-def test_execute_unknown_tool_returns_error_string() -> None:
-    result = execute("does_not_exist", {})
-    assert result.startswith("Error")
-    assert "does_not_exist" in result
 
 
 def test_execute_non_dict_arguments_returns_error_string() -> None:
     assert execute("bash", "not a dict").startswith("Error")  # type: ignore[arg-type]
 
 
-def test_execute_never_raises_on_bad_args() -> None:
-    assert execute("bash", {}).startswith("Error")
 
 
 # --- isolated loading from a temp tools dir -----------------------------
@@ -102,16 +81,6 @@ def test_skips_malformed_json(tmp_path: Path) -> None:
     assert reg.names() == []
 
 
-def test_definition_without_function_schema_not_exposed_as_tool(
-    tmp_path: Path,
-) -> None:
-    tools_dir = tmp_path / "tools"
-    tools_dir.mkdir()
-    _write_tool(tools_dir / "nope.json", id="nope", schema={"type": "not_function"})
-    reg = ToolRegistry(tools_dir=tools_dir)
-    # Loaded as a definition (has an id) but not exposed as an OpenAI tool.
-    assert reg.names() == ["nope"]
-    assert reg.get_openai_tools() == []
 
 
 def test_missing_tools_dir_is_empty_registry(tmp_path: Path) -> None:

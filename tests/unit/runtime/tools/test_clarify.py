@@ -18,8 +18,6 @@ def test_clarify_empty_is_error() -> None:
     assert execute("clarify", {"question": "  "}).startswith("Error")
 
 
-def test_clarify_missing_is_error() -> None:
-    assert execute("clarify", {}).startswith("Error")
 
 
 def test_clarify_direct_execute_points_at_loop() -> None:

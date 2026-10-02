@@ -7,11 +7,13 @@ import pytest
 from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, reset_registry
+from app.services import store
 
 
 @pytest.fixture(autouse=True)
-def _reset() -> None:
+def _reset(tmp_path) -> None:
     reset_registry()
+    store.rebind(tmp_path / "patch.db")
     sandbox.reset_agent()
     yield
     sandbox.reset_agent()

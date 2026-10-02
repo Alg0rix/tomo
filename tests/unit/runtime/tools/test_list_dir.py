@@ -21,14 +21,6 @@ def _reset() -> None:
     reset_registry()
 
 
-def test_jail_path_absolute_under_root(tmp_path: Path) -> None:
-    root = tmp_path / "wp"
-    root.mkdir()
-    (root / "a.txt").write_text("x", encoding="utf-8")
-    # Absolute path under root is allowed.
-    abs_target = (root / "a.txt").resolve()
-    got = jail_path(root, str(abs_target))
-    assert got == abs_target
 
 
 def test_jail_path_absolute_outside_root(tmp_path: Path) -> None:

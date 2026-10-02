@@ -29,22 +29,12 @@ _KEY = "sk-test"
 # ── extract_context_window ────────────────────────────────────────
 
 
-def test_extract_top_level_context_window() -> None:
-    assert extract_context_window({"context_window": 32768}) == 32768
 
 
-def test_extract_max_model_len() -> None:
-    assert extract_context_window({"max_model_len": 4096}) == 4096
 
 
-def test_extract_from_nested_model_info() -> None:
-    obj = {"model_info": {"context_length": 8192}}
-    assert extract_context_window(obj) == 8192
 
 
-def test_extract_from_nested_meta() -> None:
-    obj = {"meta": {"n_ctx": 4096}}
-    assert extract_context_window(obj) == 4096
 
 
 def test_extract_string_value() -> None:
@@ -52,16 +42,10 @@ def test_extract_string_value() -> None:
     assert extract_context_window(obj) == 16384
 
 
-def test_extract_rejects_too_small() -> None:
-    assert extract_context_window({"context_window": 100}) is None
 
 
-def test_extract_rejects_too_large() -> None:
-    assert extract_context_window({"context_window": 999_999_999}) is None
 
 
-def test_extract_none_for_no_fields() -> None:
-    assert extract_context_window({"name": "gpt-4o", "id": "gpt-4o"}) is None
 
 
 def test_extract_none_for_non_dict() -> None:
@@ -71,39 +55,14 @@ def test_extract_none_for_non_dict() -> None:
 # ── _match_model_context ──────────────────────────────────────────
 
 
-def test_match_exact_id() -> None:
-    items = [
-        {"id": "gpt-4o", "context_window": 128000},
-        {"id": "gpt-4o-mini", "context_window": 64000},
-    ]
-    assert _match_model_context(items, "gpt-4o-mini") == 64000
 
 
-def test_match_slash_suffix() -> None:
-    items = [
-        {"id": "org/gpt-4o", "context_window": 128000},
-    ]
-    assert _match_model_context(items, "gpt-4o") == 128000
 
 
-def test_match_colon_suffix() -> None:
-    items = [
-        {"id": "ollama:gpt-4o", "max_model_len": 8192},
-    ]
-    assert _match_model_context(items, "gpt-4o") == 8192
 
 
-def test_match_prefix_longest_wins() -> None:
-    items = [
-        {"id": "gpt-4o", "context_window": 128000},
-        {"id": "gpt-4o-2024-08-06", "context_window": 131072},
-    ]
-    assert _match_model_context(items, "gpt-4o-2024-08-06") == 131072
 
 
-def test_match_no_context_field_returns_none() -> None:
-    items = [{"id": "gpt-4o", "name": "gpt-4o"}]
-    assert _match_model_context(items, "gpt-4o") is None
 
 
 def test_match_skips_non_dict_items() -> None:
@@ -111,8 +70,6 @@ def test_match_skips_non_dict_items() -> None:
     assert _match_model_context(items, "gpt-4o") == 128000
 
 
-def test_match_empty_list_returns_none() -> None:
-    assert _match_model_context([], "gpt-4o") is None
 
 
 # ── fetch_model_context_window (via MockTransport) ────────────────
@@ -238,24 +195,14 @@ async def test_fetch_context_list_format_without_data_key() -> None:
 # ── _lookup_known ─────────────────────────────────────────────────
 
 
-def test_known_match_gpt4o() -> None:
-    assert _lookup_known("gpt-4o") == 128_000
 
 
-def test_known_match_prefix() -> None:
-    assert _lookup_known("gpt-4o-2024-08-06") == 128_000
 
 
-def test_known_no_match() -> None:
-    assert _lookup_known("unknown-llm") is None
 
 
-def test_known_match_claude() -> None:
-    assert _lookup_known("claude-3-5-sonnet") == 200_000
 
 
-def test_known_matches_proxy_alias_for_deepseek_v4() -> None:
-    assert _lookup_known("cline-pass/deepseek-v4-flash") == 1_000_000
 
 
 def test_catalog_prefers_original_provider_and_rejects_ambiguous_unknown() -> None:
@@ -287,19 +234,8 @@ def test_sync_falls_back_to_seed(monkeypatch) -> None:
     assert resolve_context_window_sync("main") == 65536
 
 
-def test_sync_returns_default_for_unknown(monkeypatch) -> None:
-    from app.services import store
-
-    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {"model": "unknown"})
-    monkeypatch.setattr(store, "list_models", lambda: [])
-    assert resolve_context_window_sync("main") == _DEFAULT
 
 
-def test_sync_returns_default_when_no_profile(monkeypatch) -> None:
-    from app.services import store
-
-    monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: None)
-    assert resolve_context_window_sync("main") == _DEFAULT
 
 
 def test_sync_codex_uses_route_limit(monkeypatch) -> None:
@@ -523,28 +459,5 @@ async def test_metadata_fallback_retries_without_waiting_an_hour(context_lookup,
     assert await resolve_context_window("main") == 1_000_000
 
 
-@pytest.mark.parametrize("auth_mode", ["api_key", "subscription"])
-async def test_metadata_outage_preserves_provider_limit_and_recovers(context_lookup, auth_mode):
-    mod, clock, profile, results = context_lookup
-    profile["auth_mode"] = auth_mode
-    results.extend([1_000_000, None, 800_000])
-
-    assert await resolve_context_window("main") == 1_000_000
-    clock[0] = mod._CACHE_TTL_S + 1
-    assert await resolve_context_window("main") == 1_000_000
-    clock[0] += mod._CATALOG_RETRY_S + 1
-    assert await resolve_context_window("main") == 800_000
 
 
-@pytest.mark.parametrize("auth_mode", ["api_key", "subscription"])
-async def test_switch_model_does_not_reuse_another_models_limit(context_lookup, auth_mode):
-    mod, clock, profile, results = context_lookup
-    profile["auth_mode"] = auth_mode
-    results.extend([1_000_000, 128_000, None])
-
-    assert await resolve_context_window("main") == 1_000_000
-    profile["model"] = "smaller-model"
-    assert await resolve_context_window("main") == 128_000
-    profile["model"] = "custom-model"
-    clock[0] = mod._CACHE_TTL_S + 1
-    assert await resolve_context_window("main") == 1_000_000

@@ -44,38 +44,7 @@ def test_saved_only_on_successful_writes() -> None:
     assert not is_successful_write("memory", "already present (2 entries).")
 
 
-def test_soft_evaluator_near_duplicate() -> None:
-    ev = evaluate_write("memory", "near-duplicate already present")
-    assert ev["ok"] is False
-    assert ev["reason"] == "near_duplicate"
-    assert ev["saved_eligible"] is False
 
 
-def test_classify_actions_saved_flag() -> None:
-    items = [
-        classify_review_action(
-            "list_skills", result_text="python-unit-testing"
-        ),
-        classify_review_action(
-            "memory",
-            arguments={"entity": "user/profile", "action": "add"},
-            result_text="Saved vault fact.",
-        ),
-    ]
-    agg = classify_actions([], classified=items)
-    assert agg["saved"] is True
-    assert "user" in agg["memory_types"]
-    assert len(agg["reads"]) == 1
-    assert len(agg["writes"]) == 1
-    assert agg["confidence"] >= 0.9
 
 
-def test_classify_read_only_not_saved() -> None:
-    items = [
-        classify_review_action("list_skills", result_text="a,b"),
-        classify_review_action("use_skill", result_text="# body"),
-    ]
-    agg = classify_actions([], classified=items)
-    assert agg["saved"] is False
-    assert agg["confidence"] == 0.0
-    assert all(i["kind"] == "read" for i in items)

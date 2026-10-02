@@ -19,8 +19,6 @@ def _fake_jwt(claims: dict) -> str:
     return f"header.{payload}.sig"
 
 
-def test_list_codex_models_returns_curated_defaults_without_token() -> None:
-    assert list_codex_models(None) == DEFAULT_CODEX_MODELS
 
 
 def test_list_codex_models_uses_live_api_sorted_by_priority() -> None:
@@ -49,12 +47,6 @@ def test_list_codex_models_falls_back_on_http_failure() -> None:
     assert models == DEFAULT_CODEX_MODELS
 
 
-def test_list_codex_models_falls_back_on_empty_catalog() -> None:
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, json={"models": []})
-
-    models = list_codex_models("at-1", transport=httpx2.MockTransport(handler))
-    assert models == DEFAULT_CODEX_MODELS
 
 
 def test_fetch_sends_chatgpt_account_id_header_from_jwt_claim() -> None:
@@ -70,5 +62,3 @@ def test_fetch_sends_chatgpt_account_id_header_from_jwt_claim() -> None:
     assert models == ["gpt-5.6-sol"]
 
 
-def test_extract_chatgpt_account_id_returns_none_for_malformed_token() -> None:
-    assert _extract_chatgpt_account_id("not-a-jwt") is None

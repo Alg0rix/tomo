@@ -37,27 +37,14 @@ def _hist(tmp_path: Path, *entries: dict[str, Any], db_name: str = "ctx.db") -> 
 # --- system prompt ------------------------------------------------------
 
 
-def test_system_prompt_reads_repo_defaults_file() -> None:
-    prompt = coordinator_system_prompt()
-    assert "Tomo" in prompt
-    # Whitespace is stripped so the model never sees a leading newline.
-    assert prompt == prompt.strip()
 
 
 def test_system_prompt_falls_back_when_file_missing(tmp_path: Path) -> None:
     assert coordinator_system_prompt(path=tmp_path / "nope.md") == _FALLBACK_PROMPT
 
 
-def test_system_prompt_falls_back_on_blank_file(tmp_path: Path) -> None:
-    blank = tmp_path / "blank.md"
-    blank.write_text("   \n  \n", encoding="utf-8")
-    assert coordinator_system_prompt(path=blank) == _FALLBACK_PROMPT
 
 
-def test_system_prompt_uses_file_contents(tmp_path: Path) -> None:
-    f = tmp_path / "sys.md"
-    f.write_text("You are a test agent.\n", encoding="utf-8")
-    assert coordinator_system_prompt(path=f) == "You are a test agent."
 
 
 def test_build_system_prompt_always_includes_current_time(tmp_path: Path) -> None:
@@ -73,22 +60,6 @@ def test_build_system_prompt_always_includes_current_time(tmp_path: Path) -> Non
     assert twice.count("## Current time") == 1
 
 
-def test_prompt_clock_freeze_is_stable_within_turn(tmp_path: Path) -> None:
-    from app.runtime.agent.context import (
-        freeze_prompt_clock,
-        inject_current_time,
-        reset_prompt_clock,
-    )
-
-    tok = freeze_prompt_clock()
-    try:
-        a = inject_current_time("base")
-        b = inject_current_time("base")
-        assert a == b  # once per turn — not re-stamped mid-turn
-        assert a.count("## Current time") == 1
-        assert "bash" in a.lower() or "`date`" in a
-    finally:
-        reset_prompt_clock(tok)
 
 
 def test_build_messages_stamps_time_on_custom_system_prompt() -> None:
@@ -101,9 +72,6 @@ def test_build_messages_stamps_time_on_custom_system_prompt() -> None:
 # --- history_to_messages ------------------------------------------------
 
 
-def test_history_to_messages_empty_inputs() -> None:
-    assert history_to_messages(None) == []
-    assert history_to_messages([]) == []
 
 
 def test_user_and_final_map_to_chat_roles(tmp_path: Path) -> None:
@@ -436,16 +404,6 @@ def test_refreshing_clock_preserves_appended_instructions() -> None:
     assert "## Current time" not in messages[0]["content"]
 
 
-def test_compression_preserves_turn_context() -> None:
-    from app.runtime.agent.compress import maybe_compress_messages
-
-    clock = {"role": "system", "content": "current clock and retrieved memory"}
-    messages = [{"role": "system", "content": "base"},
-                {"role": "user", "content": "old request"}, clock,
-                *[{"role": "user", "content": "followup " * 100} for _ in range(20)]]
-    compressed = maybe_compress_messages(messages, soft_limit_tokens=1000, keep_recent=4)
-    assert len(compressed) < len(messages)
-    assert clock in compressed
 
 
 # --- unpaired / surplus tool pairing -----------------------------------

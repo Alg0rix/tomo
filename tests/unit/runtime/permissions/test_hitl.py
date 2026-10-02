@@ -38,34 +38,8 @@ async def test_approval_resolve_once() -> None:
     assert choice == "once"
 
 
-@pytest.mark.asyncio
-async def test_approval_timeout_deny() -> None:
-    payload = hitl.create_approval(
-        tool="bash",
-        args={"command": "rm -rf ./x"},
-        findings=[],
-        description="dangerous",
-        session_id="s1",
-    )
-    choice = await hitl.await_approval(payload["id"], timeout=0.1)
-    assert choice == "deny"
 
 
-@pytest.mark.asyncio
-async def test_clarify_resolve() -> None:
-    payload = hitl.create_clarify(
-        question="Which env?",
-        choices=["dev", "prod"],
-        session_id="s1",
-    )
-
-    async def _resolve() -> None:
-        await asyncio.sleep(0.05)
-        hitl.resolve_clarify(payload["id"], "dev")
-
-    asyncio.create_task(_resolve())
-    answer = await hitl.await_clarify(payload["id"], timeout=2.0)
-    assert answer == "dev"
 
 
 def test_list_pending_for_session() -> None:

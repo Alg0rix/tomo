@@ -10,14 +10,15 @@ from app.core import home
 from app.runtime.artifacts.fs import bind_session, reset_session
 from app.runtime.tools.user_ctx import bind_user, reset_user
 from app.services import store
-from app.runtime.tools import process_registry, sandbox
+from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, reset_registry
+from app.services.background_jobs import manager as _job_manager
 
 
 @pytest.fixture(autouse=True)
 def _reset(tmp_path) -> None:
     reset_registry()
-    process_registry.reset()
+    _job_manager.reset()
     store.rebind(tmp_path / "process.db")
     store.update_agent("ops", {"workplace_id": ""})
     sid = store.get_or_create_session("ops", "web")
@@ -27,7 +28,7 @@ def _reset(tmp_path) -> None:
     yield
     reset_session(session_token)
     reset_user(user_token)
-    process_registry.reset()
+    _job_manager.reset()
     sandbox.reset_agent()
     reset_registry()
 

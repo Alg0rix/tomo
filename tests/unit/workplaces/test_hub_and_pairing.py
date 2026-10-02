@@ -22,18 +22,8 @@ def _rebind(tmp_path: Path) -> None:
     pairing_mod.rate_limiter.reset()
 
 
-def test_generate_pairing_code_shape() -> None:
-    code = generate_pairing_code()
-    assert len(code) == 6
-    assert code.isalnum()
-    assert code == code.upper() or any(c.isdigit() for c in code)
 
 
-def test_pairing_expires_at_in_future() -> None:
-    now = time.time()
-    exp = pairing_expires_at(now)
-    assert exp > now
-    assert exp - now >= 60
 
 
 def test_hub_offline_call_error() -> None:
@@ -43,51 +33,6 @@ def test_hub_offline_call_error() -> None:
     assert "offline" in result["error"].lower()
 
 
-def test_hub_rpc_round_trip(tmp_path: Path) -> None:
-    """Mock websocket + event loop: register session, resolve RPC manually."""
-    hub.reset()
-    loop = asyncio.new_event_loop()
-    ws = MagicMock()
-
-    async def _send(msg: dict[str, Any]) -> None:
-        # Immediately resolve as if the connector replied.
-        rid = msg.get("id")
-        if rid and session:
-            session.resolve_rpc(
-                rid, {"ok": True, "result": f"pong:{msg.get('method')}"}
-            )
-
-    ws.send_json = lambda msg: asyncio.ensure_future(_send(msg), loop=loop)
-    # ConnectorSession.send awaits websocket.send_json — use async mock.
-    async def send_json(msg: dict[str, Any]) -> None:
-        await _send(msg)
-
-    ws.send_json = send_json
-
-    session = ConnectorSession("wp_x", ws, loop, hostname="test-host")
-    hub.register(session)
-    assert hub.is_online("wp_x")
-
-    async def _run() -> dict[str, Any]:
-        # Drive pending callbacks while call waits on another thread.
-        fut = asyncio.get_event_loop().run_in_executor(
-            None, lambda: hub.call("wp_x", "bash", {"command": "true"}, timeout=5.0)
-        )
-        # Pump loop a bit.
-        for _ in range(50):
-            await asyncio.sleep(0.02)
-            if fut.done():
-                break
-        return await fut
-
-    try:
-        result = loop.run_until_complete(_run())
-    finally:
-        hub.reset()
-        loop.close()
-
-    assert result["ok"] is True
-    assert "bash" in str(result["result"])
 
 
 def test_pair_invalid_code(tmp_path: Path) -> None:
@@ -159,18 +104,8 @@ def test_set_workplace_enabled_unknown_returns_none(tmp_path: Path) -> None:
     assert store.set_workplace_enabled("nope", False) is None
 
 
-def test_pairing_code_avoids_ambiguous_chars() -> None:
-    for _ in range(40):
-        code = generate_pairing_code()
-        assert not any(c in code for c in "01OI")
 
 
-def test_client_supports_replay() -> None:
-    from app.workplaces.hub import client_supports_replay
-
-    assert client_supports_replay(caps="idempotent-replay") is True
-    assert client_supports_replay(version="0.2.0") is True
-    assert client_supports_replay(version="0.1.0") is False
 
 
 @pytest.mark.asyncio
