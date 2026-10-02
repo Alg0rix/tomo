@@ -42,9 +42,9 @@ def _download_bytes(url: str) -> bytes | str:
     if blocked:
         return blocked
     try:
-        import httpx
+        import httpx2
 
-        with httpx.Client(timeout=_DOWNLOAD_TIMEOUT, follow_redirects=False) as client:
+        with httpx2.Client(timeout=_DOWNLOAD_TIMEOUT, follow_redirects=False) as client:
             resp = client.get(url)
         if resp.status_code != 200:
             return f"Error: image download failed (HTTP {resp.status_code})"

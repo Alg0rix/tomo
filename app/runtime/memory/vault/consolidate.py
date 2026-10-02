@@ -92,7 +92,7 @@ async def consolidate_user(user_id: str, client, *, home_root: Path | None = Non
 
 
 async def run_nightly() -> None:
-    from app.runtime.llm import get_llm
+    from app.runtime.llm import get_auxiliary_llm
     from app.runtime.memory.episodes import optimize_ltm
     from app.services import store
 
@@ -102,7 +102,12 @@ async def run_nightly() -> None:
     for user in store.list_users():
         uid = user['id']
         try:
-            await consolidate_user(uid, get_llm())
+            client = get_auxiliary_llm('memory_consolidation')
+            try:
+                await consolidate_user(uid, client)
+            finally:
+                if hasattr(client, 'aclose'):
+                    await client.aclose()
             optimize_ltm(user_id=uid)
         except Exception:
             log.exception('nightly memory optimization failed for %s', uid)

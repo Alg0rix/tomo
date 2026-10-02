@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 
 
 def add_parser(sub: argparse._SubParsersAction) -> None:
@@ -157,7 +157,7 @@ def _client():
         raise ValueError(
             "Run from a foreground Tomo web-chat bash tool (local or updated tunnel connector); broker access is session-scoped"
         )
-    with httpx.Client(
+    with httpx2.Client(
         base_url=base,
         headers={"Authorization": "Bearer " + token},
         timeout=65,
@@ -167,7 +167,7 @@ def _client():
         yield client
 
 
-def _response(response: httpx.Response) -> dict:
+def _response(response: httpx2.Response) -> dict:
     try:
         data = response.json()
     except ValueError:
@@ -301,6 +301,6 @@ def run(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print("Error: " + str(exc), file=sys.stderr)
         return 1
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         print("Error: could not reach the Tomo secret broker", file=sys.stderr)
         return 1

@@ -19,7 +19,7 @@ import logging
 import time
 from typing import Any
 
-import httpx
+import httpx2
 
 from app.runtime.llm.codex_models import _extract_chatgpt_account_id
 from app.runtime.llm.openai_compat import extract_context_window
@@ -123,7 +123,7 @@ async def _fetch_codex_context(profile: dict[str, Any], model_id: str) -> int | 
         headers["ChatGPT-Account-Id"] = account_id
     model = _canonical_model_id(model_id)
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx2.AsyncClient(timeout=8.0) as client:
             for version in ("99.0.0", "0.0.0"):
                 response = await client.get(
                     base_url + "/models", params={"client_version": version}, headers=headers
@@ -167,7 +167,7 @@ async def _fetch_public_catalog_context(model_id: str) -> int | None:
     now = time.monotonic()
     if now >= _catalog_expiry:
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx2.AsyncClient(timeout=8.0) as client:
                 response = await client.get(_CATALOG_URL)
                 response.raise_for_status()
                 payload = response.json()
@@ -240,7 +240,7 @@ def resolve_context_window_sync(agent_id: str | None = None) -> int:
     return _DEFAULT
 
 
-async def resolve_context_window(agent_id: str | None = None) -> int:
+async def resolve_context_window(agent_id: str | None = None, *, session_id: str | None = None) -> int:
     """Resolve context window for the agent's LLM profile.
 
     1. Cache hit (base_url, model, credential)
@@ -252,7 +252,7 @@ async def resolve_context_window(agent_id: str | None = None) -> int:
     """
     from app.runtime.llm.openai_compat import LLMConfigError, OpenAICompatClient
 
-    profile = _get_profile(agent_id)
+    profile = _get_profile(agent_id, session_id=session_id)
     base_url = (profile or {}).get("base_url") or "https://api.openai.com/v1"
     model_id = (profile or {}).get("model") or ""
     base_url = base_url.rstrip("/")
@@ -326,17 +326,17 @@ def clear_context_window_cache() -> None:
 # ── internal helpers ──────────────────────────────────────────────
 
 
-def _get_profile(agent_id: str | None) -> dict[str, Any] | None:
+def _get_profile(agent_id: str | None, *, session_id: str | None = None) -> dict[str, Any] | None:
     try:
-        from app.services import store
+        from app.runtime.llm import resolve_main_profile
 
-        return store.resolve_llm_profile(agent_id)
+        return resolve_main_profile(agent_id, session_id=session_id)
     except Exception:
         return None
 
 
-def _agent_model(agent_id: str | None) -> str:
-    profile = _get_profile(agent_id)
+def _agent_model(agent_id: str | None, *, session_id: str | None = None) -> str:
+    profile = _get_profile(agent_id, session_id=session_id)
     return ((profile or {}).get("model") or "").strip()
 
 

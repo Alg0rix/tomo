@@ -83,7 +83,7 @@ print(response.text)
         }
         return json({ mode: session.mode || 'smart' });
       }
-      if (action === 'reasoning-effort') return json({ model: 'Test model', reasoning_efforts: ['low', 'high'], reasoning_effort: 'high' });
+      if (action === 'reasoning-effort') return json({ profile_id: 'test', model: 'Test model', model_profiles: [{ id: 'test', name: 'Test', models: ['Test model'] }], reasoning_efforts: ['low', 'high'], reasoning_effort: 'high' });
       if (action === 'artifacts') return json({ artifacts: [] });
       if (action === 'attachments' && req.method === 'POST') {
         for await (const chunk of req) {} // Consume the real multipart upload.

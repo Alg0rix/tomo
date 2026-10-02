@@ -9,7 +9,7 @@ import asyncio
 import base64
 from typing import Any
 
-import httpx
+import httpx2
 
 from app.services import secret_store, store
 from app.workplaces.hub import hub
@@ -42,12 +42,12 @@ def call(scope: dict[str, Any], method: str, params: dict, timeout: float = 30) 
     return result["result"]
 
 
-class HTTPTransport(httpx.AsyncBaseTransport):
+class HTTPTransport(httpx2.AsyncBaseTransport):
     def __init__(self, scope: dict, timeout: float):
         self.scope = scope
         self.timeout = timeout
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         result = await asyncio.to_thread(
             call,
             self.scope,
@@ -76,7 +76,7 @@ class HTTPTransport(httpx.AsyncBaseTransport):
                 raise ValueError
         except (KeyError, ValueError, TypeError):
             raise ValueError("Invalid private HTTP response") from None
-        return httpx.Response(status, content=body)
+        return httpx2.Response(status, content=body)
 
 
 def apply_file(

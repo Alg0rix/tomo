@@ -253,9 +253,9 @@ def _resolve_review_client(fallback: LLMClient) -> tuple[LLMClient, bool]:
         profile = store.get_llm_profile(pid)
         if not profile or not profile.get("enabled", True):
             return fallback, False
-        from app.runtime.llm import get_llm
+        from app.runtime.llm import get_auxiliary_llm
 
-        return get_llm(profile_id=pid), True
+        return get_auxiliary_llm('learning_review'), True
     except Exception as exc:
         _logger.debug("learning review client route failed: %s", exc)
         return fallback, False

@@ -787,7 +787,12 @@ async def run_turn(
                     selected_effort = store.resolve_session_reasoning_effort(
                         session_id, agent_id
                     )
-                if selected_effort is None:
+                from app.services import store
+
+                session_profile = store.get_session(session_id) if session_id else None
+                if session_profile and session_profile.get("model_profile_id"):
+                    client = get_llm(agent_id, reasoning_effort=selected_effort, session_id=session_id)
+                elif selected_effort is None:
                     client = get_llm(agent_id)
                 else:
                     client = get_llm(agent_id, reasoning_effort=selected_effort)

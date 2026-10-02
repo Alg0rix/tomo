@@ -1,4 +1,4 @@
-"""CodexResponsesClient HTTP mapping tests via httpx.MockTransport.
+"""CodexResponsesClient HTTP mapping tests via httpx2.MockTransport.
 
 No real network calls: a mock transport inspects the outgoing Responses-API
 request and returns canned Responses-shaped JSON/SSE so we can verify the
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.runtime.llm.base import LLMResponse
@@ -25,7 +25,7 @@ _TOKEN = "at-test"
 _MODEL = "gpt-5-codex"
 
 
-def _client(transport: httpx.MockTransport, **kw) -> CodexResponsesClient:
+def _client(transport: httpx2.MockTransport, **kw) -> CodexResponsesClient:
     return CodexResponsesClient(base_url=_BASE, access_token=_TOKEN, model=_MODEL, transport=transport, **kw)
 
 
@@ -59,8 +59,8 @@ def test_turn_context_stays_in_input_even_without_history() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_key_survives_live_changes_and_client_recreation() -> None:
-    client = _client(httpx.MockTransport(lambda req: httpx.Response(200)))
-    other = _client(httpx.MockTransport(lambda req: httpx.Response(200)))
+    client = _client(httpx2.MockTransport(lambda req: httpx2.Response(200)))
+    other = _client(httpx2.MockTransport(lambda req: httpx2.Response(200)))
     try:
         first = [{"role": "system", "content": "stable instructions"},
                  {"role": "user", "content": "previous request"},
@@ -143,16 +143,16 @@ def test_responses_tools_converts_function_schema() -> None:
     ]
 
 
-def _completed_sse(response: dict) -> httpx.Response:
+def _completed_sse(response: dict) -> httpx2.Response:
     events = [{"type": "response.output_item.done", "item": item}
               for item in response.get("output", [])]
     events.append({"type": "response.completed", "response": response})
-    return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+    return httpx2.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
 
 
 @pytest.mark.asyncio
 async def test_public_api_key_uses_responses_wire_format() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/v1/responses"
         assert request.headers["authorization"] == "Bearer sk-test"
         body = json.loads(request.content)
@@ -165,7 +165,7 @@ async def test_public_api_key_uses_responses_wire_format() -> None:
         ]})
 
     client = CodexResponsesClient(base_url="https://api.openai.com/v1", access_token="sk-test",
-                                  model="gpt-5", transport=httpx.MockTransport(handler))
+                                  model="gpt-5", transport=httpx2.MockTransport(handler))
     try:
         assert (await client.complete([{"role": "user", "content": "hi"}])).content == "ok"
     finally:
@@ -174,7 +174,7 @@ async def test_public_api_key_uses_responses_wire_format() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_returns_text() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         assert body["model"] == _MODEL
         assert body["stream"] is True
@@ -193,7 +193,7 @@ async def test_complete_returns_text() -> None:
                 "usage": {"input_tokens": 10, "output_tokens": 5},
             })
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     resp = await client.complete([{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}])
     assert isinstance(resp, LLMResponse)
     assert resp.content == "hello there"
@@ -204,7 +204,7 @@ async def test_complete_returns_text() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_returns_tool_calls() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
@@ -216,7 +216,7 @@ async def test_complete_returns_tool_calls() -> None:
                 ],
             })
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     resp = await client.complete(
         [{"role": "user", "content": "run ls"}],
         tools=[{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}],
@@ -229,10 +229,10 @@ async def test_complete_returns_tool_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_raises_llm_request_error_on_http_failure() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, json={"error": {"message": "bad token", "code": "invalid_api_key"}})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401, json={"error": {"message": "bad token", "code": "invalid_api_key"}})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     with pytest.raises(LLMRequestError):
         await client.complete([{"role": "user", "content": "hi"}])
 
@@ -258,10 +258,10 @@ async def test_stream_complete_yields_deltas_then_done() -> None:
         },
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     deltas = []
     final = None
     async for ev in client.stream_complete([{"role": "user", "content": "hi"}]):
@@ -279,14 +279,14 @@ async def test_stream_complete_yields_deltas_then_done() -> None:
 async def test_complete_sends_reasoning_effort() -> None:
     captured = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["body"] = json.loads(request.content)
         return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
             ]})
 
-    client = _client(httpx.MockTransport(handler), reasoning_effort="high")
+    client = _client(httpx2.MockTransport(handler), reasoning_effort="high")
     await client.complete([{"role": "user", "content": "hi"}])
     assert captured["body"]["reasoning"] == {"effort": "high", "summary": "auto"}
 
@@ -295,14 +295,14 @@ async def test_complete_sends_reasoning_effort() -> None:
 async def test_complete_clamps_minimal_effort_to_low() -> None:
     captured = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["body"] = json.loads(request.content)
         return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
             ]})
 
-    client = _client(httpx.MockTransport(handler), reasoning_effort="minimal")
+    client = _client(httpx2.MockTransport(handler), reasoning_effort="minimal")
     await client.complete([{"role": "user", "content": "hi"}])
     assert captured["body"]["reasoning"] == {"effort": "low", "summary": "auto"}
 
@@ -311,21 +311,21 @@ async def test_complete_clamps_minimal_effort_to_low() -> None:
 async def test_complete_omits_reasoning_when_not_configured() -> None:
     captured = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["body"] = json.loads(request.content)
         return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
             ]})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     await client.complete([{"role": "user", "content": "hi"}])
     assert "reasoning" not in captured["body"]
 
 
 @pytest.mark.asyncio
 async def test_complete_extracts_reasoning_summary() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         return _completed_sse({
                 "id": "resp_1",
                 "status": "completed",
@@ -341,7 +341,7 @@ async def test_complete_extracts_reasoning_summary() -> None:
                 ],
             })
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.content == "Here's the answer."
     assert resp.reasoning == "Thinking about the ask."
@@ -349,13 +349,13 @@ async def test_complete_extracts_reasoning_summary() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_reasoning_is_none_when_absent() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         return _completed_sse({"id": "resp_1", "status": "completed", "output": [
                 {"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
                  "content": [{"type": "output_text", "text": "hi"}]},
             ]})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.reasoning is None
 
@@ -370,7 +370,7 @@ async def test_stream_complete_exposes_reasoning_before_answer() -> None:
         {"type": "response.output_text.delta", "delta": "answer"},
         {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
     ]
-    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, content=_sse(events), headers={"content-type": "text/event-stream"})))
     try:
         output = [ev async for ev in client.stream_complete([{"role": "user", "content": "hi"}])]
@@ -392,7 +392,7 @@ async def test_stream_complete_separates_reasoning_summary_parts() -> None:
         {"type": "response.output_text.delta", "delta": "answer"},
         {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
     ]
-    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, content=_sse(events), headers={"content-type": "text/event-stream"})))
     try:
         output = [ev async for ev in client.stream_complete([{"role": "user", "content": "hi"}])]
@@ -417,10 +417,10 @@ async def test_stream_complete_extracts_reasoning_summary() -> None:
         {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     final = None
     async for ev in client.stream_complete([{"role": "user", "content": "hi"}]):
         if ev["type"] == "done":
@@ -449,9 +449,9 @@ async def test_complete_collects_deltas_reasoning_tools_and_usage() -> None:
         body = json.loads(request.content)
         assert body["stream"] is True
         assert body["tools"][0]["name"] == "bash"
-        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+        return httpx2.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         resp = await client.complete([{"role": "user", "content": "check files"}], tools=[
             {"type": "function", "function": {"name": "bash"}}])
@@ -478,7 +478,7 @@ async def test_partial_stream_is_not_accepted_as_success(method, terminal, error
     events = [{'type': 'response.output_text.delta', 'delta': 'partial output'}]
     if terminal:
         events.append(terminal)
-    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, content=_sse(events), headers={'content-type': 'text/event-stream'})))
     try:
         with pytest.raises(LLMRequestError, match=error):
@@ -509,7 +509,7 @@ async def test_memory_extraction_and_session_title_use_codex_stream(tmp_path):
         return _completed_sse({'id': 'resp_1', 'status': 'completed', 'output': [
             {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': replies.pop(0)}]}]})
 
-    client = _client(httpx.MockTransport(handler), reasoning_effort='low')
+    client = _client(httpx2.MockTransport(handler), reasoning_effort='low')
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row
     try:
@@ -530,7 +530,7 @@ async def test_complete_cancellation_closes_http_stream():
     started = asyncio.Event()
     closed = asyncio.Event()
 
-    class WaitingStream(httpx.AsyncByteStream):
+    class WaitingStream(httpx2.AsyncByteStream):
         async def __aiter__(self):
             yield _sse([{'type': 'response.output_text.delta', 'delta': 'partial'}])
             started.set()
@@ -539,7 +539,7 @@ async def test_complete_cancellation_closes_http_stream():
         async def aclose(self):
             closed.set()
 
-    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, stream=WaitingStream(), headers={'content-type': 'text/event-stream'})))
     task = asyncio.create_task(client.complete([{'role': 'user', 'content': 'hi'}]))
     try:

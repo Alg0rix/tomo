@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
 
-import httpx
+import httpx2
 
 from app.channels.delivery import register_delivery_channel
 from app.channels.telegram import run_channel_turn
@@ -50,11 +50,11 @@ def test_legacy_schedule_database_migrates_without_rerouting_jobs(tmp_path):
 
 
 def wire_scheduled_transport(monkeypatch, bot):
-    client = httpx.AsyncClient
+    client = httpx2.AsyncClient
     monkeypatch.setattr(
-        "app.channels.telegram.httpx.AsyncClient",
+        "app.channels.telegram.httpx2.AsyncClient",
         lambda **kwargs: client(
-            **{**kwargs, "transport": httpx.MockTransport(bot.transport)}
+            **{**kwargs, "transport": httpx2.MockTransport(bot.transport)}
         ),
     )
     store.update_settings(

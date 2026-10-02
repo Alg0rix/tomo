@@ -5,7 +5,7 @@ client and monkeypatched store for seed lookups.
 """
 from __future__ import annotations
 
-import httpx
+import httpx2
 
 from app.runtime.llm.openai_compat import (
     OpenAICompatClient,
@@ -118,7 +118,7 @@ def test_match_empty_list_returns_none() -> None:
 
 
 def _make_client(handler, *, model="vllm-model", base_url=_BASE, api_key=_KEY):
-    transport = httpx.MockTransport(handler)
+    transport = httpx2.MockTransport(handler)
     return OpenAICompatClient(
         base_url=base_url, api_key=api_key, model=model, transport=transport
     )
@@ -127,15 +127,15 @@ def _make_client(handler, *, model="vllm-model", base_url=_BASE, api_key=_KEY):
 async def test_fetch_context_from_models_list() -> None:
     """Provider returns context_length in /models list."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [
                     {"id": "vllm-model", "max_model_len": 16384},
                     {"id": "other", "context_window": 4096},
                 ]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     client = _make_client(handler)
     try:
@@ -148,14 +148,14 @@ async def test_fetch_context_from_models_list() -> None:
 async def test_fetch_context_from_nested_model_info() -> None:
     """Context field nested inside model_info."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [
                     {"id": "vllm-model", "model_info": {"context_length": 32768}},
                 ]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     client = _make_client(handler)
     try:
@@ -168,13 +168,13 @@ async def test_fetch_context_from_nested_model_info() -> None:
 async def test_fetch_context_fallback_to_single_model_endpoint() -> None:
     """List has no match; falls back to GET /models/{model}."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         if path.endswith("/models"):
-            return httpx.Response(200, json={"data": []})
+            return httpx2.Response(200, json={"data": []})
         if path.endswith("/models/vllm-model"):
-            return httpx.Response(200, json={"id": "vllm-model", "context_window": 65536})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"id": "vllm-model", "context_window": 65536})
+        return httpx2.Response(404)
 
     client = _make_client(handler)
     try:
@@ -187,8 +187,8 @@ async def test_fetch_context_fallback_to_single_model_endpoint() -> None:
 async def test_fetch_context_returns_none_on_network_error() -> None:
     """Network failure → None, no exception."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused")
 
     client = _make_client(handler)
     try:
@@ -201,12 +201,12 @@ async def test_fetch_context_returns_none_on_network_error() -> None:
 async def test_fetch_context_returns_none_when_no_field() -> None:
     """Model exists but has no context field → None."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [{"id": "vllm-model", "owned_by": "vllm"}]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     client = _make_client(handler)
     try:
@@ -219,12 +219,12 @@ async def test_fetch_context_returns_none_when_no_field() -> None:
 async def test_fetch_context_list_format_without_data_key() -> None:
     """Some providers return a bare list instead of {data: [...]}."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json=[
+            return httpx2.Response(200, json=[
                 {"id": "vllm-model", "context_length": 8192},
             ])
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     client = _make_client(handler)
     try:
@@ -319,14 +319,14 @@ async def test_async_caches_result(monkeypatch) -> None:
 
     call_count = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal call_count
         call_count += 1
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [{"id": "test-m", "context_window": 99999}]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     clear_context_window_cache()
     monkeypatch.setattr(store, "resolve_llm_profile", lambda aid=None: {
@@ -337,7 +337,7 @@ async def test_async_caches_result(monkeypatch) -> None:
     orig_init = OpenAICompatClient.__init__
 
     def patched_init(self, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
+        kwargs["transport"] = httpx2.MockTransport(handler)
         orig_init(self, **kwargs)
 
     monkeypatch.setattr(OpenAICompatClient, "__init__", patched_init)
@@ -356,12 +356,12 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
     """API returns no context → known table match."""
     from app.services import store
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [{"id": "gpt-4o", "owned_by": "openai"}]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
     clear_context_window_cache()
     import app.runtime.llm.context_window as context_mod
@@ -377,7 +377,7 @@ async def test_async_known_table_fallback(monkeypatch) -> None:
     orig_init = OpenAICompatClient.__init__
 
     def patched_init(self, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
+        kwargs["transport"] = httpx2.MockTransport(handler)
         orig_init(self, **kwargs)
 
     monkeypatch.setattr(OpenAICompatClient, "__init__", patched_init)
@@ -420,19 +420,19 @@ async def test_codex_catalog_reads_account_scoped_context(monkeypatch) -> None:
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
     token = f"header.{payload}.signature"
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.headers["ChatGPT-Account-Id"] == "acct-123"
         assert request.url.params["client_version"] == "99.0.0"
-        return httpx.Response(200, json={"models": [
+        return httpx2.Response(200, json={"models": [
             {"slug": "gpt-5.6-sol", "context_window": 272_000},
         ]})
 
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
     def mock_client(**kwargs):
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(transport=httpx2.MockTransport(handler), **kwargs)
 
-    monkeypatch.setattr(context_mod.httpx, "AsyncClient", mock_client)
+    monkeypatch.setattr(context_mod.httpx2, "AsyncClient", mock_client)
     result = await context_mod._fetch_codex_context({
         "access_token": token,
         "base_url": "https://chatgpt.com/backend-api/codex",
@@ -462,22 +462,22 @@ async def test_unknown_model_uses_public_catalog(monkeypatch) -> None:
 async def test_public_catalog_reads_exact_context_without_credentials(monkeypatch) -> None:
     import app.runtime.llm.context_window as context_mod
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == "models.dev"
         assert "authorization" not in request.headers
-        return httpx.Response(200, json={
+        return httpx2.Response(200, json={
             "deepseek": {"models": {"deepseek-v4-flash": {
                 "limit": {"context": 1_000_000, "output": 393_216},
             }}},
         })
 
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
     def mock_client(**kwargs):
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(transport=httpx2.MockTransport(handler), **kwargs)
 
     clear_context_window_cache()
-    monkeypatch.setattr(context_mod.httpx, "AsyncClient", mock_client)
+    monkeypatch.setattr(context_mod.httpx2, "AsyncClient", mock_client)
     assert await context_mod._fetch_public_catalog_context("cline-pass/deepseek-v4-flash") == 1_000_000
     clear_context_window_cache()
 

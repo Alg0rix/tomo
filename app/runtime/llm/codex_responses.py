@@ -21,7 +21,7 @@ import logging
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.runtime.llm.http import provider_ssl_context, session_headers, stream_json, user_agent
@@ -261,7 +261,7 @@ class CodexResponsesClient:
         *,
         reasoning_effort: str | None = None,
         timeout: float | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         resolved_token = (access_token or "").strip()
         if not resolved_token:
@@ -276,7 +276,7 @@ class CodexResponsesClient:
         )
 
         self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             headers={"Authorization": f"Bearer {resolved_token}"},
             timeout=self._http_timeout,
             transport=transport,

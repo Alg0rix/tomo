@@ -4,7 +4,7 @@ import asyncio
 import copy
 import hashlib
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher
@@ -44,7 +44,7 @@ def setup(tmp_path):
     hitl.clear_all_pending()
     chat._shutting_down = False
     bot = Bot()
-    api = TelegramAPI("test-token", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("test-token", transport=httpx2.MockTransport(bot.transport))
     yield path, bot, api
     chat._shutting_down = False
     hitl.clear_all_pending()
@@ -209,7 +209,7 @@ async def test_recovery_requires_same_bot_and_current_chat_permission(setup):
             },
         },
     )
-    other = TelegramAPI("another-bot", transport=httpx.MockTransport(bot.transport))
+    other = TelegramAPI("another-bot", transport=httpx2.MockTransport(bot.transport))
     try:
         dispatcher = TelegramDispatcher(other)
         dispatcher.recover_pending()

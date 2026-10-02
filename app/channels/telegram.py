@@ -4,7 +4,7 @@ Token lives in settings (``telegram_bot_token``, Fernet at rest). Never log the
 token. Inbound chats use a linked account (or ``tg_<chat_id>`` when unlinked),
 with a separate delivery destination. Turns reuse the web background manager.
 
-HTTP goes through :mod:`httpx` so tests inject ``MockTransport`` (no network).
+HTTP goes through :mod:`httpx2` so tests inject ``MockTransport`` (no network).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import logging
 import mimetypes
 from typing import TYPE_CHECKING, Any, Callable
 
-import httpx
+import httpx2
 
 from app.services.store import store
 
@@ -89,8 +89,8 @@ class TelegramAPI:
         self,
         token: str,
         *,
-        transport: httpx.AsyncBaseTransport | None = None,
-        client: httpx.AsyncClient | None = None,
+        transport: httpx2.AsyncBaseTransport | None = None,
+        client: httpx2.AsyncClient | None = None,
         timeout: float = 60.0,
         authorize: Callable[[], None] | None = None,
     ) -> None:
@@ -102,8 +102,8 @@ class TelegramAPI:
         self._rich_disabled = False
         self._draft_disabled = False
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=10.0),
+        self._client = client or httpx2.AsyncClient(
+            timeout=httpx2.Timeout(timeout, connect=10.0),
             transport=transport,
         )
 
@@ -141,7 +141,7 @@ class TelegramAPI:
                     timeout=60.0 if method == "getUpdates" or files is not None else 10.0,
                 )
                 body = response.json()
-            except (httpx.HTTPError, ValueError):
+            except (httpx2.HTTPError, ValueError):
                 raise RuntimeError("Telegram network request failed") from None
             if body.get("ok"):
                 return body.get("result")
@@ -206,7 +206,7 @@ class TelegramAPI:
                 if not data:
                     raise MediaError("Telegram sent an empty file. Please resend it.")
                 return bytes(data)
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             raise MediaError(
                 "I couldn't download this file from Telegram. Please resend it."
             ) from None

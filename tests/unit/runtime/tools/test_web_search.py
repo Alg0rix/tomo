@@ -1,10 +1,10 @@
-"""web_search tool tests (httpx mocked)."""
+"""web_search tool tests (httpx2 mocked)."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from app.runtime.tools import web_search
@@ -38,7 +38,7 @@ def test_web_search_formats_html_results() -> None:
     mock_resp.text = html
     mock_client = _client_with_responses(mock_resp)
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         result = execute("web_search", {"query": "python"})
     assert "1. Python" in result
     assert "A programming language." in result
@@ -54,9 +54,9 @@ def test_web_search_request_failure() -> None:
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
-    mock_client.get.side_effect = httpx.TimeoutException("slow")
+    mock_client.get.side_effect = httpx2.TimeoutException("slow")
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         result = execute("web_search", {"query": "python"})
     assert result.startswith("Error")
 
@@ -77,7 +77,7 @@ def test_web_search_no_results() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         result = execute("web_search", {"query": "zzzz"})
     assert result.startswith("No results")
 
@@ -97,7 +97,7 @@ def test_web_search_empty_ia_body_falls_through() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         result = execute(
             "web_search",
             {
@@ -125,14 +125,14 @@ def test_web_search_falls_back_to_instant_answer() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         result = execute("web_search", {"query": "python"})
     assert "1. Python" in result
     assert "A programming language." in result
 
 
 def test_web_search_overall_timeout_unsticks_hung_request(monkeypatch) -> None:
-    """A request stuck below httpx timeouts (e.g. getaddrinfo) must not hang the tool."""
+    """A request stuck below httpx2 timeouts (e.g. getaddrinfo) must not hang the tool."""
     import time
 
     monkeypatch.setattr(web_search, "_OVERALL_TIMEOUT", 0.5)
@@ -147,7 +147,7 @@ def test_web_search_overall_timeout_unsticks_hung_request(monkeypatch) -> None:
 
     mock_client.get.side_effect = hang
 
-    with patch("app.runtime.tools.web_search.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
         t0 = time.monotonic()
         result = execute("web_search", {"query": "python"})
         elapsed = time.monotonic() - t0

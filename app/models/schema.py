@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     api_key                TEXT NOT NULL DEFAULT '',
     model                  TEXT NOT NULL DEFAULT '',
     reasoning_efforts_json TEXT NOT NULL DEFAULT '[]',
+    available_models_json  TEXT NOT NULL DEFAULT '[]',
     auth_mode              TEXT NOT NULL DEFAULT 'api_key',
     subscription_provider  TEXT NOT NULL DEFAULT '',
     access_token           TEXT NOT NULL DEFAULT '',
@@ -70,6 +71,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     message_count  INTEGER NOT NULL DEFAULT 0,
     workplace_id   TEXT NOT NULL DEFAULT '',
     reasoning_effort TEXT NOT NULL DEFAULT '',
+    model_profile_id TEXT NOT NULL DEFAULT '',
+    model_name     TEXT NOT NULL DEFAULT '',
     telegram_chat_id TEXT,
     created_at     REAL NOT NULL DEFAULT 0,
     updated_at     REAL NOT NULL DEFAULT 0
@@ -685,7 +688,12 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''"
         )
+    for col in ("model_profile_id", "model_name"):
+        if col not in sess_cols:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     profile_cols = {r[1] for r in conn.execute("PRAGMA table_info(llm_profiles)")}
+    if "available_models_json" not in profile_cols:
+        conn.execute("ALTER TABLE llm_profiles ADD COLUMN available_models_json TEXT NOT NULL DEFAULT '[]'")
     if "reasoning_efforts_json" not in profile_cols:
         conn.execute(
             "ALTER TABLE llm_profiles "

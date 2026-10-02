@@ -12,10 +12,10 @@ from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
-import httpx
+import httpx2
 
 _TIMEOUT = 15.0
-# Hard wall clock for the whole search. httpx timeouts do not cover
+# Hard wall clock for the whole search. httpx2 timeouts do not cover
 # socket.getaddrinfo, and the HTML→Instant-Answer fallback can chain two
 # slow requests — without a bound the tool card sits on RUNNING forever.
 _OVERALL_TIMEOUT = 25.0
@@ -66,7 +66,7 @@ def _format_blocks(blocks: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _search_html(client: httpx.Client, query: str) -> list[tuple[str, str]]:
+def _search_html(client: httpx2.Client, query: str) -> list[tuple[str, str]]:
     """Parse top results from DuckDuckGo HTML search."""
     resp = client.get(
         _HTML_ENDPOINT,
@@ -132,7 +132,7 @@ def _collect_ia_results(data: dict[str, Any], query: str) -> list[tuple[str, str
 
 
 def _search_instant_answer(
-    client: httpx.Client, query: str
+    client: httpx2.Client, query: str
 ) -> list[tuple[str, str]]:
     """Best-effort Instant Answer; empty/non-JSON bodies return []."""
     params = urlencode(
@@ -161,13 +161,13 @@ def _search_instant_answer(
 def _run_search(query: str) -> str:
     """HTML search with Instant-Answer fallback. May block on DNS or a slow body."""
     try:
-        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+        with httpx2.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
             blocks = _search_html(client, query)
             if not blocks:
                 blocks = _search_instant_answer(client, query)
-    except httpx.TimeoutException:
+    except httpx2.TimeoutException:
         return f"Error: search timed out after {_TIMEOUT:g}s"
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         return f"Error: search request failed: {exc}"
     except OSError as exc:
         return f"Error: search request failed: {exc}"

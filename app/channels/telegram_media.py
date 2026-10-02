@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 from app.core import config
 from app.core.paths import ensure_under
@@ -109,7 +109,7 @@ async def transcribe_audio(data: bytes, name: str, mime: str, *, client=None) ->
             "Audio saved. Configure the transcription service URL and model in System → Channels."
         )
     owns_client = client is None
-    client = client or httpx.AsyncClient(timeout=90, follow_redirects=False)
+    client = client or httpx2.AsyncClient(timeout=90, follow_redirects=False)
     try:
         response = await client.post(
             base + "/audio/transcriptions",
@@ -124,7 +124,7 @@ async def transcribe_audio(data: bytes, name: str, mime: str, *, client=None) ->
                 "Audio saved, but no speech was recognized. Please send a text caption."
             )
         return text.strip()[:32000]
-    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+    except (httpx2.HTTPError, ValueError, AttributeError) as exc:
         if isinstance(exc, MediaError):
             raise
         raise MediaError(

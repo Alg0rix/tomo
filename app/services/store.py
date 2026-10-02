@@ -328,12 +328,51 @@ class Store:
                 self._conn, session_id, workplace_id
             )
 
+    def _session_llm_profile_locked(self, session: dict[str, Any], agent_id: str | None = None) -> dict[str, Any] | None:
+        coordinator = session.get("coordinator_id") or session.get("agent_id")
+        # A chat selection controls the speaker, not separately assigned swarm workers.
+        if session.get("model_profile_id") and (not agent_id or agent_id == coordinator):
+            profile = llm_profiles_store.get_profile(self._conn, session["model_profile_id"])
+            if profile and profile["enabled"]:
+                profile = llm_profiles_store._maybe_refresh_subscription(self._conn, profile)
+                profile["model"] = session.get("model_name") or profile["model"]
+                return profile
+        return llm_profiles_store.resolve_profile(self._conn, agent_id or coordinator)
+
+    def resolve_session_llm_profile(self, session_id: str, agent_id: str | None = None) -> dict[str, Any] | None:
+        with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            return self._session_llm_profile_locked(session, agent_id) if session else None
+
+    def set_session_model(self, session_id: str, profile_id: str, model: str) -> dict[str, Any] | None:
+        with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            if not session:
+                return None
+            if profile_id:
+                profile = llm_profiles_store.get_public_profile(self._conn, profile_id)
+                if not profile or not profile["enabled"]:
+                    raise ValueError("Selected model profile is unavailable")
+                allowed = profile["available_models"] or [profile["model"]]
+                if model not in allowed:
+                    raise ValueError("Model is not in this profile's catalog")
+            else:
+                model = ""
+            self._conn.execute(
+                "UPDATE sessions SET model_profile_id=?, model_name=?, reasoning_effort='', updated_at=? WHERE id=?",
+                (profile_id, model, time.time(), session_id),
+            )
+            self._conn.commit()
+            session.update(model_profile_id=profile_id, model_name=model, reasoning_effort="")
+            return self._session_reasoning_effort_payload_locked(session)
+
     def _session_reasoning_effort_payload_locked(
         self, session: dict[str, Any]
     ) -> dict[str, Any]:
-        coordinator_id = session.get("coordinator_id") or session.get("agent_id")
-        profile = llm_profiles_store.resolve_profile(self._conn, coordinator_id)
-        efforts = list((profile or {}).get("reasoning_efforts") or [])
+        from app.runtime.llm.provider_catalog import profile_efforts
+
+        profile = self._session_llm_profile_locked(session)
+        efforts = profile_efforts(profile)
         stored = (session.get("reasoning_effort") or "").strip()
         effective = llm_profiles_store.effective_reasoning_effort(profile, stored)
         selected = stored if stored in efforts else ""
@@ -342,11 +381,20 @@ class Store:
             "profile_id": (profile or {}).get("id") or "",
             "profile_name": (profile or {}).get("name") or "",
             "model": (profile or {}).get("model") or "",
+            "selected_model_profile_id": session.get("model_profile_id") or "",
+            "model_profiles": [
+                {"id": p["id"], "name": p["name"], "models": p["available_models"] or [p["model"]]}
+                for p in llm_profiles_store.list_profiles(self._conn) if p["enabled"]
+            ],
             "reasoning_efforts": efforts,
             "default_reasoning_effort": efforts[-1] if efforts else None,
             "selected_reasoning_effort": selected or None,
             "reasoning_effort": effective,
         }
+
+    def get_chat_model_settings(self, agent_id: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            return self._session_reasoning_effort_payload_locked({"id": "", "coordinator_id": agent_id})
 
     def get_session_reasoning_effort(
         self, session_id: str
@@ -364,10 +412,11 @@ class Store:
             session = sessions_store.get_session(self._conn, session_id)
             if not session:
                 return None
-            coordinator_id = session.get("coordinator_id") or session.get("agent_id")
-            profile = llm_profiles_store.resolve_profile(self._conn, coordinator_id)
+            from app.runtime.llm.provider_catalog import profile_efforts
+
+            profile = self._session_llm_profile_locked(session)
             value = (reasoning_effort or "").strip()
-            efforts = list((profile or {}).get("reasoning_efforts") or [])
+            efforts = profile_efforts(profile)
             if value and value not in efforts:
                 raise ValueError(f"Unsupported reasoning effort: {value}")
             updated = sessions_store.set_session_reasoning_effort(
@@ -384,8 +433,7 @@ class Store:
             session = sessions_store.get_session(self._conn, session_id)
             if not session:
                 return None
-            target_id = agent_id or session.get("coordinator_id") or session.get("agent_id")
-            profile = llm_profiles_store.resolve_profile(self._conn, target_id)
+            profile = self._session_llm_profile_locked(session, agent_id)
             return llm_profiles_store.effective_reasoning_effort(
                 profile, session.get("reasoning_effort")
             )

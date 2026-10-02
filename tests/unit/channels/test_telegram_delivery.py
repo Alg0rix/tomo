@@ -5,7 +5,7 @@ import json
 from email import policy
 from email.parser import BytesParser
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher, run_channel_turn
@@ -39,9 +39,9 @@ class UploadBot(Bot):
         }
         self.uploads.append((method, parts))
         if self.reject_uploads:
-            return httpx.Response(503, json={"ok": False, "error_code": 503})
+            return httpx2.Response(503, json={"ok": False, "error_code": 503})
         self.counter += 1
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"ok": True, "result": {"message_id": self.counter}}
         )
 
@@ -79,7 +79,7 @@ def setup(tmp_path, monkeypatch):
         }
     )
     bot = UploadBot()
-    api = TelegramAPI("private-bot-token", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("private-bot-token", transport=httpx2.MockTransport(bot.transport))
     yield bot, api
 
 

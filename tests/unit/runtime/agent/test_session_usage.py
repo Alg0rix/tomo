@@ -85,7 +85,8 @@ async def test_context_endpoint_exposes_recorded_usage(tmp_path, monkeypatch):
     store.append_session_history(sid, {"type": "final", "content": "done", "metrics": metrics.as_dict()})
     monkeypatch.setattr(rest, "require_owned_session", lambda request, session_id: store.get_session(session_id))
 
-    async def resolve(agent_id):
+    async def resolve(agent_id, *, session_id=None):
+        assert session_id == sid
         return 128_000
 
     monkeypatch.setattr(context_window, "resolve_context_window", resolve)

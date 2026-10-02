@@ -9,13 +9,13 @@ import threading
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import httpx
+import httpx2
 
 from app.runtime.tools.file_util import parse_positive_int
 
 _TIMEOUT = 15.0
 _DNS_TIMEOUT = 5.0
-# Hard wall clock for the whole fetch. httpx timeouts do not cover
+# Hard wall clock for the whole fetch. httpx2 timeouts do not cover
 # socket.getaddrinfo, and a slow trickle can reset per-chunk read timeouts.
 # Parallel web_fetch cards otherwise sit on RUNNING until the worker returns.
 _OVERALL_TIMEOUT = 20.0
@@ -185,11 +185,11 @@ def _run_fetch(url: str, offset: int, limit: int) -> str:
         return blocked
 
     try:
-        # Manual redirects so each hop is SSRF-checked (httpx follow_redirects
+        # Manual redirects so each hop is SSRF-checked (httpx2 follow_redirects
         # would skip re-validation of Location targets).
-        with httpx.Client(timeout=_TIMEOUT, follow_redirects=False) as client:
+        with httpx2.Client(timeout=_TIMEOUT, follow_redirects=False) as client:
             current = url
-            resp: httpx.Response | None = None
+            resp: httpx2.Response | None = None
             for _ in range(_MAX_REDIRECTS + 1):
                 hop_err = _check_url(current)
                 if hop_err:
@@ -209,11 +209,11 @@ def _run_fetch(url: str, offset: int, limit: int) -> str:
             resp.raise_for_status()
             text = resp.text
             content_type = resp.headers.get("content-type") or ""
-    except httpx.TimeoutException:
+    except httpx2.TimeoutException:
         return f"Error: request timed out after {_TIMEOUT:g}s"
-    except httpx.HTTPStatusError as exc:
+    except httpx2.HTTPStatusError as exc:
         return f"Error: HTTP {exc.response.status_code} fetching {url}"
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         return f"Error: could not fetch URL: {exc}"
     except OSError as exc:
         return f"Error: could not fetch URL: {exc}"

@@ -252,7 +252,7 @@ async def test_background_extraction_is_serial_and_next_turn_waits(monkeypatch):
         calls.append(message)
 
     monkeypatch.setattr(extract, 'extract_turn', fake_extract)
-    monkeypatch.setattr(extract, 'extraction_client', lambda: object())
+    monkeypatch.setattr(extract, 'extraction_client', lambda session_id=None: object())
     extract.schedule_extraction('alice', 's1', 'first', '')
     extract.schedule_extraction('alice', 's1', 'second', '')
     waiter = asyncio.create_task(extract.wait_for_extraction('alice'))

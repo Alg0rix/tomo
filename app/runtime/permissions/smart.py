@@ -37,7 +37,7 @@ def _strip_shell_comments(command: str) -> str:
 async def smart_approve(command: str, description: str) -> SmartVerdict:
     """Ask the configured LLM to assess risk. Failures escalate."""
     try:
-        from app.runtime.llm import get_llm
+        from app.runtime.llm import get_auxiliary_llm
 
         sanitized = _strip_shell_comments(command)
         system = (
@@ -51,7 +51,9 @@ async def smart_approve(command: str, description: str) -> SmartVerdict:
             f"<command>\n{sanitized}\n</command>\n\n"
             "Respond with exactly one word: APPROVE, DENY, or ESCALATE"
         )
-        client = get_llm(None)
+        from app.runtime.artifacts.fs import current_session_id
+
+        client = get_auxiliary_llm('smart_approval', session_id=current_session_id())
         resp = await client.complete(
             [
                 {"role": "system", "content": system},

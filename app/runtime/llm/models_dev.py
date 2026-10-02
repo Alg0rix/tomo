@@ -112,9 +112,9 @@ def _parse_index(payload: Any) -> dict[str, dict[str, bool]]:
 
 def _fetch_index() -> dict[str, dict[str, bool]]:
     """Network fetch + parse. Errors propagate to the caller's fallback."""
-    import httpx
+    import httpx2
 
-    resp = httpx.get(_CATALOG_URL, timeout=_FETCH_TIMEOUT)
+    resp = httpx2.get(_CATALOG_URL, timeout=_FETCH_TIMEOUT)
     resp.raise_for_status()
     index = _parse_index(resp.json())
     if index:

@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-import httpx
+import httpx2
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def _extract_chatgpt_account_id(access_token: str) -> str | None:
 
 
 def _fetch_models_from_api(
-    access_token: str, *, transport: httpx.BaseTransport | None = None
+    access_token: str, *, transport: httpx2.BaseTransport | None = None
 ) -> list[str]:
     """Live-probe the Codex backend's model catalog. Returns ``[]`` on any failure."""
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -70,12 +70,12 @@ def _fetch_models_from_api(
     if acct_id:
         headers["ChatGPT-Account-Id"] = acct_id
 
-    kwargs: dict[str, Any] = {"timeout": httpx.Timeout(10.0)}
+    kwargs: dict[str, Any] = {"timeout": httpx2.Timeout(10.0)}
     if transport is not None:
         kwargs["transport"] = transport
 
     try:
-        with httpx.Client(**kwargs) as client:
+        with httpx2.Client(**kwargs) as client:
             resp = client.get(
                 "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
                 headers=headers,
@@ -116,7 +116,7 @@ def _fetch_models_from_api(
 
 
 def list_codex_models(
-    access_token: str | None, *, transport: httpx.BaseTransport | None = None
+    access_token: str | None, *, transport: httpx2.BaseTransport | None = None
 ) -> list[str]:
     """Return available Codex model ids: live API when a token works, else curated defaults."""
     if access_token:

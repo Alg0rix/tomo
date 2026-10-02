@@ -5,7 +5,7 @@ import copy
 import json
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher, process_update
@@ -37,12 +37,12 @@ class MediaBot(Bot):
     def transport(self, request):
         if request.method == "GET":
             self.calls.append(("download", {}))
-            return httpx.Response(200, content=b"hello attachment")
+            return httpx2.Response(200, content=b"hello attachment")
         method = request.url.path.rsplit("/", 1)[-1]
         if method == "getFile":
             payload = json.loads(request.content)
             self.calls.append((method, payload))
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"ok": True, "result": {"file_path": "documents/file.txt"}}
             )
         return super().transport(request)
@@ -56,7 +56,7 @@ def setup(tmp_path, monkeypatch):
         {"telegram_allowed_chat_ids": [42, 43], "approvals_mode": "smart"}
     )
     bot = MediaBot()
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(bot.transport))
     yield bot, api
 
 
@@ -215,9 +215,9 @@ async def test_invalid_telegram_download_paths_rejected(path):
 
     def handler(request):
         calls.append(request)
-        return httpx.Response(200, json={"ok": True, "result": {"file_path": path}})
+        return httpx2.Response(200, json={"ok": True, "result": {"file_path": path}})
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     with pytest.raises(MediaError, match="valid file"):
         await api.download_file("f", max_bytes=20)
     assert len(calls) == 1
@@ -227,12 +227,12 @@ async def test_invalid_telegram_download_paths_rejected(path):
 async def test_streamed_size_limit_and_network_error_do_not_expose_token():
     def handler(request):
         if request.method == "POST":
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"ok": True, "result": {"file_path": "files/a"}}
             )
-        return httpx.Response(200, content=b"x" * 21)
+        return httpx2.Response(200, content=b"x" * 21)
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     with pytest.raises(MediaError, match="too large"):
         await api.download_file("a", max_bytes=20)
     await api.aclose()
@@ -240,9 +240,9 @@ async def test_streamed_size_limit_and_network_error_do_not_expose_token():
     def fail(request):
         if request.method == "POST":
             return handler(request)
-        raise httpx.ReadError(str(request.url))
+        raise httpx2.ReadError(str(request.url))
 
-    api = TelegramAPI("super-secret", transport=httpx.MockTransport(fail))
+    api = TelegramAPI("super-secret", transport=httpx2.MockTransport(fail))
     with pytest.raises(MediaError) as err:
         await api.download_file("a", max_bytes=20)
     assert "super-secret" not in str(err.value)
@@ -263,9 +263,9 @@ async def test_transcription_multipart_and_safe_failure(setup):
 
     def handler(request):
         calls.append(request)
-        return httpx.Response(200, json={"text": "Halo Tomo"})
+        return httpx2.Response(200, json={"text": "Halo Tomo"})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         assert (
             await transcribe_audio(b"audio", "voice.ogg", "audio/ogg", client=client)
             == "Halo Tomo"
@@ -275,9 +275,9 @@ async def test_transcription_multipart_and_safe_failure(setup):
     assert b"speech-model" in calls[0].content and b"voice.ogg" in calls[0].content
 
     def fail(request):
-        raise httpx.ReadError("private-stt-key")
+        raise httpx2.ReadError("private-stt-key")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(fail)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(fail)) as client:
         with pytest.raises(MediaError) as err:
             await transcribe_audio(b"audio", "voice.ogg", "audio/ogg", client=client)
     assert "private-stt-key" not in str(err.value)

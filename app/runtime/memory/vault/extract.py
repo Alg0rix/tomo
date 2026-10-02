@@ -24,18 +24,11 @@ def entity_context(user_id: str, *, home_root: Path | None = None) -> dict[str, 
     return result
 
 
-def extraction_client():
-    """Prefer an explicitly selected profile, then an available small model."""
-    from app.runtime.llm import get_llm
-    from app.services import store
+def extraction_client(session_id: str | None = None):
+    """Follow the chat's main model unless extraction has an explicit override."""
+    from app.runtime.llm import get_auxiliary_llm
 
-    settings = store.get_settings()
-    pid = settings.get('memory_extraction_profile_id') or settings.get('learning_review_profile_id')
-    if not pid:
-        pid = next((p['id'] for p in store.list_llm_profiles()
-                    if p.get('enabled') and any(token in p.get('model', '').lower()
-                                               for token in ('mini', 'nano', 'flash', 'haiku'))), None)
-    return get_llm(profile_id=pid, reasoning_effort='low')
+    return get_auxiliary_llm('memory_extraction', session_id=session_id)
 
 
 async def extract_turn(user_id: str, session_id: str, user_message: str, final_content: str,
@@ -101,7 +94,12 @@ def schedule_extraction(user_id: str, session_id: str, user_message: str, final_
         try:
             if previous:
                 await asyncio.shield(previous)
-            await extract_turn(user_id, session_id, user_message, final_content, extraction_client())
+            client = extraction_client(session_id)
+            try:
+                await extract_turn(user_id, session_id, user_message, final_content, client)
+            finally:
+                if hasattr(client, 'aclose'):
+                    await client.aclose()
         except Exception:
             log.exception('turn fact extraction failed for %s', user_id)
         finally:

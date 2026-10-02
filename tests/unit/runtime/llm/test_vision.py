@@ -151,7 +151,7 @@ def test_models_dev_catalog_verdict(monkeypatch) -> None:
 
 
 def test_ollama_probe_reports_vision(monkeypatch) -> None:
-    import httpx
+    import httpx2
 
     class _Resp:
         status_code = 200
@@ -160,7 +160,7 @@ def test_ollama_probe_reports_vision(monkeypatch) -> None:
         def json():
             return {"capabilities": ["completion", "vision"]}
 
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _Resp())
+    monkeypatch.setattr(httpx2, "post", lambda *a, **kw: _Resp())
     assert (
         lookup_vision_capability("llama3.2-vision", "http://localhost:11434/v1")
         is True
@@ -171,19 +171,19 @@ def test_ollama_probe_reports_vision(monkeypatch) -> None:
         def json():
             return {"capabilities": ["completion"]}
 
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _NoVision())
+    monkeypatch.setattr(httpx2, "post", lambda *a, **kw: _NoVision())
     assert (
         lookup_vision_capability("llama3.1", "http://localhost:11434/v1") is False
     )
 
 
 def test_ollama_probe_not_attempted_for_remote(monkeypatch) -> None:
-    import httpx
+    import httpx2
 
     def _boom(*a, **kw):
         raise AssertionError("remote endpoints must not be probed")
 
-    monkeypatch.setattr(httpx, "post", _boom)
+    monkeypatch.setattr(httpx2, "post", _boom)
     assert lookup_vision_capability("llama3.2-vision", "https://api.openai.com/v1") is not False
 
 

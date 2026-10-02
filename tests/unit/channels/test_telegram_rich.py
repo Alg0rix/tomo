@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import (
@@ -51,9 +51,9 @@ async def test_rich_send_edit_and_draft_preserve_routing(settings):
         method = request.url.path.rsplit("/", 1)[-1]
         calls.append((method, json.loads(request.content)))
         result = True if method == "sendMessageDraft" else {"message_id": 1}
-        return httpx.Response(200, json={"ok": True, "result": result})
+        return httpx2.Response(200, json={"ok": True, "result": result})
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     await api.send_answer(42, "# Native", thread_id=9, reply_to=7)
     await api.edit_answer(42, 1, "| A | B |\n|---|---|\n| 1 | 2 |")
     assert await api.send_draft(42, 123, "partial", thread_id=9)
@@ -87,7 +87,7 @@ async def test_definite_rejection_falls_back_and_long_answers_are_complete(
         payload = json.loads(request.content)
         calls.append((method, payload))
         if method == "sendRichMessage":
-            return httpx.Response(
+            return httpx2.Response(
                 code,
                 json={
                     "ok": False,
@@ -95,11 +95,11 @@ async def test_definite_rejection_falls_back_and_long_answers_are_complete(
                     "description": "unsupported format",
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"ok": True, "result": {"message_id": len(calls)}}
         )
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     answer = "long answer " * 1000 + "THE END"
     await api.send_answer(42, answer, thread_id=8, reply_to=7)
     sent = [p for m, p in calls if m == "sendMessage"]
@@ -123,8 +123,8 @@ async def test_uncertain_or_permission_failure_never_sends_legacy_duplicate(
     def handler(request):
         calls.append(request)
         if failure == "network":
-            raise httpx.ReadError(str(request.url))
-        return httpx.Response(
+            raise httpx2.ReadError(str(request.url))
+        return httpx2.Response(
             failure,
             json={
                 "ok": False,
@@ -133,7 +133,7 @@ async def test_uncertain_or_permission_failure_never_sends_legacy_duplicate(
             },
         )
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     with pytest.raises((RuntimeError, TelegramAPIError)):
         await api.send_answer(42, "answer")
     assert len(calls) == 1
@@ -147,10 +147,10 @@ async def test_draft_unavailable_does_not_disable_final_rich_delivery(settings):
         method = request.url.path.rsplit("/", 1)[-1]
         calls.append(method)
         if method == "sendMessageDraft":
-            return httpx.Response(404, json={"ok": False, "error_code": 404})
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+            return httpx2.Response(404, json={"ok": False, "error_code": 404})
+        return httpx2.Response(200, json={"ok": True, "result": {"message_id": 1}})
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     assert not await api.send_draft(42, 123, "draft")
     assert api.rich_enabled
     assert not await api.send_draft(42, 123, "another draft")
@@ -177,7 +177,7 @@ class RichBot(Bot):
             else:
                 self.drafts[payload["chat_id"]] = payload
                 result = True
-            return httpx.Response(200, json={"ok": True, "result": result})
+            return httpx2.Response(200, json={"ok": True, "result": result})
         response = super().transport(request)
         if method == "sendMessage":
             self.drafts.pop(json.loads(request.content)["chat_id"], None)
@@ -188,7 +188,7 @@ class RichBot(Bot):
 async def test_tool_commentary_shown_once_and_final_is_newest(settings, rich):
     store.update_settings({"telegram_rich_messages": rich})
     bot = RichBot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_42")
     ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
 
@@ -236,10 +236,10 @@ async def test_failed_final_delivery_keeps_streaming_preview(settings):
 
     def handler(request):
         if fail_final and request.url.path.endswith("/sendRichMessage"):
-            return httpx.Response(503, json={"ok": False, "error_code": 503})
+            return httpx2.Response(503, json={"ok": False, "error_code": 503})
         return bot.transport(request)
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     sid = store.get_or_create_session("main", "tg_-100")
     ui = TelegramTurnUI(api, -100, sid)
     try:
@@ -280,7 +280,7 @@ async def test_finish_waits_for_accepted_preview_before_sending_final(settings, 
             await release.wait()
         return response
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     sid = store.get_or_create_session("main", "tg_-100")
     ui = TelegramTurnUI(api, -100, sid, reply_to=7, thread_id=8)
     ui.answer = reply
@@ -315,10 +315,10 @@ async def test_failed_preview_delete_removes_duplicate_text_and_retries_on_close
 
     def handler(request):
         if fail_delete and request.url.path.endswith("/deleteMessage"):
-            return httpx.Response(503, json={"ok": False, "error_code": 503})
+            return httpx2.Response(503, json={"ok": False, "error_code": 503})
         return bot.transport(request)
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     sid = store.get_or_create_session("main", "tg_-100")
     ui = TelegramTurnUI(api, -100, sid)
     ui.answer = "Connector updated."
@@ -347,7 +347,7 @@ async def test_private_plain_draft_streams_then_persists_one_complete_rich_answe
     settings,
 ):
     bot = RichBot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_42")
     ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
     ui.answer = "# Preview\n\nText"
@@ -395,11 +395,11 @@ async def test_private_draft_failure_falls_back_once_without_losing_rich_final(
         if request.url.path.endswith("/sendMessageDraft"):
             bot.calls.append(("sendMessageDraft", json.loads(request.content)))
             if failure == "network":
-                raise httpx.ReadError("draft connection lost")
-            return httpx.Response(400, json={"ok": False, "error_code": 400})
+                raise httpx2.ReadError("draft connection lost")
+            return httpx2.Response(400, json={"ok": False, "error_code": 400})
         return bot.transport(request)
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     sid = store.get_or_create_session("main", "tg_42")
     ui = TelegramTurnUI(api, 42, sid, reply_to=7, thread_id=8)
     try:
@@ -423,7 +423,7 @@ async def test_private_draft_failure_falls_back_once_without_losing_rich_final(
 
 async def test_group_rich_final_sent_after_preview_without_private_draft(settings):
     bot = RichBot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     sid = store.get_or_create_session("main", "tg_-100")
     ui = TelegramTurnUI(api, -100, sid, actor_id=42, thread_id=8)
     ui.answer = "# Preview"
@@ -444,7 +444,7 @@ async def test_group_rich_final_sent_after_preview_without_private_draft(setting
 
 async def test_inbound_rich_text_reaches_real_turn(settings, monkeypatch):
     bot = RichBot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     inject(monkeypatch, [text_reply("Received rich text")])
     update = message("")
     update["message"].pop("text")
@@ -483,7 +483,7 @@ async def test_long_rich_preview_rejection_keeps_single_preview_then_complete_fi
             method in {"sendRichMessage", "sendMessageDraft"}
             or "rich_message" in payload
         ):
-            return httpx.Response(
+            return httpx2.Response(
                 400,
                 json={
                     "ok": False,
@@ -491,11 +491,11 @@ async def test_long_rich_preview_rejection_keeps_single_preview_then_complete_fi
                     "description": "unsupported format",
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"ok": True, "result": {"message_id": len(calls)}}
         )
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(handler))
     sid = store.get_or_create_session("main", "tg_42")
     ui = TelegramTurnUI(api, 42, sid, actor_id=42)
     ui.answer = "🚀" * 4000

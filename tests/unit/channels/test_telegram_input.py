@@ -3,7 +3,7 @@
 import asyncio
 import copy
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher
@@ -46,7 +46,7 @@ def setup(tmp_path):
     )
     hitl.clear_all_pending()
     bot = Bot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     dispatcher = TelegramDispatcher(api)
     yield bot, api, dispatcher
     hitl.clear_all_pending()
@@ -407,7 +407,7 @@ async def test_consumed_before_ack_response_does_not_regress_feedback(
             await until(lambda: not dispatcher.tasks)
         return bot.transport(request)
 
-    api = TelegramAPI("secret", transport=httpx.MockTransport(transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(transport))
     dispatcher = TelegramDispatcher(api)
     try:
         await dispatcher.dispatch(message("first"))
@@ -432,7 +432,7 @@ async def test_media_album_waits_without_download_and_runs_as_one_queued_turn(
     _, old_api, old_dispatcher = setup
     monkeypatch.setattr("app.core.config.TOMO_HOME", tmp_path)
     bot = MediaBot()
-    api = TelegramAPI("secret", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("secret", transport=httpx2.MockTransport(bot.transport))
     dispatcher = TelegramDispatcher(api)
     llm = install(monkeypatch, ["First", "Album"])
     try:

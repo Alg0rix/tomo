@@ -186,10 +186,20 @@ encrypts/decrypts them (Fernet, `cryptography`):
   with `override=False` (process env wins). Prefer moving durable secrets into
   encrypted SQLite via the UI. Never name it `secrets.env`.
 
-**LLM** — open **System → Models** and set Base URL, API key, and model id
-(e.g. `gpt-4o-mini`). The API key is encrypted before it touches SQLite. Until a
-key is saved, chat returns a clear error pointing at that page. Max tool
-iterations live under **System → General**.
+**LLM** — open **System → Models → New profile**. Choose **OpenCode Go** or
+**OpenCode Zen**, paste your token, and save: the live model catalog becomes
+available in chat. **Custom endpoint** still accepts a Base URL, API key, and
+model ID (e.g. `gpt-4o-mini`). Keys are encrypted before touching SQLite.
+
+The composer’s model picker works before the first message and saves model /
+reasoning choices per chat. Changes apply to the next turn; swarm workers keep
+their separately assigned profiles. **Follow main model** clears the chat override.
+Under **System → General**, background tasks (memory extraction/consolidation,
+chat titles, compaction, learning review, smart approvals, agent generation, and
+suggested prompts) default to **Follow main model**, with optional overrides.
+Chat-related tasks follow that chat’s model; global tasks follow the default.
+Vision follows the main model when it supports images, otherwise uses a
+vision-capable fallback. Max tool iterations also live under **System → General**.
 
 **Database** — state lives in SQLite at `$TOMO_HOME/state/tomo.db` by default
 (`TOMO_DB_PATH` / `TOMO_VAR_DIR` override). The directory and DB are created on

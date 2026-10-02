@@ -1,10 +1,10 @@
-"""web_fetch tool tests (httpx mocked)."""
+"""web_fetch tool tests (httpx2 mocked)."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from app.runtime.tools import web_fetch
@@ -32,7 +32,7 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/page"})
     assert result == "hello from web"
 
@@ -54,7 +54,7 @@ def test_web_fetch_html_to_markdown(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/page"})
     assert "# Hello" in result
     assert "**bold**" in result
@@ -84,7 +84,7 @@ def test_web_fetch_large_html_keeps_main_content_before_truncation(monkeypatch) 
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute(
             "web_fetch", {"url": "https://mermaid.js.org/config/usage.html"}
         )
@@ -117,7 +117,7 @@ def test_web_fetch_large_script_heavy_html_is_bounded(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute(
             "web_fetch",
             {"url": "https://deepwiki.com/mermaid-js/mermaid/2.5-security-model"},
@@ -145,10 +145,10 @@ def test_web_fetch_blocks_redirect_to_loopback(monkeypatch) -> None:
         ),
     )
 
-    redirect = httpx.Response(
+    redirect = httpx2.Response(
         302,
         headers={"location": "http://127.0.0.1/secret"},
-        request=httpx.Request("GET", "https://example.com/go"),
+        request=httpx2.Request("GET", "https://example.com/go"),
     )
 
     mock_client = MagicMock()
@@ -156,7 +156,7 @@ def test_web_fetch_blocks_redirect_to_loopback(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = redirect
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/go"})
     assert result.startswith("Error")
     assert "blocked" in result.lower() or "private" in result.lower() or "loopback" in result.lower()
@@ -171,9 +171,9 @@ def test_web_fetch_http_error(monkeypatch) -> None:
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
-    mock_client.get.side_effect = httpx.ConnectError("boom")
+    mock_client.get.side_effect = httpx2.ConnectError("boom")
 
-    with patch("app.runtime.tools.web_fetch.httpx.Client", return_value=mock_client):
+    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/"})
     assert result.startswith("Error")
 
@@ -200,7 +200,7 @@ def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> N
     assert len(full_text) > web_fetch._MAX_CHARS
 
     with patch(
-        "app.runtime.tools.web_fetch.httpx.Client",
+        "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for(full_text),
     ):
         first = execute("web_fetch", {"url": "https://example.com/page"})
@@ -219,7 +219,7 @@ def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> N
     pages_walked = 1
     while True:
         with patch(
-            "app.runtime.tools.web_fetch.httpx.Client",
+            "app.runtime.tools.web_fetch.httpx2.Client",
             return_value=_mock_client_for(full_text),
         ):
             page = execute(
@@ -243,7 +243,7 @@ def test_web_fetch_respects_explicit_limit(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     text = "abcdefghij" * 10  # 100 chars
     with patch(
-        "app.runtime.tools.web_fetch.httpx.Client",
+        "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for(text),
     ):
         result = execute(
@@ -256,7 +256,7 @@ def test_web_fetch_respects_explicit_limit(monkeypatch) -> None:
 def test_web_fetch_offset_past_end_is_error(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     with patch(
-        "app.runtime.tools.web_fetch.httpx.Client",
+        "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for("short"),
     ):
         result = execute(
@@ -268,7 +268,7 @@ def test_web_fetch_offset_past_end_is_error(monkeypatch) -> None:
 def test_web_fetch_invalid_offset_is_error(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     with patch(
-        "app.runtime.tools.web_fetch.httpx.Client",
+        "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for("short"),
     ):
         result = execute(

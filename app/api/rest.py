@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 
 from app.core.config import TOMO_HOME
 from app.core.deps import AuthDep, require_owned_session, session_user_id, visible_sessions
@@ -362,6 +363,23 @@ async def get_session_api(session_id: str, request: Request, _: AuthDep):
     }
 
 
+class SessionModelIn(BaseModel):
+    profile_id: str = Field(default="", max_length=64)
+    model: str = Field(default="", max_length=200)
+
+
+@router.put("/sessions/{session_id}/model")
+async def set_session_model_api(session_id: str, body: SessionModelIn, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
+    try:
+        state = store.set_session_model(session_id, body.profile_id, body.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if state is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return state
+
+
 @router.get("/sessions/{session_id}/reasoning-effort")
 async def get_session_reasoning_effort_api(
     session_id: str, request: Request, _: AuthDep
@@ -599,7 +617,7 @@ async def session_context_usage(session_id: str, request: Request, _: AuthDep):
     if not agent_id:
         raise HTTPException(status_code=400, detail="Session has no coordinator")
     history = store.get_session_history(session_id)
-    limit = await resolve_context_window(agent_id)
+    limit = await resolve_context_window(agent_id, session_id=session_id)
     from app.runtime.agent.metrics import session_usage
 
     return {**compute_context_usage(agent_id, history, limit=limit), "usage": session_usage(history)}

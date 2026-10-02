@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
+import httpx2
 
 _MAX_EVENT_BYTES = 16 * 1024 * 1024
 
@@ -90,7 +90,7 @@ def _decode_event(data: list[str]) -> SimpleNamespace | None:
     return event
 
 
-async def _events(response: httpx.Response) -> AsyncIterator[SimpleNamespace]:
+async def _events(response: httpx2.Response) -> AsyncIterator[SimpleNamespace]:
     data: list[str] = []
     size = 0
     async for line in response.aiter_lines():
@@ -116,7 +116,7 @@ async def _events(response: httpx.Response) -> AsyncIterator[SimpleNamespace]:
 
 @asynccontextmanager
 async def stream_json(
-    client: httpx.AsyncClient, endpoint: str, payload: dict[str, Any],
+    client: httpx2.AsyncClient, endpoint: str, payload: dict[str, Any],
     *, headers: dict[str, str] | None = None,
 ) -> AsyncIterator[AsyncIterator[SimpleNamespace]]:
     """Close the HTTP response on completion, errors, and cancellation."""

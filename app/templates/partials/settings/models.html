@@ -29,6 +29,19 @@
       <input type="hidden" id="profFormMode" value="add">
       <input type="hidden" id="profId" value="">
       <div class="machine-field">
+        <div class="machine-field-copy">
+          <label class="machine-field-name" for="profProvider">Provider</label>
+          <p class="machine-field-hint">Go / Zen: paste a token once. All catalog models become available in chat.</p>
+        </div>
+        <div class="machine-field-control">
+          <select class="input machine-input-mid" id="profProvider">
+            <option value="custom">Custom endpoint</option>
+            <option value="opencode-go">OpenCode Go</option>
+            <option value="opencode-zen">OpenCode Zen</option>
+          </select>
+        </div>
+      </div>
+      <div class="machine-field">
         <div class="machine-field-copy"><div class="machine-field-name">Name</div></div>
         <div class="machine-field-control">
           <input class="input machine-input-mid" id="profName" required placeholder="Default">
@@ -52,7 +65,7 @@
       <div class="machine-field machine-field-stack">
         <div class="machine-field-copy">
           <div class="machine-field-name">Model</div>
-          <p class="machine-field-hint">Pick from the fetched list, or choose "Custom" and type one below.</p>
+          <p class="machine-field-hint" id="profCatalogStatus" role="status">Pick a default model. Custom endpoints can also use a typed model ID.</p>
         </div>
         <div class="machine-field-control machine-field-control-wide">
           <select class="input machine-input-mid" id="profModelSelect">

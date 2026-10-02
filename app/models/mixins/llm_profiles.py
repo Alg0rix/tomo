@@ -78,6 +78,7 @@ def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
         "api_key": row["api_key"],  # ciphertext at rest
         "model": row["model"],
         "reasoning_efforts": _reasoning_efforts_from_row(row),
+        "available_models": json.loads(row["available_models_json"] or "[]"),
         "auth_mode": row["auth_mode"],
         "subscription_provider": row["subscription_provider"],
         "access_token": row["access_token"],  # ciphertext at rest
@@ -161,6 +162,7 @@ def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
             _now(),
         ),
     )
+    conn.execute("UPDATE llm_profiles SET available_models_json=? WHERE id=?", (json.dumps(data.get("available_models") or []), pid))
     conn.commit()
     return get_public_profile(conn, pid)
 
@@ -180,6 +182,9 @@ def update_profile(
     if "reasoning_efforts" in data:
         sets.append("reasoning_efforts_json=?")
         params.append(json.dumps(normalize_reasoning_efforts(data["reasoning_efforts"])))
+    if "available_models" in data:
+        sets.append("available_models_json=?")
+        params.append(json.dumps(data["available_models"] or []))
     # Blank/missing api_key keeps the existing ciphertext (never clears).
     if "api_key" in data:
         incoming = data["api_key"]
@@ -295,7 +300,9 @@ def effective_reasoning_effort(
     profile: dict[str, Any] | None, selected: str | None
 ) -> str | None:
     """Use a supported session value or the profile's highest configured value."""
-    efforts = list((profile or {}).get("reasoning_efforts") or [])
+    from app.runtime.llm.provider_catalog import profile_efforts
+
+    efforts = profile_efforts(profile)
     requested = (selected or "").strip()
     if requested and requested in efforts:
         return requested

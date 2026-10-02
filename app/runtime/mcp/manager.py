@@ -13,7 +13,7 @@ import time
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable
 
-import httpx
+import httpx  # mcp<2 expects real httpx types; keep this client on httpx until mcp v2
 
 from app.runtime.mcp.discovery import (
     normalize_prompt,

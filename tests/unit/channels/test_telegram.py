@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import (
@@ -50,11 +50,11 @@ def test_extract_text_message() -> None:
 async def test_api_get_updates_and_send_message_mocked() -> None:
     calls: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request.url.path)
         assert "SECRETTOKEN" in str(request.url)
         if request.url.path.endswith("/getUpdates"):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "ok": True,
@@ -74,13 +74,13 @@ async def test_api_get_updates_and_send_message_mocked() -> None:
             body = json.loads(request.content.decode())
             assert body["chat_id"] == 55
             assert "pong" in body["text"] or body["text"]
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={"ok": True, "result": {"message_id": 2, "chat": {"id": 55}}},
             )
-        return httpx.Response(404, json={"ok": False})
+        return httpx2.Response(404, json={"ok": False})
 
-    api = TelegramAPI("123:SECRETTOKEN", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("123:SECRETTOKEN", transport=httpx2.MockTransport(handler))
     updates = await api.get_updates(offset=0, timeout=0)
     assert len(updates) == 1
     assert updates[0]["update_id"] == 10
@@ -94,14 +94,14 @@ async def test_handle_inbound_maps_chat_to_session_and_replies(tmp_path) -> None
     _rebind(tmp_path)
     sent: list[tuple[int | str, str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/sendMessage"):
             body = json.loads(request.content.decode())
             sent.append((body["chat_id"], body["text"]))
-            return httpx.Response(200, json={"ok": True, "result": {}})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"ok": True, "result": {}})
+        return httpx2.Response(404)
 
-    api = TelegramAPI("tok:mock", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("tok:mock", transport=httpx2.MockTransport(handler))
     result = await handle_inbound_text(4242, "hello there", api=api, send_reply=True)
     await api.aclose()
 
@@ -142,9 +142,9 @@ async def test_poll_once_processes_batch(tmp_path) -> None:
     _rebind(tmp_path)
     sent: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/getUpdates"):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "ok": True,
@@ -162,10 +162,10 @@ async def test_poll_once_processes_batch(tmp_path) -> None:
         if request.url.path.endswith("/sendMessage"):
             body = json.loads(request.content.decode())
             sent.append(body["text"])
-            return httpx.Response(200, json={"ok": True, "result": {}})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"ok": True, "result": {}})
+        return httpx2.Response(404)
 
-    api = TelegramAPI("tok:poll", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("tok:poll", transport=httpx2.MockTransport(handler))
     next_off = await poll_once(api, offset=0, timeout=0)
     await api.aclose()
     assert next_off == 101
@@ -209,8 +209,8 @@ async def test_long_unicode_reply_split_without_loss():
         body = json.loads(request.content)
         parts.append(body["text"])
         assert len(body["text"].encode("utf-16-le")) // 2 <= 4096
-        return httpx.Response(200, json={"ok": True, "result": {}})
-    api = TelegramAPI("mock", transport=httpx.MockTransport(handler))
+        return httpx2.Response(200, json={"ok": True, "result": {}})
+    api = TelegramAPI("mock", transport=httpx2.MockTransport(handler))
     content = "😀" * 5000
     try:
         await api.send_message(1, content)

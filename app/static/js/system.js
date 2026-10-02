@@ -126,22 +126,26 @@
       try {
         var active = seg && seg.querySelector('.seg-btn.is-active');
         var mode = active ? active.getAttribute('data-mode') : 'smart';
+        var auxiliary = {};
+        document.querySelectorAll('[data-aux-task]').forEach(function (select) {
+          var choice = select.value ? JSON.parse(select.value) : {};
+          auxiliary[select.dataset.auxTask + '_profile_id'] = choice.profile_id || '';
+          auxiliary[select.dataset.auxTask + '_model_name'] = choice.model || '';
+        });
         var data = await Tomo.api('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: JSON.stringify(Object.assign(auxiliary, {
             max_tool_iterations: parseInt(document.getElementById('setMaxIter').value, 10),
             learning_enabled: document.getElementById('setLearning').checked,
             memory_vault_enabled: document.getElementById('setMemoryVault').checked,
-            memory_extraction_profile_id: document.getElementById('setMemoryExtractionProfile').value,
-            vision_profile_id: document.getElementById('setVisionProfile').value,
             image_input_mode: document.getElementById('setImageInputMode').value,
             auto_compact_enabled: document.getElementById('setAutoCompact').checked,
             auto_compact_threshold: (parseInt(document.getElementById('setAutoCompactThreshold').value, 10) || 90) / 100,
             memory_consolidation_enabled: document.getElementById('setMemoryConsolidation').checked,
             memory_consolidation_cron: document.getElementById('setMemoryCron').value.trim(),
             approvals_mode: mode || 'smart',
-          }),
+          })),
         });
         if (!data) return;
         if (data.max_tool_iterations != null) {
@@ -199,6 +203,12 @@
   var fId = document.getElementById('profId');
   var fName = document.getElementById('profName');
   var fBase = document.getElementById('profBaseUrl');
+  var fProvider = document.getElementById('profProvider');
+  var catalogStatus = document.getElementById('profCatalogStatus');
+  var providerPresets = {
+    'opencode-go': { name: 'OpenCode Go', base_url: 'https://opencode.ai/zen/go/v1' },
+    'opencode-zen': { name: 'OpenCode Zen', base_url: 'https://opencode.ai/zen/v1' }
+  };
   var fKey = document.getElementById('profApiKey');
   var fModel = document.getElementById('profModel');
   var fReasoning = document.getElementById('profReasoningEfforts');
@@ -225,6 +235,21 @@
 
   function render(profiles, dId) {
     defaultId = dId || '';
+    document.querySelectorAll('[data-aux-task]').forEach(function (select) {
+      var value = select.value;
+      select.innerHTML = '<option value="">Follow main model</option>';
+      profiles.filter(function (p) { return p.enabled; }).forEach(function (p) {
+        var group = document.createElement('optgroup'); group.label = p.name;
+        (p.available_models && p.available_models.length ? p.available_models : [p.model]).forEach(function (model) {
+          var option = document.createElement('option');
+          option.value = JSON.stringify({ profile_id: p.id, model: model }); option.textContent = model || p.name;
+          // Server-rendered JSON can differ only in whitespace / key order.
+          if (value) { var chosen = JSON.parse(value); option.selected = chosen.profile_id === p.id && chosen.model === model; }
+          group.appendChild(option);
+        });
+        select.appendChild(group);
+      });
+    });
     if (!listEl) return;
     if (!profiles.length) { listEl.innerHTML = '<div class="empty">No profiles yet — add one to enable chat.</div>'; }
     else { listEl.innerHTML = profiles.map(rowHtml).join(''); }
@@ -258,8 +283,14 @@
       fId.value = p.id; fName.value = p.name || ''; fBase.value = p.base_url || ''; fKey.value = ''; fModel.value = p.model || ''; fReasoning.value = (p.reasoning_efforts || []).join('\n'); fEnabled.checked = !!p.enabled;
       markSelected(listEl, p.id);
     }
+    fProvider.value = Object.keys(providerPresets).find(function (id) { return providerPresets[id].base_url === fBase.value.replace(/\/$/, ''); }) || 'custom';
+    fBase.readOnly = fProvider.value !== 'custom';
+    fModel.readOnly = fProvider.value !== 'custom';
+    fillModelSelect((p && p.available_models) || []);
+    if (catalogStatus) catalogStatus.textContent = 'Pick a default model. All saved catalog models are available in chat.';
     formCard.classList.remove('hidden');
-    if (fName) fName.focus();
+    if (fProvider.value !== 'custom') fKey.focus();
+    else if (fName) fName.focus();
   }
 
   var addBtn = document.getElementById('addProfileBtn');
@@ -293,6 +324,8 @@
       var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: parseReasoningEfforts(fReasoning.value), enabled: fEnabled.checked };
       var key = fKey.value;
       if (key && key.indexOf('•') === -1) body.api_key = key;
+      saveProf.disabled = true;
+      saveProf.textContent = fProvider.value === 'custom' ? 'Saving…' : 'Connecting…';
       try {
         if (fMode.value === 'add') {
           await Tomo.api('/api/llm-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -303,6 +336,7 @@
         }
         formCard.classList.add('hidden'); loadProfiles();
       } catch (e) { Tomo.toast((e && e.message) || 'Could not save profile', 'err'); }
+      finally { saveProf.disabled = false; saveProf.textContent = 'Save profile'; }
     });
   }
 
@@ -324,31 +358,54 @@
     });
   }
 
-  if (fetchModelsBtn) {
-    fetchModelsBtn.addEventListener('click', async function () {
-      var url = '/api/llm-profiles/codex-models';
-      if (fId.value) url += '?profile_id=' + encodeURIComponent(fId.value);
-      fetchModelsBtn.disabled = true;
-      fetchModelsBtn.textContent = 'Fetching…';
-      try {
-        var d = await Tomo.api(url);
-        resetModelSelect();
-        var models = (d && d.models) || [];
-        models.forEach(function (m) {
-          var opt = document.createElement('option');
-          opt.value = m; opt.textContent = m;
-          if (m === fModel.value) opt.selected = true;
-          modelSelect.appendChild(opt);
-        });
-        Tomo.toast(models.length ? (models.length + ' models loaded') : 'No models found', models.length ? 'ok' : 'err');
-      } catch (er) {
-        Tomo.toast((er && er.message) || 'Could not fetch models', 'err');
-      } finally {
-        fetchModelsBtn.disabled = false;
-        fetchModelsBtn.textContent = 'Fetch models';
-      }
+  function fillModelSelect(models) {
+    resetModelSelect();
+    models.forEach(function (m) {
+      var opt = document.createElement('option');
+      opt.value = m; opt.textContent = m; opt.selected = m === fModel.value;
+      modelSelect.appendChild(opt);
     });
+    if (fProvider.value !== 'custom' && models.length && models.indexOf(fModel.value) === -1) {
+      fModel.value = models[0]; modelSelect.value = models[0];
+    }
   }
+
+  async function fetchProfileModels() {
+    var provider = fProvider.value;
+    var fingerprint = [provider, fKey.value, fId.value].join('\n');
+    var url = '/api/llm-profiles/codex-models';
+    if (fId.value) url += '?profile_id=' + encodeURIComponent(fId.value);
+    fetchModelsBtn.disabled = true; fetchModelsBtn.textContent = 'Fetching…';
+    if (catalogStatus) catalogStatus.textContent = 'Loading provider catalog…';
+    try {
+      var d = provider === 'custom' ? await Tomo.api(url) : await Tomo.api('/api/llm-profiles/provider-models', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: provider, api_key: fKey.value, profile_id: fId.value || null })
+      });
+      if (fingerprint !== [fProvider.value, fKey.value, fId.value].join('\n')) return;
+      var models = (d && d.models) || [];
+      fillModelSelect(models);
+      if (catalogStatus) catalogStatus.textContent = models.length + ' models loaded. Save to make them available in chat.';
+    } catch (er) {
+      if (fingerprint !== [fProvider.value, fKey.value, fId.value].join('\n')) return;
+      if (catalogStatus) catalogStatus.textContent = (er && er.message) || 'Could not load models.';
+    } finally {
+      fetchModelsBtn.disabled = false; fetchModelsBtn.textContent = 'Fetch models';
+    }
+  }
+  if (fetchModelsBtn) fetchModelsBtn.addEventListener('click', fetchProfileModels);
+  if (fProvider) fProvider.addEventListener('change', function () {
+    var preset = providerPresets[fProvider.value];
+    fBase.readOnly = !!preset; fModel.readOnly = !!preset;
+    fBase.value = preset ? preset.base_url : '';
+    fModel.value = ''; resetModelSelect();
+    if (preset) { fName.value = preset.name; fKey.focus(); }
+    if (catalogStatus) catalogStatus.textContent = preset ? 'Paste your token, then save. The model catalog loads automatically.' : 'Enter your custom endpoint and model ID.';
+    if (preset && fKey.value.trim()) fetchProfileModels();
+  });
+  if (fKey) fKey.addEventListener('change', function () {
+    if (fProvider.value !== 'custom' && fKey.value.trim()) fetchProfileModels();
+  });
 
   // ---- ChatGPT/Codex subscription login ----
   var codexBtn = document.getElementById('codexLoginBtn');

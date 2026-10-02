@@ -7,7 +7,7 @@ import json
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-import httpx
+import httpx2
 
 from app.services import secret_store, store
 from app.services.connection_forms import preset_form, relative_path, validate_auth
@@ -28,8 +28,8 @@ def validate_config(data: dict[str, Any], *, saving: bool = False) -> dict[str, 
     try:
         url = urlsplit(base_url)
         _ = url.port
-        normalized = str(httpx.URL(base_url)).rstrip("/")
-    except (ValueError, httpx.InvalidURL):
+        normalized = str(httpx2.URL(base_url)).rstrip("/")
+    except (ValueError, httpx2.InvalidURL):
         raise ValueError("Invalid base URL") from None
     if (
         url.scheme not in {"https", "http"}
@@ -167,10 +167,10 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
     }:
         raise ValueError("Unsupported HTTP method")
     path = relative_path(data.get("path", "/"))
-    base = httpx.URL(usage["base_url"])
+    base = httpx2.URL(usage["base_url"])
     try:
-        url = httpx.URL(usage["base_url"] + path)
-    except httpx.InvalidURL:
+        url = httpx2.URL(usage["base_url"] + path)
+    except httpx2.InvalidURL:
         raise ValueError("Invalid request path") from None
     if (url.scheme, url.host, url.port) != (base.scheme, base.host, base.port):
         raise ValueError("Request cannot change the approved origin")
@@ -242,7 +242,7 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
             from app.services.secret_tunnel import HTTPTransport
 
             transport = HTTPTransport(scope, timeout)
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             timeout=timeout,
             follow_redirects=False,
             trust_env=False,
@@ -274,7 +274,7 @@ async def execute_http(scope: dict[str, Any], data: dict[str, Any]) -> dict[str,
                         "body": "Redirect refused; credentials were not forwarded",
                     }
                 return {"status_code": response.status_code, "body": text}
-    except (httpx.HTTPError, ValueError):
+    except (httpx2.HTTPError, ValueError):
         return {
             "status_code": 502,
             "body": "Upstream request failed (connection, TLS or timeout); a mutation may have completed, verify before retrying",

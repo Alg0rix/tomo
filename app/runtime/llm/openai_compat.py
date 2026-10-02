@@ -23,7 +23,7 @@ import logging
 import re
 from typing import Any, AsyncIterator
 
-import httpx
+import httpx2
 
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.runtime.llm.http import provider_ssl_context, session_headers, stream_json, user_agent
@@ -383,8 +383,8 @@ def stream_stale_seconds(model: str, effort: str | None = None) -> float:
     return floor
 
 
-def llm_http_timeout(read: float, model: str, effort: str | None = None) -> httpx.Timeout:
-    return httpx.Timeout(
+def llm_http_timeout(read: float, model: str, effort: str | None = None) -> httpx2.Timeout:
+    return httpx2.Timeout(
         connect=30.0, read=max(read, stream_stale_seconds(model, effort)),
         write=60.0, pool=30.0,
     )
@@ -649,7 +649,7 @@ class OpenAICompatClient:
 
     Uses HTTPX for requests and a bounded SSE reader for streaming. Parallel
     tool calls are accumulated per index. ``transport`` accepts
-    ``httpx.MockTransport`` for deterministic tests.
+    ``httpx2.MockTransport`` for deterministic tests.
     """
 
     def __init__(
@@ -660,7 +660,7 @@ class OpenAICompatClient:
         *,
         reasoning_effort: str | None = None,
         timeout: float | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         resolved_key = (api_key or "").strip()
         if not resolved_key:
@@ -679,7 +679,7 @@ class OpenAICompatClient:
         self._transport = transport
         self._http_timeout = llm_http_timeout(self._timeout, self._model, self._reasoning_effort)
 
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             headers={"Authorization": f"Bearer {resolved_key}", "User-Agent": user_agent()},
             timeout=self._http_timeout,
             transport=transport,
@@ -941,7 +941,7 @@ class OpenAICompatClient:
     async def _get_json(self, path: str) -> Any:
         """GET *path* on the same base URL and return parsed JSON.
 
-        Uses a short-lived ``httpx.AsyncClient`` with the stored transport
+        Uses a short-lived ``httpx2.AsyncClient`` with the stored transport
         (if any) so extra provider fields are preserved — the OpenAI SDK
         ``Model`` type strips them.
         """
@@ -952,7 +952,7 @@ class OpenAICompatClient:
         if self._transport is not None:
             kwargs["transport"] = self._transport
         headers = {"Authorization": f"Bearer {self._api_key}", "User-Agent": user_agent()}
-        async with httpx.AsyncClient(base_url=self._base_url, **kwargs) as http:
+        async with httpx2.AsyncClient(base_url=self._base_url, **kwargs) as http:
             r = await http.get(path, headers=headers)
             r.raise_for_status()
             return r.json()

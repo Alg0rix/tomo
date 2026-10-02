@@ -91,14 +91,15 @@ async def generate_session_title(
     *,
     llm: LLMClient | None = None,
     agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> str | None:
     """Ask the agent's LLM for a short title; return sanitized text or ``None``."""
     try:
         client = llm
         if client is None:
-            from app.runtime.llm import get_llm
+            from app.runtime.llm import get_auxiliary_llm
 
-            client = get_llm(agent_id=agent_id)
+            client = get_auxiliary_llm('session_title', agent_id=agent_id, session_id=session_id)
         user_snip = " ".join((user_text or "").split())[:_SNIPPET_MAX]
         asst_snip = " ".join((assistant_text or "").split())[:_SNIPPET_MAX]
         logger.info(
@@ -131,6 +132,9 @@ async def generate_session_title(
     except Exception as exc:
         logger.warning("session title generation failed: %s", exc, exc_info=True)
         return None
+    finally:
+        if llm is None and 'client' in locals() and client is not None and hasattr(client, 'aclose'):
+            await client.aclose()
 
 
 __all__ = [

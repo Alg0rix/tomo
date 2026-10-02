@@ -50,11 +50,11 @@ def embed_texts(
     base_url = (profile.get("base_url") or "https://api.openai.com/v1").rstrip("/")
     use_model = model or DEFAULT_EMBED_MODEL
     try:
-        import httpx
+        import httpx2
 
         from app.runtime.llm.http import provider_ssl_context
 
-        with httpx.Client(timeout=60.0, follow_redirects=True, verify=provider_ssl_context()) as client:
+        with httpx2.Client(timeout=60.0, follow_redirects=True, verify=provider_ssl_context()) as client:
             resp = client.post(
                 f"{base_url}/embeddings",
                 headers={"Authorization": f"Bearer {api_key}"},

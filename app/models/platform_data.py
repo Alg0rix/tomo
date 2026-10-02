@@ -98,21 +98,22 @@ def seed_settings() -> dict[str, Any]:
         "concurrency_limit": 4,
         "learning_enabled": True,
         "memory_vault_enabled": False,
-        "memory_extraction_profile_id": "",
         "memory_consolidation_enabled": False,
         "memory_consolidation_cron": "0 3 * * *",
         "learning_memory_nudge_turns": 5,
         "learning_skill_nudge_iters": 5,
         "learning_cooldown_sec": 90,
-        "learning_review_profile_id": "",
+        # Empty auxiliary routes follow the main chat / global model.
+        **{task + suffix: "" for task in (
+            "memory_extraction", "memory_consolidation", "learning_review",
+            "session_title", "compaction", "smart_approval", "agent_generation",
+            "dashboard_prompts", "vision",
+        ) for suffix in ("_profile_id", "_model_name")},
         "llm_timeout_seconds": 300,
         # How user-attached images reach the model: "auto" = native image
         # parts when the model proves vision-capable, else a vision-model
         # text description; "native" = always attach; "text" = always describe.
         "image_input_mode": "auto",
-        # Pinned auxiliary vision profile id ("" = auto: main profile when it
-        # sees images, else the first vision-capable enabled profile).
-        "vision_profile_id": "",
         # Per-model capability pins: {"<model id or profile id>": {"supports_vision": true}}
         # — wins over catalog/prefix detection.
         "model_capability_overrides": {},

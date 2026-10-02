@@ -2,7 +2,7 @@
 
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramAPIError
@@ -15,7 +15,7 @@ async def test_entity_error_falls_back_to_plain_text_and_keeps_buttons():
         body = json.loads(request.content)
         calls.append(body)
         if body.get("parse_mode"):
-            return httpx.Response(
+            return httpx2.Response(
                 400,
                 json={
                     "ok": False,
@@ -23,9 +23,9 @@ async def test_entity_error_falls_back_to_plain_text_and_keeps_buttons():
                     "description": "Bad Request: can't parse entities",
                 },
             )
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+        return httpx2.Response(200, json={"ok": True, "result": {"message_id": 1}})
 
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(handler))
     try:
         keyboard = {
             "inline_keyboard": [[{"text": "Once", "callback_data": "ta:test:once"}]]
@@ -50,12 +50,12 @@ async def test_flood_retry_respects_server_delay_and_is_bounded(monkeypatch):
 
     def handler(request):
         attempts.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             429, json={"ok": False, "error_code": 429, "parameters": {"retry_after": 2}}
         )
 
     monkeypatch.setattr("app.channels.telegram.asyncio.sleep", sleep)
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(handler))
     try:
         with pytest.raises(TelegramAPIError):
             await api.send_message(42, "hello")
@@ -73,13 +73,13 @@ async def test_typing_flood_is_not_retried_or_allowed_to_block_status(monkeypatc
 
     def handler(request):
         calls.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             429,
             json={"ok": False, "error_code": 429, "parameters": {"retry_after": 30}},
         )
 
     monkeypatch.setattr("app.channels.telegram.asyncio.sleep", sleep)
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(handler))
     try:
         with pytest.raises(TelegramAPIError):
             await api.send_typing(42)
@@ -93,9 +93,9 @@ async def test_transport_error_is_redacted_and_not_retried():
 
     def handler(request):
         attempts.append(request)
-        raise httpx.ConnectError("secret-token in a token-bearing URL", request=request)
+        raise httpx2.ConnectError("secret-token in a token-bearing URL", request=request)
 
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(handler))
     try:
         with pytest.raises(RuntimeError) as error:
             await api.send_message(42, "hello")
@@ -107,7 +107,7 @@ async def test_transport_error_is_redacted_and_not_retried():
 
 async def test_not_modified_edit_is_successful_noop():
     def handler(request):
-        return httpx.Response(
+        return httpx2.Response(
             400,
             json={
                 "ok": False,
@@ -116,7 +116,7 @@ async def test_not_modified_edit_is_successful_noop():
             },
         )
 
-    api = TelegramAPI("secret-token", transport=httpx.MockTransport(handler))
+    api = TelegramAPI("secret-token", transport=httpx2.MockTransport(handler))
     try:
         assert await api.edit_message(42, 1, "same") == {}
     finally:
@@ -154,7 +154,7 @@ async def test_supervisor_restores_only_this_bots_admission_cursor(
         if request.url.path.endswith("/getUpdates"):
             polls.append(body.get("offset"))
             if len(polls) == 1:
-                return httpx.Response(
+                return httpx2.Response(
                     200,
                     json={
                         "ok": True,
@@ -174,9 +174,9 @@ async def test_supervisor_restores_only_this_bots_admission_cursor(
             result = []
         else:
             result = {}
-        return httpx.Response(200, json={"ok": True, "result": result})
+        return httpx2.Response(200, json={"ok": True, "result": result})
 
-    api = TelegramAPI(token, transport=httpx.MockTransport(handler))
+    api = TelegramAPI(token, transport=httpx2.MockTransport(handler))
     monkeypatch.setattr("app.channels.telegram.TelegramAPI", lambda token: api)
     await _supervisor_loop(stop)
     assert polls == [70 if same_bot else None, 71]

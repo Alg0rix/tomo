@@ -256,10 +256,15 @@
     const reasoningEl = wrap.querySelector('.composer-reasoning');
     const reasoningTrigger = reasoningEl && reasoningEl.querySelector('.composer-reasoning-trigger');
     const reasoningPopover = reasoningEl && reasoningEl.querySelector('.composer-reasoning-popover');
-    const reasoningFlyout = reasoningEl && reasoningEl.querySelector('.composer-reasoning-flyout');
+    const modelSearch = reasoningEl && reasoningEl.querySelector('.composer-model-search');
+    const modelSelect = reasoningEl && reasoningEl.querySelector('.composer-model-select');
+    const effortSelect = reasoningEl && reasoningEl.querySelector('.composer-effort-select');
+    const pickerStatus = reasoningEl && reasoningEl.querySelector('.composer-picker-status');
+    const pickerClose = reasoningEl && reasoningEl.querySelector('.composer-picker-close');
     const reasoningModel = reasoningEl && reasoningEl.querySelector('.composer-reasoning-model');
     const reasoningTriggerEffort = reasoningEl && reasoningEl.querySelector('.composer-reasoning-trigger-effort');
-    const reasoningRows = reasoningEl ? reasoningEl.querySelectorAll('.composer-reasoning-row') : [];
+    var pickerBusy = false;
+    var pickerRevision = 0;
     const reasoningReset = reasoningEl && reasoningEl.querySelector('.composer-reasoning-reset');
     const defaultAgentName = wrap.dataset.agentName || (wrap.querySelector('.chat-agent-name') || {}).textContent || 'Agent';
     if (!scroll || !input || !sendBtn || (!agentId && !currentSessionId() && !pendingAgentIds().length)) {
@@ -342,9 +347,46 @@
     }
 
     function closeReasoningMenus() {
-      if (reasoningPopover) reasoningPopover.classList.add('hidden');
-      if (reasoningFlyout) reasoningFlyout.classList.add('hidden');
+      if (reasoningPopover) {
+        if (reasoningPopover.hidePopover && reasoningPopover.matches(':popover-open')) reasoningPopover.hidePopover();
+        reasoningPopover.classList.add('hidden');
+      }
       if (reasoningTrigger) reasoningTrigger.setAttribute('aria-expanded', 'false');
+    }
+
+    function fillChatModels() {
+      if (!modelSelect) return;
+      var query = String((modelSearch && modelSearch.value) || '').trim().toLowerCase();
+      modelSelect.innerHTML = '';
+      var found = 0;
+      ((reasoningState && reasoningState.model_profiles) || []).forEach(function (profile) {
+        var group = document.createElement('optgroup'); group.label = profile.name;
+        (profile.models || []).forEach(function (model) {
+          var selected = profile.id === reasoningState.profile_id && model === reasoningState.model;
+          if (!selected && query && (profile.name + ' ' + model).toLowerCase().indexOf(query) === -1) return;
+          var option = document.createElement('option');
+          option.value = JSON.stringify({ profile_id: profile.id, model: model });
+          option.textContent = model || profile.name; option.selected = selected;
+          group.appendChild(option); found++;
+        });
+        if (group.children.length) modelSelect.appendChild(group);
+      });
+      modelSelect.disabled = pickerBusy || !found;
+    }
+
+    function placeModelPicker() {
+      if (!reasoningPopover || reasoningPopover.classList.contains('hidden')) return;
+      var viewport = window.visualViewport;
+      var left = viewport ? viewport.offsetLeft : 0;
+      var top = viewport ? viewport.offsetTop : 0;
+      var width = viewport ? viewport.width : window.innerWidth;
+      var height = viewport ? viewport.height : window.innerHeight;
+      var rect = reasoningTrigger.getBoundingClientRect();
+      var panelWidth = Math.min(340, width - 24);
+      reasoningPopover.style.width = panelWidth + 'px';
+      reasoningPopover.style.maxHeight = Math.max(120, height - 24) + 'px';
+      reasoningPopover.style.left = Math.max(left + 12, Math.min(rect.left, left + width - panelWidth - 12)) + 'px';
+      reasoningPopover.style.top = Math.max(top + 12, Math.min(rect.top - reasoningPopover.offsetHeight - 8, top + height - reasoningPopover.offsetHeight - 12)) + 'px';
     }
 
     function paintReasoningEffort(payload) {
@@ -353,7 +395,7 @@
       if (!reasoningEl) return;
       var efforts = payload && Array.isArray(payload.reasoning_efforts)
         ? payload.reasoning_efforts : [];
-      if (!payload || !currentSessionId() || !efforts.length) {
+      if (!payload || !(payload.model_profiles || []).length) {
         reasoningEl.classList.add('hidden');
         closeReasoningMenus();
         return;
@@ -362,70 +404,80 @@
       var active = String(payload.reasoning_effort || payload.default_reasoning_effort || efforts[efforts.length - 1] || '');
       reasoningEl.classList.remove('hidden');
       if (reasoningModel) reasoningModel.textContent = model;
-      if (reasoningTriggerEffort) reasoningTriggerEffort.textContent = active;
-      var rowValues = reasoningEl.querySelectorAll('.composer-reasoning-row-value');
-      if (rowValues[0]) rowValues[0].textContent = model;
-      if (rowValues[1]) rowValues[1].textContent = active;
-      if (reasoningFlyout) {
-        reasoningFlyout.innerHTML = efforts.map(function (effort) {
-          var value = String(effort);
-          var selected = value === active;
-          return '<button type="button" class="composer-reasoning-option' + (selected ? ' is-active' : '') + '" data-effort="' + esc(value) + '" role="menuitemradio" aria-checked="' + (selected ? 'true' : 'false') + '">' +
-            '<span>' + esc(value) + '</span><span class="check" aria-hidden="true">' + (selected ? '✓' : '') + '</span></button>';
-        }).join('');
-        reasoningFlyout.querySelectorAll('.composer-reasoning-option').forEach(function (option) {
-          on(option, 'click', function (event) {
-            event.preventDefault();
-            persistReasoningEffort(option.getAttribute('data-effort'));
-          });
-        });
+      if (reasoningTriggerEffort) { reasoningTriggerEffort.textContent = active; reasoningTriggerEffort.hidden = !active; }
+      if (reasoningTrigger) reasoningTrigger.title = model + (active ? ' · ' + active : '');
+      fillChatModels();
+      if (effortSelect) {
+        effortSelect.innerHTML = '';
+        var auto = document.createElement('option'); auto.value = '';
+        auto.textContent = efforts.length ? 'Auto (' + efforts[efforts.length - 1] + ')' : 'Provider default';
+        effortSelect.appendChild(auto);
+        efforts.forEach(function (effort) { var option = document.createElement('option'); option.value = effort; option.textContent = effort; effortSelect.appendChild(option); });
+        effortSelect.value = payload.selected_reasoning_effort || '';
+        effortSelect.disabled = pickerBusy || !efforts.length;
       }
+      placeModelPicker();
     }
 
-    async function persistReasoningEffort(value) {
+    async function persistChatSelection(path, body) {
       var sid = currentSessionId();
-      if (!sid) return;
+      if (pickerBusy) return;
       var before = reasoningState;
+      pickerBusy = true;
+      pickerRevision++;
+      refreshSendBtn();
+      paintReasoningEffort(before);
+      if (reasoningReset) reasoningReset.disabled = true;
+      if (pickerStatus) { pickerStatus.textContent = 'Saving…'; pickerStatus.dataset.state = 'saving'; }
+      if (reasoningPopover) reasoningPopover.setAttribute('aria-busy', 'true');
       try {
-        var data = await Tomo.api(
-          '/api/sessions/' + encodeURIComponent(sid) + '/reasoning-effort',
-          {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reasoning_effort: value == null ? '' : String(value) }),
-          }
-        );
-        paintReasoningEffort(data);
-        closeReasoningMenus();
+        if (!sid) sid = agentId ? await createSession() : await ensureSession();
+        if (destroyed || !sid || sid !== currentSessionId()) return;
+        var data = await Tomo.api('/api/sessions/' + encodeURIComponent(sid) + '/' + path, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (destroyed || sid !== currentSessionId()) return;
+        reasoningState = data;
+        if (pickerStatus) { pickerStatus.textContent = 'Saved. Applies to the next message in this chat.'; pickerStatus.dataset.state = 'saved'; }
+        if (window.TomoContextUsage && TomoContextUsage.refresh) TomoContextUsage.refresh(wrap);
       } catch (e) {
-        paintReasoningEffort(before);
-        if (window.Tomo && Tomo.toast) {
-          Tomo.toast((e && e.message) || 'Could not change reasoning effort', 'err');
-        }
+        if (destroyed || sid !== currentSessionId()) return;
+        reasoningState = before;
+        if (pickerStatus) { pickerStatus.textContent = (e && e.message) || 'Could not save. Try again.'; pickerStatus.dataset.state = 'error'; }
+      } finally {
+        pickerBusy = false;
+        refreshSendBtn();
+        if (!destroyed && sid === currentSessionId()) paintReasoningEffort(reasoningState);
+        if (reasoningReset) reasoningReset.disabled = false;
+        if (reasoningPopover) reasoningPopover.setAttribute('aria-busy', 'false');
       }
     }
 
     async function refreshReasoningEffort() {
       var sid = currentSessionId();
-      if (!sid || !reasoningEl) {
-        paintReasoningEffort(null);
-        return;
-      }
+      if (!reasoningEl || pickerBusy) return;
+      var revision = pickerRevision;
       try {
-        var data = await Tomo.api(
-          '/api/sessions/' + encodeURIComponent(sid) + '/reasoning-effort'
+        var targetAgent = agentId || pendingAgentIds()[0] || '';
+        var data = await Tomo.api(sid
+          ? '/api/sessions/' + encodeURIComponent(sid) + '/reasoning-effort'
+          : '/api/llm-profiles/chat-options?agent_id=' + encodeURIComponent(targetAgent)
         );
-        paintReasoningEffort(data);
+        if (!destroyed && sid === currentSessionId() && !pickerBusy && revision === pickerRevision) paintReasoningEffort(data);
       } catch (e) {
-        paintReasoningEffort(null);
+        if (!destroyed && sid === currentSessionId() && !pickerBusy && revision === pickerRevision) paintReasoningEffort(null);
       }
     }
 
     function toggleReasoningPopover() {
       if (!reasoningPopover || reasoningEl.classList.contains('hidden')) return;
-      var open = reasoningPopover.classList.toggle('hidden') === false;
-      if (!open && reasoningFlyout) reasoningFlyout.classList.add('hidden');
-      if (reasoningTrigger) reasoningTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!reasoningPopover.classList.contains('hidden')) { closeReasoningMenus(); return; }
+      reasoningPopover.classList.remove('hidden');
+      if (reasoningPopover.showPopover) reasoningPopover.showPopover();
+      reasoningTrigger.setAttribute('aria-expanded', 'true');
+      if (modelSearch) { modelSearch.value = ''; fillChatModels(); }
+      placeModelPicker();
+      if (modelSelect) modelSelect.focus({ preventScroll: true });
     }
 
     if (reasoningTrigger) {
@@ -434,27 +486,21 @@
         toggleReasoningPopover();
       });
     }
-    if (reasoningRows.length) {
-      reasoningRows.forEach(function (row) {
-        on(row, 'click', function (event) {
-          event.preventDefault();
-          if (row.getAttribute('data-reasoning-row') !== 'effort' || !reasoningFlyout) return;
-          reasoningFlyout.classList.toggle('hidden');
-        });
-      });
-    }
-    if (reasoningReset) {
-      on(reasoningReset, 'click', function (event) {
-        event.preventDefault();
-        persistReasoningEffort('');
-      });
-    }
+    if (modelSearch) on(modelSearch, 'input', fillChatModels);
+    if (modelSelect) on(modelSelect, 'change', function () { persistChatSelection('model', JSON.parse(modelSelect.value)); });
+    if (effortSelect) on(effortSelect, 'change', function () { persistChatSelection('reasoning-effort', { reasoning_effort: effortSelect.value }); });
+    if (reasoningReset) on(reasoningReset, 'click', function () { persistChatSelection('model', { profile_id: '', model: '' }); });
+    if (pickerClose) on(pickerClose, 'click', function () { closeReasoningMenus(); reasoningTrigger.focus(); });
+    on(window, 'resize', placeModelPicker);
+    if (window.visualViewport) { on(window.visualViewport, 'resize', placeModelPicker); on(window.visualViewport, 'scroll', placeModelPicker); }
     function onReasoningDocumentClick(event) {
       if (reasoningEl && !reasoningEl.contains(event.target)) closeReasoningMenus();
     }
     on(document, 'click', onReasoningDocumentClick);
     function onReasoningEscape(event) {
-      if (event.key === 'Escape') closeReasoningMenus();
+      if (event.key === 'Escape' && reasoningPopover && !reasoningPopover.classList.contains('hidden')) {
+        closeReasoningMenus(); reasoningTrigger.focus();
+      }
     }
     on(document, 'keydown', onReasoningEscape);
 
@@ -1003,7 +1049,7 @@
       input.setSelectionRange(pos, pos);
       hideMentions();
       input.focus();
-      sendBtn.disabled = !input.value.trim() || sending;
+      sendBtn.disabled = pickerBusy || !input.value.trim() || sending;
       resize();
     }
 
@@ -1063,7 +1109,7 @@
     function refreshSendBtn() {
       if (destroyed) return;
       // While a turn is running, Enter still enqueues; primary control shows Stop.
-      sendBtn.disabled = uploading || (!input.value.trim() && !uploadedAttachments.length);
+      sendBtn.disabled = pickerBusy || uploading || (!input.value.trim() && !uploadedAttachments.length);
       syncGeneratingUi();
     }
 
@@ -1573,7 +1619,7 @@
     }
 
     async function createSession() {
-      const agents = pendingAgentIds();
+      const agents = pendingAgentIds().length ? pendingAgentIds() : (agentId ? [agentId] : []);
       if (!agents.length) throw new Error('No agents');
       var workplaceId = (wrap.dataset.workplaceId || '').trim();
       const data = await Tomo.api('/api/sessions', {
@@ -1774,6 +1820,7 @@
 
     async function send(text) {
       if (destroyed) return;
+      if (pickerBusy) { Tomo.toast('Wait for model settings to save', 'err'); return; }
       const value = (text != null ? String(text) : input.value).trim();
       if (uploading) {
         Tomo.toast('Wait for uploads to finish', 'err');

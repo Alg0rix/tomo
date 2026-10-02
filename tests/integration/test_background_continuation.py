@@ -2,7 +2,7 @@
 
 import asyncio
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher
@@ -139,7 +139,7 @@ def telegram(monkeypatch):
     bot = Bot()
     original = TelegramAPI.__init__
     def mocked(self, token, **kwargs):
-        kwargs.setdefault('transport', httpx.MockTransport(bot.transport))
+        kwargs.setdefault('transport', httpx2.MockTransport(bot.transport))
         original(self, token, **kwargs)
     monkeypatch.setattr(TelegramAPI, '__init__', mocked)
     store.update_settings({'telegram_enabled': True, 'telegram_bot_token': 'test-job-bot',
@@ -488,10 +488,10 @@ async def test_job_deleted_during_flood_wait_blocks_http_retry(setup, telegram):
         calls.append(request)
         # Deletion at this seam occurs before the retry's per-attempt check.
         store.delete_session(job['session_id'])
-        return httpx.Response(429, json={'ok': False, 'error_code': 429, 'parameters': {'retry_after': .01}})
+        return httpx2.Response(429, json={'ok': False, 'error_code': 429, 'parameters': {'retry_after': .01}})
     api = JobTelegramAPI(job['delivery'], [job['id']])
     old_client = api._client
-    api._client = httpx.AsyncClient(transport=httpx.MockTransport(flood))
+    api._client = httpx2.AsyncClient(transport=httpx2.MockTransport(flood))
     await old_client.aclose()
     try:
         from app.channels.delivery import DeliveryBlocked

@@ -1,4 +1,4 @@
-"""OpenAI-compatible client HTTP mapping tests via ``httpx.MockTransport``.
+"""OpenAI-compatible client HTTP mapping tests via ``httpx2.MockTransport``.
 
 No real network calls: a mock transport inspects the outgoing request and
 returns canned OpenAI-shaped JSON so we can verify the wire mapping
@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.runtime.llm.openai_compat import (
@@ -26,7 +26,7 @@ _KEY = "sk-test"
 _MODEL = "gpt-4o-mini"
 
 
-def _client(transport: httpx.MockTransport, **kw) -> OpenAICompatClient:
+def _client(transport: httpx2.MockTransport, **kw) -> OpenAICompatClient:
     return OpenAICompatClient(
         base_url=_BASE,
         api_key=_KEY,
@@ -79,7 +79,7 @@ def _completion_json_to_sse(body: dict) -> bytes:
     ).encode()
 
 
-def _completion_response(request: httpx.Request, body: dict, *, status: int = 200) -> httpx.Response:
+def _completion_response(request: httpx2.Request, body: dict, *, status: int = 200) -> httpx2.Response:
     """Serve JSON or SSE depending on whether the client asked for streaming.
 
     ``complete(..., tools=...)`` assembles via stream; text-only ``complete``
@@ -90,12 +90,12 @@ def _completion_response(request: httpx.Request, body: dict, *, status: int = 20
     except Exception:
         req = {}
     if status == 200 and req.get("stream"):
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=_completion_json_to_sse(body),
             headers={"content-type": "text/event-stream"},
         )
-    return httpx.Response(status, json=body)
+    return httpx2.Response(status, json=body)
 
 
 def _completion_body(
@@ -135,7 +135,7 @@ async def test_compatible_provider_reasoning_delta_reaches_turn() -> None:
         'data: {"choices":[{"delta":{"content":"done"}}]}\n\n'
         'data: [DONE]\n\n'
     ).encode()
-    client = _client(httpx.MockTransport(lambda request: httpx.Response(
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, content=body, headers={"content-type": "text/event-stream"})))
     try:
         events = [ev async for ev in run_turn("hi", llm=client, tools=[], enable_atg=False)]
@@ -152,18 +152,18 @@ async def test_stale_stream_aborts_and_reports_retry(monkeypatch) -> None:
 
     attempts = 0
 
-    class StalledStream(httpx.AsyncByteStream):
+    class StalledStream(httpx2.AsyncByteStream):
         async def __aiter__(self):
             yield b'data: {"choices":[{"delta":{}}]}\n\n'
             await asyncio.sleep(1)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(200, stream=StalledStream(), headers={"content-type": "text/event-stream"})
+        return httpx2.Response(200, stream=StalledStream(), headers={"content-type": "text/event-stream"})
 
     monkeypatch.setattr(loop, "_stream_stale_seconds", lambda client: 0.04)
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         events = [ev async for ev in loop.run_turn("hi", llm=client, tools=[], enable_atg=False)]
         assert attempts == 2
@@ -180,14 +180,14 @@ def test_missing_api_key_raises() -> None:
 
 
 async def test_plain_content_mapped_and_request_shape() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path.endswith("/chat/completions")
         assert request.headers["Authorization"] == f"Bearer {_KEY}"
         body = json.loads(request.content)
         assert body["model"] == _MODEL
         assert body["messages"] == [{"role": "user", "content": "hi"}]
         assert "tools" not in body
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json=_completion_body(
                 content="hello back",
@@ -197,7 +197,7 @@ async def test_plain_content_mapped_and_request_shape() -> None:
             ),
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert resp.content == "hello back"
@@ -211,13 +211,13 @@ async def test_plain_content_mapped_and_request_shape() -> None:
 async def test_opencode_gets_stable_session_header_per_conversation() -> None:
     from app.runtime.artifacts import fs as artifacts_fs
 
-    seen: list[httpx.Request] = []
+    seen: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
-        return httpx.Response(200, json=_completion_body(content="ok"))
+        return httpx2.Response(200, json=_completion_body(content="ok"))
 
-    transport = httpx.MockTransport(handler)
+    transport = httpx2.MockTransport(handler)
     opencode = OpenAICompatClient(
         base_url="https://opencode.ai/zen/go/v1", api_key=_KEY, model="glm-5.3",
         transport=transport,
@@ -240,13 +240,13 @@ async def test_opencode_gets_stable_session_header_per_conversation() -> None:
 
 
 async def test_reasoning_effort_is_forwarded_to_non_stream_request() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         assert body["reasoning_effort"] == "deep-thought"
-        return httpx.Response(200, json=_completion_body(content="ok"))
+        return httpx2.Response(200, json=_completion_body(content="ok"))
 
     client = _client(
-        httpx.MockTransport(handler), reasoning_effort="deep-thought"
+        httpx2.MockTransport(handler), reasoning_effort="deep-thought"
     )
     response = await client.complete([{"role": "user", "content": "hi"}])
     assert response.content == "ok"
@@ -255,12 +255,12 @@ async def test_reasoning_effort_is_forwarded_to_non_stream_request() -> None:
 async def test_reasoning_effort_is_forwarded_to_stream_request() -> None:
     seen: dict = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.update(json.loads(request.content))
         return _completion_response(request, _completion_body(content="ok"))
 
     client = _client(
-        httpx.MockTransport(handler), reasoning_effort="xhigh-provider"
+        httpx2.MockTransport(handler), reasoning_effort="xhigh-provider"
     )
     await client.complete(
         [{"role": "user", "content": "hi"}],
@@ -281,7 +281,7 @@ async def test_tools_forwarded_and_tool_calls_mapped() -> None:
         }
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         assert body["tools"] == [
             {"type": "function", "function": {"name": "calculator"}}
@@ -291,7 +291,7 @@ async def test_tools_forwarded_and_tool_calls_mapped() -> None:
             request, _completion_body(content=None, tool_calls=raw_tool_calls)
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "calculate 2 + 2"}],
         tools=[{"type": "function", "function": {"name": "calculator"}}],
     )
@@ -320,10 +320,10 @@ async def test_multiple_tool_calls_and_dict_arguments() -> None:
         },
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_completion_body(tool_calls=raw))
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=_completion_body(tool_calls=raw))
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "do two things"}]
     )
     assert [c.name for c in resp.tool_calls] == ["calculator", "search"]
@@ -333,28 +333,28 @@ async def test_multiple_tool_calls_and_dict_arguments() -> None:
 
 
 async def test_http_error_raises_request_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="boom")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, text="boom")
 
     with pytest.raises(LLMRequestError):
-        await _client(httpx.MockTransport(handler)).complete(
+        await _client(httpx2.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
 
 
 async def test_empty_choices_raises_request_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": []})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"choices": []})
 
     with pytest.raises(LLMRequestError, match="empty choices"):
-        await _client(httpx.MockTransport(handler)).complete(
+        await _client(httpx2.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
 
 
 async def test_empty_choices_includes_embedded_provider_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "choices": [],
@@ -363,7 +363,7 @@ async def test_empty_choices_includes_embedded_provider_error() -> None:
         )
 
     with pytest.raises(LLMRequestError, match="Provider overloaded") as ei:
-        await _client(httpx.MockTransport(handler)).complete(
+        await _client(httpx2.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
     assert "empty choices" in str(ei.value)
@@ -373,16 +373,16 @@ async def test_complete_unwraps_gateway_data_wrapper() -> None:
     """Cline/gateway wraps the completion under ``data``; do not stream-retry."""
     calls = {"stream": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         if body.get("stream"):
             calls["stream"] += 1
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 content=b'data: {"choices":[]}\n\ndata: [DONE]\n\n',
                 headers={"content-type": "text/event-stream"},
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "data": {
@@ -404,7 +404,7 @@ async def test_complete_unwraps_gateway_data_wrapper() -> None:
             },
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert resp.content == "hello from wrapper"
@@ -417,16 +417,16 @@ async def test_empty_choices_retries_via_stream() -> None:
     """Non-stream empty choices[] recovers through the streaming path."""
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         body = json.loads(request.content)
         if not body.get("stream"):
-            return httpx.Response(200, json={"choices": []})
+            return httpx2.Response(200, json={"choices": []})
         return _completion_response(
             request, _completion_body(content="recovered via stream")
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert resp.content == "recovered via stream"
@@ -438,9 +438,9 @@ async def test_session_title_recovers_when_provider_always_returns_sse() -> None
 
     requests: list[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(json.loads(request.content))
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=_completion_json_to_sse(_completion_body(content="Service Config Check")),
             headers={"content-type": "text/event-stream"},
@@ -448,7 +448,7 @@ async def test_session_title_recovers_when_provider_always_returns_sse() -> None
 
     title = await generate_session_title(
         "Check the service config", "The service listens on port 8791",
-        llm=_client(httpx.MockTransport(handler)),
+        llm=_client(httpx2.MockTransport(handler)),
     )
 
     assert title == "Service Config Check"
@@ -460,7 +460,7 @@ async def test_session_title_recovers_when_provider_always_returns_sse() -> None
 async def test_complete_with_tools_uses_stream() -> None:
     """Tool-bearing complete() must hit stream=true (avoids empty choices[])."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         assert body.get("stream") is True
         assert body.get("tools")
@@ -478,7 +478,7 @@ async def test_complete_with_tools_uses_stream() -> None:
             ),
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "run"}],
         tools=[{"type": "function", "function": {"name": "bash"}}],
     )
@@ -486,25 +486,25 @@ async def test_complete_with_tools_uses_stream() -> None:
 
 
 async def test_request_error_wraps_network_failure() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused")
 
     with pytest.raises(LLMRequestError):
-        await _client(httpx.MockTransport(handler)).complete(
+        await _client(httpx2.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
 
 
 async def test_explicit_args_client() -> None:
     """Constructing with explicit args does not need env/config."""
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_completion_body(content="ok"))
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=_completion_body(content="ok"))
 
     client = OpenAICompatClient(
         base_url=_BASE,
         api_key=_KEY,
         model=_MODEL,
-        transport=httpx.MockTransport(handler),
+        transport=httpx2.MockTransport(handler),
     )
     assert client.endpoint == f"{_BASE}/chat/completions"
     resp = await client.complete([{"role": "user", "content": "hi"}])
@@ -524,7 +524,7 @@ def test_base_url_already_including_chat_completions_unchanged() -> None:
         api_key=_KEY,
         model=_MODEL,
         base_url="http://x/v1/chat/completions",
-        transport=httpx.MockTransport(lambda req: httpx.Response(200)),
+        transport=httpx2.MockTransport(lambda req: httpx2.Response(200)),
     )
     assert client.endpoint == "http://x/v1/chat/completions"
 
@@ -540,12 +540,12 @@ async def test_non_dict_json_arguments_coerced_to_dict() -> None:
         }
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, json=_completion_body(content=None, tool_calls=raw_tool_calls)
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert len(resp.tool_calls) == 1
@@ -555,11 +555,11 @@ async def test_non_dict_json_arguments_coerced_to_dict() -> None:
 async def test_malformed_choices_zero_raises_request_error() -> None:
     """choices[0] being null must raise LLMRequestError, not AttributeError."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [None]})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"choices": [None]})
 
     with pytest.raises(LLMRequestError):
-        await _client(httpx.MockTransport(handler)).complete(
+        await _client(httpx2.MockTransport(handler)).complete(
             [{"role": "user", "content": "hi"}]
         )
 
@@ -575,12 +575,12 @@ async def test_non_dict_tool_call_entry_is_skipped() -> None:
         },
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, json=_completion_body(content=None, tool_calls=raw_tool_calls)
         )
 
-    resp = await _client(httpx.MockTransport(handler)).complete(
+    resp = await _client(httpx2.MockTransport(handler)).complete(
         [{"role": "user", "content": "hi"}]
     )
     assert len(resp.tool_calls) == 1
@@ -588,12 +588,12 @@ async def test_non_dict_tool_call_entry_is_skipped() -> None:
 
 
 async def test_aclose_releases_client() -> None:
-    """aclose() closes the underlying httpx client without error."""
+    """aclose() closes the underlying httpx2 client without error."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_completion_body(content="ok"))
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=_completion_body(content="ok"))
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     await client.complete([{"role": "user", "content": "hi"}])
     await client.aclose()
 
@@ -701,10 +701,10 @@ async def test_parallel_tool_calls_streamed_correctly() -> None:
     ]
     sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     events = [ev async for ev in client.stream_complete([])]
     assert events[-1]["type"] == "done"
     resp = events[-1]["response"]
@@ -731,10 +731,10 @@ async def test_malformed_arguments_repaired_via_stream() -> None:
     ]
     sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     events = [ev async for ev in client.stream_complete([])]
     resp = events[-1]["response"]
     assert len(resp.tool_calls) == 1
@@ -755,15 +755,15 @@ async def test_stream_include_usage_on_trailing_chunk() -> None:
     ]
     sse_body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         assert body.get("stream") is True
         assert body.get("stream_options") == {"include_usage": True}
-        return httpx.Response(
+        return httpx2.Response(
             200, content=sse_body, headers={"content-type": "text/event-stream"}
         )
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     events = [ev async for ev in client.stream_complete([{"role": "user", "content": "x"}])]
     resp = events[-1]["response"]
     assert resp.content == "hi"
@@ -780,17 +780,17 @@ async def test_stream_include_usage_on_trailing_chunk() -> None:
 async def test_fetch_model_context_window_from_list() -> None:
     """fetch_model_context_window extracts context from /models list."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [
                     {"id": _MODEL, "max_model_len": 16384},
                     {"id": "other", "context_window": 4096},
                 ]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         ctx = await client.fetch_model_context_window()
         assert ctx == 16384
@@ -801,10 +801,10 @@ async def test_fetch_model_context_window_from_list() -> None:
 async def test_fetch_model_context_window_network_error_returns_none() -> None:
     """Network failure returns None, not an exception."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("refused")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("refused")
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         ctx = await client.fetch_model_context_window()
         assert ctx is None
@@ -815,12 +815,12 @@ async def test_fetch_model_context_window_network_error_returns_none() -> None:
 async def test_fetch_model_context_window_no_match_returns_none() -> None:
     """Model not in /models list and no context field → None."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={"data": [{"id": "other", "context_window": 4096}]})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"data": [{"id": "other", "context_window": 4096}]})
+        return httpx2.Response(404)
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         ctx = await client.fetch_model_context_window()
         assert ctx is None
@@ -831,14 +831,14 @@ async def test_fetch_model_context_window_no_match_returns_none() -> None:
 async def test_fetch_model_context_window_slash_suffix_match() -> None:
     """Model id 'org/gpt-4o' matches 'gpt-4o' via /{model} suffix."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={
+            return httpx2.Response(200, json={
                 "data": [{"id": f"org/{_MODEL}", "context_window": 8192}]
             })
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
-    client = _client(httpx.MockTransport(handler))
+    client = _client(httpx2.MockTransport(handler))
     try:
         ctx = await client.fetch_model_context_window()
         assert ctx == 8192

@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-import httpx
+import httpx2
 import pytest
 import uvicorn
 
@@ -84,7 +84,7 @@ def environment(tmp_path, monkeypatch):
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started
-    client = httpx.Client(base_url=f"http://127.0.0.1:{port}")
+    client = httpx2.Client(base_url=f"http://127.0.0.1:{port}")
     assert (
         client.post(
             "/login", data={"username": "alice", "password": "password1"}
@@ -201,7 +201,7 @@ def test_broker_rejects_secret_echo_cross_session_and_origin_override(environmen
         },
     ).json()
     # The shell capability cannot supply or retrieve plaintext credentials.
-    with httpx.Client(base_url=str(client.base_url)) as unauthenticated:
+    with httpx2.Client(base_url=str(client.base_url)) as unauthenticated:
         denied = unauthenticated.post(
             f"/api/sessions/{sid}/connections/requests/{pending['id']}",
             headers=headers,
@@ -263,7 +263,7 @@ def test_broker_rejects_secret_echo_cross_session_and_origin_override(environmen
         == 404
     )
     bob = store.create_user({"username": "bob", "password": "password1"})
-    with httpx.Client(base_url=str(client.base_url)) as bob_client:
+    with httpx2.Client(base_url=str(client.base_url)) as bob_client:
         bob_client.post("/login", data={"username": "bob", "password": "password1"})
         assert bob_client.get(f"/api/sessions/{sid}/connections").status_code == 404
         assert (

@@ -140,9 +140,9 @@ async def generate_agent_draft(
     try:
         client = llm
         if client is None:
-            from app.runtime.llm import LLMConfigError, get_llm
+            from app.runtime.llm import LLMConfigError, get_auxiliary_llm
 
-            client = get_llm()
+            client = get_auxiliary_llm('agent_generation')
         ctx = _existing_context(existing_agents)
         messages = [
             {"role": "system", "content": _SYSTEM},

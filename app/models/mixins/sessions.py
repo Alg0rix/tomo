@@ -145,6 +145,8 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "message_count": row["message_count"],
         "workplace_id": workplace_id,
         "reasoning_effort": reasoning_effort,
+        "model_profile_id": row["model_profile_id"],
+        "model_name": row["model_name"],
         "updated_at": row["updated_at"],
         "created_at": row["created_at"],
     }

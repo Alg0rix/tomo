@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from app.channels.telegram import TelegramAPI, TelegramDispatcher
@@ -33,7 +33,7 @@ class Bot:
             if self.fail_prompt and payload.get("reply_markup", {}).get(
                 "inline_keyboard", [[]]
             )[0][0].get("callback_data", "").startswith("ta:"):
-                return httpx.Response(
+                return httpx2.Response(
                     403, json={"ok": False, "error_code": 403, "description": "blocked"}
                 )
             self.counter += 1
@@ -54,12 +54,12 @@ class Bot:
             result = {}
         elif method == "sendMessageDraft":
             # Legacy-server fake; RichBot opts in to native DM drafts.
-            return httpx.Response(404, json={"ok": False, "error_code": 404})
+            return httpx2.Response(404, json={"ok": False, "error_code": 404})
         elif method == "getUpdates":
             result = []
         else:
             result = True
-        return httpx.Response(200, json={"ok": True, "result": result})
+        return httpx2.Response(200, json={"ok": True, "result": result})
 
     def callback(self, data, message_id, *, actor=42, chat=42, thread=None):
         message = {"message_id": message_id, "chat": {"id": chat}}
@@ -97,7 +97,7 @@ def setup(tmp_path):
     hitl.clear_all_pending()
     clear_session_modes()
     bot = Bot()
-    api = TelegramAPI("not-a-real-token", transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI("not-a-real-token", transport=httpx2.MockTransport(bot.transport))
     yield bot, api
     hitl.clear_all_pending()
     clear_session_modes()

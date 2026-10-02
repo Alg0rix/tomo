@@ -531,12 +531,58 @@ async def list_llm_profiles(_: AuthDep):
     }
 
 
+async def _profile_catalog_data(data: dict, profile_id: str | None = None) -> dict:
+    from app.models.mixins.llm_profiles import get_profile
+    from app.runtime.llm.provider_catalog import fetch_models, provider_for_url
+
+    existing = store.with_db(lambda conn: get_profile(conn, profile_id)) if profile_id else None
+    url = data.get("base_url", (existing or {}).get("base_url", "")) or ""
+    provider = provider_for_url(url)
+    if provider:
+        key = data.get("api_key") or (existing or {}).get("api_key") or ""
+        models = await fetch_models(provider, key)
+        model = data.get("model", (existing or {}).get("model")) or models[0]
+        if model not in models:
+            raise ValueError("Choose a model from this provider's catalog")
+        data.update(available_models=models, model=model)
+    elif "base_url" in data:
+        data["available_models"] = []
+    return data
+
+
+class ProviderModelsIn(BaseModel):
+    provider: str
+    api_key: str = ""
+    profile_id: str | None = None
+
+
+@router.post("/llm-profiles/provider-models")
+async def get_provider_models(body: ProviderModelsIn, _: AuthDep):
+    from app.models.mixins.llm_profiles import get_profile
+    from app.runtime.llm.provider_catalog import fetch_models
+
+    key = body.api_key
+    if not key and body.profile_id:
+        profile = store.with_db(lambda conn: get_profile(conn, body.profile_id))
+        key = (profile or {}).get("api_key") or ""
+    try:
+        return {"models": await fetch_models(body.provider, key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/llm-profiles")
 async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
     try:
-        return store.create_llm_profile(body.model_dump(exclude_none=True))
+        data = await _profile_catalog_data(body.model_dump(exclude_none=True))
+        return store.create_llm_profile(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/llm-profiles/chat-options")
+async def get_chat_model_options(_: AuthDep, agent_id: str | None = None):
+    return store.get_chat_model_settings(agent_id)
 
 
 @router.get("/llm-profiles/codex-models")
@@ -555,10 +601,13 @@ async def get_llm_profile(profile_id: str, _: AuthDep):
 
 @router.put("/llm-profiles/{profile_id}")
 async def update_llm_profile(profile_id: str, body: LLMProfileUpdate, _: AuthDep):
-    prof = store.update_llm_profile(profile_id, body.model_dump(exclude_unset=True))
-    if not prof:
+    if not store.get_llm_profile(profile_id):
         raise HTTPException(status_code=404, detail="Profile not found")
-    return prof
+    try:
+        data = await _profile_catalog_data(body.model_dump(exclude_unset=True), profile_id)
+        return store.update_llm_profile(profile_id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/llm-profiles/{profile_id}")

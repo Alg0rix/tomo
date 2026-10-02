@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 
-import httpx
+import httpx2
 
 from app.runtime.llm.codex_models import (
     DEFAULT_CODEX_MODELS,
@@ -24,9 +24,9 @@ def test_list_codex_models_returns_curated_defaults_without_token() -> None:
 
 
 def test_list_codex_models_uses_live_api_sorted_by_priority() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.headers["Authorization"] == "Bearer at-1"
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "models": [
@@ -37,23 +37,23 @@ def test_list_codex_models_uses_live_api_sorted_by_priority() -> None:
             },
         )
 
-    models = list_codex_models("at-1", transport=httpx.MockTransport(handler))
+    models = list_codex_models("at-1", transport=httpx2.MockTransport(handler))
     assert models == ["gpt-5.5", "gpt-5.3-codex"]
 
 
 def test_list_codex_models_falls_back_on_http_failure() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, json={})
 
-    models = list_codex_models("at-1", transport=httpx.MockTransport(handler))
+    models = list_codex_models("at-1", transport=httpx2.MockTransport(handler))
     assert models == DEFAULT_CODEX_MODELS
 
 
 def test_list_codex_models_falls_back_on_empty_catalog() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"models": []})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"models": []})
 
-    models = list_codex_models("at-1", transport=httpx.MockTransport(handler))
+    models = list_codex_models("at-1", transport=httpx2.MockTransport(handler))
     assert models == DEFAULT_CODEX_MODELS
 
 
@@ -61,11 +61,11 @@ def test_fetch_sends_chatgpt_account_id_header_from_jwt_claim() -> None:
     captured = {}
     token = _fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-123"}})
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured["headers"] = dict(request.headers)
-        return httpx.Response(200, json={"models": [{"slug": "gpt-5.6-sol", "priority": 0}]})
+        return httpx2.Response(200, json={"models": [{"slug": "gpt-5.6-sol", "priority": 0}]})
 
-    models = list_codex_models(token, transport=httpx.MockTransport(handler))
+    models = list_codex_models(token, transport=httpx2.MockTransport(handler))
     assert captured["headers"].get("chatgpt-account-id") == "acct-123"
     assert models == ["gpt-5.6-sol"]
 

@@ -163,12 +163,12 @@ def _ollama_supports_vision(model_id: str, base_url: str) -> bool | None:
         return cached[0]
     verdict: bool | None = None
     try:
-        import httpx
+        import httpx2
 
         root = base_url.rstrip("/")
         if root.endswith("/v1"):
             root = root[: -len("/v1")]
-        resp = httpx.post(
+        resp = httpx2.post(
             f"{root}/api/show", json={"model": model_id}, timeout=_OLLAMA_PROBE_TIMEOUT
         )
         if resp.status_code == 200:
@@ -234,12 +234,16 @@ def model_supports_vision(model_id: str | None, base_url: str | None = "") -> bo
     return lookup_vision_capability(model_id, base_url) is True
 
 
+def _main_profile(agent_id: str | None):
+    from app.runtime.llm import resolve_main_profile
+
+    return resolve_main_profile(agent_id)
+
+
 def resolve_model_id(agent_id: str | None) -> str:
     """Best-effort model id for *agent_id*'s resolved LLM profile."""
     try:
-        from app.services import store
-
-        profile: dict[str, Any] | None = store.resolve_llm_profile(agent_id)
+        profile: dict[str, Any] | None = _main_profile(agent_id)
         return ((profile or {}).get("model") or "").strip()
     except Exception:
         return ""
@@ -248,9 +252,7 @@ def resolve_model_id(agent_id: str | None) -> str:
 def agent_supports_vision(agent_id: str | None) -> bool:
     """True when *agent_id*'s resolved profile is proven vision-capable."""
     try:
-        from app.services import store
-
-        profile = store.resolve_llm_profile(agent_id) or {}
+        profile = _main_profile(agent_id) or {}
         return model_supports_vision(
             profile.get("model"), profile.get("base_url") or ""
         )
@@ -291,9 +293,7 @@ def decide_image_input_mode(agent_id: str | None) -> str:
     if _vision_profile_pin():
         return "text"
     try:
-        from app.services import store
-
-        profile = store.resolve_llm_profile(agent_id) or {}
+        profile = _main_profile(agent_id) or {}
     except Exception:
         return "text"
     if lookup_vision_capability(
@@ -324,9 +324,10 @@ def resolve_vision_profile(agent_id: str | None) -> dict[str, Any] | None:
         except Exception:
             prof = None
         if prof and prof.get("enabled"):
+            prof['model'] = store.get_settings().get('vision_model_name') or prof['model']
             return prof
     try:
-        main = store.resolve_llm_profile(agent_id)
+        main = _main_profile(agent_id)
     except Exception:
         main = None
     if main and lookup_vision_capability(
@@ -366,7 +367,7 @@ def vision_client(agent_id: str | None):
     from app.runtime.llm import get_llm
 
     try:
-        return get_llm(profile_id=profile["id"])
+        return get_llm(profile_id=profile["id"], model=profile['model'])
     except Exception as exc:
         logger.debug("vision client for profile %s failed: %s", profile.get("id"), exc)
         return None

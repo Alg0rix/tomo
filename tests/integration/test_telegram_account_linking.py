@@ -2,7 +2,7 @@
 from datetime import date
 import hashlib
 
-import httpx
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -67,7 +67,7 @@ async def test_web_dm_link_merges_memory_and_keeps_transport_separate(setup, mon
                                'title': 'Telegram experience', 'content': 'Fixed a Telegram incident'})
     code = client.post(f'/api/users/{uid}/telegram/link-code').json()['code']
     bot = Bot()
-    api = TelegramAPI('test-token', transport=httpx.MockTransport(bot.transport))
+    api = TelegramAPI('test-token', transport=httpx2.MockTransport(bot.transport))
     dispatcher = TelegramDispatcher(api)
     llm = RecordingLLM([
         calls(('memory', {'action': 'add', 'entity': 'user/profile', 'content': 'Likes tea.'})),

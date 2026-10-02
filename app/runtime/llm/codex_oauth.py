@@ -6,7 +6,7 @@ Plus/Pro/Team subscription instead of an API key, then talks to
 ``https://chatgpt.com/backend-api/codex`` via the Responses API
 (:mod:`app.runtime.llm.codex_responses`).
 
-All HTTP calls here are synchronous (:class:`httpx.Client`) to match
+All HTTP calls here are synchronous (:class:`httpx2.Client`) to match
 ``resolve_profile()`` (plain sqlite3, no event loop) — see the design spec
 at ``docs/superpowers/specs/2026-08-19-codex-subscription-auth-design.md``.
 """
@@ -17,7 +17,7 @@ import base64
 import json
 from typing import Any
 
-import httpx
+import httpx2
 
 CODEX_ISSUER = "https://auth.openai.com"
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -53,15 +53,15 @@ def _decode_jwt_exp(access_token: str) -> float:
         return 0.0
 
 
-def _client(timeout: float, transport: httpx.BaseTransport | None) -> httpx.Client:
-    kwargs: dict[str, Any] = {"timeout": httpx.Timeout(timeout)}
+def _client(timeout: float, transport: httpx2.BaseTransport | None) -> httpx2.Client:
+    kwargs: dict[str, Any] = {"timeout": httpx2.Timeout(timeout)}
     if transport is not None:
         kwargs["transport"] = transport
-    return httpx.Client(**kwargs)
+    return httpx2.Client(**kwargs)
 
 
 def start_device_login(
-    *, timeout: float = 15.0, transport: httpx.BaseTransport | None = None
+    *, timeout: float = 15.0, transport: httpx2.BaseTransport | None = None
 ) -> dict[str, Any]:
     """Request a device code. Returns ``{user_code, device_auth_id, verification_url, interval}``."""
     with _client(timeout, transport) as client:
@@ -105,7 +105,7 @@ def _exchange_authorization_code(
     code_verifier: str,
     *,
     timeout: float,
-    transport: httpx.BaseTransport | None,
+    transport: httpx2.BaseTransport | None,
 ) -> dict[str, Any]:
     with _client(timeout, transport) as client:
         resp = client.post(
@@ -143,7 +143,7 @@ def poll_device_login(
     user_code: str,
     *,
     timeout: float = 15.0,
-    transport: httpx.BaseTransport | None = None,
+    transport: httpx2.BaseTransport | None = None,
 ) -> dict[str, Any] | None:
     """Poll once. Returns tokens on success, ``None`` if still pending.
 
@@ -181,7 +181,7 @@ def refresh_tokens(
     refresh_token: str,
     *,
     timeout: float = 20.0,
-    transport: httpx.BaseTransport | None = None,
+    transport: httpx2.BaseTransport | None = None,
 ) -> dict[str, Any]:
     """Refresh an expiring/expired Codex access token."""
     if not refresh_token or not refresh_token.strip():

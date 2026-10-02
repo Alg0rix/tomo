@@ -109,10 +109,10 @@ async def compact_session(
             "compacted": 0,
         }
 
-    from app.runtime.llm import get_llm
+    from app.runtime.llm import get_auxiliary_llm
 
     try:
-        client = get_llm(agent_id=agent_id)
+        client = get_auxiliary_llm('compaction', agent_id=agent_id, session_id=session_id)
     except Exception:
         return {
             "status": "no_model",
@@ -181,7 +181,7 @@ async def maybe_auto_compact(
         _resolve_context_limit,
     )
 
-    limit = _resolve_context_limit(agent_id)
+    limit = _resolve_context_limit(agent_id, session_id=session_id)
     threshold = float(settings.get("auto_compact_threshold") or 0.9)
     threshold = min(max(threshold, 0.5), 0.99)
     # Cheap gate first — rough live-segment size before paying for the full
@@ -193,7 +193,7 @@ async def maybe_auto_compact(
     )
     if rough < limit * max(0.4, threshold - 0.25):
         return None
-    usage = compute_context_usage(agent_id, history)
+    usage = compute_context_usage(agent_id, history, limit=limit)
     if usage["used"] < usage["limit"] * threshold:
         return None
     result = await compact_session(session_id, agent_id=agent_id)

@@ -63,7 +63,7 @@ def _msg_tokens(msg: dict[str, Any]) -> int:
     return estimate_tokens("\n".join(parts))
 
 
-def _resolve_context_limit(agent_id: str | None) -> int:
+def _resolve_context_limit(agent_id: str | None, *, session_id: str | None = None) -> int:
     """Context window for the agent's resolved model profile (sync).
 
     Resolution order (no network):
@@ -71,7 +71,7 @@ def _resolve_context_limit(agent_id: str | None) -> int:
       2. ``_KNOWN_WINDOWS`` prefix match (longest prefix first)
       3. ``_DEFAULT_CONTEXT``
     """
-    model_id = _agent_model(agent_id)
+    model_id = _agent_model(agent_id, session_id=session_id)
     if not model_id:
         return _DEFAULT_CONTEXT
 

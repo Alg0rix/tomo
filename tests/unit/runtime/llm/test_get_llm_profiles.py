@@ -157,16 +157,16 @@ def test_get_llm_threads_reasoning_effort_into_codex_client(tmp_path) -> None:
     assert client._reasoning_effort == "high"
 
 
-def test_memory_extraction_routes_to_small_or_selected_profile(tmp_path):
+def test_memory_extraction_follows_main_unless_overridden(tmp_path):
     from app.runtime.memory.vault.extract import extraction_client
 
     _rebind(tmp_path)
     store.create_llm_profile(_profile('default', 'https://default/v1', 'large-model'))
     store.set_default_llm_profile('default')
     store.create_llm_profile(_profile('small', 'https://small/v1', 'fast-mini'))
-    assert extraction_client().endpoint == 'https://small/v1/chat/completions'
-    store.update_settings({'memory_extraction_profile_id': 'default'})
     assert extraction_client().endpoint == 'https://default/v1/chat/completions'
-    store.update_llm_profile('default', {'enabled': False})
+    store.update_settings({'memory_extraction_profile_id': 'small'})
+    assert extraction_client().endpoint == 'https://small/v1/chat/completions'
+    store.update_llm_profile('small', {'enabled': False})
     with pytest.raises(LLMConfigError, match='unavailable'):
         extraction_client()

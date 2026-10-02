@@ -26,27 +26,19 @@
         </button>
         {% if toolbar %}<button type="button" class="composer-ghost chat-swarm-toggle" aria-pressed="false" title="Use agents together for the next message">Team</button>{% endif %}
         <div class="composer-reasoning hidden" aria-live="polite">
-          <button class="composer-reasoning-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Model and reasoning effort">
+          <button class="composer-reasoning-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Choose model and reasoning effort">
+            <svg class="composer-reasoning-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
             <span class="composer-reasoning-model">Model</span>
             <span class="composer-reasoning-trigger-effort">Reasoning</span>
-            <span class="composer-reasoning-chevron" aria-hidden="true">⌄</span>
+            <svg class="composer-reasoning-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
           </button>
-          <div class="composer-reasoning-popover hidden" role="menu">
-            <button class="composer-reasoning-row" type="button" data-reasoning-row="model" role="menuitem">
-              <span class="composer-reasoning-row-label">Model</span>
-              <span class="composer-reasoning-row-value"></span>
-              <b aria-hidden="true">›</b>
-            </button>
-            <button class="composer-reasoning-row" type="button" data-reasoning-row="effort" role="menuitem">
-              <span class="composer-reasoning-row-label">Effort</span>
-              <span class="composer-reasoning-row-value"></span>
-              <b aria-hidden="true">›</b>
-            </button>
-            <div class="composer-reasoning-divider"></div>
-            <button class="composer-reasoning-reset" type="button" role="menuitem">
-              <span>Reset to default</span><span aria-hidden="true">↻</span>
-            </button>
-            <div class="composer-reasoning-flyout hidden" role="menu" aria-label="Reasoning effort options"></div>
+          <div class="composer-reasoning-popover hidden" popover="manual" role="dialog" aria-label="Chat model settings">
+            <div class="composer-picker-head"><strong>Chat model</strong><button class="composer-picker-close" type="button" aria-label="Close model settings">×</button></div>
+            <label class="composer-picker-field"><span>Find a model</span><input class="input composer-model-search" type="search" placeholder="Search models or providers…" autocomplete="off"></label>
+            <label class="composer-picker-field"><span>Model</span><select class="input composer-model-select" aria-label="Chat model"></select></label>
+            <label class="composer-picker-field"><span>Reasoning effort</span><select class="input composer-effort-select" aria-label="Reasoning effort"></select></label>
+            <p class="composer-picker-status" role="status">Changes apply to the next message in this chat.</p>
+            <button class="composer-reasoning-reset" type="button">Follow main model <span aria-hidden="true">↻</span></button>
           </div>
         </div>
       </div>
@@ -92,7 +84,7 @@
           </button>
           <button class="send chat-send" type="button" disabled aria-label="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M5 12h14M13 6l6 6-6 6"/>
+              <path d="M12 19V5M6 11l6-6 6 6"/>
             </svg>
           </button>
         </div>

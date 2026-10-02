@@ -236,9 +236,9 @@ async def _generate(
     try:
         client = llm
         if client is None:
-            from app.runtime.llm import get_llm
+            from app.runtime.llm import get_auxiliary_llm
 
-            client = get_llm()
+            client = get_auxiliary_llm('dashboard_prompts')
         ctx = build_user_context(user_id)
         user_content = (ctx or "No prior activity yet.") + "\n\nJSON:"
         messages = [
