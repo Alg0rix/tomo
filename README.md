@@ -226,7 +226,7 @@ CI workflows:
 
 | Workflow | When | What |
 |----------|------|------|
-| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; tag → GitHub Release; `main`/`v*` → GHCR `ghcr.io/alg0rix/tomo` |
+| [`ci.yml`](.github/workflows/ci.yml) | push/PR + `v*` tags | pytest (3.12/3.13), Python wheel, connector cross-builds; `v*` tags only → GitHub Release + GHCR `ghcr.io/alg0rix/tomo` |
 | [`lint.yml`](.github/workflows/lint.yml) | push/PR | ruff (E/F), `gofmt`/`go vet`, `bash -n` on install scripts |
 | [`security.yml`](.github/workflows/security.yml) | push/PR + weekly | `pip-audit` on the lockfile, CodeQL (Python + Go) |
 

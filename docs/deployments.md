@@ -36,21 +36,22 @@ Repo root ships `Dockerfile`, `docker-compose.yml`, and `.env.example`.
 Published images live on **GitHub Container Registry**:
 
 ```text
-ghcr.io/alg0rix/tomo:latest     # main branch
+ghcr.io/alg0rix/tomo:latest     # latest release (slim)
 ghcr.io/alg0rix/tomo:0.2.0      # release tag v0.2.0
 ghcr.io/alg0rix/tomo:0.2        # major.minor
-ghcr.io/alg0rix/tomo:main
 ghcr.io/alg0rix/tomo:sha-<short>
 ```
 
-CI (`.github/workflows/ci.yml` job `docker`) builds and pushes on every
-`main` push and on `v*` tags after Python tests pass. No Docker Hub token
+CI (`.github/workflows/ci.yml` job `docker`) builds and pushes only on
+`v*` release tags after Python tests pass. Pushes to `main` and PRs run
+checks without building Docker images. The `latest` and `full` aliases
+follow releases, not unreleased `main` commits. No Docker Hub token
 needed — `GITHUB_TOKEN` + `packages: write` is enough.
 
 ### Image variants: slim vs `full`
 
-Two variants are published for every ref — the slim image above plus a
-`-full` variant (`tomo:full`, `tomo:0.3.1-full`, `tomo:main-full`, …)
+Two variants are published for every release — the slim image above plus a
+`-full` variant (`tomo:full`, `tomo:0.3.2-full`, `tomo:0.3-full`, …)
 built from `Dockerfile.full` on top of the slim image:
 
 - LibreOffice (`soffice`, `python3-uno`), Poppler, pandoc, tesseract —
