@@ -1,0 +1,76 @@
+"""process + bash background job tests."""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from app.core import home
+from app.runtime.artifacts.fs import bind_session, reset_session
+from app.runtime.tools.user_ctx import bind_user, reset_user
+from app.services import store
+from app.runtime.tools import sandbox
+from app.runtime.tools.registry import execute, reset_registry
+from app.services.background_jobs import manager as _job_manager
+
+
+@pytest.fixture(autouse=True)
+def _reset(tmp_path) -> None:
+    reset_registry()
+    _job_manager.reset()
+    store.rebind(tmp_path / "process.db")
+    store.update_agent("ops", {"workplace_id": ""})
+    sid = store.get_or_create_session("ops", "web")
+    session_token = bind_session(sid)
+    user_token = bind_user("web")
+    sandbox.reset_agent()
+    yield
+    reset_session(session_token)
+    reset_user(user_token)
+    _job_manager.reset()
+    sandbox.reset_agent()
+    reset_registry()
+
+
+def test_bash_background_registers_job() -> None:
+    work = home.agent_work_dir("ops")
+    work.mkdir(parents=True, exist_ok=True)
+    sandbox.bind_agent("ops")
+    result = execute(
+        "bash", {"command": "sleep 0.3; echo done", "background": True}
+    )
+    assert result.startswith("Started background job")
+    job_id = result.splitlines()[0].rsplit(" ", 1)[-1]
+    listed = execute("process", {"action": "list"})
+    assert job_id in listed
+    # wait for completion
+    deadline = time.time() + 2
+    status = ""
+    while time.time() < deadline:
+        status = execute("process", {"action": "status", "id": job_id})
+        if "succeeded" in status:
+            break
+        time.sleep(0.05)
+    assert "succeeded" in status
+
+
+def test_process_kill() -> None:
+    work = home.agent_work_dir("ops")
+    work.mkdir(parents=True, exist_ok=True)
+    sandbox.bind_agent("ops")
+    result = execute("bash", {"command": "sleep 30", "background": True})
+    job_id = result.splitlines()[0].rsplit(" ", 1)[-1]
+    killed = execute("process", {"action": "kill", "id": job_id})
+    assert job_id in killed
+    assert "stopped" in killed or "returncode" in killed
+
+
+def test_process_unknown_id_is_error() -> None:
+    assert execute("process", {"action": "status", "id": "job_nope"}).startswith(
+        "Error"
+    )
+
+
+def test_process_bad_action_is_error() -> None:
+    assert execute("process", {"action": "pause"}).startswith("Error")

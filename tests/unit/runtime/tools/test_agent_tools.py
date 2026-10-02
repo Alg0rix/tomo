@@ -1,0 +1,70 @@
+"""Per-agent tool enablement persistence (SQLite agent_tools)."""
+
+from __future__ import annotations
+
+from app.runtime.tools.registry import get_registry, reset_registry
+from app.services import store
+
+
+def _rebind(tmp_path) -> None:
+    reset_registry()
+    store.rebind(tmp_path / "tools.db")
+
+
+def test_list_tools_comes_from_registry(tmp_path) -> None:
+    _rebind(tmp_path)
+    names = {t["id"] for t in store.list_tools()}
+    assert names == set(get_registry().names())
+    assert "bash" in names
+    assert "calculator" not in names
+    assert "delegate" in names
+    assert "read_file" in names
+    assert "write_file" in names
+    assert "str_replace" in names
+
+
+def test_agent_tools_default_all_enabled(tmp_path) -> None:
+    _rebind(tmp_path)
+    rows = store.get_agent_tools("main")
+    assert rows
+    assert all(r["enabled"] for r in rows)
+
+
+def test_set_agent_tools_persists(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
+    enabled = {t["id"]: t["id"] in {"bash", "str_replace"} for t in store.list_tools()}
+    updated = store.set_agent_tools("main", enabled)
+    assert updated is not None
+    on = {t["id"] for t in updated if t["enabled"]}
+    # Artifact tools are locked on when artifacts_enabled (default).
+    assert on == {"bash", "str_replace"} | ARTIFACT_TOOLS
+    again = store.get_agent_tools("main")
+    assert {t["id"] for t in again if t["enabled"]} == on
+    agent = store.get_agent("main")
+    assert agent is not None
+    assert agent["tool_count"] == len(on)
+
+
+def test_get_agent_openai_tools_filters(tmp_path) -> None:
+    _rebind(tmp_path)
+    from app.runtime.artifacts.fs import ARTIFACT_TOOLS
+
+    store.set_agent_tools(
+        "main",
+        {
+            "bash": True,
+            "delegate": False,
+            "read_file": False,
+            "write_file": False,
+            **{
+                t["id"]: False
+                for t in store.list_tools()
+                if t["id"] not in {"bash", "delegate", "read_file", "write_file"}
+            },
+        },
+    )
+    schemas = store.get_agent_openai_tools("main")
+    names = {t["function"]["name"] for t in schemas}
+    assert names == {"bash"} | ARTIFACT_TOOLS
