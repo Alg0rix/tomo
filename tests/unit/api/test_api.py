@@ -1,15 +1,101 @@
+"""Consolidated tests (merged from: test_companion_api.py, test_memory_vault_api.py, test_openai_compat_helpers.py).
+- test_companion_api.py: Companion REST endpoints.
+- test_openai_compat_helpers.py: Unit tests for OpenAI-compat helpers.
+"""
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from app.core import config
 from app.core.deps import require_auth
 from app.main import app
+from app.services import store
+from app.core import config
 from app.runtime.memory.vault.write import add_entity, record_turn
 from app.runtime.memory.vault.paths import timeline_path
 from datetime import date
-from app.services import store
+from fastapi import Request
+from starlette.datastructures import Headers
+from app.api.openai_compat import last_user_message, parse_sse_block, resolve_session_id
 
 
+# --- from test_companion_api.py ---
+def test_companion_snapshot_shape(tmp_path) -> None:
+    store.rebind(tmp_path / "comp.db")
+    store.update_settings({"setup_complete": True, "learning_enabled": True})
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        client = TestClient(app)
+        r = client.get("/api/companion")
+        assert r.status_code == 200
+        data = r.json()
+        assert "bond" in data
+        assert 0 <= data["bond"] <= 100
+        assert "bond_parts" in data
+        assert "stats" in data
+        assert "growth" in data
+        assert isinstance(data["growth"], list)
+        assert "recent_events" in data
+        assert "learning_enabled" in data
+        assert "user_profile_preview" in data
+        assert "heatmap" in data
+        assert isinstance(data["heatmap"].get("days"), list)
+        assert "streak" in data
+        assert "diagnostics" in data
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+def test_companion_events_saved_only(tmp_path) -> None:
+    store.rebind(tmp_path / "comp_saved.db")
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        store.insert_learning_event(saved=True, diary="a", created_at=100.0)
+        store.insert_learning_event(saved=False, note="idle", created_at=200.0)
+        client = TestClient(app)
+        r = client.get("/api/companion/events?saved_only=true")
+        assert r.status_code == 200
+        events = r.json()["events"]
+        assert len(events) == 1
+        assert events[0]["saved"] is True
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+def test_companion_events_pagination(tmp_path) -> None:
+    store.rebind(tmp_path / "comp2.db")
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        store.insert_learning_event(saved=True, diary="a", created_at=100.0)
+        store.insert_learning_event(saved=False, note="idle", created_at=200.0)
+        client = TestClient(app)
+        r = client.get("/api/companion/events?limit=1")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["events"]) == 1
+        assert body["events"][0]["created_at"] == 200.0
+        r2 = client.get("/api/companion/events?limit=1&before=200")
+        assert r2.status_code == 200
+        assert r2.json()["events"][0]["created_at"] == 100.0
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+def test_companion_page_renders(tmp_path) -> None:
+    store.rebind(tmp_path / "comp3.db")
+    store.update_settings({"setup_complete": True})
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        client = TestClient(app)
+        r = client.get("/companion")
+        assert r.status_code == 200
+        assert b"Companion" in r.content
+        assert b"companion.js" in r.content
+        assert b"companion.css" in r.content
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+# --- from test_memory_vault_api.py ---
 def test_memory_graph_entity_timeline_and_forget(tmp_path, monkeypatch):
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'vault.db')
@@ -136,3 +222,80 @@ def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
         assert {a['id']: a['turns'] for a in overview['agents']} == {'ops': 2, agent_id: 1}
     finally:
         app.dependency_overrides.pop(require_auth, None)
+
+
+# --- from test_openai_compat_helpers.py ---
+def test_last_user_message_plain() -> None:
+    assert (
+        last_user_message(
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "again"},
+            ]
+        )
+        == "again"
+    )
+
+
+def test_last_user_message_multimodal() -> None:
+    assert (
+        last_user_message(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "see this"},
+                        {"type": "image_url", "image_url": {"url": "x"}},
+                    ],
+                }
+            ]
+        )
+        == "see this"
+    )
+
+
+def test_parse_sse_block() -> None:
+    name, data = parse_sse_block('event: delta\ndata: {"content":"hi"}\nid: 1')
+    assert name == "delta"
+    assert data == {"content": "hi"}
+
+
+def test_resolve_session_id_uses_header(tmp_path) -> None:
+    store.rebind(tmp_path / "resolve_hdr.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": Headers({"x-tomo-session-id": sid}).raw,
+        "query_string": b"",
+        "client": ("test", 0),
+        "server": ("test", 80),
+        "scheme": "http",
+    }
+    request = Request(scope)
+    got, err = resolve_session_id(request, agent_id="main", user_id="web")
+    assert err is None
+    assert got == sid
+
+
+def test_resolve_session_id_missing_header_session(tmp_path) -> None:
+    store.rebind(tmp_path / "resolve_missing.db")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": Headers({"x-tomo-session-id": "ses_nope"}).raw,
+        "query_string": b"",
+        "client": ("test", 0),
+        "server": ("test", 80),
+        "scheme": "http",
+    }
+    request = Request(scope)
+    got, err = resolve_session_id(request, agent_id="main", user_id="web")
+    assert got is None
+    assert err and err["error"]["type"] == "not_found_error"
+
+

@@ -415,3 +415,91 @@ async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leak
 
     raw = json.dumps([dict(h) for h in history]) + json.dumps(events)
     assert "sekrit-do-not-leak" not in raw
+
+
+# --- ported from test_chat_mock.py (unique coverage, mock file removed) ---
+
+async def test_concurrent_session_turn_rejected(tmp_path) -> None:
+    """Second in-flight turn on the same session is rejected with session_busy."""
+    store.rebind(tmp_path / "chat_busy_lock.db")
+    sid = store.create_swarm_session(["main"], user_id="web")
+    assert store.try_begin_session_turn(sid) is True
+    try:
+        events = await _collect(sid, "should fail")
+    finally:
+        store.end_session_turn(sid)
+    assert "error" in _names(events)
+    err = _data(events, "error")[0]
+    assert err.get("code") == "session_busy"
+    # Rejected before user message is persisted.
+    hist = store.get_session_history(sid)
+    assert not any(h.get("type") == "user" and "should fail" in (h.get("content") or "") for h in hist)
+
+
+async def test_plain_turn_can_delegate_to_enabled_agent(
+    tmp_path, monkeypatch
+) -> None:
+    """An explicit request can delegate in the current chat without a mention."""
+    from app.runtime.llm.base import LLMResponse, ToolCall
+
+    store.rebind(tmp_path / "chat_delegate.db")
+    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+
+    class _CoordDelegateThenFinal:
+        """First call: delegate to ops. Second call: final text."""
+        def __init__(self) -> None:
+            self._call = 0
+
+        async def complete(self, messages, tools=None):
+            self._call += 1
+            if self._call == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_d",
+                            name="delegate",
+                            arguments={"agent_id": "ops", "reason": "ops work"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="Thanks Ops — disk looks fine.", tool_calls=[])
+
+        async def stream_complete(self, messages, tools=None):
+            resp = await self.complete(messages, tools)
+            if resp.content and not resp.has_tool_calls:
+                yield {"type": "delta", "content": resp.content}
+            yield {"type": "done", "response": resp}
+
+    class _OpsReply:
+        async def complete(self, messages, tools=None):
+            return LLMResponse(content="Ops reporting: disk looks fine.", tool_calls=[])
+
+        async def stream_complete(self, messages, tools=None):
+            resp = await self.complete(messages, tools)
+            if resp.content:
+                yield {"type": "delta", "content": resp.content}
+            yield {"type": "done", "response": resp}
+
+    def _llm(agent_id=None):
+        if agent_id == "ops":
+            return _OpsReply()
+        return _CoordDelegateThenFinal()
+
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm)
+
+    events = await _collect(sid, "please have ops check the disk")
+
+    assert "delegate" in _names(events)
+    dones = _data(events, "done")
+    assert dones
+    assert dones[-1]["agent_id"] == "main"
+    assert any(d.get("agent_id") == "ops" for d in _data(events, "delta"))
+
+    history = store.get_session_history(sid)
+    types = [h["type"] for h in history]
+    assert "delegate" in types
+    finals = [h for h in history if h["type"] == "final"]
+    assert finals and finals[-1]["agent_id"] == "main"
+    assert store.get_agent("main")["busy"] is False
+    assert store.get_agent("ops")["busy"] is False

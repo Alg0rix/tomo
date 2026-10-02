@@ -1,17 +1,44 @@
-"""CLI changes persist in the same DB without booting server recovery."""
+"""Consolidated tests (merged from: test_main_help.py, test_config_cmd.py).
+- test_config_cmd.py: CLI changes persist in the same DB without booting server recovery.
+"""
 
+import pytest
+from cli.__main__ import build_parser
 import json
 import os
 import subprocess
 import sys
-
-import pytest
-
 from app.core import config
 from app.services import store
 from cli.__main__ import _run
 
 
+# --- from test_main_help.py ---
+def test_update_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["update", "--help"])
+    assert ei.value.code == 0
+
+
+def test_uninstall_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["uninstall", "--help"])
+    assert ei.value.code == 0
+
+
+def test_service_choices() -> None:
+    args = build_parser().parse_args(["service", "status"])
+    assert args.cmd == "service"
+    assert args.action == "status"
+
+
+def test_skills_list_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["skills", "list", "--help"])
+    assert ei.value.code == 0
+
+
+# --- from test_config_cmd.py ---
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     path = tmp_path / "cli.db"
@@ -197,3 +224,5 @@ assert "app.services.store" not in sys.modules, "CLI booted the server store"
         [sys.executable, "-c", code], env=env, capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
