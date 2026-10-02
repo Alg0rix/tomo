@@ -29,6 +29,49 @@
   var pollTimer = null;
   var monitorEs = null;
   var lastHistLen = -1;
+  var historyEntries = [];
+  var historyHasMore = false;
+  var historyBefore = null;
+  var historyLoading = false;
+  var historyRequest = 0;
+  var historyQueries = [];
+
+  async function refreshQueryRail(sessionId) {
+    var selection = selectionSeq;
+    try {
+      var data = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat/queries');
+      if (selection !== selectionSeq || chatWrap.dataset.sessionId !== sessionId) return;
+      historyQueries = (data.queries || []).map(function (entry, index) {
+        return { id: 'chat-message-' + entry.message_id, messageId: entry.message_id,
+          index: index, prompt: entry.content || '', context: '' };
+      });
+      // A completed live turn used a temporary query ID. Adopt persisted IDs
+      // without rebuilding its messages or moving the scroll position.
+      var turns = Array.from(chatWrap.querySelectorAll('.chat-scroll .turn[data-query-id]'));
+      var users = historyEntries.filter(function (entry) { return entry.type === 'user'; });
+      if (turns.length === users.length && chatWrap.dataset.liveStream !== '1') {
+        turns.forEach(function (turn, index) {
+          if (users[index].message_id) turn.dataset.queryId = 'chat-message-' + users[index].message_id;
+        });
+      }
+      renderQueryRail(fullQueryRecords(buildQueryRecords(historyEntries)));
+      scheduleQueryContexts();
+    } catch (_) {}
+  }
+
+  function fullQueryRecords(loaded) {
+    if (!historyQueries.length) return loaded;
+    var byId = new Map(loaded.map(function (record) { return [record.id, record]; }));
+    var queryIds = new Set(historyQueries.map(function (record) { return record.id; }));
+    return historyQueries.map(function (record) {
+      var visible = byId.get(record.id);
+      return visible ? Object.assign({}, record, { prompt: visible.prompt, context: visible.context }) : record;
+    }).concat(loaded.filter(function (record) {
+      return !queryIds.has(record.id);
+    }).map(function (record, index) {
+      return Object.assign({}, record, { index: historyQueries.length + index });
+    }));
+  }
   var inspectorOpenKey = null;
   var draftWorkplaceId = '';
   var searchMode = false;
@@ -72,20 +115,23 @@
 
   function refetchHistory(sessionId, cb) {
     // Don't wipe the live stream or inspector while the user is in an active turn.
-    if (chatWrap.dataset.liveStream === '1') {
+    if (chatWrap.dataset.liveStream === '1' || historyLoading) {
       if (cb) cb([]);
       return;
     }
     var selection = selectionSeq;
-    Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat').then(function (hist) {
-      if (selection !== selectionSeq || chatWrap.dataset.sessionId !== sessionId || chatWrap.dataset.liveStream === '1') return;
+    var request = ++historyRequest;
+    Tomo.api(historyUrl(sessionId, true)).then(function (hist) {
+      if (request !== historyRequest || selection !== selectionSeq || chatWrap.dataset.sessionId !== sessionId || chatWrap.dataset.liveStream === '1') return;
       var entries = hist.entries || [];
+      rememberHistory(hist);
       if (entries.length === lastHistLen && !inspectorOpenKey) {
         if (cb) cb(entries);
         return;
       }
       lastHistLen = entries.length;
-      renderHistory(entries);
+      renderHistory(entries, { preserveScroll: true });
+      refreshQueryRail(sessionId);
       hydrateSwarmRuns(sessionId);
       if (!chatHandle) chatHandle = TomoChat.init(chatWrap);
       // History wipe removes HITL cards + todo dock — rehydrate from server.
@@ -95,6 +141,62 @@
       if (cb) cb(entries);
     }).catch(function () {});
   }
+
+  function historyUrl(sessionId, refresh) {
+    var url = '/api/sessions/' + encodeURIComponent(sessionId) + '/chat?limit=20';
+    if (refresh && historyEntries.length && historyEntries[0].message_id) {
+      url += '&since=' + encodeURIComponent(historyEntries[0].message_id);
+    }
+    return url;
+  }
+
+  function rememberHistory(hist) {
+    historyEntries = hist.entries || [];
+    historyHasMore = !!hist.has_more;
+    historyBefore = hist.before || (historyEntries[0] && historyEntries[0].message_id);
+  }
+
+  function paintHistoryLoader() {
+    var scroll = chatWrap.querySelector('.chat-scroll');
+    var loader = scroll.querySelector('.chat-load-older');
+    if (!historyHasMore) { if (loader) loader.remove(); return; }
+    if (!loader) {
+      loader = document.createElement('div');
+      loader.className = 'chat-load-older';
+      loader.setAttribute('role', 'status');
+      scroll.prepend(loader);
+    }
+    loader.textContent = historyLoading ? 'Loading earlier messages…' : '';
+  }
+
+  async function loadOlderHistory(targetMessageId) {
+    if (!historyHasMore || !historyBefore || historyLoading || chatWrap.dataset.liveStream === '1') return;
+    var sessionId = chatWrap.dataset.sessionId;
+    var selection = selectionSeq;
+    var request = ++historyRequest;
+    historyLoading = true;
+    paintHistoryLoader();
+    try {
+      var url = historyUrl(sessionId, false) + (targetMessageId
+        ? '&since=' + encodeURIComponent(targetMessageId)
+        : '&before=' + encodeURIComponent(historyBefore));
+      var hist = await Tomo.api(url);
+      if (request !== historyRequest || selection !== selectionSeq || chatWrap.dataset.liveStream === '1') return;
+      rememberHistory({ entries: targetMessageId ? (hist.entries || []) : (hist.entries || []).concat(historyEntries), has_more: hist.has_more, before: hist.before });
+      lastHistLen = historyEntries.length;
+      renderHistory(historyEntries, { preserveScroll: true, loadingOlder: true });
+      hydrateSwarmRuns(sessionId);
+      if (chatHandle && chatHandle.rehydratePending) chatHandle.rehydratePending();
+    } catch (_) {
+      if (selection === selectionSeq) Tomo.toast('Could not load earlier messages — try again', 'err');
+    } finally {
+      if (selection === selectionSeq) { historyLoading = false; paintHistoryLoader(); }
+    }
+  }
+
+  chatWrap.querySelector('.chat-scroll').addEventListener('scroll', function () {
+    if (this.scrollTop < 120 && !chatWrap.hasAttribute('aria-busy')) loadOlderHistory();
+  }, { passive: true });
 
   function startHistoryPoll(sessionId) {
     stopHistoryPoll();
@@ -557,7 +659,7 @@
       if (entry.type === 'user') {
         current = {
           index: records.length,
-          id: queryId(records.length),
+          id: entry.message_id ? 'chat-message-' + entry.message_id : queryId(records.length),
           prompt: String(entry.content || '').trim(),
           context: '',
         };
@@ -810,9 +912,17 @@
       event.preventDefault();
       items[Math.max(0, Math.min(items.length - 1, next))].focus();
     });
-    item.addEventListener('click', function () {
+    item.addEventListener('click', async function () {
       var turn = queryTurn(item.dataset.queryId);
+      var selection = selectionSeq;
+      if (!turn && record.messageId) {
+        await loadOlderHistory(record.messageId);
+        if (selection !== selectionSeq) return;
+        turn = queryTurn(record.id);
+      }
       if (!turn) return;
+      var scroll = chatWrap.querySelector('.chat-scroll');
+      if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();
       var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       turn.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
       setActiveQuery(item.dataset.queryId);
@@ -870,10 +980,19 @@
     scheduleActiveQuery();
   }
 
-  function renderHistory(entries) {
+  function renderHistory(entries, opts) {
     const scroll = chatWrap.querySelector('.chat-scroll');
+    var preserve = opts && opts.preserveScroll;
+    var atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+    var previousTop = scroll.scrollTop;
+    var anchor = preserve && Array.from(scroll.querySelectorAll('.turn[data-query-id]')).find(function (el) {
+      return el.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top;
+    });
+    var anchorId = anchor && anchor.dataset.queryId;
+    var anchorTop = anchor && anchor.getBoundingClientRect().top;
+    if (preserve && scroll._tomoStickCleanup) scroll._tomoStickCleanup();
     var queryRecords = buildQueryRecords(entries);
-    renderQueryRail(queryRecords);
+    renderQueryRail(fullQueryRecords(queryRecords));
     scroll.innerHTML = '';
     if (window.Tomo && Tomo.clearTodoDock) Tomo.clearTodoDock(chatWrap);
     if (!entries.length) {
@@ -1521,7 +1640,16 @@
     }
 
     bindQueryTracking(scroll);
-    stickChatScrollBottom(scroll);
+    paintHistoryLoader();
+    if (preserve && (!atBottom || opts.loadingOlder)) {
+      var restored = anchorId && queryTurn(anchorId);
+      var behavior = scroll.style.scrollBehavior;
+      scroll.style.scrollBehavior = 'auto';
+      scroll.scrollTop = restored ? previousTop + restored.getBoundingClientRect().top - anchorTop : previousTop;
+      scroll.style.scrollBehavior = behavior;
+    } else {
+      stickChatScrollBottom(scroll);
+    }
   }
 
   function closeMobileRail() {
@@ -1536,6 +1664,12 @@
     if (!s) return;
     if (activeId === sessionId && chatHandle && !searchMode && !(opts && opts.pendingMessage)) return;
     var selection = ++selectionSeq;
+    ++historyRequest;
+    historyEntries = [];
+    historyHasMore = false;
+    historyBefore = null;
+    historyLoading = false;
+    historyQueries = [];
     detachChat();
     closeSearchView();
     activeId = sessionId;
@@ -1553,6 +1687,7 @@
     chatWrap.style.display = 'flex';
 
     chatWrap.dataset.sessionId = sessionId;
+    refreshQueryRail(sessionId);
     cancelSwarmHydrate();
     // Keep the login account id — never adopt another session's user_id.
     chatWrap.dataset.userId = currentUserId();
@@ -1578,8 +1713,10 @@
     inspectorOpenKey = null;
 
     try {
-      const hist = await Tomo.api('/api/sessions/' + encodeURIComponent(sessionId) + '/chat');
+      const hist = await Tomo.api(historyUrl(sessionId, false));
       if (selection !== selectionSeq) return;
+      rememberHistory(hist);
+      lastHistLen = historyEntries.length;
       renderHistory(hist.entries || []);
       hydrateSwarmRuns(sessionId);
       if (input) input.disabled = false;
@@ -1695,6 +1832,12 @@
     closeMobileRail();
     detachChat();
     ++selectionSeq;
+    ++historyRequest;
+    historyEntries = [];
+    historyHasMore = false;
+    historyBefore = null;
+    historyLoading = false;
+    historyQueries = [];
     cancelSwarmHydrate();
     const ids = agentIds.slice();
     const pending = opts && opts.pendingMessage ? String(opts.pendingMessage).trim() : '';
@@ -1840,9 +1983,14 @@
     // clears .chat-scroll (scroll jumps to top) then rebuilds — that is the
     // "thrown upward" kick after the agent finishes responding.
     // Only sync the length marker so a later poll won't wipe either.
-    Tomo.api('/api/sessions/' + encodeURIComponent(sid) + '/chat').then(function (hist) {
-      if (chatWrap.dataset.sessionId !== sid) return;
+    var selection = selectionSeq;
+    var request = ++historyRequest;
+    Tomo.api(historyUrl(sid, true)).then(function (hist) {
+      if (request !== historyRequest || selection !== selectionSeq || chatWrap.dataset.sessionId !== sid) return;
+      rememberHistory(hist);
       lastHistLen = (hist.entries || []).length;
+      paintHistoryLoader();
+      refreshQueryRail(sid);
     }).catch(function () {});
   });
   chatWrap.addEventListener('tomo:session-title', function (ev) {
@@ -1867,6 +2015,12 @@
     });
   });
   chatWrap.addEventListener('tomo:chat-cleared', function () {
+    ++historyRequest;
+    historyEntries = [];
+    historyHasMore = false;
+    historyBefore = null;
+    historyLoading = false;
+    historyQueries = [];
     renderHistory([]);
     refreshSessions();
   });

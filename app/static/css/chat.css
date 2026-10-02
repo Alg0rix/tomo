@@ -1017,3 +1017,10 @@
 .chat-wrap .sw-wait[hidden] { display: none; }
 .chat-wrap .sw-head:has(.sw-wait:not([hidden])) { flex-wrap: wrap; }
 .chat-wrap .swarm-row.is-awaiting-main .sw-dot { animation: none; background: var(--accent); }
+.chat-load-older {
+  min-height: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: inherit;
+  opacity: .6;
+}

@@ -510,6 +510,19 @@ class Store:
         with self._lock:
             return messages_store.get_session_history(self._conn, session_id)
 
+    def get_session_history_page(
+        self, session_id: str, *, limit: int = 20,
+        before: int | None = None, since: int | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            return messages_store.get_session_history_page(
+                self._conn, session_id, limit=limit, before=before, since=since,
+            )
+
+    def get_session_queries(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return messages_store.get_session_queries(self._conn, session_id)
+
     def append_session_history(self, session_id: str, entry: dict[str, Any]) -> str | None:
         """Append history. Returns new session title when auto-resolved from first user message."""
         with self._lock:

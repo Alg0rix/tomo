@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS messages (
     error       INTEGER NOT NULL DEFAULT 0,
     ts          REAL NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_session_type_id ON messages(session_id, type, id);
 
 CREATE TABLE IF NOT EXISTS attachments (
     id            TEXT PRIMARY KEY,

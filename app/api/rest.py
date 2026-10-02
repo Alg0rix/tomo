@@ -507,10 +507,27 @@ async def update_session_agents(
 
 
 @router.get("/sessions/{session_id}/chat")
-async def session_chat_history(session_id: str, request: Request, _: AuthDep):
+async def session_chat_history(
+    session_id: str, request: Request, _: AuthDep,
+    limit: int | None = Query(None, ge=1, le=50),
+    before: int | None = Query(None, ge=1),
+    since: int | None = Query(None, ge=1),
+):
     session = require_owned_session(request, session_id)
+    if before is not None and since is not None:
+        raise HTTPException(status_code=422, detail="Use either before or since")
+    if limit is not None or before is not None or since is not None:
+        return {**store.get_session_history_page(
+            session_id, limit=limit or 20, before=before, since=since,
+        ), "session": session}
     entries = store.get_session_history(session_id)
     return {"entries": entries, "has_more": False, "session": session}
+
+
+@router.get("/sessions/{session_id}/chat/queries")
+async def session_chat_queries(session_id: str, request: Request, _: AuthDep):
+    require_owned_session(request, session_id)
+    return {"queries": store.get_session_queries(session_id)}
 
 
 @router.get("/sessions/{session_id}/swarm")

@@ -112,6 +112,47 @@ def get_session_history(conn: sqlite3.Connection, session_id: str) -> list[dict[
     return [_row_to_entry(r) for r in rows]
 
 
+def get_session_history_page(
+    conn: sqlite3.Connection, session_id: str, *, limit: int = 20,
+    before: int | None = None, since: int | None = None,
+) -> dict[str, Any]:
+    """Page backwards by user turns so tools and replies stay together.
+
+    ``since`` refreshes the already loaded window, including new messages.
+    Cursors are message IDs scoped to this session, never row offsets.
+    """
+    upper = " AND id < ?" if before is not None else ""
+    args = [session_id, before] if before is not None else [session_id]
+    if since is None:
+        starts = conn.execute(
+            "SELECT id FROM messages WHERE session_id=? AND type='user'"
+            + upper + " ORDER BY id DESC LIMIT ?",
+            (*args, limit + 1),
+        ).fetchall()
+        # Include any preamble when this is the oldest page.
+        since = starts[limit - 1]["id"] if len(starts) > limit else 0
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE session_id=?" + upper
+        + " AND id >= ? ORDER BY id ASC", (*args, since),
+    ).fetchall()
+    entries = [_row_to_entry(row) for row in rows]
+    oldest = entries[0]["message_id"] if entries else None
+    has_more = oldest is not None and conn.execute(
+        "SELECT 1 FROM messages WHERE session_id=? AND id < ? LIMIT 1",
+        (session_id, oldest),
+    ).fetchone() is not None
+    return {"entries": entries, "has_more": has_more, "before": oldest}
+
+
+def get_session_queries(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
+    """Lightweight full query rail; omit tool payloads and large message bodies."""
+    return [dict(row) for row in conn.execute(
+        "SELECT id AS message_id, substr(content, 1, 300) AS content "
+        "FROM messages WHERE session_id=? AND type='user' ORDER BY id ASC",
+        (session_id,),
+    )]
+
+
 def append_session_history(
     conn: sqlite3.Connection, session_id: str, entry: dict[str, Any]
 ) -> str | None:
