@@ -27,6 +27,7 @@ def test_dashboard_prompts_requires_auth(tmp_path):
 
 def test_dashboard_prompts_shape_falls_back_when_unconfigured(tmp_path):
     # No LLM profile configured for this fresh DB → LLMConfigError → fallback.
+    # Fresh DB has no memory signals, so the generic pool is used.
     store.rebind(tmp_path / "prompts_fallback.db")
     app.dependency_overrides[require_auth] = lambda: None
     try:
@@ -39,5 +40,28 @@ def test_dashboard_prompts_shape_falls_back_when_unconfigured(tmp_path):
         for p in data["prompts"]:
             assert set(p.keys()) == {"key", "label", "prompt"}
             assert p["key"] and p["label"] and p["prompt"]
+    finally:
+        app.dependency_overrides.pop(require_auth, None)
+
+
+def test_dashboard_prompts_memory_fallback_when_unconfigured(tmp_path):
+    # Same unconfigured-LLM path, but with a memory signal → fallback-memory.
+    from app.services import store as _store
+
+    store.rebind(tmp_path / "prompts_mem_fallback.db")
+    sid = _store.create_swarm_session(["main"], user_id="web")
+    _store.append_session_history(
+        sid, {"type": "user", "content": "Help me debug the CCTV lane dashboard"}
+    )
+    dashboard_prompts.clear_dashboard_prompts_cache()
+    app.dependency_overrides[require_auth] = lambda: None
+    try:
+        client = TestClient(app)
+        r = client.get("/api/dashboard/prompts")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["source"] == "fallback-memory"
+        assert len(data["prompts"]) == 3
+        assert "cctv" in " ".join(p["prompt"] for p in data["prompts"]).lower()
     finally:
         app.dependency_overrides.pop(require_auth, None)

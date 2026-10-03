@@ -11,6 +11,8 @@ import pytest
 
 from app.runtime.dashboard_prompts import (
     _FALLBACK_POOL,
+    _memory_fallback,
+    _memory_signals,
     build_user_context,
     clear_dashboard_prompts_cache,
     get_dashboard_prompts,
@@ -92,14 +94,16 @@ def test_parse_prompts_json_rejects_non_dict_item():
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_fallback_returns_three_distinct():
+async def test_get_dashboard_prompts_fallback_returns_three_distinct(tmp_path):
+    store.rebind(tmp_path / "fb_generic.db")
+
     class _Unconfigured:
         async def complete(self, messages, tools=None):
             raise LLMConfigError("no model")
 
     for _ in range(10):
         clear_dashboard_prompts_cache()
-        result = await get_dashboard_prompts("web", llm=_Unconfigured())
+        result = await get_dashboard_prompts("fb_nobody", llm=_Unconfigured())
         assert result["source"] == "fallback"
         prompts = result["prompts"]
         assert len(prompts) == 3
@@ -107,6 +111,110 @@ async def test_get_dashboard_prompts_fallback_returns_three_distinct():
         assert len(keys) == 3
         for p in prompts:
             assert p in _FALLBACK_POOL
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_prompts_memory_fallback_from_sessions(tmp_path):
+    store.rebind(tmp_path / "fb_mem_sess.db")
+    _make_session("fb_alice", "Help me debug the CCTV lane dashboard relay")
+
+    class _Unconfigured:
+        async def complete(self, messages, tools=None):
+            raise LLMConfigError("no model")
+
+    result = await get_dashboard_prompts("fb_alice", llm=_Unconfigured())
+    assert result["source"] == "fallback-memory"
+    prompts = result["prompts"]
+    assert len(prompts) == 3
+    blob = " ".join(p["prompt"] for p in prompts)
+    assert "CCTV lane dashboard" in blob
+    assert len({p["key"] for p in prompts}) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_prompts_memory_fallback_from_vault(tmp_path):
+    store.rebind(tmp_path / "fb_mem_vault.db")
+    write.add_entity(
+        'fb_vault_user',
+        scoped_key('topic', 'Sourdough'),
+        'Sourdough: bakes sourdough every weekend',
+    )
+
+    class _Unconfigured:
+        async def complete(self, messages, tools=None):
+            raise LLMConfigError("no model")
+
+    result = await get_dashboard_prompts("fb_vault_user", llm=_Unconfigured())
+    assert result["source"] == "fallback-memory"
+    blob = " ".join(p["prompt"] for p in result["prompts"])
+    assert "sourdough" in blob.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_prompts_memory_fallback_isolated(tmp_path):
+    store.rebind(tmp_path / "fb_mem_iso.db")
+    _make_session("fb_iso_alice", "alice cctv project follow-up")
+    _make_session("fb_iso_bob", "bob cooking recipe ideas")
+
+    class _Unconfigured:
+        async def complete(self, messages, tools=None):
+            raise LLMConfigError("no model")
+
+    alice = await get_dashboard_prompts("fb_iso_alice", llm=_Unconfigured())
+    assert alice["source"] == "fallback-memory"
+    assert "cctv" in " ".join(p["prompt"] for p in alice["prompts"]).lower()
+    assert "cooking" not in " ".join(p["prompt"] for p in alice["prompts"]).lower()
+
+    clear_dashboard_prompts_cache()
+    bob = await get_dashboard_prompts("fb_iso_bob", llm=_Unconfigured())
+    assert bob["source"] == "fallback-memory"
+    assert "cooking" in " ".join(p["prompt"] for p in bob["prompts"]).lower()
+    assert "cctv" not in " ".join(p["prompt"] for p in bob["prompts"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_prompts_memory_fallback_survives_store_error(
+    tmp_path, monkeypatch
+):
+    store.rebind(tmp_path / "fb_mem_fail.db")
+
+    monkeypatch.setattr(
+        store, "list_sessions",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+    monkeypatch.setattr(
+        store, "list_episodes",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+
+    class _Unconfigured:
+        async def complete(self, messages, tools=None):
+            raise LLMConfigError("no model")
+
+    result = await get_dashboard_prompts("anyone", llm=_Unconfigured())
+    assert result["source"] == "fallback"
+    assert len(result["prompts"]) == 3
+
+
+def test_memory_signals_prefers_sessions_over_episodes(tmp_path):
+    store.rebind(tmp_path / "fb_sig_order.db")
+    _make_session("fb_sig_user", "session question about relays")
+    store.insert_episode(
+        {
+            "user_id": "fb_sig_user",
+            "objective": "episode objective about ovens",
+            "state": "active",
+            "force": True,
+        }
+    )
+    signals = _memory_signals("fb_sig_user")
+    assert signals and signals[0][0] == "query"
+    assert any(s[0] == "episode" for s in signals) or len(signals) >= 1
+
+
+def test_memory_fallback_returns_none_without_signals(tmp_path):
+    store.rebind(tmp_path / "fb_sig_none.db")
+    assert _memory_fallback("fb_sig_nobody") is None
 
 
 # ── build_user_context (user isolation) ─────────────────────────────────
@@ -293,38 +401,45 @@ async def test_get_dashboard_prompts_cache_expires(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_llm_config_error_falls_back():
+async def test_get_dashboard_prompts_llm_config_error_falls_back(tmp_path):
+    store.rebind(tmp_path / "fb_llm_err.db")
+
     class _L:
         async def complete(self, messages, tools=None):
             raise LLMConfigError("no model configured")
 
-    result = await get_dashboard_prompts("web", llm=_L())
+    result = await get_dashboard_prompts("fb_llm_err_user", llm=_L())
     assert result["source"] == "fallback"
     assert len(result["prompts"]) == 3
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_llm_raises_falls_back():
+async def test_get_dashboard_prompts_llm_raises_falls_back(tmp_path):
+    store.rebind(tmp_path / "fb_llm_raise.db")
+
     class _L:
         async def complete(self, messages, tools=None):
             raise RuntimeError("provider blew up")
 
-    result = await get_dashboard_prompts("web", llm=_L())
+    result = await get_dashboard_prompts("fb_llm_raise_user", llm=_L())
     assert result["source"] == "fallback"
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_malformed_output_falls_back():
+async def test_get_dashboard_prompts_malformed_output_falls_back(tmp_path):
+    store.rebind(tmp_path / "fb_llm_mal.db")
+
     class _L:
         async def complete(self, messages, tools=None):
             return LLMResponse(content="not json", tool_calls=[])
 
-    result = await get_dashboard_prompts("web", llm=_L())
+    result = await get_dashboard_prompts("fb_llm_mal_user", llm=_L())
     assert result["source"] == "fallback"
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_duplicate_output_falls_back():
+async def test_get_dashboard_prompts_duplicate_output_falls_back(tmp_path):
+    store.rebind(tmp_path / "fb_llm_dup.db")
     dup_raw = (
         '[{"key": "a", "label": "A", "prompt": "same"},'
         '{"key": "a", "label": "B", "prompt": "same"},'
@@ -335,16 +450,17 @@ async def test_get_dashboard_prompts_duplicate_output_falls_back():
         async def complete(self, messages, tools=None):
             return LLMResponse(content=dup_raw, tool_calls=[])
 
-    result = await get_dashboard_prompts("web", llm=_L())
+    result = await get_dashboard_prompts("fb_llm_dup_user", llm=_L())
     assert result["source"] == "fallback"
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch, caplog):
+async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch, caplog, tmp_path):
     import logging
 
     import app.runtime.dashboard_prompts as dp
 
+    store.rebind(tmp_path / "fb_llm_timeout.db")
     monkeypatch.setattr(dp, "_LLM_TIMEOUT_S", 0.01)
 
     class _Slow:
@@ -353,7 +469,7 @@ async def test_get_dashboard_prompts_timeout_falls_back(monkeypatch, caplog):
             return LLMResponse(content=_VALID_RAW, tool_calls=[])
 
     with caplog.at_level(logging.WARNING, logger="app.runtime.dashboard_prompts"):
-        result = await get_dashboard_prompts("web", llm=_Slow())
+        result = await get_dashboard_prompts("fb_llm_timeout_user", llm=_Slow())
     assert result["source"] == "fallback"
     assert any("timed out" in r.message for r in caplog.records)
     assert not any(r.exc_info for r in caplog.records)

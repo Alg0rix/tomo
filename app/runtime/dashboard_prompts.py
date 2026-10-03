@@ -5,7 +5,9 @@ Home depend on an available LLM. ``key``, ``label``, and ``prompt`` are all
 model-chosen on the LLM path — there is no fixed category taxonomy. A
 process-local, per-user TTL cache avoids re-calling the model on every
 Home load; validation failures, timeouts, and unconfigured models all fall
-back to a randomized pool of hardcoded suggestions instead of raising.
+back to a memory-aware fallback: personalized starters built from the
+user's recent sessions, episodes, and vault facts when any exist, otherwise
+a randomized pool of hardcoded suggestions. Nothing raises.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from typing import Any
 
@@ -35,6 +38,8 @@ _SESSION_SCAN_LIMIT = 8
 _SESSION_QUERY_LIMIT = 2
 _CACHE_TTL_S = 90 * 60
 _LLM_TIMEOUT_S = 12.0
+_MEM_SIGNAL_TRUNC = 200
+_MEM_FALLBACK_LIMIT = 3
 
 _SYSTEM = (
     "You suggest three short starter prompts for a multi-agent AI assistant's "
@@ -117,9 +122,157 @@ _FALLBACK_POOL: list[dict[str, str]] = [
 ]
 
 
+_MEM_FALLBACK_TEMPLATES: tuple[tuple[str, str, str], ...] = (
+    ("follow-up", "{label}", "Follow up on {signal}"),
+    ("go-deeper", "{label} deeper", "Help me go deeper on {signal}"),
+    ("next-step", "Next step: {label}", "What is the next step for {signal}?"),
+)
+
+
 def _pick_fallback() -> list[dict[str, str]]:
     """3 distinct random entries from the fallback pool."""
     return [dict(e) for e in random.sample(_FALLBACK_POOL, 3)]
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)[:_KEY_MAX].strip("-") or "topic"
+
+
+def _signal_text(kind: str, text: str) -> str:
+    """Short, human-readable signal for a memory-fallback chip."""
+    clean = _truncate(text, _MEM_SIGNAL_TRUNC)
+    if kind == "query":
+        return (clean or "my recent questions").rstrip(".,;:!?…")
+    if kind == "title":
+        return (clean or "my recent chat").rstrip(".,;:!?…")
+    return clean or "my recent activity"
+
+
+def _memory_signals(user_id: str) -> list[tuple[str, str, str]]:
+    """Collect up to 3 (kind, label, text) memory signals for the fallback.
+
+    Priority is recency-of-action: latest session activity first, then
+    episodes, then vault facts. All queries are user-scoped; store errors
+    yield no signals so the caller can use the generic pool instead.
+    """
+    from app.services import store
+
+    signals: list[tuple[str, str, str]] = []
+    try:
+        sessions = store.list_sessions(user_id=user_id)
+    except Exception:
+        return []
+    for sess in sessions[:_SESSION_SCAN_LIMIT]:
+        sid = sess.get("id")
+        if not sid:
+            continue
+        try:
+            queries = store.get_session_queries(sid)
+        except Exception:
+            continue
+        asked = [q for q in queries if (q.get("content") or "").strip()]
+        if asked:
+            text = asked[-1].get("content") or ""
+            label = _truncate(text, _LABEL_MAX)
+            if label:
+                signals.append(("query", label, text))
+                if len(signals) >= _MEM_FALLBACK_LIMIT:
+                    return signals
+            continue
+        title = (sess.get("title") or "").strip()
+        if title and title not in ("New conversation", "New swarm chat"):
+            signals.append(("title", _truncate(title, _LABEL_MAX), title))
+            if len(signals) >= _MEM_FALLBACK_LIMIT:
+                return signals
+    if len(signals) < _MEM_FALLBACK_LIMIT:
+        try:
+            episodes = store.list_episodes(
+                user_id=user_id, state="active", limit=_EPISODE_LIMIT
+            )
+        except Exception:
+            episodes = []
+        for ep in episodes:
+            text = (
+                ep.get("objective") or ep.get("outcome_summary")
+                or ep.get("context_summary") or ""
+            ).strip()
+            label = _truncate(text, _LABEL_MAX)
+            if label:
+                signals.append(("episode", label, text))
+                if len(signals) >= _MEM_FALLBACK_LIMIT:
+                    return signals
+    if len(signals) < _MEM_FALLBACK_LIMIT:
+        try:
+            kn = _vault_context(user_id)
+        except Exception:
+            kn = ""
+        facts = [
+            ln[2:].strip() for ln in (kn or "").splitlines()
+            if ln.startswith("- ") and ln[2:].strip()
+        ]
+        for fact in facts:
+            label = _truncate(fact.split(":", 1)[-1].strip() or fact, _LABEL_MAX)
+            if label:
+                signals.append(("memory", label, fact))
+                if len(signals) >= _MEM_FALLBACK_LIMIT:
+                    break
+    return signals
+
+
+def _memory_fallback(user_id: str) -> list[dict[str, str]] | None:
+    """Personalized no-LLM fallback from the user's own memory.
+
+    Returns 3 distinct chips derived from memory signals, or ``None``
+    when the user has no memory signal to personalize from (caller then
+    uses the generic pool).
+    """
+    signals = _memory_signals(user_id)
+    if not signals:
+        return None
+    items: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+    seen_prompts: set[str] = set()
+    for idx, (kind, label, text) in enumerate(signals):
+        signal = _signal_text(kind, text)
+        for tkey, tlabel, tprompt in _MEM_FALLBACK_TEMPLATES:
+            cand_key = f"{tkey}-{_slugify(label)}"
+            cand_label = tlabel.format(label=label)
+            cand_prompt = tprompt.format(signal=signal)
+            if cand_key.lower() in seen_keys or cand_prompt.lower() in seen_prompts:
+                continue
+            seen_keys.add(cand_key.lower())
+            seen_prompts.add(cand_prompt.lower())
+            items.append({
+                "key": cand_key[:_KEY_MAX],
+                "label": cand_label[:_LABEL_MAX],
+                "prompt": cand_prompt[:_PROMPT_MAX],
+            })
+            break
+        if len(items) >= _MEM_FALLBACK_LIMIT:
+            break
+    # Pad from the generic pool when memory yields fewer than 3 chips.
+    if len(items) < 3:
+        for entry in random.sample(_FALLBACK_POOL, len(_FALLBACK_POOL)):
+            cand = dict(entry)
+            if cand["key"].lower() in seen_keys or cand["prompt"].lower() in seen_prompts:
+                continue
+            seen_keys.add(cand["key"].lower())
+            seen_prompts.add(cand["prompt"].lower())
+            items.append(cand)
+            if len(items) >= 3:
+                break
+    by_signal = [(s[0], s[1]) for s in signals[: len(items)]]
+    logger.info("dashboard prompts memory-fallback signals=%r", by_signal)
+    return items if len(items) == 3 else None
+
+
+def _fallback_prompts(user_id: str) -> tuple[list[dict[str, str]], str]:
+    """Memory-aware fallback: personalized when possible, generic otherwise."""
+    mem = _memory_fallback(user_id)
+    if mem is not None:
+        return mem, "fallback-memory"
+    return _pick_fallback(), "fallback"
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -311,7 +464,12 @@ async def _generate(
 async def get_dashboard_prompts(
     user_id: str, *, llm: LLMClient | None = None
 ) -> dict[str, Any]:
-    """Resolve dynamic Home prompt chips for *user_id* — cache, LLM, fallback."""
+    """Resolve dynamic Home prompt chips for *user_id*.
+
+    Cache, then LLM, then memory-aware fallback (``fallback-memory`` when
+    the user's sessions/episodes/vault yield a signal, else ``fallback``).
+    Fallbacks are never cached so later requests can recover/personalize.
+    """
     uid = (user_id or "web").strip() or "web"
     cached = _cache_get(uid)
     if cached is not None:
@@ -320,7 +478,8 @@ async def get_dashboard_prompts(
     if prompts is not None:
         _cache_set(uid, prompts)
         return {"prompts": prompts, "source": "llm"}
-    return {"prompts": _pick_fallback(), "source": "fallback"}
+    fallback, source = _fallback_prompts(uid)
+    return {"prompts": fallback, "source": source}
 
 
 __all__ = [
