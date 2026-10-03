@@ -12,7 +12,10 @@ private user datum, reload, and confirm persistence. Disable must make page/tool
 skill access unavailable. Other plugins and core pages should still work.
 
 Edit source, call Reload, and verify changed behavior. If reload fails, the old
-running instance stays active; fix the source and retry. Busy plugins return a
+running instance stays active; fix the source and retry. Git snapshots use
+Outdated and Update to fetch a new branch commit, even at the same version.
+Verify that failed updates retain the old source, tools, pages, skills, and data;
+disabled plugins must stay disabled when their source is updated. Busy plugins return a
 conflict rather than interrupting requests/tools/turn hooks. Wait for that work
 to finish and retry only the requested action. Never work around it by restarting.
 

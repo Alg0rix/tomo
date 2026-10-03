@@ -1,7 +1,7 @@
 # Live Tomo plugins
 
 Plugins add multiple pages, HTTP handlers, and domain tools to the running Tomo
-server. Install, enable, disable, and reload do not restart Tomo. Deploying this
+server. Install, enable, disable, reload, and update do not restart Tomo. Deploying this
 runtime itself requires one normal application restart.
 
 Open **Plugins** in navigation (`/extensions`). Discover searches your connected
@@ -53,7 +53,47 @@ tomo plugins uninstall money
 remote server. These commands do not load a second plugin runtime in the CLI.
 The equivalent authenticated API is `GET /api/plugins`,
 `POST /api/plugins/install` with `{"path":"..."}`, and
-`POST /api/plugins/<id>/<enable|disable|reload|uninstall>`.
+`POST /api/plugins/<id>/<enable|disable|reload|update|uninstall>`.
+
+## Updates by source revision
+
+Open **Installed** to check plugin sources automatically; **Check updates** forces
+another check. Automatic checks use a five-minute server cache. Git branch
+installs compare the installed commit SHA with the branch's current SHA, so
+**authors do not need to bump `version` for every source change**. Installed
+version identifies the running snapshot; Repository version comes from the
+selected commit’s `tomo-plugin.json`. An available version is displayed before
+applying the update, and becomes the installed version only after a successful
+update. The check
+validates the candidate manifest at that exact revision without downloading the
+repository, importing Python, or executing setup. Network and compatibility
+failures are shown as check errors, never as “up to date.”
+
+Choose **Update** to download the checked commit into a new managed source folder.
+Enabled plugins build a replacement and swap pages, tools, and usage skills live.
+Disabled plugins update their source without executing it or becoming enabled.
+Data and agent settings are preserved. A failed activation or registry save
+keeps the previous source and running instance; a busy plugin returns a conflict.
+The branch moving during a download cannot change the selected revision.
+
+Git tags and commit references are pinned and stay unchanged. Local `path:`
+sources use local edits or `git pull`, then **Reload code**. Updates follow the
+recorded repository/ref/subdirectory independently of catalogs, including after
+the original marketplace is removed. Refreshing a catalog does not apply updates
+or redirect an installed plugin to a different source. The declared version is
+still useful release metadata and must match a catalog when first installing.
+
+```sh
+tomo plugins outdated
+tomo plugins update money
+```
+
+The agent tool uses `plugin_manager(action="outdated")` and
+`plugin_manager(action="update", id="money")`. The administrator API is
+`POST /api/plugins/check-updates` with `{"force": true}` and
+`POST /api/plugins/<id>/update`. Update checks are metadata-only; applying an
+update executes new code only for an already enabled plugin. Old successful
+source snapshots are retained on disk; rejected candidate downloads are removed.
 
 ## Icons
 
@@ -174,7 +214,7 @@ rejects archive traversal and symlinks, records source/commit provenance, and
 registers the plugin **disabled**. Enable is the separate step that executes code.
 Plugin dependencies must already be available; downloads do not run pip, git
 hooks, or plugin setup. Managed source edits stay at the downloaded commit;
-reload does not fetch updates. Private repositories and automatic updates are
+reload does not fetch updates. Private repositories and automatically applying updates are
 not supported in this version.
 
 `GET /api/marketplaces` lists sources; `POST /api/marketplaces` adds a source;

@@ -77,7 +77,7 @@ into a universal rule. Validate discovery and reference loading after editing.
 
 ## Manage live plugins
 
-Use the `plugin_manager` agent tool to install, enable, disable, reload, and
+Use the `plugin_manager` agent tool to install, enable, disable, reload, update, and
 list trusted plugins without restarting Tomo. Read the `plugin-development`
 skill when creating a plugin. Plugins can add pages, domain tools, static assets,
 turn-end hooks, and packaged usage skills. Token Monitor, Task Board, and Money
@@ -92,6 +92,8 @@ tomo plugins list
 tomo plugins install /absolute/server/path/to/plugin
 tomo plugins enable <plugin-id>
 tomo plugins reload <plugin-id>
+tomo plugins outdated
+tomo plugins update <plugin-id>
 tomo plugins disable <plugin-id>
 ```
 
@@ -100,3 +102,7 @@ Plugin tools use `plugin__<id>__<tool>` names and normal agent assignments.
 Disabled plugins have no active pages, tools, or packaged skills. Usage skills
 have IDs `plugin__<plugin-id>__<skill-id>` and are loaded with `use_skill`. Plugin data survives reload and
 uninstall. There is no `tomo config modules` resource or old module API.
+
+Git branch updates compare source commits; version bumps are optional. Tags and
+commit references are pinned. Check updates in Installed; use Update to download
+and apply the selected commit live. Local sources use Reload after edits.

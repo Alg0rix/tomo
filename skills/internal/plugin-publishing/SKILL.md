@@ -27,7 +27,12 @@ package manifest. Keep descriptions concrete; document actual pages, tools,
 skills, data scope, dependencies, and operating constraints in the plugin repo.
 Do not embed credentials, private URLs, arbitrary HTML, or raw SVG in metadata.
 
-For an official plugin, update its source and independent catalog. For a
+Tracking branch installs detect new commits without a version bump. Keep the
+manifest and listing versions equal; bump both for a named release rather than
+for every code edit. Tags/commits are pinned and do not track updates.
+
+For an official plugin, update its source and independent catalog when its
+listing metadata changes. For a
 community plugin, add `plugins/<plugin-id>.json`, run
 `python scripts/build_catalog.py`, then `python scripts/validate.py`. Commit the
 listing and generated catalog together; open a submission PR when requested.

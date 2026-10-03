@@ -672,6 +672,6 @@ Copyright 2026 Tomo contributors
 ### Live plugins
 
 Build trusted Python plugins with multiple pages and tools that Tomo agents can use.
-Open **Plugins** to install, enable, disable, or reload them without restarting
+Open **Plugins** to install, enable, disable, reload, or update them without restarting
 the server. See [the plugin guide](docs/plugins.md) and the
 [Money plugin](https://github.com/Alg0rix/tomo-plugins/tree/main/plugins/money).

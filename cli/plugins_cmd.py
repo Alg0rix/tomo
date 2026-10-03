@@ -17,6 +17,7 @@ def add_parser(sub):
     )
     actions = parser.add_subparsers(dest="plugin_action", required=True)
     actions.add_parser("list")
+    actions.add_parser("outdated", help="Check source commits for available updates")
     install = actions.add_parser("install")
     install.add_argument(
         "path", help="Local path, plugin_id@marketplace, or HTTPS GitHub repository URL"
@@ -33,7 +34,7 @@ def add_parser(sub):
     market_actions.add_parser("add").add_argument("source")
     for action in ("refresh", "remove"):
         market_actions.add_parser(action).add_argument("identity")
-    for action in ("enable", "disable", "reload", "uninstall"):
+    for action in ("enable", "disable", "reload", "update", "uninstall"):
         child = actions.add_parser(action)
         child.add_argument("id")
 
@@ -68,6 +69,10 @@ def run(args):
         ) as client:
             if args.plugin_action == "list":
                 response = client.get("/api/plugins")
+            elif args.plugin_action == "outdated":
+                response = client.post(
+                    "/api/plugins/check-updates", json={"force": True}
+                )
             elif args.plugin_action == "install":
                 response = client.post(
                     "/api/plugins/install",

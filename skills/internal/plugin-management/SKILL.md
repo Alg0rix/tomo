@@ -1,6 +1,6 @@
 ---
 name: plugin-management
-description: Discover, install, enable, reload, or remove trusted Tomo plugins.
+description: Discover, install, update, reload, or remove trusted Tomo plugins.
 ---
 
 # Manage live plugins
@@ -12,8 +12,9 @@ the running server; no restart is needed. Develop with `plugin-development`.
 | Action | Arguments |
 | --- | --- |
 | list | none |
+| outdated | none; check recorded Git source commits |
 | install | path; optional ref and subdirectory for a GitHub source |
-| enable / disable / reload / uninstall | id |
+| enable / disable / reload / update / uninstall | id |
 | marketplaces | none |
 | search | query |
 | marketplace_add | source |
@@ -34,9 +35,15 @@ plugins; built-in marketplace registrations cannot be removed.
 
 Enable adds pages, tools, and packaged skills. Reload applies source/skill edits
 at the same installed path; it does not download a new Git release. Disable
-removes live capabilities. Uninstall unregisters the plugin and keeps its source
+removes live capabilities. Outdated checks Git branch commits without executing
+code; source changes are detected even at the same version. Update downloads the
+selected commit and replaces enabled capabilities live. Disabled plugins stay
+disabled. Git tags and commit references are pinned; local folders use Reload.
+Update follows the recorded source, even after its marketplace is removed. It
+does not require a catalog version bump. Network or SDK/identity errors mean the
+update could not be checked, not that it is current. Uninstall unregisters the plugin and keeps its source
 and data. Busy actions return a conflict: retry after current work finishes.
-Failed reload keeps the prior running instance. Report errors as errors, not as
+Failed reload or update keeps the prior source and running instance. Report errors as errors, not as
 a request to restart Tomo. Consult runtime logs for activation failures.
 
 Browser: `/extensions` Discover / Installed / Create, and
@@ -49,6 +56,8 @@ tomo plugins search money
 tomo plugins install money@tomo-official
 tomo plugins enable money
 tomo plugins reload money
+tomo plugins outdated
+tomo plugins update money
 ```
 
 Use the actual plugin ID. Verify running/error state, page URLs, and new tools /

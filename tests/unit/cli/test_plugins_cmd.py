@@ -32,3 +32,26 @@ def test_cli_refuses_remote_plain_http(monkeypatch, capsys):
     )
     assert plugins_cmd.run(args) == 1
     assert "HTTPS" in capsys.readouterr().err
+
+
+def test_cli_outdated_and_update(monkeypatch):
+    monkeypatch.setenv("TOMO_API_KEY", "tomo_test_key")
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json=[])
+
+    original = httpx.Client
+    monkeypatch.setattr(
+        plugins_cmd.httpx,
+        "Client",
+        lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(handle)),
+    )
+    assert plugins_cmd.run(build_parser().parse_args(["plugins", "outdated"])) == 0
+    assert requests[-1].method == "POST"
+    assert requests[-1].url.path == "/api/plugins/check-updates"
+    assert (
+        plugins_cmd.run(build_parser().parse_args(["plugins", "update", "money"])) == 0
+    )
+    assert requests[-1].url.path == "/api/plugins/money/update"

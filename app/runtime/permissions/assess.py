@@ -100,7 +100,7 @@ def assess(
             )
         )
 
-    if tool.startswith("plugin__") or (tool == "plugin_manager" and arguments.get("action", "list") not in {"list", "search", "marketplaces"}):
+    if tool.startswith("plugin__") or (tool == "plugin_manager" and arguments.get("action", "list") not in {"list", "search", "marketplaces", "outdated"}):
         findings.append(Finding(kind="external", key=f"plugin:{tool}",
                                 description=f"trusted plugin execution: {tool}"))
 

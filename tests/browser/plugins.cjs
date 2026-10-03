@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from app.plugins.icons import ICONS
 env=Environment(loader=FileSystemLoader('app/templates'), autoescape=True)
 env.globals.update(plugin_icons=ICONS, url_for=lambda name, **kwargs: '/static/'+kwargs.get('path',''), avatar_color=lambda *args:'#777', eval_ui_enabled=False)
-plugins=[dict(id='token_monitor', icon='chart-column', name='Token Monitor', description='Usage heatmap and recent agent activity.', version='0.3', running=True, error=None, source='git', pages=[dict(label='Usage',path='/plugins/token_monitor/')]), dict(id='kanban', icon='columns-3', name='Kanban', description='A board for your project.', version='0.1', running=False, error=None, source='git', pages=[])]
+plugins=[dict(id='token_monitor', icon='chart-column', name='Token Monitor', description='Usage heatmap and recent agent activity.', version='0.3', commit='a'*40, origin=dict(url='https://github.com/example/repo',ref='main'), running=True, error=None, source='git', pages=[dict(label='Usage',path='/plugins/token_monitor/')]), dict(id='kanban', icon='columns-3', name='Kanban', description='A board for your project.', version='0.1', running=False, error=None, source='git', pages=[])]
 catalog=[dict(id='money', icon='wallet', name='Money', description='Track income and expenses with your agents.', version='0.1.0', author='Tomo', publisher='Tomo Official', marketplace='tomo-official', source=dict(url='https://github.com/Alg0rix/tomo-plugins', ref='main', subdirectory='plugins/money')),dict(id='token_monitor', icon='chart-column', name='Token Monitor', description='Usage heatmap and recent agent activity.', version='0.3', author='Tomo', publisher='Tomo Official', marketplace='tomo-official', source=dict(url='https://github.com/Alg0rix/tomo-plugins', ref='main', subdirectory='plugins/token_monitor')),dict(id='library', icon='library', name='Reading Library', description='Private notes and reading progress.', version='0.1', author='Test author', publisher='Community', marketplace='tomo-community', source=dict(url='https://github.com/example/library',ref='main',subdirectory=''))]
 print(env.get_template('plugins.html').render(brand='Tomo', page='plugins', static_ver='test', app_version='test', request=SimpleNamespace(session={'username':'test'}), plugins=[] if ${empty ? 'True' : 'False'} else plugins, catalog=[] if ${empty ? 'True' : 'False'} else catalog, marketplaces=[dict(id='tomo-official',name='Tomo Official')], builder_agents=[dict(id='main',name='Main')], builder_workplaces=[dict(id='local',name='Plugin projects')], plugin_nav=[dict(id='plugins',label='Plugins',path='/extensions',page='plugins',icon='puzzle'),dict(id='token_monitor',label='Token Monitor',path='/plugins/token_monitor/',page='plugin-token_monitor',icon='chart-column')], can_manage_plugins=${admin ? 'True' : 'False'}))
 `], {cwd:root, encoding:'utf8'}).replace(/<script\b(?![^>]*type="application\/json")[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<link\b[^>]*>/gi,'');
@@ -28,7 +28,7 @@ print(env.get_template('plugins.html').render(brand='Tomo', page='plugins', stat
     await page.goto('http://plugins.test/extensions'+hash);
     await page.addStyleTag({path:path.join(root,'app/static/css/tomo.css')});
     await page.addStyleTag({path:path.join(root,'app/static/css/plugins.css')});
-    await page.evaluate(()=>{window.calls=[];window.toasts=[];window.Tomo={api:async(url,options)=>{calls.push({url,options});throw new Error('Test request failed');},toast:msg=>toasts.push(msg)};});
+    await page.evaluate(()=>{window.calls=[];window.toasts=[];window.Tomo={api:async(url,options)=>{calls.push({url,options});if(url==='/api/plugins/check-updates')return [{id:'token_monitor',status:'available',installed_commit:'a'.repeat(40),latest_commit:'b'.repeat(40),installed_version:'0.3',latest_version:'1.1.0'},{id:'kanban',status:'local',message:'Edit the local source, then reload.'}];throw new Error('Test request failed');},toast:msg=>toasts.push(msg)};});
     await page.addScriptTag({path:path.join(root,'app/static/js/plugins.js')});
    }
    await load();
@@ -43,6 +43,19 @@ print(env.get_template('plugins.html').render(brand='Tomo', page='plugins', stat
    await page.locator('#hub-discover .hub-title').first().click();assert.equal(await page.locator('dialog[open]').count(),1);
    await page.keyboard.press('Escape');assert.equal(await page.locator('dialog[open]').count(),0);
    await page.getByRole('tab',{name:/Installed/}).click();await page.waitForFunction(()=>!document.getElementById('hub-installed').hidden);
+   await page.waitForFunction(()=>document.getElementById('plugin-update-feedback').textContent==='1 update available.');
+   assert.match(await page.locator('#hub-installed .hub-card [data-plugin-update-status="token_monitor"]').first().textContent(),/aaaaaaa → bbbbbbb/);
+   assert.match(await page.locator('#hub-installed .hub-card [data-plugin-update-status="token_monitor"]').textContent(),/v1.1.0 available/);
+   assert.equal(await page.locator('[data-plugin-repo-version="token_monitor"]').textContent(),'v1.1.0');
+   assert.deepEqual(await page.evaluate(()=>JSON.parse(calls.at(-1).options.body)),{force:false});
+   await page.locator('#plugin-check-updates').click();assert.deepEqual(await page.evaluate(()=>JSON.parse(calls.at(-1).options.body)),{force:true});
+   await page.locator('#hub-installed .hub-card [data-plugin=token_monitor][data-action=update]').click();assert.equal(await page.evaluate(()=>calls.at(-1).url),'/api/plugins/token_monitor/update');
+   assert.equal(await page.locator('#hub-installed .hub-card [data-plugin=token_monitor][data-action=update]').isDisabled(),false);
+   await page.screenshot({path:'/tmp/tomo-plugin-updates-'+width+'.png',fullPage:true});
+   await page.evaluate(()=>{window.normalPluginApi=Tomo.api;Tomo.api=async()=>[{id:'token_monitor',status:'error',message:'offline <script>bad</script>'}]});
+   await page.locator('#plugin-check-updates').click();assert.equal(await page.locator('#hub-installed .hub-card [data-action=update]:visible').count(),0);
+   assert.match(await page.locator('#plugin-update-feedback').textContent(),/1 checks failed/);assert.equal(await page.locator('.hub-update-status script').count(),0);
+   await page.evaluate(()=>{Tomo.api=normalPluginApi;calls=[];toasts=[]});
    await page.locator('#hub-filter').selectOption('disabled');assert.equal(await page.locator('[data-hub-card]:visible').count(),1);
    await page.locator('#hub-installed .hub-card [data-action=enable]').click();assert.deepEqual(await page.evaluate(()=>calls.map(c=>c.url)),['/api/plugins/kanban/enable']);assert.equal(await page.locator('[data-action=enable]').first().isDisabled(),false);assert.equal(await page.evaluate(()=>toasts[0]),'Test request failed');
    await page.getByRole('button',{name:'New plugin',exact:true}).click();await page.waitForFunction(()=>!document.getElementById('hub-create').hidden);

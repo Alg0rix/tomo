@@ -36,6 +36,8 @@ def run(arguments: dict) -> str:
                 result = markets.remove(arguments.get("id", ""))
         elif action == "list":
             result = manager.list()
+        elif action == "outdated":
+            result = manager.check_updates()
         elif action == "install":
             result = manager.install(
                 arguments.get("path", ""),

@@ -34,6 +34,10 @@ class InstallBody(BaseModel):
     ref: str = "main"
 
 
+class CheckUpdatesBody(BaseModel):
+    force: bool = True
+
+
 async def operate(function, *args):
     try:
         return await run_in_threadpool(function, *args)
@@ -60,6 +64,11 @@ def list_plugins(_: AuthDep):
 @router.post("/api/plugins/install", dependencies=[Depends(require_plugin_admin)])
 async def install_plugin(body: InstallBody):
     return await operate(get_manager().install, body.path, body.subdirectory, body.ref)
+
+
+@router.post("/api/plugins/check-updates", dependencies=[Depends(require_plugin_admin)])
+async def check_plugin_updates(body: CheckUpdatesBody):
+    return await operate(get_manager().check_updates, body.force)
 
 
 @router.post(

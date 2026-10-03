@@ -7,8 +7,11 @@ import json
 import logging
 from pathlib import Path
 import re
+import shutil
 import sys
+import tempfile
 import threading
+import time
 import types
 import uuid
 
@@ -29,6 +32,8 @@ class PluginManager:
         self._runtime_started = False
         self._busy: dict[str, int] = {}
         self._errors: dict[str, str] = {}
+        self._updates: dict[str, tuple[dict, dict]] = {}
+        self._check_lock = threading.Lock()
         self._state_path = root / "plugins" / "registry.json"
         self._rows: dict[str, dict] = {}
         if self._state_path.exists():
@@ -110,6 +115,10 @@ class PluginManager:
     @staticmethod
     def manifest(path: Path) -> dict:
         row = json.loads((path / "tomo-plugin.json").read_text())
+        return PluginManager.manifest_data(row)
+
+    @staticmethod
+    def manifest_data(row: dict) -> dict:
         if not isinstance(row, dict) or not re.fullmatch(
             r"[a-z][a-z0-9_]{0,31}", str(row.get("id", ""))
         ):
@@ -201,6 +210,7 @@ class PluginManager:
                     "id": plugin_id,
                     "running": plugin_id in self._active,
                     "error": self._errors.get(plugin_id, ""),
+                    "update": self._update_status(plugin_id, row),
                     "skills": [
                         {
                             "id": skill.id,
@@ -229,6 +239,137 @@ class PluginManager:
                 }
                 for plugin_id, row in sorted(self._rows.items())
             ]
+
+    def _update_status(self, plugin_id: str, row: dict) -> dict:
+        cached = self._updates.get(plugin_id)
+        if cached and cached[0] == row:
+            return cached[1]
+        return {"status": "unchecked" if row.get("source") == "git" else "local"}
+
+    def check_updates(self, force: bool = True) -> list[dict]:
+        from app.plugins.updates import check_source
+
+        # Network calls never hold the runtime lock or import plugin code.
+        with self._check_lock:
+            with self._lock:
+                rows = [dict(row) for row in self._rows.values()]
+            results = []
+            for row in rows:
+                with self._lock:
+                    cached = self._updates.get(row["id"])
+                if (
+                    not force
+                    and cached
+                    and cached[0] == row
+                    and time.time() - cached[1]["checked_at"] < 300
+                ):
+                    result = cached[1]
+                else:
+                    try:
+                        result = check_source(row, self.manifest_data)
+                    except Exception as exc:
+                        result = {
+                            "id": row["id"],
+                            "status": "error",
+                            "checked_at": time.time(),
+                            "message": str(exc),
+                        }
+                    with self._lock:
+                        if self._rows.get(row["id"]) != row:
+                            continue
+                        self._updates[row["id"]] = (row, result)
+                results.append(result)
+            return results
+
+    def update(self, plugin_id: str) -> dict:
+        from app.plugins.catalogs import GitSource, download_repository
+        from app.plugins.updates import check_source
+
+        with self._lock:
+            row = dict(self._rows[plugin_id])
+            old = self._active.get(plugin_id)
+            if self._busy.get(plugin_id, 0):
+                raise RuntimeError("Plugin is in use; retry after its work finishes")
+        candidate = check_source(row, self.manifest_data)
+        if candidate["status"] in {"local", "pinned"}:
+            raise ValueError(candidate["message"])
+        if candidate["status"] == "current":
+            with self._lock:
+                if self._rows.get(plugin_id) != row:
+                    raise RuntimeError("Plugin changed during update; retry")
+                self._updates[plugin_id] = (row, candidate)
+            return {"id": plugin_id, "updated": False, "commit": row.get("commit")}
+        source = GitSource.model_validate(row["origin"])
+        downloads = self.root / "plugins/sources"
+        downloads.mkdir(parents=True, exist_ok=True)
+        download = Path(tempfile.mkdtemp(prefix="repo-", dir=downloads))
+        new = None
+        try:
+            download_repository(source, download, commit=candidate["latest_commit"])
+            path = download / source.subdirectory
+            meta = self.manifest(path)
+            if meta["id"] != plugin_id:
+                raise ValueError(
+                    "Update plugin identity differs from installed identity"
+                )
+            if not (path / "plugin.py").is_file():
+                raise ValueError("Update requires plugin.py")
+            with self._lock:
+                if (
+                    self._rows.get(plugin_id) != row
+                    or self._active.get(plugin_id) is not old
+                ):
+                    raise RuntimeError("Plugin changed during update; retry")
+                if self._busy.get(plugin_id, 0):
+                    raise RuntimeError(
+                        "Plugin is in use; retry after its work finishes"
+                    )
+                if row.get("enabled"):
+                    new = self._build(path)
+                replacement = {
+                    **row,
+                    **meta,
+                    "path": str(path),
+                    "commit": candidate["latest_commit"],
+                }
+                self._rows[plugin_id] = replacement
+                try:
+                    self._save()
+                except Exception:
+                    self._rows[plugin_id] = row
+                    raise
+                if new:
+                    self._active[plugin_id] = new
+                    self._runtime_started = True
+                self._updates[plugin_id] = (
+                    replacement,
+                    {
+                        **candidate,
+                        "status": "current",
+                        "message": "Up to date.",
+                        "installed_commit": replacement["commit"],
+                        "installed_version": replacement["version"],
+                    },
+                )
+                self._errors.pop(plugin_id, None)
+                if old:
+                    old["api"].dispose()
+                return {
+                    "id": plugin_id,
+                    "updated": True,
+                    "enabled": bool(row.get("enabled")),
+                    "running": new is not None,
+                    "commit": replacement["commit"],
+                    "version": meta["version"],
+                }
+        except Exception as exc:
+            if new:
+                new["api"].dispose()
+            shutil.rmtree(download)
+            with self._lock:
+                if self._rows.get(plugin_id) == row:
+                    self._errors[plugin_id] = "Update failed: " + str(exc)
+            raise
 
     def skill_packages(self) -> list:
         """Live skills in the server; enabled package metadata in an offline CLI."""
@@ -263,7 +404,9 @@ class PluginManager:
                 )
             with self._lock:
                 if meta["id"] in self._rows:
-                    raise ValueError("Plugin already installed; use reload")
+                    raise ValueError(
+                        "Plugin already installed; use update for Git sources or reload for local edits"
+                    )
                 self._rows[meta["id"]] = {
                     **meta,
                     **origin,
@@ -284,6 +427,8 @@ class PluginManager:
             raise
 
     def change(self, plugin_id: str, action: str) -> dict:
+        if action == "update":
+            return self.update(plugin_id)
         if action not in {"enable", "disable", "reload", "uninstall"}:
             raise ValueError("Unknown plugin action")
         with self._lock:

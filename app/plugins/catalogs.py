@@ -128,14 +128,17 @@ def fetch_bytes(url: str, limit: int = 2_000_000) -> bytes:
             return bytes(body)
 
 
-def download_repository(source: GitSource, destination: Path) -> str:
+def download_repository(
+    source: GitSource, destination: Path, *, commit: str | None = None
+) -> str:
     """Resolve a ref, then extract that exact commit without running git hooks."""
     owner, repo = urlsplit(source.url).path.strip("/").removesuffix(".git").split("/")
-    commit = json.loads(
-        fetch_bytes(
-            f"https://api.github.com/repos/{owner}/{repo}/commits/{quote(source.ref, safe='')}"
-        )
-    )["sha"]
+    if commit is None:
+        commit = json.loads(
+            fetch_bytes(
+                f"https://api.github.com/repos/{owner}/{repo}/commits/{quote(source.ref, safe='')}"
+            )
+        )["sha"]
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid resolved commit")
     archive = fetch_bytes(

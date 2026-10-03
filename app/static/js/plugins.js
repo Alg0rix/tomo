@@ -89,6 +89,7 @@
     filter.setAttribute("aria-label", view === "installed" ? "Filter by status" : "Filter by publisher");
     applyFilter();
     if (view === "create") loadIdeas(false);
+    if (view === "installed") checkUpdates(false);
   }
   document.querySelectorAll("[data-hub-tab]").forEach(function (tab) {
     tab.addEventListener("click", function () { location.hash = tab.dataset.hubTab; });
@@ -114,6 +115,36 @@
     if (!failures.length && marketplaces.length) window.location.reload();
     else { feedback.textContent = failures.length ? failures.join(" · ") + ". Successful refreshes are saved; reload this page to view them." : "Connect a marketplace in Settings first."; feedback.hidden = false; refresh.disabled = false; refresh.textContent = "↻ Refresh catalogs"; }
   });
+  var updatesBusy = false;
+  var updatesLoaded = false;
+  var updateCheck = document.getElementById("plugin-check-updates");
+  async function checkUpdates(force) {
+    if (!updateCheck || updatesBusy || (updatesLoaded && !force)) return;
+    updatesBusy = true; updateCheck.disabled = true; updateCheck.textContent = "Checking…";
+    var feedback = document.getElementById("plugin-update-feedback");
+    feedback.hidden = false; feedback.textContent = "Checking installed plugin sources…";
+    try {
+      var updates = await Tomo.api("/api/plugins/check-updates", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({force: force})});
+      if (!Array.isArray(updates)) throw new Error("Invalid update response");
+      updates.forEach(function (update) {
+        var message = update.message || "Updates not checked";
+        if (update.status === "available") {
+          var versions = update.latest_version ? " · v" + update.latest_version + (update.latest_version === update.installed_version ? " (new revision)" : " available") : "";
+          message = "Update available" + versions + " · " + (update.installed_commit || "").slice(0, 7) + " → " + (update.latest_commit || "").slice(0, 7);
+        }
+        if (update.status === "error") message = "Update check failed: " + message;
+        document.querySelectorAll("[data-plugin-repo-version]").forEach(function (node) { if (node.dataset.pluginRepoVersion === update.id) node.textContent = update.latest_version ? "v" + update.latest_version : (update.status === "error" ? "Check failed" : update.status === "pinned" ? "Pinned source" : "Not checked"); });
+        document.querySelectorAll("[data-plugin-update-status]").forEach(function (node) { if (node.dataset.pluginUpdateStatus === update.id) node.textContent = message; });
+        document.querySelectorAll("[data-plugin-update-button]").forEach(function (node) { if (node.dataset.pluginUpdateButton === update.id) node.hidden = update.status !== "available"; });
+      });
+      var count = updates.filter(function (update) { return update.status === "available"; }).length;
+      var failed = updates.filter(function (update) { return update.status === "error"; }).length;
+      feedback.textContent = count + " update" + (count === 1 ? "" : "s") + " available" + (failed ? " · " + failed + " checks failed; retry to check these sources." : ".");
+      updatesLoaded = true;
+    } catch (error) { feedback.textContent = "Unable to check updates: " + (error.message || "Request failed"); }
+    finally { updatesBusy = false; updateCheck.disabled = false; updateCheck.textContent = "↻ Check updates"; }
+  }
+  if (updateCheck) updateCheck.addEventListener("click", function () { checkUpdates(true); });
   var ideasLoaded = false;
   var ideasBusy = false;
   async function loadIdeas(refresh) {
