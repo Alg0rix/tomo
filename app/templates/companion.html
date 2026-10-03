@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block extra_head %}
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kurenaido&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', path='css/companion.css') }}?v={{ static_ver }}">
 {% endblock %}
 {% block content %}
-<div class="page companion-page">
-  <div id="companionRoot" class="companion-root" aria-live="polite"
-       data-username="{{ current_username or '' }}">
-    <div class="empty">Loading companion…</div>
-  </div>
+<div class="page kn" id="companionRoot" aria-live="polite"
+     data-username="{{ current_username or '' }}"
+     data-mark="{{ url_for('static', path='mark.png') }}">
+  <div class="kn-loading"><span class="kn-k">日記</span> Opening the diary…</div>
 </div>
 {% endblock %}
 {% block scripts %}

@@ -163,8 +163,10 @@ def _record_learning_event(
     actions = list(result.get("actions") or [])
     note = str(result.get("note") or "")
     saved = bool(result.get("saved"))
-    diary = derive_diary(saved=saved, note=note, actions=actions)
     extract = result.get("extract") if isinstance(result.get("extract"), dict) else {}
+    diary = derive_diary(
+        saved=saved, note=note, actions=actions, items=extract.get("items")
+    )
     plan_payload = plan.as_dict()
     if extract:
         plan_payload = {**plan_payload, "extract": extract}

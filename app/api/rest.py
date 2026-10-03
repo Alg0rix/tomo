@@ -56,9 +56,14 @@ async def dashboard_data(request: Request, _: AuthDep):
 
 
 @router.get("/companion")
-async def companion_snapshot_api(request: Request, _: AuthDep):
-    """Bond, growth ledger, profile preview for the Companion page (per login)."""
-    return store.companion_snapshot(user_id=session_user_id(request))
+async def companion_snapshot_api(
+    request: Request, _: AuthDep, tz: int = Query(0, ge=-840, le=840)
+):
+    """Bond, rhythm, profile, and diary for the Companion page (per login).
+
+    ``tz`` is the viewer's offset in minutes east of UTC (day buckets, streaks).
+    """
+    return store.companion_snapshot(user_id=session_user_id(request), tz_minutes=tz)
 
 
 @router.get("/episodes")
@@ -187,23 +192,19 @@ async def episode_feedback_api(
 async def companion_events_api(
     request: Request,
     _: AuthDep,
-    limit: int = Query(30, ge=1, le=200),
+    limit: int = Query(30, ge=1, le=100),
     before: float | None = Query(None),
     agent_id: str | None = Query(None),
     saved_only: bool = Query(False),
 ):
-    """Paginated growth log (learning events for this account only)."""
-    events = store.list_learning_events(
+    """Paginated diary (learning events for this account only)."""
+    return store.companion_diary(
+        user_id=session_user_id(request),
         limit=limit,
         before=before,
         agent_id=agent_id,
-        saved_only=saved_only,
-        user_id=session_user_id(request),
+        learned_only=saved_only,
     )
-    next_before = None
-    if events and len(events) >= limit:
-        next_before = float(events[-1].get("created_at") or 0) or None
-    return {"events": events, "next_before": next_before}
 
 
 @router.get("/dashboard/sidebar")

@@ -30,17 +30,19 @@ def test_companion_snapshot_shape(tmp_path) -> None:
         data = r.json()
         assert "bond" in data
         assert 0 <= data["bond"] <= 100
-        assert "bond_parts" in data
-        assert "stats" in data
-        assert "growth" in data
-        assert isinstance(data["growth"], list)
-        assert "recent_events" in data
-        assert "learning_enabled" in data
-        assert "user_profile_preview" in data
-        assert "heatmap" in data
-        assert isinstance(data["heatmap"].get("days"), list)
-        assert "streak" in data
-        assert "diagnostics" in data
+        assert {p["key"] for p in data["bond_parts"]} == {
+            "chats", "saved_events", "user_memory_chars", "library_skills", "days_active",
+        }
+        assert data["stage"]["kanji"] == "初対面"
+        assert data["stage"]["next"]["to_go"] > 0
+        assert data["learning"]["mode"] in {"listening", "due", "resting", "reviewing", "off"}
+        days = data["rhythm"]["days"]
+        assert days[0]["weekday"] == 0 and days[-1]["date"] == data["rhythm"]["today"]
+        assert 19 * 7 < len(days) <= 20 * 7
+        assert data["profile"] == {"facts": [], "total": 0, "chars": 0}
+        assert data["diary"] == {"entries": [], "has_more": False, "next_before": None}
+        for gone in ("growth", "heatmap", "recent_events", "diagnostics", "user_profile_preview"):
+            assert gone not in data
     finally:
         app.dependency_overrides.pop(require_auth, None)
 
@@ -54,9 +56,9 @@ def test_companion_events_saved_only(tmp_path) -> None:
         client = TestClient(app)
         r = client.get("/api/companion/events?saved_only=true")
         assert r.status_code == 200
-        events = r.json()["events"]
-        assert len(events) == 1
-        assert events[0]["saved"] is True
+        entries = r.json()["entries"]
+        assert len(entries) == 1
+        assert entries[0]["status"] == "learned"
     finally:
         app.dependency_overrides.pop(require_auth, None)
 
@@ -71,11 +73,14 @@ def test_companion_events_pagination(tmp_path) -> None:
         r = client.get("/api/companion/events?limit=1")
         assert r.status_code == 200
         body = r.json()
-        assert len(body["events"]) == 1
-        assert body["events"][0]["created_at"] == 200.0
+        assert [e["created_at"] for e in body["entries"]] == [200.0]
+        assert body["has_more"] is True
+        assert body["next_before"] == 200.0
         r2 = client.get("/api/companion/events?limit=1&before=200")
         assert r2.status_code == 200
-        assert r2.json()["events"][0]["created_at"] == 100.0
+        page2 = r2.json()
+        assert [e["created_at"] for e in page2["entries"]] == [100.0]
+        assert page2["has_more"] is False
     finally:
         app.dependency_overrides.pop(require_auth, None)
 
@@ -89,6 +94,7 @@ def test_companion_page_renders(tmp_path) -> None:
         r = client.get("/companion")
         assert r.status_code == 200
         assert b"Companion" in r.content
+        assert b'id="companionRoot"' in r.content
         assert b"companion.js" in r.content
         assert b"companion.css" in r.content
     finally:
