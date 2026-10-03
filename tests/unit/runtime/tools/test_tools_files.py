@@ -148,3 +148,48 @@ def test_write_file_overwrite_default() -> None:
     assert (work / "b.txt").read_text(encoding="utf-8") == "new\n"
 
 
+
+
+def test_main_without_project_can_reference_other_folder(tmp_path):
+    from app.runtime.permissions.assess import assess
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    sandbox.bind_agent("main")
+    tokens = bind_workplace(force_work_dir=True)
+    outside = tmp_path / "reference.txt"
+    try:
+        root = sandbox.resolve_work_root()
+        assert root == home.agent_work_dir("main").resolve()
+        assert not assess("write_file", {"path": str(outside)}, root).findings
+        assert not assess("bash", {"command": f"cat {outside}"}, root).findings
+        execute("write_file", {"path": str(outside), "content": "reference"})
+        assert "reference" in execute("read_file", {"path": str(outside)})
+        assert outside.read_text() == "reference"
+    finally:
+        reset_workplace(tokens)
+
+
+def test_main_selected_project_requires_grant_for_other_folder(tmp_path):
+    from app.runtime.permissions.assess import assess
+    from app.runtime.permissions.grants import set_outside_grant, reset_outside_grant
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store.create_workplace({"id": "project", "name": "Project", "kind": "local",
+                            "root_path": str(root)})
+    sandbox.bind_agent("main")
+    tokens = bind_workplace(workplace_id="project")
+    outside = tmp_path / "reference.txt"
+    try:
+        assert sandbox.resolve_work_root() == root
+        assert any(f.kind == "escape" for f in
+                   assess("read_file", {"path": str(outside)}, root).findings)
+        assert isinstance(sandbox.jail_path(root, str(outside)), str)
+        grant_token = set_outside_grant(frozenset({outside}))
+        try:
+            assert sandbox.jail_path(root, str(outside)) == outside
+        finally:
+            reset_outside_grant(grant_token)
+    finally:
+        reset_workplace(tokens)

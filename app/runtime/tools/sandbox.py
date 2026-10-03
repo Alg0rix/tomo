@@ -5,8 +5,9 @@ demand. When the chat/session binds a **local** workplace (or the agent has
 one and the chat did not choose “Tomo work dir”), that ``root_path`` is used
 instead. **Tunnel** workplaces route tools over the connector hub.
 
-Path arguments must stay under that root (absolute paths OK only if inside
-the root). Escapes return error strings (never raise to the caller).
+The main agent in a chat without a selected project uses that root as its
+starting cwd, with unrestricted local paths. Other contexts require paths
+under the root or an approved outside-path grant.
 """
 
 from __future__ import annotations
@@ -130,6 +131,27 @@ def resolve_work_root(agent_id: str | None = None) -> Path:
     return root
 
 
+def unrestricted_local_paths(agent_id: str | None = None) -> bool:
+    """The top-level main agent has no path jail when chat has no project."""
+    from app.runtime.agent.subagent import current_depth
+    from app.runtime.tools.workplace_ctx import (
+        current_workplace_hint,
+        current_workplace_id,
+        force_work_dir,
+    )
+    from app.services import store
+
+    if (
+        not force_work_dir()
+        or current_workplace_id()
+        or current_workplace_hint()
+        or current_depth() > 0
+    ):
+        return False
+    agent = store.get_agent(agent_id if agent_id is not None else current_agent_id())
+    return bool(agent and agent.get("is_super"))
+
+
 def jail_path(root: Path, relative: str) -> Path | str:
     """Resolve a path under ``root``, or return an ``Error: ...`` string.
 
@@ -138,6 +160,7 @@ def jail_path(root: Path, relative: str) -> Path | str:
     use ``/tmp/foo``; a work-dir root still rejects ``/etc/passwd``).
     ``..`` escapes outside ``root`` are rejected — unless an active
     :mod:`app.runtime.permissions.grants` outside grant covers the target.
+    The main agent without a selected project accepts any local target.
     Never raises.
     """
     if not isinstance(relative, str):
@@ -154,6 +177,8 @@ def jail_path(root: Path, relative: str) -> Path | str:
             target = candidate.resolve()
         else:
             target = (root_resolved / text).resolve()
+        if unrestricted_local_paths():
+            return target
         try:
             target.relative_to(root_resolved)
         except ValueError:
@@ -179,4 +204,5 @@ __all__ = [
     "current_agent_id",
     "resolve_work_root",
     "jail_path",
+    "unrestricted_local_paths",
 ]

@@ -685,7 +685,7 @@ def _workplace_prompt_section(agent_id: str) -> str:
 
         # Live tool cwd for this turn (session folder or ~/tomo/<agent>).
         try:
-            from app.runtime.tools.sandbox import resolve_work_root
+            from app.runtime.tools.sandbox import resolve_work_root, unrestricted_local_paths
             from app.runtime.tools.workplace_ctx import (
                 current_workplace_id,
                 force_work_dir,
@@ -698,6 +698,12 @@ def _workplace_prompt_section(agent_id: str) -> str:
                     f"(chat = Tomo work dir `~/tomo/{agent_id}` — "
                     "not your permanently assigned local workplace)."
                 )
+                if unrestricted_local_paths(agent_id):
+                    cwd_line += (
+                        " No project is selected: this cwd is a starting folder, "
+                        "not a filesystem boundary. You may access other local "
+                        "folders using absolute paths or change directory in bash."
+                    )
             elif current_workplace_id():
                 cwd_line = (
                     f"**This turn's tool cwd:** `{cwd}` "

@@ -83,7 +83,10 @@ def assess(
     # Escape + dangerous only matter if not already hardline-blocked for messaging,
     # but we still collect them for allowlist keys when hardline is absent.
     if not any(f.kind == "hardline" for f in findings):
-        findings.extend(detect_escape(tool, arguments, work_root))
+        from app.runtime.tools.sandbox import unrestricted_local_paths
+
+        if not unrestricted_local_paths():
+            findings.extend(detect_escape(tool, arguments, work_root))
         if cmd:
             dang = detect_dangerous(cmd)
             if dang is not None:
