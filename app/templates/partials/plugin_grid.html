@@ -1,0 +1,17 @@
+  <div class="tile-grid">
+    {% for plugin in plugins %}
+    <article class="card" style="padding:1rem">
+      <span class="plugin-settings-icon" aria-hidden="true">{% with icon=plugin.icon %}{% include 'partials/plugin_icon.html' %}{% endwith %}</span><h2>{{ plugin.name }}</h2><p>{{ plugin.description }}</p>
+      <p>{{ 'Running' if plugin.running else 'Disabled' }} · {{ plugin.version }}</p>
+      {% if plugin.error %}<p role="alert">{{ plugin.error }}</p>{% endif %}
+      {% for page in plugin.pages %}<a class="btn ghost sm" href="{{ page.path }}">{{ page.label }}</a> {% endfor %}
+      {% if can_manage_plugins %}
+      <div style="margin-top:1rem">
+        <button class="btn sm" data-plugin="{{ plugin.id }}" data-action="{{ 'disable' if plugin.running else 'enable' }}">{{ 'Disable' if plugin.running else 'Enable' }}</button>
+        {% if plugin.running %}<button class="btn ghost sm" data-plugin="{{ plugin.id }}" data-action="reload">Reload</button>{% endif %}
+        <button class="btn ghost sm" data-plugin="{{ plugin.id }}" data-action="uninstall">Uninstall</button>
+      </div>
+      {% endif %}
+    </article>
+    {% else %}<p>No plugins installed yet.</p>{% endfor %}
+  </div>

@@ -1,4 +1,4 @@
-"""Platform API — tools, skills, modules, workplaces, schedules, settings."""
+"""Platform API — tools, skills, plugins, workplaces, schedules, settings."""
 
 from __future__ import annotations
 
@@ -171,50 +171,6 @@ async def get_skill(skill_id: str, _: AuthDep):
 
     body = read_skill_body(skill_id)
     return {**skill, "body": body or skill.get("description") or ""}
-
-
-@router.get("/modules")
-async def list_modules(_: AuthDep):
-    return {"modules": store.list_modules()}
-
-
-@router.get("/modules/{module_id}")
-async def get_module(module_id: str, _: AuthDep):
-    module = store.get_module(module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    return module
-
-
-@router.put("/modules/{module_id}")
-async def update_module(module_id: str, body: dict, _: AuthDep):
-    module = store.update_module(module_id, body)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    return module
-
-
-# Back-compat aliases for older clients
-@router.get("/plugins")
-async def list_plugins_alias(_: AuthDep):
-    mods = store.list_modules()
-    return {"plugins": mods, "modules": mods}
-
-
-@router.get("/plugins/{plugin_id}")
-async def get_plugin_alias(plugin_id: str, _: AuthDep):
-    module = store.get_module(plugin_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    return module
-
-
-@router.put("/plugins/{plugin_id}")
-async def update_plugin_alias(plugin_id: str, body: dict, _: AuthDep):
-    module = store.update_module(plugin_id, body)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    return module
 
 
 @router.put("/skills/{skill_id}")

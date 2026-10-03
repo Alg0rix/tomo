@@ -194,8 +194,10 @@ def _memory_signals(user_id: str) -> list[tuple[str, str, str]]:
             episodes = []
         for ep in episodes:
             text = (
-                ep.get("objective") or ep.get("outcome_summary")
-                or ep.get("context_summary") or ""
+                ep.get("objective")
+                or ep.get("outcome_summary")
+                or ep.get("context_summary")
+                or ""
             ).strip()
             label = _truncate(text, _LABEL_MAX)
             if label:
@@ -208,7 +210,8 @@ def _memory_signals(user_id: str) -> list[tuple[str, str, str]]:
         except Exception:
             kn = ""
         facts = [
-            ln[2:].strip() for ln in (kn or "").splitlines()
+            ln[2:].strip()
+            for ln in (kn or "").splitlines()
             if ln.startswith("- ") and ln[2:].strip()
         ]
         for fact in facts:
@@ -243,11 +246,13 @@ def _memory_fallback(user_id: str) -> list[dict[str, str]] | None:
                 continue
             seen_keys.add(cand_key.lower())
             seen_prompts.add(cand_prompt.lower())
-            items.append({
-                "key": cand_key[:_KEY_MAX],
-                "label": cand_label[:_LABEL_MAX],
-                "prompt": cand_prompt[:_PROMPT_MAX],
-            })
+            items.append(
+                {
+                    "key": cand_key[:_KEY_MAX],
+                    "label": cand_label[:_LABEL_MAX],
+                    "prompt": cand_prompt[:_PROMPT_MAX],
+                }
+            )
             break
         if len(items) >= _MEM_FALLBACK_LIMIT:
             break
@@ -255,7 +260,10 @@ def _memory_fallback(user_id: str) -> list[dict[str, str]] | None:
     if len(items) < 3:
         for entry in random.sample(_FALLBACK_POOL, len(_FALLBACK_POOL)):
             cand = dict(entry)
-            if cand["key"].lower() in seen_keys or cand["prompt"].lower() in seen_prompts:
+            if (
+                cand["key"].lower() in seen_keys
+                or cand["prompt"].lower() in seen_prompts
+            ):
                 continue
             seen_keys.add(cand["key"].lower())
             seen_prompts.add(cand["prompt"].lower())
@@ -282,6 +290,7 @@ def _truncate(text: str, limit: int) -> str:
 def _vault_context(user_id: str) -> str:
     from app.services import store
     from app.runtime.memory.vault.read import world_card
+
     return store.with_db(lambda conn: world_card(conn, user_id))
 
 
@@ -325,7 +334,9 @@ def _session_context(user_id: str) -> str:
             continue
         title = _truncate(sess.get("title") or "", _SESSION_TITLE_TRUNC)
         # Skip untitled / never-chatted sessions — no signal for suggestions.
-        if (not title or title in ("New conversation", "New swarm chat")) and not queries:
+        if (
+            not title or title in ("New conversation", "New swarm chat")
+        ) and not queries:
             continue
         if not title or title in ("New conversation", "New swarm chat"):
             title = "(untitled)"
@@ -333,7 +344,9 @@ def _session_context(user_id: str) -> str:
         recent = recent[-_SESSION_QUERY_LIMIT:]
         bit = "- Session: " + title
         for q in recent:
-            bit += f' | Asked: {_truncate(q.get("content") or "", _SESSION_QUERY_TRUNC)}'
+            bit += (
+                f" | Asked: {_truncate(q.get('content') or '', _SESSION_QUERY_TRUNC)}"
+            )
         lines.append(bit)
         if len(lines) >= _SESSION_LIMIT:
             break
@@ -424,19 +437,25 @@ def clear_dashboard_prompts_cache() -> None:
     _cache.clear()
 
 
-async def _generate(
-    user_id: str, *, llm: LLMClient | None = None
+async def generate_prompts(
+    user_id: str,
+    *,
+    llm: LLMClient | None = None,
+    system: str = _SYSTEM,
+    extra_context: str = "",
 ) -> list[dict[str, str]] | None:
     try:
         client = llm
         if client is None:
             from app.runtime.llm import get_auxiliary_llm
 
-            client = get_auxiliary_llm('dashboard_prompts')
+            client = get_auxiliary_llm("dashboard_prompts")
         ctx = build_user_context(user_id)
-        user_content = (ctx or "No prior activity yet.") + "\n\nJSON:"
+        user_content = (
+            (ctx or "No prior activity yet.") + "\n\n" + extra_context + "\n\nJSON:"
+        )
         messages = [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ]
         resp = await asyncio.wait_for(
@@ -444,9 +463,7 @@ async def _generate(
         )
         raw = (resp.content or "").strip()
         parsed = parse_prompts_json(raw)
-        logger.info(
-            "dashboard prompts LLM raw=%r parsed=%r", raw[:200], parsed
-        )
+        logger.info("dashboard prompts LLM raw=%r parsed=%r", raw[:200], parsed)
         return parsed
     except TimeoutError:
         logger.warning(
@@ -455,9 +472,7 @@ async def _generate(
         )
         return None
     except Exception as exc:
-        logger.warning(
-            "dashboard prompts generation failed: %s", exc, exc_info=True
-        )
+        logger.warning("dashboard prompts generation failed: %s", exc, exc_info=True)
         return None
 
 
@@ -474,7 +489,7 @@ async def get_dashboard_prompts(
     cached = _cache_get(uid)
     if cached is not None:
         return {"prompts": cached, "source": "llm"}
-    prompts = await _generate(uid, llm=llm)
+    prompts = await generate_prompts(uid, llm=llm)
     if prompts is not None:
         _cache_set(uid, prompts)
         return {"prompts": prompts, "source": "llm"}
@@ -484,6 +499,7 @@ async def get_dashboard_prompts(
 
 __all__ = [
     "get_dashboard_prompts",
+    "generate_prompts",
     "parse_prompts_json",
     "build_user_context",
     "clear_dashboard_prompts_cache",

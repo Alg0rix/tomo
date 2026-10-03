@@ -190,6 +190,9 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
     discovered = find_discovered_skill(sid)
     from app.runtime.agent.learning.state import in_review_scope
 
+    # A stale catalog row must not provide a disabled plugin's instructions.
+    if sid.startswith("plugin__") and discovered is None:
+        return f"Error: plugin skill '{sid}' is unavailable; enable its plugin first"
     if skill and skill.get("archived_at") and not in_review_scope():
         target = skill.get("merged_into")
         hint = f" Use '{target}' instead." if target else " Restore it from its Skills page first."

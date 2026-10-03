@@ -1,0 +1,58 @@
+{
+  "id": "plugin_manager",
+  "name": "Plugins",
+  "description": "Install, enable, disable, reload, and list trusted local Tomo plugins without restarting the app. Administrator only.",
+  "backend": "app.runtime.tools.plugin_manager",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "plugin_manager",
+      "description": "Manage trusted Python plugins on the Tomo server. Read the plugin-development skill before developing one. Install registers a server-local directory containing tomo-plugin.json and plugin.py; then enable it. Reload applies edits live. Disable removes pages and agent tools. Uninstall unregisters the plugin and retains its source and data. Code runs with server privileges; install only code the user has authorized. Busy plugins return an error; retry after their work finishes. Official plugins come directly from tomo-official (Alg0rix/tomo-plugins); community submissions come from tomo-community (Alg0rix/tomo-marketplace). They are independent. Marketplace add and refresh read metadata only; install downloads code disabled until enable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "install",
+              "enable",
+              "disable",
+              "reload",
+              "uninstall",
+              "search",
+              "marketplaces",
+              "marketplace_add",
+              "marketplace_refresh",
+              "marketplace_remove"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "Installed plugin id for lifecycle actions"
+          },
+          "path": {
+            "type": "string",
+            "description": "Local directory, plugin_id@marketplace, or HTTPS GitHub repository URL"
+          },
+          "subdirectory": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Marketplace HTTPS URL, git:https://github.com/owner/repo@ref, or path:/directory"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  }
+}

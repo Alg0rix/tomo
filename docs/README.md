@@ -2,6 +2,7 @@
 
 | Doc | Topic |
 |-----|--------|
+| [Live plugins](plugins.md) | Live plugins, official/community catalogs, and direct repository installs |
 | [architecture.md](architecture.md) | High-level layout |
 | [deployments.md](deployments.md) | systemd + Docker Compose deploy |
 | [harness-improvement-report.md](harness-improvement-report.md) | Agent harness notes |

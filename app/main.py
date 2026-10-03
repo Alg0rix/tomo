@@ -84,6 +84,8 @@ async def _lifespan(_app: FastAPI):
     finally:
         from app.services.terminals import terminal_manager
 
+        from app.plugins.manager import get_manager
+
         await terminal_manager.close_all()
         await suspend_session_turns()
         await background_continuation.stop()
@@ -95,6 +97,7 @@ async def _lifespan(_app: FastAPI):
             await mcp_manager.close_all()
         except Exception:
             pass
+        get_manager().close()
 
 
 def create_app() -> FastAPI:
@@ -118,19 +121,13 @@ def create_app() -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    try:
-        from modules.registry import (
-            mount_module_static,
-            register_module_pages,
-            register_module_routes,
-        )
+    from app.plugins.manager import get_manager
+    from app.plugins.routes import router as plugins_router
 
-        register_module_pages(web_router)
-        register_module_routes(api_router)
-        mount_module_static(app)
-    except Exception:
-        logging.getLogger(__name__).exception("module registration failed")
-
+    plugin_manager = get_manager()
+    plugin_manager.start()
+    app.include_router(plugins_router)
+    app.mount("/plugins", plugin_manager, name="plugins")
     app.include_router(web_router)
     app.include_router(api_router)
 

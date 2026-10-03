@@ -6,35 +6,14 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Form, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
-from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader
 
 from .config import EVAL_UI_ENABLED, TEMPLATE_DIR
 
 
-def _module_template_prefixes() -> dict[str, FileSystemLoader]:
-    """``token_monitor/page.html`` → ``modules/token_monitor/templates/page.html``."""
-    from modules.paths import module_templates_dir
-    from modules.registry import all_metas
+from app.plugins.icons import ICONS
 
-    prefixes: dict[str, FileSystemLoader] = {}
-    for meta in all_metas():
-        tdir = module_templates_dir(meta.id)
-        if tdir.is_dir():
-            prefixes[meta.id] = FileSystemLoader(str(tdir))
-    return prefixes
-
-
-def _build_templates() -> Jinja2Templates:
-    t = Jinja2Templates(directory=str(TEMPLATE_DIR))
-    prefixes = _module_template_prefixes()
-    loaders: list[Any] = [FileSystemLoader(str(TEMPLATE_DIR))]
-    if prefixes:
-        loaders.append(PrefixLoader(prefixes))
-    t.env.loader = ChoiceLoader(loaders)
-    return t
-
-
-templates = _build_templates()
+templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env.globals["plugin_icons"] = ICONS
 
 # Darkroom signal hues: sky / rose / jade / amber / warm-earth (no indigo/violet)
 _AVATAR_HUES = [200, 350, 160, 30, 12, 85, 195, 45]
@@ -104,17 +83,15 @@ class _StaticVersion:
             for path in sorted(STATIC_DIR.rglob("*")):
                 if path.is_file():
                     st = path.stat()
-                    digest.update(f"{path.relative_to(STATIC_DIR)}:{st.st_mtime_ns}:{st.st_size}\n".encode())
+                    digest.update(
+                        f"{path.relative_to(STATIC_DIR)}:{st.st_mtime_ns}:{st.st_size}\n".encode()
+                    )
             self._value = f"{_pkg_version()}-{digest.hexdigest()[:10]}"
             self._checked = now
         return self._value
 
 
 templates.env.globals["static_ver"] = _StaticVersion()
-
-from modules.paths import static_url as module_static  # noqa: E402
-
-templates.env.globals["module_static"] = module_static
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -181,8 +158,11 @@ def visible_sessions(request: Request) -> list[dict]:
     uid = session_user_id(request)
     if not can_manage_telegram(request):
         return store.list_sessions(user_id=uid)
-    return [s for s in store.list_sessions()
-            if s["user_id"] == uid or s.get("channel") == "telegram"]
+    return [
+        s
+        for s in store.list_sessions()
+        if s["user_id"] == uid or s.get("channel") == "telegram"
+    ]
 
 
 def require_owned_session(request: Request, session_id: str) -> dict:

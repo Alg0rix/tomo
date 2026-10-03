@@ -35,7 +35,7 @@ tomo config settings update --set telegram_rich_messages=true
 | --- | --- |
 | `agents`, `workplaces`, `llm-profiles`, `mcp-servers`, `schedules`, `knowledge`, `users` | `list`, `show ID`, `create`, `update ID`, `delete ID`, `schema` |
 | `api-keys` | `list`, `show ID`, `create`, `delete ID`, `schema` |
-| `skills`, `modules` | `list`, `show ID`, `update ID` |
+| `skills` | `list`, `show ID`, `update ID` |
 | `settings` | `show`, `update` |
 | `agent-tools`, `agent-skills` | `show AGENT_ID`, `update AGENT_ID` |
 | `mcp-items` | `list SERVER_ID`, `show ITEM_ID`, `update ITEM_ID` |
@@ -74,3 +74,6 @@ Tunnel `status` is the last database value, while JSON `online` is `null` and
 `status_source` is `database`; use the running server to verify live connectivity.
 These are configuration commands; device OAuth authorization, chat execution,
 MCP discovery, and other runtime operations are separate workflows.
+
+Live plugins use `tomo plugins list/install/enable/disable/reload/uninstall`,
+which contact the running server. See [Live plugins](plugins.md).

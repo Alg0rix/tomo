@@ -28,24 +28,6 @@ def seed_skills() -> list[dict[str, Any]]:
     ]
 
 
-def seed_plugins() -> list[dict[str, Any]]:
-    """Deprecated alias — modules are discovered from ``modules/`` packages."""
-    from modules.registry import all_metas
-
-    return [
-        {
-            "id": m.id,
-            "name": m.name,
-            "description": m.description,
-            "version": m.version,
-            "enabled": m.default_enabled,
-            "has_ui": m.has_ui,
-            "ui_path": m.ui_path,
-        }
-        for m in all_metas()
-    ]
-
-
 def seed_workplaces() -> list[dict[str, Any]]:
     return [
         {"id": "wp_local", "name": "Local Dev", "kind": "local", "status": "connected", "host": "127.0.0.1", "agent_count": 2, "updated_at": _ts(-300)},

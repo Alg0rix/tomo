@@ -7204,3 +7204,9 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 .team-progress-state{width:8px;height:8px;margin-top:4px;border-radius:50%;background:#888;flex:none}
 .team-progress-state.running{background:#e9a746}.team-progress-state.done{background:#54b785}.team-progress-state.failed,.team-progress-state.blocked{background:#d76565}
 .chat-swarm-toggle.active,.chat-swarm-toggle[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
+
+/* Plugin settings share the same manifest icon as cards and navigation. */
+.plugin-settings-icon { display: inline-flex; color: var(--accent); margin-bottom: 8px; }
+.plugin-settings-icon svg { width: 24px; height: 24px; }
+.app-rail-ico [data-plugin-icon] { width: 18px; height: 18px; flex-shrink: 0; }
+.app-rail-item.active .app-rail-ico [data-plugin-icon] { color: var(--accent); }

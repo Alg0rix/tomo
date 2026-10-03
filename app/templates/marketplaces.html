@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-head"><div><h1 class="page-title">Plugin marketplaces</h1>
+    <p class="page-sub">Adding or refreshing a catalog reads metadata. It does not install or run plugins.</p></div>
+    <a class="btn ghost sm" href="/extensions">Browse plugins</a></div>
+  {% if can_manage_plugins %}
+  <form id="marketplace-add" class="card" style="padding:1rem;margin-bottom:1rem">
+    <label for="marketplace-source">Catalog source</label>
+    <input class="input" id="marketplace-source" name="source" required placeholder="https://example.com/marketplace.json or path:/directory" style="width:100%;margin:.5rem 0">
+    <p>Use an HTTPS manifest URL, git:https://github.com/owner/repo@ref, or path:/directory on the server.</p>
+    <button class="btn" type="submit">Add marketplace</button>
+  </form>
+  {% endif %}
+  <div class="tile-grid">
+  {% for marketplace in marketplaces %}
+    <article class="card" style="padding:1rem">
+      <h2>{{ marketplace.name }}</h2><p>{{ marketplace.id }}{% if marketplace.reserved %} · Default{% endif %}</p>
+      <p style="overflow-wrap:anywhere">{{ marketplace.source }}</p>
+      <p>{{ marketplace.plugin_count }} plugins · {% if marketplace.refreshed_at %}Refreshed {{ ts(marketplace.refreshed_at) }}{% else %}Not refreshed yet{% endif %}</p>
+      {% if can_manage_plugins %}
+      <button class="btn sm" data-marketplace="{{ marketplace.id }}" data-marketplace-action="refresh">Refresh</button>
+      {% if not marketplace.reserved %}<button class="btn ghost sm" data-marketplace="{{ marketplace.id }}" data-marketplace-action="remove">Remove</button>{% endif %}
+      {% endif %}
+    </article>
+  {% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/plugins.js') }}?v={{ static_ver }}"></script>{% endblock %}

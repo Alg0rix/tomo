@@ -89,11 +89,11 @@
         <span class="app-rail-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="18" cy="19" r="2"/><path d="m10.5 10.5-4-4m7-3 3.5 1.5m-3 9 3 4"/></svg></span>
         <span class="app-rail-label">Memory</span>
       </a>
-      {% for item in module_nav|default([]) %}
-      {% if page != 'sessions' or item.id != 'token_monitor' %}
+      {% for item in plugin_nav|default([]) %}
+      {% if page != 'sessions' %}
       <a class="app-rail-item {{ 'active' if page == item.page }}" href="{{ item.path }}" title="{{ item.label }}">
         <span class="app-rail-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+          {% with icon=item.icon %}{% include 'partials/plugin_icon.html' %}{% endwith %}
         </span>
         <span class="app-rail-label">{{ item.label }}</span>
       </a>

@@ -28,6 +28,7 @@ ToolRunner = Callable[[dict[str, Any]], str]
 # Only these repo-controlled import paths may execute. The JSON backend
 # field stays descriptive; catalog discovery never imports tool implementations.
 _BACKENDS: dict[str, str | ToolRunner] = {
+    "plugin_manager": "app.runtime.tools.plugin_manager:run",
     "delegate": "app.runtime.tools.delegate:run",
     "create_agent": "app.runtime.tools.create_agent:run",
     "bash": "app.runtime.tools.bash:run",
@@ -105,20 +106,23 @@ class ToolRegistry:
 
     # --- public API -----------------------------------------------------
 
+    def _live_definitions(self) -> dict[str, dict[str, Any]]:
+        from app.plugins.manager import get_manager
+        return {**self._definitions, **get_manager().definitions()}
+
     def names(self) -> list[str]:
         """Sorted list of registered tool names."""
-        return sorted(self._definitions)
+        return sorted(self._live_definitions())
 
     def get_definition(self, name: str) -> dict[str, Any] | None:
         """Return the raw JSON definition for ``name``, or ``None``."""
-        data = self._definitions.get(name)
+        data = self._live_definitions().get(name)
         return dict(data) if isinstance(data, dict) else None
 
     def list_catalog(self) -> list[dict[str, Any]]:
         """UI/API catalog rows sourced from registry JSON (not platform seed)."""
         rows: list[dict[str, Any]] = []
-        for name in sorted(self._definitions):
-            data = self._definitions[name]
+        for name, data in sorted(self._live_definitions().items()):
             schema = data.get("schema") or {}
             fn = schema.get("function") or {}
             rows.append(
@@ -143,16 +147,21 @@ class ToolRegistry:
         """
         allow = set(enabled) if enabled is not None else None
         tools: list[dict[str, Any]] = []
-        for name in sorted(self._definitions):
+        for name, data in sorted(self._live_definitions().items()):
             if allow is not None and name not in allow:
                 continue
-            schema = self._definitions[name].get("schema")
+            schema = data.get("schema")
             if isinstance(schema, dict) and schema.get("type") == "function":
                 tools.append(schema)
         return tools
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         """Run a named tool with parsed arguments; always returns a string."""
+        if name.startswith("plugin__"):
+            from app.plugins.manager import get_manager
+            if not isinstance(arguments, dict):
+                return "Error: tool expects a dict of arguments"
+            return get_manager().execute(name, arguments)
         if name not in self._definitions:
             return f"Error: unknown tool '{name}'"
         runner = _BACKENDS.get(name)

@@ -40,7 +40,7 @@ support files needed for the task.
 | --- | --- |
 | Command syntax, resource/action support, JSON input, schema discovery, reload behavior | [CLI configuration](references/configuration-cli.md) |
 | Persistent agents, personas, model profiles, reasoning effort, workplace scopes | [Agents and models](references/agents-models.md) |
-| Skill packages, per-agent tools/skills, reusable procedures, registered modules | [Skills and modules](references/skills-modules.md) |
+| Skill packages, per-agent tools/skills, reusable procedures, live plugins | [Skills and plugins](references/skills-plugins.md) |
 | Future/recurring jobs, pause/resume, run history, background-work diagnosis | [Schedules](references/schedules.md) |
 | Telegram, transcription, settings, approval defaults, limits, learning controls | [Channels and settings](references/channels-settings.md) |
 | Full memory lifecycle: storage/scope, capture, wikilinks/aliases, recall, correction/move/forget, learning/consolidation, backup/restore | [Memory lifecycle and knowledge](references/memory-knowledge.md) |

@@ -85,7 +85,7 @@ available control. Do not fabricate a new provider login command.
 
 ## Tools, skills, and completion
 
-Read [skills and modules](skills-modules.md) before replacing assignments.
+Read [skills and plugins](skills-plugins.md) before replacing assignments.
 `artifacts_enabled` controls that agent's artifact capability; it does not move
 existing files. A newly created agent still needs usable model credentials,
 relevant tools, and reachable workplaces.

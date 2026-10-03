@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.core.config import EVAL_UI_ENABLED
 from app.core.deps import AuthDep, require_owned_session, session_user_id, templates
 from app.services import store
+from app.plugins.manager import get_manager
 from app.web.context import page_ctx
 
 router = APIRouter()
@@ -253,18 +254,6 @@ async def skill_detail_page(request: Request, skill_id: str, _: AuthDep):
     )
 
 
-@router.get("/modules", response_class=HTMLResponse)
-async def modules_page(request: Request, _: AuthDep):
-    return templates.TemplateResponse(request, "modules.html", page_ctx(
-        request, "modules", modules=store.list_modules(),
-    ))
-
-
-@router.get("/plugins", response_class=HTMLResponse)
-async def plugins_page_redirect(_: AuthDep):
-    return RedirectResponse("/modules", status_code=303)
-
-
 @router.get("/scheduler", response_class=HTMLResponse)
 async def scheduler_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "scheduler.html", page_ctx(
@@ -281,7 +270,8 @@ async def system_page(request: Request, _: AuthDep):
         llm_profiles=store.list_llm_profiles(),
         default_model_id=store.get_default_llm_profile_id(),
         mcp_servers=store.list_mcp_servers(),
-        modules=store.list_modules(),
+        plugins=get_manager().list(),
+        can_manage_plugins=(store.get_user(session_user_id(request)) or {}).get("role") == "admin",
         shared_channels=store.list_shared_channels(),
         users=store.list_users(),
     ))

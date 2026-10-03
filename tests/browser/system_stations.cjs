@@ -9,9 +9,10 @@ const root = path.resolve(__dirname, '../..');
 const html = execFileSync(process.env.PYTHON || path.join(root, '.venv/bin/python'), ['-c', `
 from jinja2 import Environment, FileSystemLoader
 from types import SimpleNamespace
+from app.plugins.icons import ICONS
 env = Environment(loader=FileSystemLoader('app/templates'), autoescape=True)
-env.globals.update(url_for=lambda name, **kwargs: '/static/' + kwargs.get('path', ''), module_static=lambda *args: '', avatar_color=lambda *args: '#777', eval_ui_enabled=False)
-print(env.get_template('system.html').render(brand='Tomo', page='system', app_version='test', static_ver='test', settings={}, llm_profiles=[], tools=[], modules=[], mcp_servers=[], shared_channels=[], users=[], request=SimpleNamespace(session={'username': 'test'})))
+env.globals.update(plugin_icons=ICONS, url_for=lambda name, **kwargs: '/static/' + kwargs.get('path', ''), avatar_color=lambda *args: '#777', eval_ui_enabled=False)
+print(env.get_template('system.html').render(brand='Tomo', page='system', app_version='test', static_ver='test', settings={}, llm_profiles=[], tools=[], plugins=[], mcp_servers=[], shared_channels=[], users=[], request=SimpleNamespace(session={'username': 'test'})))
 `], { cwd: root, encoding: 'utf8' })
   .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
   .replace(/<link\b[^>]*>/gi, '');
@@ -36,7 +37,7 @@ print(env.get_template('system.html').render(brand='Tomo', page='system', app_ve
       await load();
       assert.equal(await page.locator('.sys-section:visible').count(), 1);
       assert.equal(await page.locator('#sec-general').isVisible(), true);
-      for (const station of ['memory', 'general', 'models', 'memory', 'tools', 'mcp', 'modules', 'shared_channel', 'users', 'general']) {
+      for (const station of ['memory', 'general', 'models', 'memory', 'tools', 'mcp', 'plugins', 'shared_channel', 'users', 'general']) {
         await page.locator(`#systemNav a[data-section="${station}"]`).click();
         await page.waitForFunction(expected => {
           const section = document.getElementById('sec-' + expected);

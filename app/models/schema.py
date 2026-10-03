@@ -10,7 +10,6 @@ Tables (per design spec §5 + Alpha Slice G):
 * ``agent_tools``    — per-agent tool enablement (Slice C; missing rows = all on)
 * ``workplaces``     — local / SSH / tunnel execution contexts (Slice D)
 * ``skills`` / ``agent_skills`` — skill catalog + per-agent links (Slice G)
-* ``modules``        — optional module catalog enable/disable
 * ``usage_events``   — Token Monitor turn/token ledger
 * ``schedules`` / ``schedule_runs`` — cron/interval jobs + run log (Slice G)
 * ``users``           — login accounts (username + scrypt password hash)
@@ -192,17 +191,6 @@ CREATE TABLE IF NOT EXISTS agent_skills (
     agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
     PRIMARY KEY (agent_id, skill_id)
-);
-
-CREATE TABLE IF NOT EXISTS modules (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    version     TEXT NOT NULL DEFAULT '1.0',
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    has_ui      INTEGER NOT NULL DEFAULT 0,
-    ui_path     TEXT NOT NULL DEFAULT '',
-    created_at  REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS schedules (
@@ -747,22 +735,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE skills ADD COLUMN archived_at REAL NOT NULL DEFAULT 0")
     if "merged_into" not in skill_cols:
         conn.execute("ALTER TABLE skills ADD COLUMN merged_into TEXT NOT NULL DEFAULT ''")
-
-    # plugins → modules rename (Alpha catalog rename).
-    table_names = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-    }
-    if "plugins" in table_names and "modules" not in table_names:
-        conn.execute("ALTER TABLE plugins RENAME TO modules")
-    # Connector is a first-class feature, not a catalog module.
-    if "modules" in {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }:
-        conn.execute("DELETE FROM modules WHERE id='connector'")
 
     # FTS5 indexes for lexical retrieval (built into SQLite).
     fts_names = {

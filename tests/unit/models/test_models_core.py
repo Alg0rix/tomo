@@ -492,7 +492,6 @@ EXPECTED_TABLES = {
     "workplaces",
     "skills",
     "agent_skills",
-    "modules",
     "schedules",
     "schedule_runs",
     "users",

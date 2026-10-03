@@ -1,5 +1,5 @@
 """Thin store facade: SQLite for agents/sessions/messages/settings/agent_tools/
-workplaces/skills/plugins/schedules/users and ``platform_data``
+workplaces/skills/schedules/users and ``platform_data``
 for remaining stub lists (models, providers, safety rules, channel users, shared
 channels, eval_*). Tool catalog is sourced from the JSON tool registry.
 
@@ -23,7 +23,6 @@ from app.models.mixins import background_jobs as background_jobs_store
 from app.models.mixins import agents as agents_store
 from app.models.mixins import attachments as attachments_store
 from app.models.mixins import messages as messages_store
-from app.models.mixins import modules as modules_store
 from app.models.mixins import schedules as schedules_store
 from app.models.mixins import sessions as sessions_store
 from app.models.mixins import swarm as swarm_store
@@ -67,6 +66,10 @@ class Store:
         path = self._path if self._path is not None else DB_PATH
         self._conn = get_connection(path)
         migrate(self._conn)
+        from app.plugins.migration import migrate_module_catalog
+        from app.core.config import TOMO_HOME
+
+        migrate_module_catalog(self._conn, TOMO_HOME)
         swarm_store.interrupt_inflight(self._conn)
         seed_if_empty(self._conn)
         from app.runtime.memory.vault.migrate import migrate_notes
@@ -75,15 +78,9 @@ class Store:
         # A persisted "connected" status is never trustworthy after a restart
         # (live SDK sessions are process-local and do not survive it).
         mcp_store.reset_runtime_statuses(self._conn)
-        try:
-            from modules.registry import sync_module_rows
-
-            sync_module_rows(self._conn)
-        except Exception:
-            pass
 
     def with_db(self, fn):
-        """Run ``fn(conn)`` under the store lock (for module ledger access)."""
+        """Run ``fn(conn)`` under the store lock (for plugin ledger access)."""
         with self._lock:
             return fn(self._conn)
 
@@ -998,7 +995,7 @@ class Store:
         with self._lock:
             return workplaces_store.resolve_agent_workplace(self._conn, agent_id)
 
-    # -- skills / plugins / schedules (SQLite) ---------------------------
+    # -- skills / schedules (SQLite) ---------------------------
     def list_skills(self) -> list[dict[str, Any]]:
         with self._lock:
             return skills_store.list_skills(self._conn)
@@ -1046,43 +1043,6 @@ class Store:
                 pass
         return removed
 
-    def list_plugins(self) -> list[dict[str, Any]]:
-        """Deprecated alias for :meth:`list_modules`."""
-        return self.list_modules()
-
-    def list_modules(self) -> list[dict[str, Any]]:
-        with self._lock:
-            return modules_store.list_modules(self._conn)
-
-    def enabled_module_ids(self) -> set[str]:
-        with self._lock:
-            return {
-                m["id"]
-                for m in modules_store.list_modules(self._conn)
-                if m.get("enabled")
-            }
-
-    def get_plugin(self, plugin_id: str) -> dict[str, Any] | None:
-        return self.get_module(plugin_id)
-
-    def get_module(self, module_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            return modules_store.get_module(self._conn, module_id)
-
-    def update_plugin(self, plugin_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        return self.update_module(plugin_id, data)
-
-    def update_module(self, module_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        with self._lock:
-            return modules_store.update_module(self._conn, module_id, data)
-
-    def is_plugin_enabled(self, plugin_id: str) -> bool:
-        return self.is_module_enabled(plugin_id)
-
-    def is_module_enabled(self, module_id: str) -> bool:
-        with self._lock:
-            return modules_store.is_module_enabled(self._conn, module_id)
-
     def dispatch_turn_end(
         self,
         *,
@@ -1092,21 +1052,13 @@ class Store:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
     ) -> None:
-        """Notify enabled modules that a session turn finished."""
-        from modules.base import TurnEndContext
-        from modules.registry import on_turn_end
+        """Notify enabled plugins that a session turn finished."""
+        from app.plugins.events import TurnEndContext
+        from app.plugins.manager import get_manager
 
-        with self._lock:
-            on_turn_end(
-                self._conn,
-                TurnEndContext(
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    message=message,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                ),
-            )
+        get_manager().on_turn_end(TurnEndContext(
+            session_id=session_id, agent_id=agent_id, message=message,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens))
 
     def list_schedules(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         with self._lock:

@@ -263,13 +263,6 @@ def _seed_skills(conn: sqlite3.Connection) -> None:
         )
 
 
-def _seed_modules(conn: sqlite3.Connection) -> None:
-    """Sync discovered modules into the catalog (insert-missing only)."""
-    from modules.registry import sync_module_rows
-
-    sync_module_rows(conn)
-
-
 def _seed_schedules(conn: sqlite3.Connection) -> None:
     """Seed demo schedules only when referenced agents exist."""
     from app.services.platform_data import seed_schedules
@@ -320,8 +313,6 @@ def seed_if_empty(conn: sqlite3.Connection) -> None:
             _seed_settings(conn)
         if _count(conn, "skills") == 0:
             _seed_skills(conn)
-        # Always upsert missing discovered modules (safe for existing DBs).
-        _seed_modules(conn)
         if _count(conn, "schedules") == 0:
             _seed_schedules(conn)
         conn.commit()

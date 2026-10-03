@@ -244,13 +244,20 @@ def discover_skills(home_root: Path | None = None) -> list[DiscoveredSkill]:
     for root, source in skill_search_roots(home_root):
         for skill_md in iter_skill_md_files(root):
             skill = load_discovered_skill(skill_md, source, root=root)
-            if skill is None:
+            if skill is None or skill.id.startswith("plugin__"):
                 continue
             existing = by_id.get(skill.id)
             if existing is None:
                 by_id[skill.id] = skill
             elif existing.source not in {"internal", "library"} and source == "library":
                 by_id[skill.id] = skill
+    # Plugin skills are read-only, namespaced, and follow the active runtime.
+    from app.plugins.manager import get_manager
+
+    manager = get_manager()
+    for skill in manager.skill_packages():
+        if home_root is None or manager.root.resolve() == home_root.resolve():
+            by_id[skill.id] = skill
     return sorted(by_id.values(), key=lambda s: s.name.lower())
 
 

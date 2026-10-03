@@ -66,7 +66,7 @@ parser shows the union of action names.
 | `users` | CRUD and `schema`; create requires username/password; last-enabled-account protection applies |
 | `api-keys` | `list`, `show`, `create`, `delete`, `schema`; create requires `user_id`; cannot update an existing key |
 | `skills` | `list`, `show`, `update`; fields `enabled`, `name`, `description`, `version`; package install/removal uses `tomo skills` |
-| `modules` | `list`, `show`, `update`; fields `enabled`, `name`, `description`, `version`; no generic module `config` payload |
+| Live plugins | Use `tomo plugins` or the `plugin_manager` tool; see [Skills and plugins](skills-plugins.md) |
 | `settings` | `show`/`list`, `update`; no ID; update existing settings keys |
 | `agent-tools` | `show`/`list <agent-id>`, `update <agent-id>` with `{"enabled":{"tool-id":true}}` |
 | `agent-skills` | `show`/`list <agent-id>`, `update <agent-id>` with `{"skill_ids":["skill-id"]}` |
@@ -84,7 +84,7 @@ This file defines command mechanics and resource support. For end-to-end decisio
 load the relevant playbook:
 
 - [Agents and models](agents-models.md): persistent specialists, personas, profile selection, workplace scope.
-- [Skills and modules](skills-modules.md): discovery, installations, full assignment saves, reusable procedures.
+- [Skills and plugins](skills-plugins.md): discovery, installations, full assignment saves, reusable procedures.
 - [Schedules](schedules.md): complete job prompts, timezone/next-run checks, run history.
 - [Channels and settings](channels-settings.md): Telegram, transcription, approval defaults, learning/limits.
 - [Memory and knowledge](memory-knowledge.md): retrieval, store selection, corrections, scoped knowledge.

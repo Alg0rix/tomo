@@ -92,16 +92,7 @@ RESOURCES = {
         None,
         None,
     ),
-    "modules": (
-        "modules",
-        "list_modules",
-        "get_module",
-        None,
-        "update_module",
-        None,
-        None,
-        None,
-    ),
+
 }
 SPECIAL = ("settings", "agent-tools", "agent-skills", "mcp-items")
 
@@ -198,7 +189,6 @@ def _validate(resource: str, action: str, data: dict) -> dict:
         )
     allowed = {
         "skills": {"enabled", "name", "description", "version"},
-        "modules": {"enabled", "name", "description", "version"},
     }[resource]
     if set(data) - allowed:
         raise ValueError(f"Allowed fields: {', '.join(sorted(allowed))}")

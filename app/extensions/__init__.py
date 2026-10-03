@@ -1,1 +1,1 @@
-"""Plugin and skill loading."""
+"""Skill package loading."""

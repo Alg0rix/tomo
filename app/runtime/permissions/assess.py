@@ -100,6 +100,10 @@ def assess(
             )
         )
 
+    if tool.startswith("plugin__") or (tool == "plugin_manager" and arguments.get("action", "list") not in {"list", "search", "marketplaces"}):
+        findings.append(Finding(kind="external", key=f"plugin:{tool}",
+                                description=f"trusted plugin execution: {tool}"))
+
     if tool == 'process' and str(arguments.get('action') or '').strip().lower() in {'kill', 'close-monitoring'}:
         findings.append(Finding(kind='dangerous', key=_commandish(tool, arguments),
                                 description='change a background process or close its monitoring'))

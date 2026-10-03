@@ -1,0 +1,2 @@
+{# SVG markup comes only from the fixed registry in app/plugins/icons.py. #}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-plugin-icon="{{ icon|default('puzzle', true) }}">{{ plugin_icons.get(icon|default('puzzle', true), plugin_icons['puzzle'])|safe }}</svg>

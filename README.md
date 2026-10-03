@@ -595,14 +595,14 @@ tomo/
 │   ├── tools/                    # Declarative tool JSON (schema + backend ref)
 │   ├── channels/                 # Web + Telegram (WhatsApp later)
 │   ├── workplaces/               # Local / SSH / tunnel hub + pairing
-│   ├── extensions/               # Skill loader; plugin loader stub
+│   ├── extensions/               # Installable skill loader
+│   ├── plugins/                  # Live plugin runtime, SDK, and catalog management
 │   ├── services/                 # Store facade + chat/SSE
 │   ├── static/                   # CSS + JS (Darkroom UI)
 │   └── templates/                # Jinja pages + partials/
 │
-├── cli/                          # `tomo` CLI (update, uninstall, service, skills)
+├── cli/                          # `tomo` CLI (update, uninstall, service, skills, plugins)
 ├── skills/                       # Installable skill packages
-├── modules/                      # Optional product modules (Token Monitor, …)
 ├── skillsets/                    # Preset agent profiles (JSON)
 ├── defaults/                     # Shipped prompts and KB seeds
 ├── evaluator/                    # LLM evaluation engine — stub (UI hidden; TOMO_EVAL_UI)
@@ -626,7 +626,7 @@ tomo/
 | **Persistence** | `app/models/` | SQLite via mixins |
 | **Runtime** | `app/runtime/` | Coordinator, agent loop, memory, portals, tools |
 | **Integrations** | `app/channels/`, `app/workplaces/` | Messaging and execution environments |
-| **Extensions** | `skills/`, `modules/`, `app/extensions/` | Skill packages + optional modules |
+| **Extensions** | `skills/`, `app/plugins/`, `app/extensions/` | Skills + live plugins |
 | **Ops** | `cli/`, `scripts/` | Install/update/uninstall, systemd user unit, local tooling |
 
 **Today:** `app/services/store.py` is a facade over SQLite mixins (`app/models/`). Runtime, channels, and workplaces are wired for the Alpha demo path.
@@ -668,3 +668,10 @@ Build the swarm. Let it learn. Let the coordinator handle the rest.
 Apache License 2.0. See [LICENSE](LICENSE) for the full text.
 
 Copyright 2026 Tomo contributors
+
+### Live plugins
+
+Build trusted Python plugins with multiple pages and tools that Tomo agents can use.
+Open **Plugins** to install, enable, disable, or reload them without restarting
+the server. See [the plugin guide](docs/plugins.md) and the
+[Money plugin](https://github.com/Alg0rix/tomo-plugins/tree/main/plugins/money).

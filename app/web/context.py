@@ -1,4 +1,4 @@
-"""Shared Jinja page context for HTML routes and module pages."""
+"""Shared Jinja page context for HTML routes and plugin pages."""
 
 from __future__ import annotations
 
@@ -14,21 +14,34 @@ logger = logging.getLogger(__name__)
 
 
 def page_ctx(request: Request, page: str, **extra):
-    module_nav: list = []
-    try:
-        from app.services import store
-        from modules.registry import nav_items
+    from app.plugins.manager import get_manager
 
-        module_nav = nav_items(store.enabled_module_ids())
-    except Exception:
-        logger.exception("module_nav failed")
-        module_nav = []
+    plugin_nav = [
+        {
+            "id": "plugins",
+            "label": "Plugins",
+            "path": "/extensions",
+            "page": "plugins",
+            "icon": "puzzle",
+        }
+    ]
+    for plugin in get_manager().list():
+        if plugin["running"] and plugin["pages"]:
+            plugin_nav.append(
+                {
+                    "id": plugin["id"],
+                    "icon": plugin.get("icon", "puzzle"),
+                    "label": plugin["name"],
+                    "path": plugin["pages"][0]["path"],
+                    "page": "plugin-" + plugin["id"],
+                }
+            )
     return {
         "page": page,
         "brand": BRAND,
         "app_version": package_version(),
         "current_user_id": session_user_id(request),
         "current_username": session_username(request),
-        "module_nav": module_nav,
+        "plugin_nav": plugin_nav,
         **extra,
     }

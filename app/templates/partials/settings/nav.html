@@ -10,7 +10,7 @@
   {% endif %}
 {% endfor %}
 {% set tools_on = tools|selectattr('enabled')|list|length %}
-{% set modules_on = modules|selectattr('enabled')|list|length %}
+{% set plugins_on = plugins|selectattr('running')|list|length %}
 {% set mcp_n = mcp_servers|length %}
 {% set mcp_ok = mcp_servers|selectattr('status', 'equalto', 'connected')|list|length %}
 {% set mcp_err = mcp_servers|selectattr('status', 'equalto', 'error')|list|length %}
@@ -105,11 +105,11 @@
           <span class="machine-node-key">MCP</span>
           <span class="machine-node-val">{% if mcp_n %}{{ mcp_n }} server{{ 's' if mcp_n != 1 else '' }}{% else %}None{% endif %}</span>
         </a>
-        <a href="#modules" data-section="modules" class="machine-node" data-state="{{ 'ok' if modules_on else 'off' }}" data-kicker="Surfaces" data-title="Optional surfaces" data-lede="Optional module UIs. Open the gallery for the full set.">
+        <a href="#plugins" data-section="plugins" class="machine-node" data-state="{{ 'ok' if plugins_on else 'off' }}" data-kicker="Surfaces" data-title="Optional surfaces" data-lede="Pages, agent tools, and turn hooks. Open the gallery to install or reload plugins.">
           <span class="machine-node-pip" aria-hidden="true"></span>
           <span class="machine-node-name">Surfaces</span>
-          <span class="machine-node-key">Modules</span>
-          <span class="machine-node-val">{{ modules_on }} on</span>
+          <span class="machine-node-key">Plugins</span>
+          <span class="machine-node-val">{{ plugins_on }} on</span>
         </a>
       </div>
     </div>

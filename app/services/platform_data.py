@@ -3,7 +3,6 @@
 from app.models.platform_data import (
     seed_tools,
     seed_skills,
-    seed_plugins,
     seed_workplaces,
     seed_schedules,
     seed_providers,
@@ -20,7 +19,6 @@ from app.models.platform_data import (
 __all__ = [
     "seed_tools",
     "seed_skills",
-    "seed_plugins",
     "seed_workplaces",
     "seed_schedules",
     "seed_providers",

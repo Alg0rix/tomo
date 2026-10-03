@@ -22,6 +22,9 @@ empty to disable external discovery.
 Bundled packages:
 
 - [Tomo](internal/tomo/SKILL.md): operate and configure Tomo.
+- [Plugin development](internal/plugin-development/SKILL.md): build pages, tools, and usage skills.
+- [Plugin management](internal/plugin-management/SKILL.md): install and manage live plugins and catalogs.
+- [Plugin publishing](internal/plugin-publishing/SKILL.md): release official plugins or submit community listings.
 - [Documents](internal/documents/SKILL.md): create, edit, and style Word/PDF
   deliverables; includes design, embedded diagrams, proposal helpers, and page preview.
 
@@ -37,7 +40,7 @@ Agents load a Tomo topic with
 | `references/cli.md` | CLI lifecycle and skill packages |
 | `references/configuration-cli.md` | Local configuration syntax, action support, schemas, reloads |
 | `references/agents-models.md` | Agents, personas, LLM profiles, workplace scopes |
-| `references/skills-modules.md` | Packages, tool/skill assignments, reusable playbooks, modules |
+| `references/skills-plugins.md` | Packages, tool/skill assignments, reusable playbooks, plugins |
 | `references/schedules.md` | Scheduled prompts, recurrence, pause/resume, run verification |
 | `references/channels-settings.md` | Telegram, transcription, approvals, learning, general limits |
 | `references/memory-knowledge.md` | Full memory lifecycle: scopes, capture, wikilinks/aliases, recall, edit/move/forget, extraction/consolidation, retention, backup/restore |
@@ -69,3 +72,11 @@ When **Settings → Learning loop** is on, Tomo may run a background review afte
 eligible multi-step turns. The reviewer can call ``remember`` and ``manage_skill``
 to distill facts and class-level playbooks. Agents can also call those tools
 mid-turn. Skills stay inspectable files under ``$TOMO_HOME/library/skills``.
+
+## Plugin-owned skills
+
+Enabled plugins contribute `skills/<name>/SKILL.md` from their source package.
+IDs use `plugin__<plugin-id>__<skill-id>`; that namespace is reserved. They are
+read-only in skill management and refreshed through plugin reload. Disable or
+uninstall removes their availability. Complete official examples live in
+[tomo-plugins](https://github.com/Alg0rix/tomo-plugins).

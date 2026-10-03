@@ -5,15 +5,13 @@
   </span>
   <span class="app-rail-label">Workplaces</span>
 </a>
-{% for item in module_nav|default([]) %}
-{% if item.id == 'token_monitor' %}
+{% for item in plugin_nav|default([]) %}
 <a class="app-rail-item {{ 'active' if page == item.page }}" href="{{ item.path }}" title="{{ item.label }}" role="menuitem">
   <span class="app-rail-ico" aria-hidden="true">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+    {% with icon=item.icon %}{% include 'partials/plugin_icon.html' %}{% endwith %}
   </span>
   <span class="app-rail-label">{{ item.label }}</span>
 </a>
-{% endif %}
 {% endfor %}
 <a class="app-rail-item {{ 'active' if page == 'scheduler' }}" href="/scheduler" title="Scheduler" role="menuitem">
   <span class="app-rail-ico" aria-hidden="true">
