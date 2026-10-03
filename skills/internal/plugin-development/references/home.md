@@ -119,7 +119,7 @@ the user or a person (neutral grey).
 | `timeline` | `[{time, label, meta?, tone?, href?}]` | Agenda, ≤5 entries; `time` ≤12 chars ("09:30", "Fri") |
 | `checklist` | `[{label, done}]` | ≤6 read-only rows; mutate through your tools/pages |
 | `list` | `[{label, value?, sub?, who?, tone?, href?}]` | ≤6 rows; `sub` is a second line; `who` avatar or `tone` dot leads the row |
-| `apps` | `[{label, href?, icon?, sub?, tone?}]` | Launcher tile grid, ≤8; `icon` is a supported Lucide name, a local path, or an `https://` image (else a coloured initial); `href` may be external (opens a new tab); `tone` is a status dot |
+| `apps` | `[{label, href?, icon?, sub?, tone?}]` | Launcher tile grid, ≤24; `icon` is a supported Lucide name, a local path, or an `https://` image (else a coloured initial); `href` may be external (opens a new tab); `tone` is a status dot |
 | `table` | `{columns: [label, …], rows: [[cell, …]]}` | Compact grid, ≤4 columns × 5 rows; short rows are padded, long ones truncated |
 | `tags` | `[{label, tone?}]` | ≤8 chips |
 | `quote` | string | ≤240 chars |

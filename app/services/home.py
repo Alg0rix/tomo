@@ -655,7 +655,7 @@ def normalize_card(data: Any) -> dict[str, Any]:
             tone=_tone(a.get("tone")),
         ))
     if apps:
-        out["apps"] = apps[:8]
+        out["apps"] = apps[:24]
     timeline = []
     for event in _items(data.get("timeline")):
         if isinstance(event, dict) and event.get("label"):

@@ -207,7 +207,7 @@ def test_normalize_card_apps_field():
                 {"label": "Room", "href": "/plugins/money/", "icon": "/plugins/money/static/i.png"},
                 {"label": "Bad", "href": "javascript:alert(1)", "icon": "nope"},
                 {"no_label": True},
-            ] * 2,
+            ] * 7,
         }
     )
     assert card["apps"][0] == {
@@ -217,7 +217,7 @@ def test_normalize_card_apps_field():
     assert card["apps"][1] == {"label": "LAN app", "href": "http://192.168.1.5:8080", "icon": "globe"}
     assert card["apps"][2] == {"label": "Room", "href": "/plugins/money/", "img": "/plugins/money/static/i.png"}
     assert card["apps"][3] == {"label": "Bad", "href": ""}
-    assert len(card["apps"]) == 8
+    assert len(card["apps"]) == 24
 
 
 def test_normalize_card_rejects_non_dict():
