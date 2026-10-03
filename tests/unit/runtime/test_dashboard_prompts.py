@@ -159,6 +159,55 @@ def test_build_user_context_truncates_long_body(tmp_path):
     assert "z" * 160 in ctx
 
 
+# ── build_user_context (recent sessions) ──────────────────────────────────
+
+
+def _make_session(user_id: str, *queries: str) -> str:
+    sid = store.create_swarm_session(["main"], user_id=user_id)
+    for q in queries:
+        store.append_session_history(sid, {"type": "user", "content": q})
+    return sid
+
+
+def test_build_user_context_includes_recent_sessions(tmp_path):
+    store.rebind(tmp_path / "ctx_sess.db")
+    _make_session("sess_alice", "Help me debug the CCTV lane dashboard relay")
+    ctx = build_user_context("sess_alice")
+    assert "Recent sessions:" in ctx
+    assert "CCTV lane dashboard" in ctx
+
+
+def test_build_user_context_sessions_scoped_to_user(tmp_path):
+    store.rebind(tmp_path / "ctx_sess_scope.db")
+    _make_session("sess_scope_alice", "alice cctv project follow-up")
+    _make_session("sess_scope_bob", "bob cooking recipe ideas")
+    alice_ctx = build_user_context("sess_scope_alice")
+    assert "cctv" in alice_ctx.lower()
+    assert "cooking" not in alice_ctx.lower()
+    bob_ctx = build_user_context("sess_scope_bob")
+    assert "cooking" in bob_ctx.lower()
+    assert "cctv" not in bob_ctx.lower()
+
+
+def test_build_user_context_skips_empty_sessions(tmp_path):
+    store.rebind(tmp_path / "ctx_sess_empty.db")
+    # No messages yet — title stays "New conversation", no signal.
+    store.create_swarm_session(["main"], user_id="sess_empty_user")
+    assert build_user_context("sess_empty_user") == ""
+
+
+def test_build_user_context_survives_session_store_failure(tmp_path, monkeypatch):
+    store.rebind(tmp_path / "ctx_sess_fail.db")
+    write.add_entity('sess_fail_user', scoped_key('topic', 'Fail secret'), 'Fail secret' + ': ' + "only this user's note")
+    monkeypatch.setattr(
+        store, "list_sessions",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+    ctx = build_user_context("sess_fail_user")
+    assert "Fail secret" in ctx
+    assert "Recent sessions:" not in ctx
+
+
 # ── get_dashboard_prompts orchestration ─────────────────────────────────
 
 

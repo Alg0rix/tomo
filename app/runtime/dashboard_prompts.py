@@ -26,8 +26,13 @@ _LABEL_MAX = 60
 _PROMPT_MAX = 300
 _KNOWLEDGE_TRUNC = 160
 _EPISODE_TRUNC = 160
+_SESSION_TITLE_TRUNC = 80
+_SESSION_QUERY_TRUNC = 120
 _KNOWLEDGE_LIMIT = 5
 _EPISODE_LIMIT = 5
+_SESSION_LIMIT = 5
+_SESSION_SCAN_LIMIT = 8
+_SESSION_QUERY_LIMIT = 2
 _CACHE_TTL_S = 90 * 60
 _LLM_TIMEOUT_S = 12.0
 
@@ -149,6 +154,39 @@ def _episode_context(user_id: str) -> str:
     return "\n".join(lines)
 
 
+def _session_context(user_id: str) -> str:
+    from app.services import store
+
+    try:
+        sessions = store.list_sessions(user_id=user_id)
+    except Exception:
+        return ""
+    lines = []
+    for sess in sessions[:_SESSION_SCAN_LIMIT]:
+        sid = sess.get("id")
+        if not sid:
+            continue
+        try:
+            queries = store.get_session_queries(sid)
+        except Exception:
+            continue
+        title = _truncate(sess.get("title") or "", _SESSION_TITLE_TRUNC)
+        # Skip untitled / never-chatted sessions — no signal for suggestions.
+        if (not title or title in ("New conversation", "New swarm chat")) and not queries:
+            continue
+        if not title or title in ("New conversation", "New swarm chat"):
+            title = "(untitled)"
+        recent = [q for q in queries if (q.get("content") or "").strip()]
+        recent = recent[-_SESSION_QUERY_LIMIT:]
+        bit = "- Session: " + title
+        for q in recent:
+            bit += f' | Asked: {_truncate(q.get("content") or "", _SESSION_QUERY_TRUNC)}'
+        lines.append(bit)
+        if len(lines) >= _SESSION_LIMIT:
+            break
+    return "\n".join(lines)
+
+
 def build_user_context(user_id: str) -> str:
     """Compact, user-scoped context block for the prompt-suggestion LLM call."""
     parts = []
@@ -158,6 +196,9 @@ def build_user_context(user_id: str) -> str:
     ep = _episode_context(user_id)
     if ep:
         parts.append("Recent experience:\n" + ep)
+    sess = _session_context(user_id)
+    if sess:
+        parts.append("Recent sessions:\n" + sess)
     return "\n\n".join(parts)
 
 
