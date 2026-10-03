@@ -63,6 +63,14 @@ async def home_live_api(request: Request, _: AuthDep):
     return home.live_snapshot(session_user_id(request))
 
 
+@router.get("/home/badges")
+async def home_badges_api(request: Request, _: AuthDep):
+    """Rail counters polled from every page."""
+    from app.services import home
+
+    return home.badges(session_user_id(request))
+
+
 @router.put("/home/layout")
 async def home_layout_api(request: Request, body: dict, _: AuthDep):
     from app.services import home

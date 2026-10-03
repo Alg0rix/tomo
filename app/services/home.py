@@ -791,6 +791,16 @@ def live_snapshot(user_id: str) -> dict[str, Any]:
     }
 
 
+def badges(user_id: str) -> dict[str, int]:
+    """Rail counters: open needs and chat turns or swarms in flight."""
+    sessions, agents = _context(user_id)
+    running = live(user_id, sessions, agents)
+    return {
+        "needs": len(needs(user_id, sessions)),
+        "running": sum(item["kind"] in {"turn", "swarm"} for item in running),
+    }
+
+
 def snapshot(user_id: str, tz_minutes: int = 0) -> dict[str, Any]:
     sessions, agents = _context(user_id)
     pending = needs(user_id, sessions)
@@ -812,6 +822,7 @@ def snapshot(user_id: str, tz_minutes: int = 0) -> dict[str, Any]:
 
 
 __all__ = [
+    "badges",
     "get_layout",
     "live_snapshot",
     "normalize_card",

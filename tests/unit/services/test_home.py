@@ -141,7 +141,28 @@ def test_layout_api_roundtrip_and_isolation(monkeypatch):
         assert client.get("/api/home?tz=0").json()["layout"]["hidden"] == ["core:companion"]
         user["id"] = "usr_bob"
         assert client.get("/api/home/live").status_code == 200
+        assert client.get("/api/home/badges").json() == {"needs": 0, "running": 0}
         assert client.get("/api/home?tz=0").json()["layout"] == {"order": [], "hidden": []}
         assert client.get("/api/home?tz=9999").status_code == 422
     finally:
         app.dependency_overrides.pop(require_auth, None)
+
+
+def test_rail_renders_rooms_with_kanji_and_tint():
+    from app.core.deps import templates
+
+    html = templates.get_template("partials/app_rail.html").render(
+        page="home",
+        brand="Tomo",
+        current_username="ana",
+        current_role="admin",
+        plugin_nav=[
+            {"id": "money", "label": "Money", "path": "/plugins/money/", "page": "plugin-money", "icon": "wallet", "kanji": "金", "tint": "ok"},
+            {"id": "notes", "label": "Notes", "path": "/plugins/notes/", "page": "plugin-notes", "icon": "puzzle", "kanji": "", "tint": "info"},
+        ],
+        url_for=lambda *a, **k: "/static/mark.png",
+    )
+    assert 'app-rail-room ok"><span lang="ja">金</span>' in html
+    assert 'app-rail-room info">' in html and 'data-plugin-icon="puzzle"' in html
+    assert "Under the roof" in html and 'data-rail-badge="needs"' in html
+    assert "admin · " in html and ">A</span>" in html

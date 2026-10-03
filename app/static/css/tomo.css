@@ -135,7 +135,7 @@ img { max-width: 100%; display: block; }
   height: 100vh; height: 100dvh;
   position: sticky; top: 0;
   z-index: 40;
-  background: color-mix(in srgb, var(--surface) 92%, #000 8%);
+  background: var(--bg-grain);
   border-right: 1px solid var(--border);
   transition: width .18s ease;
   overflow: hidden;
@@ -147,8 +147,15 @@ html.is-rail-collapsed .app-rail {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 12px var(--rail-pad) 8px;
+  padding: 14px var(--rail-pad) 8px;
   flex-shrink: 0;
+}
+/* Off /sessions the nav owns the height and scrolls; Chat keeps it fixed for Recents. */
+.app-rail:not(.is-chat) .app-rail-top {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .app-rail-brand-row {
   display: flex;
@@ -201,7 +208,7 @@ html.is-rail-collapsed .app-rail {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: transparent;
@@ -212,12 +219,53 @@ html.is-rail-collapsed .app-rail {
   cursor: pointer;
   transition: color .15s, background .15s, border-color .15s;
 }
-.app-rail-item:hover { color: var(--text); background: var(--surface-2); }
+.app-rail-item:hover { color: var(--text); background: var(--surface); }
 .app-rail-item.active {
   color: var(--text);
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
+.app-rail-item.active .app-rail-ico > svg { color: var(--accent); }
+.app-rail-badge {
+  margin-left: auto;
+  font: 600 11px var(--font-mono);
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+}
+.app-rail-dot {
+  margin-left: auto;
+  width: 7px; height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: rail-pulse 1.8s ease-in-out infinite;
+}
+.app-rail-badge[hidden], .app-rail-dot[hidden] { display: none; }
+@keyframes rail-pulse { 50% { box-shadow: 0 0 0 5px transparent; } }
+@media (prefers-reduced-motion: reduce) { .app-rail-dot { animation: none; } }
+.app-rail-kanji, .app-rail-room {
+  font-family: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+}
+.app-rail-kanji { letter-spacing: 0; font-size: 12px; }
+.app-rail-room {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+.app-rail-room svg { width: 12px !important; height: 12px !important; }
+.app-rail-room.warm { background: var(--accent-soft); color: var(--accent); }
+.app-rail-room.ok { background: var(--ok-soft); color: var(--ok); }
+.app-rail-room.info { background: var(--info-soft); color: var(--info); }
+.app-rail-room.rose { background: var(--danger-soft); color: var(--danger); }
+.app-rail-room.earth { background: hsl(12 55% 55% / .16); color: hsl(12 60% 64%); }
+[data-theme="light"] .app-rail-room.earth { background: hsl(12 55% 45% / .12); color: hsl(12 55% 40%); }
+.app-rail-item.active .app-rail-room { box-shadow: 0 0 0 1px currentColor; }
+.app-rail-empty { color: var(--text-faint); }
 button.app-rail-item.active { color: var(--accent); }
 .app-rail-ico {
   width: 20px; height: 20px; flex-shrink: 0;
@@ -274,13 +322,29 @@ html.is-rail-collapsed .app-rail-more-menu .app-rail-item {
 }
 .app-rail-section-label {
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: .1em;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--text-faint);
   padding: 6px 10px 8px;
   flex-shrink: 0;
 }
+.app-rail-sec {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 10px 6px;
+}
+.app-rail-sec a {
+  color: var(--text-faint);
+  font: 400 15px var(--font-body, inherit);
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 0 2px;
+}
+.app-rail-sec a:hover { color: var(--accent); }
+.app-rail-more-menu .app-rail-sec:first-child { padding-top: 6px; }
 .app-rail-session-list.sessions-list {
   flex: 1;
   min-height: 0;
@@ -292,11 +356,26 @@ html.is-rail-collapsed .app-rail-more-menu .app-rail-item {
 .app-rail-foot {
   flex-shrink: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px var(--rail-pad) 12px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px var(--rail-pad) 10px;
   border-top: 1px solid var(--border);
   margin-top: auto;
+}
+.app-rail-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 0 10px;
+}
+.app-rail-avatar {
+  width: 26px; height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 12px var(--font-display);
 }
 .app-rail-user {
   flex: 1;
@@ -305,8 +384,15 @@ html.is-rail-collapsed .app-rail-more-menu .app-rail-item {
   flex-direction: column;
   gap: 1px;
 }
+.app-rail-user-meta {
+  font: 11px var(--font-mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .app-rail-user-name {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -324,9 +410,23 @@ html.is-rail-collapsed .app-rail-brand-text,
 html.is-rail-collapsed .app-rail-label,
 html.is-rail-collapsed .app-rail-section-label,
 html.is-rail-collapsed .app-rail-user,
+html.is-rail-collapsed .app-rail-badge,
 html.is-rail-collapsed .app-rail-recents {
   display: none;
 }
+/* Collapsed: sections become hairlines; badges shrink to corner dots. */
+html.is-rail-collapsed .app-rail-nav > .app-rail-sec {
+  display: block;
+  height: 1px;
+  padding: 0;
+  margin: 8px 10px;
+  font-size: 0;
+  background: var(--border);
+}
+html.is-rail-collapsed .app-rail-nav > .app-rail-sec > * { display: none; }
+html.is-rail-collapsed .app-rail-item { position: relative; }
+html.is-rail-collapsed .app-rail-dot { position: absolute; top: 7px; right: 9px; width: 6px; height: 6px; }
+html.is-rail-collapsed .app-rail-me { flex-direction: column; padding: 6px 0 0; gap: 6px; }
 html.is-rail-collapsed .app-rail-brand-row { justify-content: center; flex-wrap: wrap; gap: 2px; }
 html.is-rail-collapsed .app-rail-brand { justify-content: center; flex: 0 0 auto; }
 html.is-rail-collapsed .app-rail-item { justify-content: center; padding: 10px 8px; }
@@ -4639,6 +4739,11 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
     display: block;
   }
   html.is-rail-collapsed .app-rail-recents { display: flex; }
+  html.is-rail-collapsed .app-rail-badge:not([hidden]) { display: inline; }
+  html.is-rail-collapsed .app-rail-nav > .app-rail-sec { display: flex; height: auto; padding: 16px 10px 6px; margin: 0; font-size: 10.5px; background: none; }
+  html.is-rail-collapsed .app-rail-nav > .app-rail-sec > * { display: inline; }
+  html.is-rail-collapsed .app-rail-dot { position: static; width: 7px; height: 7px; }
+  html.is-rail-collapsed .app-rail-me { flex-direction: row; padding: 6px 4px 0 10px; gap: 10px; }
   /* Mobile drawer: close with X only — hide desktop collapse */
   .app-rail-collapse { display: none; }
   html.is-rail-collapsed .app-rail-brand { flex: 1; justify-content: flex-start; }

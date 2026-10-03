@@ -123,10 +123,38 @@
     }
   }
   Tomo.setRailCollapsed = setRailCollapsed;
+
+  // ---- rail badges: needs on Home, running dot on Chat ----
+  var badgeTimer = null;
+  function setRailBadges(data) {
+    document.querySelectorAll('[data-rail-badge]').forEach(function (el) {
+      if (!data || !(el.dataset.railBadge in data)) return;
+      var n = Number(data[el.dataset.railBadge]) || 0;
+      if (el.classList.contains('app-rail-badge')) el.textContent = n > 99 ? '99+' : String(n);
+      el.hidden = n <= 0;
+    });
+  }
+  Tomo.setRailBadges = setRailBadges;
+  function pollRailBadges() {
+    clearTimeout(badgeTimer);
+    if (!document.querySelector('[data-rail-badge]')) return;
+    if (document.visibilityState === 'visible') {
+      fetch('/api/home/badges', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { if (d) setRailBadges(d); })
+        .catch(function () {});
+    }
+    badgeTimer = setTimeout(pollRailBadges, 15000);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') pollRailBadges();
+  });
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindChrome);
+    document.addEventListener('DOMContentLoaded', function () { bindChrome(); pollRailBadges(); });
   } else {
     bindChrome();
+    pollRailBadges();
   }
 
   // ---- toast ----

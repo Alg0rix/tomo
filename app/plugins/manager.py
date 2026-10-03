@@ -266,6 +266,16 @@ class PluginManager:
                     "pages": self._active[plugin_id]["api"].pages
                     if plugin_id in self._active
                     else [],
+                    "kanji": next(
+                        (
+                            card["kanji"]
+                            for card in self._active[plugin_id]["api"].home_cards
+                            if card.get("kanji")
+                        ),
+                        "",
+                    )
+                    if plugin_id in self._active
+                    else "",
                 }
                 for plugin_id, row in sorted(self._rows.items())
             ]

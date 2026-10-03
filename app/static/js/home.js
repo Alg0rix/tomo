@@ -225,6 +225,7 @@
   }
   function renderNeeds(list) {
     list = (list || []).filter(function (n) { return !resolving[n.id]; });
+    if (Tomo.setRailBadges) Tomo.setRailBadges({ needs: list.length });
     $('needsCount').textContent = list.length ? list.length + ' waiting' : '';
     var box = $('homeNeeds');
     if (!list.length) {
@@ -240,7 +241,11 @@
       setTimeout(function () {
         el.remove();
         if (!$('homeNeeds').querySelector('.home-need')) renderNeeds([]);
-        else $('needsCount').textContent = $('homeNeeds').querySelectorAll('.home-need').length + ' waiting';
+        else {
+          var left = $('homeNeeds').querySelectorAll('.home-need').length;
+          $('needsCount').textContent = left + ' waiting';
+          if (Tomo.setRailBadges) Tomo.setRailBadges({ needs: left });
+        }
       }, 400);
     }, stamp ? 650 : 0);
   }
