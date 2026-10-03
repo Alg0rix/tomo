@@ -114,17 +114,18 @@ async def test_approval_deny_unblocks_real_turn_and_other_chat_stays_responsive(
     setup, monkeypatch
 ):
     bot, api = setup
+    # Main has unrestricted paths without a project; use a flagged mutation.
     inject(
         monkeypatch,
         [
-            bash_call("ls ~/.tomo"),
+            bash_call("rm -r approval-test"),
             text_reply("Other chat ready"),
             text_reply("Denied safely."),
         ],
     )
     dispatcher = TelegramDispatcher(api)
     try:
-        await dispatcher.dispatch(message("inspect outside the workspace"))
+        await dispatcher.dispatch(message("remove the test directory"))
         await until(lambda: 42 in dispatcher.uis and bool(dispatcher.uis[42].prompts))
         ui = dispatcher.uis[42]
         prompt = next(iter(ui.prompts.values()))
@@ -216,7 +217,7 @@ async def test_stop_button_interrupts_approval_wait_and_releases_lease(
     setup, monkeypatch
 ):
     bot, api = setup
-    inject(monkeypatch, [bash_call("ls ~/.tomo")])
+    inject(monkeypatch, [bash_call("rm -r approval-test")])
     dispatcher = TelegramDispatcher(api)
     try:
         await dispatcher.dispatch(message("inspect"))
@@ -368,7 +369,7 @@ async def test_activity_is_compact_and_does_not_publish_reasoning_or_tool_secret
 
 async def test_shutdown_cancels_waiters_and_typing(setup, monkeypatch):
     _, api = setup
-    inject(monkeypatch, [bash_call("ls ~/.tomo")])
+    inject(monkeypatch, [bash_call("rm -r approval-test")])
     dispatcher = TelegramDispatcher(api)
     await dispatcher.dispatch(message("inspect"))
     await until(lambda: 42 in dispatcher.uis and bool(dispatcher.uis[42].prompts))
@@ -534,7 +535,7 @@ async def test_real_poll_batch_does_not_wait_for_agent_approval(setup, monkeypat
     from app.channels.telegram import poll_once
 
     bot, api = setup
-    inject(monkeypatch, [bash_call("ls ~/.tomo"), text_reply("Denied.")])
+    inject(monkeypatch, [bash_call("rm -r approval-test"), text_reply("Denied.")])
     batches = [[{"update_id": 50, **message("inspect")}]]
 
     async def updates(**kwargs):
@@ -571,7 +572,7 @@ async def test_allow_once_dispatches_real_gate_and_records_tool_result(
     setup, monkeypatch
 ):
     bot, api = setup
-    inject(monkeypatch, [bash_call("ls ~/.tomo"), text_reply("Tool completed.")])
+    inject(monkeypatch, [bash_call("rm -r approval-test"), text_reply("Tool completed.")])
     executed = []
 
     async def execute(call, decision):

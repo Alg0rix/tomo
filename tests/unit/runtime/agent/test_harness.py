@@ -22,14 +22,25 @@ from tests.fakes.llm import ScriptedLLM, text_reply
 
 @pytest.mark.asyncio
 async def test_execute_authorized_still_runs_builtin_tools(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
+    from app.runtime.tools.sandbox import bind_agent, reset_agent
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+    from app.services import store
+
+    # This tests real local dispatch, independent of earlier agents/workplaces.
+    store.rebind(tmp_path / "builtin-tools.db")
+    agent_token = bind_agent(None)
+    workplace_tokens = bind_workplace(force_work_dir=True)
     call = ToolCall(id="c1", name="bash", arguments={"command": "echo hi"})
     decision = Decision(allowed=True, grant=None)
 
-    result = await _execute_authorized(call, decision)
-
-    assert "hi" in result
+    try:
+        result = await _execute_authorized(call, decision)
+        assert "hi" in result
+    finally:
+        reset_workplace(workplace_tokens)
+        reset_agent(agent_token)
 
 
 

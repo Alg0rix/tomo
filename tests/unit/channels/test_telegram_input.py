@@ -323,7 +323,7 @@ async def test_interrupt_approval_wait_does_not_grant_old_permission(
 
     _, api, dispatcher = setup
     store.update_settings({"approvals_mode": "manual"})
-    llm = ScriptedLLM([bash_call("ls ~/.tomo"), text_reply("Replacement")])
+    llm = ScriptedLLM([bash_call("rm -r approval-test"), text_reply("Replacement")])
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
     try:
         await dispatcher.dispatch(message("old"))
