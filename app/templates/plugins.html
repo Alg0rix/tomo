@@ -4,7 +4,6 @@
 <div class="page pl" id="pl"><noscript><p class="pl-empty">Plugins needs JavaScript.</p></noscript></div>
 <aside class="pl-panel" id="pl-panel" aria-label="Plugin details" hidden></aside>
 <div id="pl-modal"></div>
-{% set used_icons = (plugins + catalog)|map(attribute='icon')|unique|list %}
 <script type="application/json" id="pl-data">{{ {
   "plugins": plugins,
   "catalog": catalog,
@@ -12,7 +11,7 @@
   "agents": builder_agents|default([]),
   "workplaces": builder_workplaces|default([]),
   "admin": can_manage_plugins,
-  "icons": dict(plugin_icons|dictsort|selectattr(0, 'in', used_icons + ['puzzle'])|list),
+  "icons": plugin_icon_paths,
 }|tojson }}</script>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', path='js/plugins.js') }}?v={{ static_ver }}"></script>{% endblock %}

@@ -141,10 +141,14 @@ def test_hub_renders_catalog_and_agent_builder(tmp_path, monkeypatch):
     client = TestClient(app)
     response = client.get("/extensions")
     assert response.status_code == 200
-    assert 'data-catalog-install="money@tomo-official"' in response.text
-    assert 'id="plugin-build"' in response.text
-    assert 'id="hub-marketplaces"' in response.text
-    assert "Money &lt;script&gt;alert(1)&lt;/script&gt;" in response.text
+    assert 'id="pl-data"' in response.text
+    assert '"marketplace": "tomo-official"' in response.text
+    assert '"admin": true' in response.text
+    assert "<script>alert(1)" not in response.text
+    assert "\\u003cscript\\u003ealert(1)" in response.text
+    assert client.get("/settings/marketplaces", follow_redirects=False).headers[
+        "location"
+    ] == "/extensions#catalogs"
     assert client.get("/extensions/guide").status_code == 200
 
 

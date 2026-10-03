@@ -10,9 +10,17 @@ from starlette.concurrency import run_in_threadpool
 from app.core.deps import AuthDep, session_user_id, templates
 from app.plugins.manager import get_manager
 from app.plugins.catalogs import get_marketplaces
+from app.plugins.icons import ICONS
 from app.web.context import page_ctx, room_tint
 
 router = APIRouter()
+
+
+def with_tints(items: list[dict]) -> list[dict]:
+    """Give each row the same sidebar tint the rail uses for its room tile."""
+    for item in items:
+        item["tint"] = room_tint(item["id"])
+    return items
 
 
 def require_plugin_admin(request: Request, _: AuthDep):
@@ -59,7 +67,7 @@ async def operate(function, *args):
 
 @router.get("/api/plugins")
 def list_plugins(_: AuthDep):
-    return get_manager().list()
+    return with_tints(get_manager().list())
 
 
 @router.post("/api/plugins/install", dependencies=[Depends(require_plugin_admin)])
@@ -84,10 +92,9 @@ def plugins_page(request: Request, _: AuthDep):
     from app.services import store
 
     user = store.get_user(session_user_id(request)) or {}
-    plugins = get_manager().list()
-    catalog = get_marketplaces().search()
-    for item in [*plugins, *catalog]:
-        item["tint"] = room_tint(item["id"])
+    plugins = with_tints(get_manager().list())
+    catalog = with_tints(get_marketplaces().search())
+    used = {item.get("icon") for item in [*plugins, *catalog]} | {"puzzle"}
     return templates.TemplateResponse(
         request,
         "plugins.html",
@@ -107,6 +114,7 @@ def plugins_page(request: Request, _: AuthDep):
                 for w in store.list_workplaces()
                 if w.get("kind") == "local"
             ],
+            plugin_icon_paths={k: v for k, v in ICONS.items() if k in used},
             can_manage_plugins=user.get("role") == "admin",
         ),
     )
@@ -125,7 +133,7 @@ def list_marketplaces(_: AuthDep):
 @router.get("/api/plugins/catalog")
 def search_catalog(_: AuthDep, q: str = ""):
 
-    return get_marketplaces().search(q)
+    return with_tints(get_marketplaces().search(q))
 
 
 @router.post("/api/marketplaces", dependencies=[Depends(require_plugin_admin)])
