@@ -91,6 +91,15 @@ class Entry(BaseModel):
     sdk_version: Literal[1]
     author: str = Field(min_length=1, max_length=120)
     source: GitSource
+    kanji: str = ""
+    category: str = Field(default="", max_length=40)
+
+    @field_validator("kanji")
+    @classmethod
+    def valid_kanji(cls, value):
+        from app.plugins.icons import clean_kanji
+
+        return clean_kanji(value)
 
 
 class Catalog(BaseModel):

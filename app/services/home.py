@@ -36,6 +36,24 @@ def _local_href(value: Any) -> str:
     return href[:300]
 
 
+def _ext_href(value: Any) -> str:
+    """App tile links may leave the app: http(s) or a local path."""
+    href = str(value or "").strip()[:300]
+    return href if href.startswith(("http://", "https://")) else _local_href(href)
+
+
+def _tile_icon(value: Any) -> dict[str, str]:
+    """App tile visual: a supported Lucide name or an image (local / https)."""
+    from app.plugins.icons import ICONS
+
+    src = str(value or "").strip()[:300]
+    if src in ICONS:
+        return {"icon": src}
+    if src.startswith("https://"):
+        return {"img": src}
+    return {"img": src} if _local_href(src) else {}
+
+
 # -- needs ---------------------------------------------------------------------
 
 
@@ -627,6 +645,17 @@ def normalize_card(data: Any) -> dict[str, Any]:
                     row = [_text(c, 24) for c in r[: len(headers)]]
                     body.append(row + [""] * (len(headers) - len(row)))
             out["table"] = {"columns": headers, "rows": body[:5]}
+    apps = []
+    for a in _items(data.get("apps")):
+        if not isinstance(a, dict) or not a.get("label"):
+            continue
+        apps.append(_with(
+            {"label": _text(a["label"], 24), "href": _ext_href(a.get("href")), **_tile_icon(a.get("icon"))},
+            sub=_text(a.get("sub"), 40),
+            tone=_tone(a.get("tone")),
+        ))
+    if apps:
+        out["apps"] = apps[:8]
     timeline = []
     for event in _items(data.get("timeline")):
         if isinstance(event, dict) and event.get("label"):

@@ -119,6 +119,7 @@ the user or a person (neutral grey).
 | `timeline` | `[{time, label, meta?, tone?, href?}]` | Agenda, ≤5 entries; `time` ≤12 chars ("09:30", "Fri") |
 | `checklist` | `[{label, done}]` | ≤6 read-only rows; mutate through your tools/pages |
 | `list` | `[{label, value?, sub?, who?, tone?, href?}]` | ≤6 rows; `sub` is a second line; `who` avatar or `tone` dot leads the row |
+| `apps` | `[{label, href?, icon?, sub?, tone?}]` | Launcher tile grid, ≤8; `icon` is a supported Lucide name, a local path, or an `https://` image (else a coloured initial); `href` may be external (opens a new tab); `tone` is a status dot |
 | `table` | `{columns: [label, …], rows: [[cell, …]]}` | Compact grid, ≤4 columns × 5 rows; short rows are padded, long ones truncated |
 | `tags` | `[{label, tone?}]` | ≤8 chips |
 | `quote` | string | ≤240 chars |
@@ -130,8 +131,10 @@ the user or a person (neutral grey).
 
 `href` and `image.src` must be local paths starting with `/` (not `//`);
 anything else is removed. Use `api.base_url + "/page"` for plugin links and
-`api.base_url + "/static/…"` for card images. Send raw numbers in `chart`,
-`ring`, and `heatmap`; core scales them.
+`api.base_url + "/static/…"` for card images. The only external exception is
+the launcher field: `apps[].href` accepts `http(s)://` and `apps[].icon`
+accepts `https://` images. Send raw numbers in `chart`, `ring`, and `heatmap`;
+core scales them.
 
 Good combinations:
 
@@ -141,6 +144,7 @@ Good combinations:
 - **Usage**: `metric` + `stats` + `heatmap`.
 - **Monitor**: `metric` with a threshold `tone` + `series` (multiple lines) + `gauge` + `states` (uptime band) — a mini dashboard.
 - **Pipeline / sync job**: `notice` on failure + `steps` (fetch → parse → import) + `foot` with last-run time; `code` for the last log line.
+- **App launcher**: `apps` tiles (Lucide icon, image, or initial; `tone` for health) + `status` for a count pill.
 
 ## Verify
 

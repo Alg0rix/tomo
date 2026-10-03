@@ -3,13 +3,14 @@
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import AuthDep, session_user_id, templates
 from app.plugins.manager import get_manager
 from app.plugins.catalogs import get_marketplaces
-from app.web.context import page_ctx
+from app.web.context import page_ctx, room_tint
 
 router = APIRouter()
 
@@ -83,18 +84,28 @@ def plugins_page(request: Request, _: AuthDep):
     from app.services import store
 
     user = store.get_user(session_user_id(request)) or {}
+    plugins = get_manager().list()
+    catalog = get_marketplaces().search()
+    for item in [*plugins, *catalog]:
+        item["tint"] = room_tint(item["id"])
     return templates.TemplateResponse(
         request,
         "plugins.html",
         page_ctx(
             request,
             "plugins",
-            plugins=get_manager().list(),
-            catalog=get_marketplaces().search(),
+            plugins=plugins,
+            catalog=catalog,
             marketplaces=get_marketplaces().list(),
-            builder_agents=[a for a in store.list_agents() if a.get("enabled")],
+            builder_agents=[
+                {"id": a["id"], "name": a["name"]}
+                for a in store.list_agents()
+                if a.get("enabled")
+            ],
             builder_workplaces=[
-                w for w in store.list_workplaces() if w.get("kind") == "local"
+                {"id": w["id"], "name": w["name"]}
+                for w in store.list_workplaces()
+                if w.get("kind") == "local"
             ],
             can_manage_plugins=user.get("role") == "admin",
         ),
@@ -140,22 +151,8 @@ async def remove_marketplace(identity: str):
 
 
 @router.get("/settings/marketplaces")
-def marketplaces_page(request: Request, _: AuthDep):
-    from app.services import store
-
-    return templates.TemplateResponse(
-        request,
-        "marketplaces.html",
-        page_ctx(
-            request,
-            "marketplaces",
-            marketplaces=get_marketplaces().list(),
-            can_manage_plugins=(store.get_user(session_user_id(request)) or {}).get(
-                "role"
-            )
-            == "admin",
-        ),
-    )
+def marketplaces_page(_: AuthDep):
+    return RedirectResponse("/extensions#catalogs", status_code=307)
 
 
 @router.get("/extensions/guide")

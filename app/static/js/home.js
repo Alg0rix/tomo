@@ -475,7 +475,7 @@
   }
   function cardBody(d) {
     var html = '';
-    var rich = ['metric', 'caption', 'stats', 'chart', 'ring', 'heatmap', 'spark', 'bars', 'columns', 'timeline', 'checklist', 'list', 'tags', 'quote', 'meter', 'notice', 'image', 'steps', 'table', 'code', 'foot', 'series', 'gauge', 'states'];
+    var rich = ['metric', 'caption', 'stats', 'chart', 'ring', 'heatmap', 'spark', 'bars', 'columns', 'timeline', 'checklist', 'list', 'tags', 'quote', 'meter', 'notice', 'image', 'steps', 'table', 'code', 'foot', 'series', 'gauge', 'states', 'apps'];
     if (d.empty && !rich.some(function (k) { return d[k]; })) {
       return '<div class="empty">' + esc(d.empty) + '</div>' + actionsHtml(d);
     }
@@ -527,6 +527,20 @@
       var inner = '<span class="lb">' + lead + '<span class="tx"><span>' + esc(r.label) + '</span>' + (r.sub ? '<small>' + esc(r.sub) + '</small>' : '') + '</span></span>' +
         '<span>' + esc(r.value || '') + '</span>';
       return r.href ? '<a class="li" href="' + esc(r.href) + '">' + inner + '</a>' : '<div class="li">' + inner + '</div>';
+    }).join('') + '</div>';
+    if (d.apps) html += '<div class="home-apps">' + d.apps.map(function (a) {
+      var inner;
+      if (a.img) inner = '<img src="' + esc(a.img) + '" alt="" loading="lazy">';
+      else if (a.icon) inner = pluginIcon(a.icon);
+      else inner = esc(initial(a.label));
+      var tile = '<span class="tile' + (a.img ? ' img' : a.icon ? ' luc' : ' let') + '"' +
+        (a.img || a.icon ? '' : ' style="background:' + Tomo.avatarColor(a.label) + '"') + '>' + inner +
+        (a.tone ? '<i class="dot ' + esc(a.tone) + '"></i>' : '') + '</span>';
+      var body = tile + '<span class="nm">' + esc(a.label) + '</span>' + (a.sub ? '<span class="sb">' + esc(a.sub) + '</span>' : '');
+      var ext = a.href && a.href.indexOf('http') === 0;
+      return a.href
+        ? '<a class="home-app" href="' + esc(a.href) + '"' + (ext ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + body + '</a>'
+        : '<div class="home-app">' + body + '</div>';
     }).join('') + '</div>';
     if (d.table) html += '<table class="home-tbl"><thead><tr>' + d.table.columns.map(function (c) {
       return '<th>' + esc(c) + '</th>';

@@ -198,6 +198,28 @@ def test_normalize_card_dashboard_fields():
     ]
 
 
+def test_normalize_card_apps_field():
+    card = home.normalize_card(
+        {
+            "apps": [
+                {"label": "Cadesia", "href": "https://console.cadesia.com", "icon": "https://x.dev/f.png", "sub": "pod", "tone": "ok"},
+                {"label": "LAN app", "href": "http://192.168.1.5:8080", "icon": "globe"},
+                {"label": "Room", "href": "/plugins/money/", "icon": "/plugins/money/static/i.png"},
+                {"label": "Bad", "href": "javascript:alert(1)", "icon": "nope"},
+                {"no_label": True},
+            ] * 2,
+        }
+    )
+    assert card["apps"][0] == {
+        "label": "Cadesia", "href": "https://console.cadesia.com",
+        "img": "https://x.dev/f.png", "sub": "pod", "tone": "ok",
+    }
+    assert card["apps"][1] == {"label": "LAN app", "href": "http://192.168.1.5:8080", "icon": "globe"}
+    assert card["apps"][2] == {"label": "Room", "href": "/plugins/money/", "img": "/plugins/money/static/i.png"}
+    assert card["apps"][3] == {"label": "Bad", "href": ""}
+    assert len(card["apps"]) == 8
+
+
 def test_normalize_card_rejects_non_dict():
     with pytest.raises(ValueError):
         home.normalize_card(["not", "a", "card"])

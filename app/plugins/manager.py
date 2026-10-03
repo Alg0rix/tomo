@@ -134,9 +134,13 @@ class PluginManager:
             or not row["name"].strip()
         ):
             raise ValueError("Plugin requires a name and sdk_version: 1")
-        from app.plugins.icons import validate_icon
+        from app.plugins.icons import clean_kanji, validate_icon
 
-        return {"icon": validate_icon(row.get("icon", "puzzle"))} | {
+        return {
+            "icon": validate_icon(row.get("icon", "puzzle")),
+            "kanji": clean_kanji(row.get("kanji")),
+            "category": str(row.get("category") or "")[:40],
+        } | {
             key: row.get(key, "")
             for key in ("id", "name", "description", "version", "sdk_version")
         }
@@ -272,10 +276,13 @@ class PluginManager:
                             for card in self._active[plugin_id]["api"].home_cards
                             if card.get("kanji")
                         ),
-                        "",
+                        row.get("kanji", ""),
                     )
                     if plugin_id in self._active
-                    else "",
+                    else row.get("kanji", ""),
+                    "home_cards": len(self._active[plugin_id]["api"].home_cards)
+                    if plugin_id in self._active
+                    else 0,
                 }
                 for plugin_id, row in sorted(self._rows.items())
             ]

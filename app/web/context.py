@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 ROOM_TINTS = ("warm", "ok", "info", "earth", "rose")
 
 
+def room_tint(plugin_id: str) -> str:
+    return ROOM_TINTS[zlib.crc32(plugin_id.encode()) % len(ROOM_TINTS)]
+
+
 def page_ctx(request: Request, page: str, **extra):
     from app.plugins.manager import get_manager
     from app.services import store
@@ -25,7 +29,7 @@ def page_ctx(request: Request, page: str, **extra):
             "id": plugin["id"],
             "icon": plugin.get("icon", "puzzle"),
             "kanji": plugin.get("kanji", ""),
-            "tint": ROOM_TINTS[zlib.crc32(plugin["id"].encode()) % len(ROOM_TINTS)],
+            "tint": room_tint(plugin["id"]),
             "label": plugin["name"],
             "path": plugin["pages"][0]["path"],
             "page": "plugin-" + plugin["id"],

@@ -345,6 +345,22 @@ a.home-ti:hover .x b { color: var(--accent); }
 .home-states i.ok { background: var(--ok); }
 .home-states i.info { background: var(--info); }
 
+/* app launcher tiles */
+.home-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 6px; }
+.home-app { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 7px 4px 6px; border-radius: var(--r-sm); min-width: 0; text-align: center; }
+a.home-app:hover { background: var(--surface-2); }
+.home-app .tile { position: relative; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--surface-3); color: #fff; font: 600 16px var(--font-display); overflow: hidden; }
+.home-app .tile.luc { background: var(--accent-soft); color: var(--accent); }
+.home-app .tile.luc svg { width: 20px; height: 20px; }
+.home-app .tile.img img { width: 100%; height: 100%; object-fit: cover; }
+.home-app .tile .dot { position: absolute; right: 2px; bottom: 2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--surface); background: var(--text-faint); }
+.home-app .tile .dot.ok { background: var(--ok); }
+.home-app .tile .dot.hot { background: var(--danger); }
+.home-app .tile .dot.warm { background: var(--accent); }
+.home-app .tile .dot.info { background: var(--info); }
+.home-app .nm { max-width: 100%; font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-app .sb { max-width: 100%; font-size: 10px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* code block + footnote */
 .home-code { margin: 0; font: 11.5px/1.5 var(--font-mono); color: var(--text-dim); background: var(--bg-grain); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; white-space: pre-wrap; word-break: break-word; max-height: 118px; overflow: hidden; }
 .home-foot { font-size: 11px; color: var(--text-faint); }

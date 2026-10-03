@@ -12,3 +12,9 @@ def validate_icon(value: str) -> str:
     if not isinstance(value, str) or value not in ICONS:
         raise ValueError("Plugin icon must be one of: " + ", ".join(ICONS))
     return value
+
+
+def clean_kanji(value) -> str:
+    """Return one CJK ideograph for a room tile, or "" when unusable."""
+    text = str(value or "").strip()
+    return text if len(text) == 1 and "\u3400" <= text <= "\u9fff" else ""
