@@ -26,7 +26,10 @@ logger = logging.getLogger(__name__)
 
 class PluginManager:
     def __init__(self, root: Path):
+        from app.plugins.dependencies import DependencyEnvironment
+
         self.root = root
+        self.dependencies = DependencyEnvironment(root)
         self._lock = threading.RLock()
         self._active: dict[str, dict] = {}
         self._runtime_started = False
@@ -140,6 +143,16 @@ class PluginManager:
 
     def _build(self, path: Path) -> dict:
         from app.core.deps import require_auth
+        from app.plugins.dependencies import status
+
+        dependency_status = status(path)
+        if dependency_status["status"] != "ready":
+            raise ValueError(
+                "Plugin dependencies are not ready; use Sync dependencies. "
+                + dependency_status.get(
+                    "error", ", ".join(dependency_status["missing"])
+                )
+            )
 
         meta = self.manifest(path)
         api = PluginAPI(meta["id"], path, self.root / "plugins" / "data" / meta["id"])
@@ -198,6 +211,20 @@ class PluginManager:
 
             api.skills = load_plugin_skills(path, meta["id"])
             return {"meta": meta, "api": api, "mount": Mount("/" + meta["id"], app=app)}
+        except ModuleNotFoundError as exc:
+            api.dispose()
+            requirement = (
+                "opencv-python-headless"
+                if exc.name == "cv2"
+                else "the package providing " + str(exc.name)
+            )
+            raise ValueError(
+                "Missing Python module "
+                + str(exc.name)
+                + ". Declare "
+                + requirement
+                + " in requirements.txt or pyproject.toml, then Sync dependencies and Enable."
+            ) from exc
         except Exception:
             api.dispose()
             raise
@@ -211,6 +238,9 @@ class PluginManager:
                     "running": plugin_id in self._active,
                     "error": self._errors.get(plugin_id, ""),
                     "update": self._update_status(plugin_id, row),
+                    "dependencies": self.dependency_status(Path(row["path"]))
+                    if row.get("path")
+                    else {},
                     "skills": [
                         {
                             "id": skill.id,
@@ -239,6 +269,43 @@ class PluginManager:
                 }
                 for plugin_id, row in sorted(self._rows.items())
             ]
+
+    def dependency_status(self, path: Path) -> dict:
+        from app.plugins.dependencies import status
+
+        result = status(path)
+        if self.dependencies.error:
+            result["environment_error"] = self.dependencies.error
+        return result
+
+    def sync_dependencies(self, plugin_id: str) -> dict:
+        with self.dependencies.lock:
+            with self._lock:
+                if plugin_id not in self._rows:
+                    raise KeyError(plugin_id)
+                snapshot = {key: dict(row) for key, row in self._rows.items()}
+                paths = [
+                    Path(row["path"]) for row in snapshot.values() if row.get("path")
+                ]
+            prepared = self.dependencies.prepare(paths)
+            try:
+                with self._lock:
+                    if snapshot != self._rows:
+                        raise RuntimeError(
+                            "Plugins changed during dependency sync; retry"
+                        )
+                    self.dependencies.publish(prepared)
+                    self._errors.pop(plugin_id, None)
+                    return {
+                        "id": plugin_id,
+                        "dependencies": self.dependency_status(
+                            Path(snapshot[plugin_id]["path"])
+                        ),
+                        "enabled": snapshot[plugin_id].get("enabled", False),
+                    }
+            except Exception:
+                self.dependencies.discard(prepared)
+                raise
 
     def _update_status(self, plugin_id: str, row: dict) -> dict:
         cached = self._updates.get(plugin_id)
@@ -282,11 +349,17 @@ class PluginManager:
             return results
 
     def update(self, plugin_id: str) -> dict:
+        with self.dependencies.lock:
+            return self._update(plugin_id)
+
+    def _update(self, plugin_id: str) -> dict:
         from app.plugins.catalogs import GitSource, download_repository
         from app.plugins.updates import check_source
+        from app.plugins.dependencies import status
 
         with self._lock:
             row = dict(self._rows[plugin_id])
+            snapshot = {key: dict(value) for key, value in self._rows.items()}
             old = self._active.get(plugin_id)
             if self._busy.get(plugin_id, 0):
                 raise RuntimeError("Plugin is in use; retry after its work finishes")
@@ -304,6 +377,8 @@ class PluginManager:
         downloads.mkdir(parents=True, exist_ok=True)
         download = Path(tempfile.mkdtemp(prefix="repo-", dir=downloads))
         new = None
+        prepared = None
+        published = False
         try:
             download_repository(source, download, commit=candidate["latest_commit"])
             path = download / source.subdirectory
@@ -314,17 +389,24 @@ class PluginManager:
                 )
             if not (path / "plugin.py").is_file():
                 raise ValueError("Update requires plugin.py")
+            if row.get("enabled") and status(path)["status"] != "ready":
+                paths = [
+                    path if key == plugin_id else Path(value["path"])
+                    for key, value in snapshot.items()
+                    if value.get("path")
+                ]
+                prepared = self.dependencies.prepare(paths)
             with self._lock:
-                if (
-                    self._rows.get(plugin_id) != row
-                    or self._active.get(plugin_id) is not old
-                ):
+                if self._rows != snapshot or self._active.get(plugin_id) is not old:
                     raise RuntimeError("Plugin changed during update; retry")
                 if self._busy.get(plugin_id, 0):
                     raise RuntimeError(
                         "Plugin is in use; retry after its work finishes"
                     )
                 if row.get("enabled"):
+                    if prepared:
+                        self.dependencies.publish(prepared)
+                        published = True
                     new = self._build(path)
                 replacement = {
                     **row,
@@ -363,6 +445,8 @@ class PluginManager:
                     "version": meta["version"],
                 }
         except Exception as exc:
+            if prepared and not published:
+                self.dependencies.discard(prepared)
             if new:
                 new["api"].dispose()
             shutil.rmtree(download)
@@ -427,6 +511,8 @@ class PluginManager:
             raise
 
     def change(self, plugin_id: str, action: str) -> dict:
+        if action == "sync-dependencies":
+            return self.sync_dependencies(plugin_id)
         if action == "update":
             return self.update(plugin_id)
         if action not in {"enable", "disable", "reload", "uninstall"}:

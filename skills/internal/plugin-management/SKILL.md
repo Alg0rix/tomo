@@ -12,6 +12,7 @@ the running server; no restart is needed. Develop with `plugin-development`.
 | Action | Arguments |
 | --- | --- |
 | list | none |
+| sync_dependencies | id; uv sync of all declared plugin requirements |
 | outdated | none; check recorded Git source commits |
 | install | path; optional ref and subdirectory for a GitHub source |
 | enable / disable / reload / update / uninstall | id |
@@ -24,8 +25,11 @@ Sources are a server-local directory, `money@tomo-official`, or an HTTPS GitHub
 repo URL. Direct Git installs may select a branch/tag/commit and subdirectory.
 Installs are disabled until Enable; enabling/reloading executes trusted server
 code. Use the authorization already given by the task, and do not treat metadata
-discovery as permission to execute unrelated plugins. Dependencies are not
-installed automatically. Private repositories are not supported.
+discovery as permission to execute unrelated plugins. Declare requirements.txt
+or pyproject.toml dependencies. Sync dependencies installs wheels with uv into a persistent overlay and leaves the plugin disabled.
+Resolve reported missing requirements before Enable. Core and already imported package versions are preserved; incompatible
+declarations fail without replacing the environment. Private repositories are
+not supported.
 
 Catalogs are metadata caches. Refresh before expecting new releases/listings.
 Official `tomo-official` (Alg0rix/tomo-plugins) and community `tomo-community`
@@ -54,6 +58,7 @@ tomo plugins list
 tomo plugins marketplaces refresh tomo-official
 tomo plugins search money
 tomo plugins install money@tomo-official
+tomo plugins sync-dependencies money
 tomo plugins enable money
 tomo plugins reload money
 tomo plugins outdated

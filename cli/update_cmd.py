@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,23 @@ def _uv_sync(cwd: Path, home: Path | None = None) -> int:
     return int(proc.returncode)
 
 
+def _restore_plugin_dependencies(app: Path, home: Path | None = None) -> int:
+    from cli.paths import default_tomo_home
+
+    root = (
+        default_tomo_home(home)
+        if home is not None
+        else Path(os.environ.get("TOMO_HOME", str(default_tomo_home())))
+    )
+    if not (root / "plugins/dependencies/active.json").exists():
+        return 0
+    proc = subprocess.run(
+        [str(app / ".venv/bin/python"), "-m", "app.plugins.dependencies", str(root)],
+        cwd=app,
+    )
+    return int(proc.returncode)
+
+
 def cmd_update(*, assume_yes: bool = False, home: Path | None = None) -> int:
     app = install_dir(home)
     if not (app / ".git").is_dir():
@@ -48,6 +66,14 @@ def cmd_update(*, assume_yes: bool = False, home: Path | None = None) -> int:
     if uv_code != 0:
         print("✗ uv sync failed", file=sys.stderr)
         return uv_code
+
+    dependency_code = _restore_plugin_dependencies(app, home)
+    if dependency_code:
+        print(
+            "✗ Plugin dependency restore failed; service was not restarted",
+            file=sys.stderr,
+        )
+        return dependency_code
 
     # Seed missing session/admin/.secret_key for installs that predate hardening.
     try:

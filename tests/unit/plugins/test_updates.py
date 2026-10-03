@@ -362,3 +362,43 @@ def test_repository_version_is_reported_and_saved_after_update(remote):
     assert result["version"] == "1.1.0"
     assert manager.list()[0]["version"] == "1.1.0"
     assert manager.check_updates()[0]["latest_version"] == "1.1.0"
+
+
+def test_enabled_source_update_prepares_new_dependencies(remote, monkeypatch):
+    from app.plugins import dependencies
+
+    manager, state, _ = remote
+    manager.change("demo", "enable")
+    advance(state)
+    original = catalogs.download_repository
+    prepared = []
+    published = []
+
+    def download(source, path, **kwargs):
+        commit = original(source, path, **kwargs)
+        (path / "plugins/demo/requirements.txt").write_text("new-lib>=1")
+        return commit
+
+    def prepare(paths):
+        prepared.extend(paths)
+        assert any((path / "requirements.txt").exists() for path in paths)
+        return {"directory": "fake"}
+
+    monkeypatch.setattr(catalogs, "download_repository", download)
+    monkeypatch.setattr(manager.dependencies, "prepare", prepare)
+    monkeypatch.setattr(
+        manager.dependencies, "publish", lambda row: published.append(row)
+    )
+
+    def status(path):
+        return {
+            "status": "missing"
+            if (path / "requirements.txt").exists() and not published
+            else "ready",
+            "missing": ["new-lib>=1"],
+        }
+
+    monkeypatch.setattr(dependencies, "status", status)
+    assert manager.change("demo", "update")["running"]
+    assert prepared and published
+    assert manager.execute("plugin__demo__value", {}) == "two"

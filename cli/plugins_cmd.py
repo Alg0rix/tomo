@@ -34,7 +34,14 @@ def add_parser(sub):
     market_actions.add_parser("add").add_argument("source")
     for action in ("refresh", "remove"):
         market_actions.add_parser(action).add_argument("identity")
-    for action in ("enable", "disable", "reload", "update", "uninstall"):
+    for action in (
+        "enable",
+        "disable",
+        "reload",
+        "update",
+        "sync-dependencies",
+        "uninstall",
+    ):
         child = actions.add_parser(action)
         child.add_argument("id")
 
@@ -63,7 +70,7 @@ def run(args):
         with httpx.Client(
             base_url=args.url,
             headers={"Authorization": f"Bearer {token}"},
-            timeout=60,
+            timeout=660,
             follow_redirects=False,
             trust_env=False,
         ) as client:

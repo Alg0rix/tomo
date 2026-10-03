@@ -173,8 +173,8 @@ Python plugins execute in-process with server privileges. Authentication and
 user-scoped SDK helpers protect ordinary plugin use; they do not sandbox trusted
 Python code. This implementation targets Tomo's normal single-server-process
 configuration. Multi-worker deployments need coordinated activation before using
-live plugins. Dependencies must already be installed in Tomo's environment.
-There is no automatic pip installation or file watcher; explicitly reload
+live plugins. Declare dependencies in the plugin package and use Sync dependencies before
+activation. There is no file watcher; explicitly reload
 after source edits. Catalog discovery and GitHub downloads are described below.
 
 
@@ -212,8 +212,9 @@ public HTTPS GitHub repositories, resolves a branch/tag/commit to a commit SHA,
 and downloads that exact revision. It validates catalog identity and version,
 rejects archive traversal and symlinks, records source/commit provenance, and
 registers the plugin **disabled**. Enable is the separate step that executes code.
-Plugin dependencies must already be available; downloads do not run pip, git
-hooks, or plugin setup. Managed source edits stay at the downloaded commit;
+Source downloads do not run package managers, Git hooks, or plugin setup.
+Sync dependencies is a separate action; enabled updates sync newly required
+packages before activation. Managed source edits stay at the downloaded commit;
 reload does not fetch updates. Private repositories and automatically applying updates are
 not supported in this version.
 
@@ -258,3 +259,48 @@ Core ships the [authoring](../skills/internal/plugin-development/SKILL.md),
 plugins, domain usage skills, and feature tests belong in
 [tomo-plugins](https://github.com/Alg0rix/tomo-plugins). Core contains no example
 plugin packages.
+
+## Python dependencies and uv
+
+Declare registry packages as PEP 508 requirements in `requirements.txt` (one per
+line, comments allowed), or `[project].dependencies` in `pyproject.toml`. If both
+files exist, `requirements.txt` is authoritative. Use tested version ranges or
+pins. Dependency names are distribution names: `cv2` is supplied by
+`opencv-python-headless` for servers. Declare `onnxruntime` only when importing
+it; OpenCV can load ONNX directly. Model weights and system libraries are not
+Python dependencies and must be documented separately.
+
+```text
+opencv-python-headless
+numpy
+```
+
+Installed shows missing or incompatible declared dependencies. **Sync
+dependencies** resolves requirements for all installed plugins with `uv`, using
+Tomo's actual Python interpreter. It preserves core and already imported distribution versions,
+downloads prebuilt wheels only, and installs non-core packages in a fresh
+`$TOMO_HOME/plugins/dependencies/env-*/site-packages` overlay. It never runs a
+plugin entrypoint or enables a disabled plugin. Core imports take precedence. Overlay packages not yet imported can be upgraded
+during sync; loaded versions remain protected.
+URL/local dependencies, requirements-file includes, package-manager options,
+source builds, and wheel `.pth` startup execution are unsupported.
+
+The resolved lock and active environment pointer persist outside the core venv.
+Core `uv sync` cannot prune them. `tomo update` restores registered plugin
+requirements using the newly synced interpreter before restarting the service.
+Python/core changes invalidate an incompatible overlay and require resync. A
+resolution/install failure leaves the prior environment active. Shared Python
+means incompatible package versions cannot coexist; conflicting upgrades are
+rejected instead of replacing loaded packages. A fresh interpreter during
+`tomo update` can resolve overlay upgrades before plugin activation. Use compatible requirements or
+move that workload to an external worker environment. Plugin data is unaffected.
+
+```sh
+tomo plugins sync-dependencies vehicle_cctv
+tomo plugins enable vehicle_cctv
+```
+
+Agents use `plugin_manager(action="sync_dependencies", id="vehicle_cctv")`; the
+administrator API is `POST /api/plugins/<id>/sync-dependencies`. Enabled source
+updates sync new requirements automatically, preserving the old plugin on
+failure. Disabled source updates remain disabled and sync later when requested.

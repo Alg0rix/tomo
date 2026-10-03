@@ -6,7 +6,8 @@ URL. Exercise domain reads/writes, user isolation, and failure cases appropriate
 to the feature. A new CSS color does not need a new unit test.
 
 Use a temporary Tomo home/work/database for runtime tests; do not rebind the
-operator's real store. Install is disabled, then Enable runs setup. Check pages,
+operator's real store. Install is disabled. Sync declared dependencies, verify readiness, then Enable
+runs setup. Exercise missing requirements and conflicting version failures. Check pages,
 agent tools and skills, sidebar navigation, and mobile/desktop layout. Add a
 private user datum, reload, and confirm persistence. Disable must make page/tool/
 skill access unavailable. Other plugins and core pages should still work.

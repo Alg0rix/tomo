@@ -5,6 +5,7 @@ for user work use the selected local workplace or agent work directory. Do not
 add a feature package to `app/` or an `examples/plugins` directory in core.
 
 A minimal layout is `tomo-plugin.json`, `plugin.py`, `templates/overview.html`,
+dependency declarations in `requirements.txt` or `pyproject.toml` when needed,
 and optionally `static/` and `skills/<skill-name>/SKILL.md`.
 
 ```json
@@ -37,3 +38,6 @@ Install with `plugin_manager(action="install", path="/server/path/my-plugin")`,
 then enable by the manifest ID when authorized. Installation registers the
 source, does not execute it, and leaves it disabled. Your source folder must
 stay available. After edits call Reload, not another Install or a server restart.
+
+Before Enable, use plugin_manager sync_dependencies if required packages are
+missing. Declare distribution names rather than guessing from Python imports.

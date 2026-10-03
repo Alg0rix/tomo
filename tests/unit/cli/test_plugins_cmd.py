@@ -55,3 +55,26 @@ def test_cli_outdated_and_update(monkeypatch):
         plugins_cmd.run(build_parser().parse_args(["plugins", "update", "money"])) == 0
     )
     assert requests[-1].url.path == "/api/plugins/money/update"
+
+
+def test_cli_dependency_sync(monkeypatch):
+    monkeypatch.setenv("TOMO_API_KEY", "tomo_test_key")
+    requests = []
+    original = httpx.Client
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"enabled": False})
+
+    monkeypatch.setattr(
+        plugins_cmd.httpx,
+        "Client",
+        lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(handle)),
+    )
+    assert (
+        plugins_cmd.run(
+            build_parser().parse_args(["plugins", "sync-dependencies", "vehicle_cctv"])
+        )
+        == 0
+    )
+    assert requests[0].url.path == "/api/plugins/vehicle_cctv/sync-dependencies"

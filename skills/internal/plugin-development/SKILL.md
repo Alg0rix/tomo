@@ -30,8 +30,11 @@ plugins. Do not invent those surfaces.
 
 Reuse Tomo's existing agents, models, permissions, navigation, and skill loader.
 A domain plugin exposes tools; it does not create a second AI client. Respect
-existing tool selections. Dependencies must already be available in Tomo's
-Python environment; installation never runs setup scripts or installs packages.
+existing tool selections. Declare dependencies in requirements.txt or project.dependencies in
+pyproject.toml. Use plugin_manager(action="sync_dependencies", id=...) before
+Enable. uv resolves all plugins together into a persistent overlay; existing
+package versions are preserved. Distribution names differ from imports: cv2
+requires opencv-python-headless on a server. Source install never runs setup.
 
 Source paths must exist on the Tomo server. A tunnel or SSH workplace may be a
 different machine. Develop in a server-local workplace unless the user has

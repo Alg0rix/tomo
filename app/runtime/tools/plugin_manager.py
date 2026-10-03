@@ -36,6 +36,8 @@ def run(arguments: dict) -> str:
                 result = markets.remove(arguments.get("id", ""))
         elif action == "list":
             result = manager.list()
+        elif action == "sync_dependencies":
+            result = manager.sync_dependencies(arguments.get("id", ""))
         elif action == "outdated":
             result = manager.check_updates()
         elif action == "install":

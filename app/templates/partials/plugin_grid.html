@@ -11,6 +11,7 @@
         <button class="btn sm" data-plugin="{{ plugin.id }}" data-action="{{ 'disable' if plugin.running else 'enable' }}">{{ 'Disable' if plugin.running else 'Enable' }}</button>
         {% if plugin.running %}<button class="btn ghost sm" data-plugin="{{ plugin.id }}" data-action="reload">Reload</button>{% endif %}
         {% if plugin.get('update', {}).get('status') == 'available' %}<button class="btn primary sm" data-plugin="{{ plugin.id }}" data-action="update">Update</button>{% endif %}
+        {% if plugin.get('dependencies', {}).get('requirements') %}<button class="btn sm" data-plugin="{{ plugin.id }}" data-action="sync-dependencies">Sync dependencies</button>{% endif %}
         <button class="btn ghost sm" data-plugin="{{ plugin.id }}" data-action="uninstall">Uninstall</button>
       </div>
       {% endif %}

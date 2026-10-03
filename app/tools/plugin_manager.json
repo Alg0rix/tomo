@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "plugin_manager",
-      "description": "Manage trusted Python plugins on the Tomo server. Read the plugin-development skill before developing one. Install registers a server-local directory containing tomo-plugin.json and plugin.py; then enable it. Reload applies edits live. Disable removes pages and agent tools. Uninstall unregisters the plugin and retains its source and data. Code runs with server privileges; install only code the user has authorized. Busy plugins return an error; retry after their work finishes. Official plugins come directly from tomo-official (Alg0rix/tomo-plugins); community submissions come from tomo-community (Alg0rix/tomo-marketplace). They are independent. Marketplace add and refresh read metadata only; install downloads code disabled until enable. Outdated checks recorded Git branch commits and candidate metadata without executing code; versions need not change. Update downloads that exact candidate and swaps it live, preserving enabled state and data. Failed activation retains the previous plugin. Git tags/commits are pinned; local path sources use reload. Catalog refresh never applies updates.",
+      "description": "Manage trusted Python plugins on the Tomo server. Read the plugin-development skill before developing one. Install registers a server-local directory containing tomo-plugin.json and plugin.py; then enable it. Reload applies edits live. Disable removes pages and agent tools. Uninstall unregisters the plugin and retains its source and data. Code runs with server privileges; install only code the user has authorized. Busy plugins return an error; retry after their work finishes. Official plugins come directly from tomo-official (Alg0rix/tomo-plugins); community submissions come from tomo-community (Alg0rix/tomo-marketplace). They are independent. Marketplace add and refresh read metadata only; install downloads code disabled until enable. Outdated checks recorded Git branch commits and candidate metadata without executing code; versions need not change. Update downloads that exact candidate and swaps it live, preserving enabled state and data. Failed activation retains the previous plugin. Git tags/commits are pinned; local path sources use reload. Catalog refresh never applies updates. Plugins declare registry dependencies in requirements.txt or project.dependencies in pyproject.toml. Sync_dependencies resolves all installed plugin requirements with uv, preserves core and imported package versions, and installs wheels into a persistent overlay outside the core venv. It does not enable the plugin. Conflicts fail without replacing the running environment.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -26,7 +26,8 @@
               "marketplace_refresh",
               "marketplace_remove",
               "outdated",
-              "update"
+              "update",
+              "sync_dependencies"
             ]
           },
           "id": {

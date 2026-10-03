@@ -34,8 +34,30 @@ def test_update_runs_sync_and_restart(tmp_path: Path) -> None:
     sc.assert_called()
 
 
-
-
 def test_find_uv_missing(tmp_path: Path) -> None:
     with patch("cli.update_cmd.shutil.which", return_value=None):
         assert _find_uv(tmp_path) is None
+
+
+def test_update_restores_overlay_with_new_core_interpreter(tmp_path, monkeypatch):
+    from cli.update_cmd import _restore_plugin_dependencies
+    import subprocess
+
+    app = tmp_path / ".local/share/tomo/app"
+    state = tmp_path / ".tomo/plugins/dependencies/active.json"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("cli.update_cmd.subprocess.run", run)
+    assert _restore_plugin_dependencies(app, tmp_path) == 0
+    assert calls[0][0] == [
+        str(app / ".venv/bin/python"),
+        "-m",
+        "app.plugins.dependencies",
+        str(tmp_path / ".tomo"),
+    ]
