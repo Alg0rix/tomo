@@ -63,6 +63,16 @@ async def home_live_api(request: Request, _: AuthDep):
     return home.live_snapshot(session_user_id(request))
 
 
+@router.get("/home/cards")
+async def home_cards_api(
+    request: Request, _: AuthDep, keys: list[str] = Query(..., min_length=1, max_length=100)
+):
+    """Refresh requested plugin cards that opted into periodic updates."""
+    from app.services import home
+
+    return await asyncio.to_thread(home.rooms, session_user_id(request), 0, keys=set(keys))
+
+
 @router.get("/home/badges")
 async def home_badges_api(request: Request, _: AuthDep):
     """Rail counters polled from every page."""

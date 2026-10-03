@@ -596,12 +596,28 @@
       : '<span class="home-room-ico">' + pluginIcon(r.icon) + '</span>';
   }
   var ADD_TILE = '<button type="button" class="home-room home-addtile" id="homeAddTile"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><b>Add widget</b><span>from your plugins</span></button>';
+  function roomStatus(r) {
+    if (r.stale) return '<span class="home-status warm" title="' + esc(r.stale) + '">Stale</span>';
+    return r.data && r.data.status
+      ? '<span class="home-status ' + esc(r.data.status.tone || '') + '">' + esc(r.data.status.text) + '</span>' : '';
+  }
+  function roomBody(r) {
+    return r.error ? '<div class="err">' + esc(r.error) + '</div>' : cardBody(r.data || {});
+  }
+  function updateRoom(r) {
+    var el = $('homeRooms').querySelector('[data-key="' + CSS.escape(r.key) + '"]');
+    if (!el || state.editing) return;
+    var status = el.querySelector('.home-status');
+    if (status) status.remove();
+    el.querySelector('.home-room-h .open').insertAdjacentHTML('beforebegin', roomStatus(r));
+    // Keep focused actions intact until focus leaves the card.
+    if (!el.contains(document.activeElement)) el.querySelector('.home-widget-body').innerHTML = roomBody(r);
+  }
   function roomHtml(r) {
     var size = widgetSize(r);
     var ico = roomIco(r);
-    var status = r.data && r.data.status
-      ? '<span class="home-status ' + esc(r.data.status.tone || '') + '">' + esc(r.data.status.text) + '</span>' : '';
-    var body = r.error ? '<div class="err">' + esc(r.error) + '</div>' : cardBody(r.data || {});
+    var status = roomStatus(r);
+    var body = roomBody(r);
     var t = esc(r.title);
     return '<div class="home-room ' + esc(size.width) + (size.height ? ' fixed' : '') + '"' + (size.height ? ' style="height:' + size.height + 'px"' : '') + ' data-key="' + esc(r.key) + '">' +
       '<div class="home-handle" role="toolbar" aria-label="Arrange ' + t + '">' +
@@ -631,13 +647,6 @@
     var box = $('homeRooms');
     var rooms = orderedRooms().filter(isSelected);
     box.innerHTML = rooms.map(roomHtml).join('') + ADD_TILE;
-    rooms.forEach(function (r) {
-      var el = box.querySelector('[data-key="' + CSS.escape(r.key) + '"]');
-      if (!el) return;
-      el.querySelectorAll('[data-prompt-i]').forEach(function (b) {
-        b.addEventListener('click', function () { prefill(r.data.actions[Number(b.dataset.promptI)].prompt); });
-      });
-    });
   }
 
   /* arrange mode */
@@ -680,7 +689,11 @@
     root.classList.toggle('editing', on);
     $('homeEditBar').hidden = !on;
     $('homeArrange').setAttribute('aria-pressed', on ? 'true' : 'false');
-    if (!on) say('');
+    if (!on) {
+      say('');
+      (state.data && state.data.rooms || []).filter(isSelected).forEach(updateRoom);
+      refreshCards();
+    }
   }
   $('homeArrange').addEventListener('click', function () { setEditing(!state.editing); });
   $('homeEditDone').addEventListener('click', function () { setEditing(false); $('homeArrange').focus(); });
@@ -704,6 +717,14 @@
     clearTimeout(resetTimer); delete btn.dataset.armed; btn.textContent = 'Reset';
   }
   var roomsBox = $('homeRooms');
+  roomsBox.addEventListener('click', function (e) {
+    var button = e.target.closest('[data-prompt-i]');
+    if (!button) return;
+    var el = button.closest('[data-key]');
+    var room = state.data.rooms.find(function (r) { return r.key === el.dataset.key; });
+    var action = room && room.data && room.data.actions && room.data.actions[Number(button.dataset.promptI)];
+    if (action && action.prompt) prefill(action.prompt);
+  });
   var justAdded = [];
   function renderPicker() {
     var groups = Object.create(null), total = 0;
@@ -887,6 +908,9 @@
     }
     if (!d) return;
     state.data = d;
+    (d.rooms || []).forEach(function (r) {
+      if (r.refresh_seconds) cardDue[r.key] = Date.now() + r.refresh_seconds * 1000;
+    });
     state.layout = d.layout || { order: [], hidden: [] };
     renderCoordinator(d.coordinator);
     renderHeader(d);
@@ -900,6 +924,40 @@
     renderStarters();
   }
 
+  var cardDue = Object.create(null), cardsPolling = false;
+  async function refreshCards() {
+    if (cardsPolling || !state.data || document.hidden || state.editing) return;
+    var now = Date.now();
+    var due = state.data.rooms.filter(function (r) {
+      return r.refresh_seconds && isSelected(r) && now >= (cardDue[r.key] || 0);
+    });
+    if (!due.length) return;
+    cardsPolling = true;
+    var params = new URLSearchParams();
+    due.forEach(function (r) { params.append('keys', r.key); });
+    try {
+      var d = await Tomo.api('/api/home/cards?' + params.toString());
+      due.forEach(function (r) {
+        var fresh = (d.cards || []).find(function (c) { return c.key === r.key; });
+        if (!fresh || fresh.error) r.stale = fresh && fresh.error || 'Widget unavailable';
+        else {
+          var el = $('homeRooms').querySelector('[data-key="' + CSS.escape(r.key) + '"]');
+          if (el && el.contains(document.activeElement)) return;
+          Object.assign(r, fresh); delete r.error; delete r.stale;
+        }
+      });
+    } catch (e) {
+      due.forEach(function (r) { r.stale = 'Could not refresh'; });
+    } finally {
+      due.forEach(function (r) {
+        cardDue[r.key] = Date.now() + r.refresh_seconds * 1000;
+        updateRoom(r);
+      });
+      cardsPolling = false;
+    }
+  }
+  setInterval(refreshCards, 1000);
+
   var polling = false;
   async function refreshLive() {
     if (polling || !state.data || document.hidden) return;
@@ -910,7 +968,9 @@
     } catch (e) {} finally { polling = false; }
   }
   setInterval(refreshLive, 5000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshLive(); });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { refreshLive(); refreshCards(); }
+  });
 
   resizeInput();
   syncSend();

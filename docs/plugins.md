@@ -155,7 +155,7 @@ needs no separate AI key or agent loop.
 
 ### Home cards
 
-`api.home_card(handler, title=None, size="s", kanji=None, id=None, default_visible=None)` adds a room card to Home's
+`api.home_card(handler, title=None, size="s", kanji=None, id=None, default_visible=None, refresh_seconds=None)` adds a room card to Home's
 Rooms grid; `handler(user_id)` is synchronous, runs per Home load under a 2.5s
 shared deadline with the user bound, and returns a typed dict (`status`,
 `metric`, `caption`, `trend`, `stats`, `chart`, `spark`, `ring`, `heatmap`,
@@ -176,6 +176,21 @@ height while keeping desktop sizes saved.
 without a card get a door card. Full field table: the plugin-development
 skill's `references/home.md`. Guard calls with `hasattr(api, "home_card")` when
 supporting older Tomo releases.
+
+Opt into periodic updates with `refresh_seconds` (integer seconds, 5–3600):
+
+```python
+api.home_card(monitor_card, id="server-monitor", title="Server monitor",
+              refresh_seconds=10)
+```
+
+Home refreshes only selected widgets whose intervals are due, while the tab is
+visible and Arrange mode is off. Updates preserve widget order and size. Failed
+updates keep the last successful readings and show a **Stale** badge until a
+successful refresh. Omitting the interval keeps refresh-on-load behavior.
+The authenticated `GET /api/home/cards?keys=<plugin-id>:<card-id>` endpoint
+returns normalized cards for requested widgets that opted into refresh.
+Keep the handler a cheap read of cached metrics; collect monitor data separately.
 
 Use `api.on_dispose(callback)` for cleanup. Callbacks run on replacement,
 disable, uninstall, shutdown, or failed activation. Imports have a fresh package

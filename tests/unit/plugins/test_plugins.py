@@ -372,6 +372,9 @@ def test_home_card_and_starter_validation(tmp_path):
     for bad in ("", "ab", "A", "😀", 7):
         with pytest.raises(ValueError):
             api.home_card(lambda uid: {}, kanji=bad)
+    for bad in (True, 0, 4, 3601, 10.5, "10"):
+        with pytest.raises(ValueError, match="refresh_seconds"):
+            api.home_card(lambda uid: {}, refresh_seconds=bad)
     api.home_card(lambda uid: {}, size="l", kanji="板")
     api.home_card(lambda uid: {}, id="budgets")
     assert api.home_cards[-1]["default_visible"] is False
@@ -391,3 +394,38 @@ def test_home_card_and_starter_validation(tmp_path):
         api.starter(f"s{i}", "go")
     with pytest.raises(ValueError):
         api.starter("s5", "go")
+
+
+def test_home_card_refresh_api_filters_and_scopes(manager, tmp_path, monkeypatch):
+    from app.api import rest
+    from app.core.deps import require_auth
+
+    manager.install(str(source(tmp_path, """
+def setup(api):
+    api.home_card(lambda uid: {"metric": {"value": uid}, "html": "unsafe"},
+                  id="monitor", refresh_seconds=10)
+    api.home_card(lambda uid: 1 / 0, id="static")
+    api.home_card(lambda uid: 1 / 0, id="other", refresh_seconds=30)
+""")))
+    manager.change("test", "enable")
+    assert manager.home_contributions("alice")["cards"][0]["refresh_seconds"] == 10
+    app = FastAPI()
+    app.include_router(rest.router)
+    app.dependency_overrides[require_auth] = lambda: None
+    user = {"id": "alice"}
+    monkeypatch.setattr(rest, "session_user_id", lambda request: user["id"])
+    client = TestClient(app)
+    response = client.get("/api/home/cards", params=[
+        ("keys", "test:monitor"), ("keys", "test:static"), ("keys", "missing:0"),
+    ])
+    assert response.status_code == 200
+    cards = response.json()["cards"]
+    assert [c["key"] for c in cards] == ["test:monitor"]
+    assert cards[0]["refresh_seconds"] == 10
+    assert cards[0]["data"] == {"metric": {"value": "alice", "label": ""}}
+    user["id"] = "bob"
+    assert client.get("/api/home/cards?keys=test:monitor").json()["cards"][0]["data"]["metric"]["value"] == "bob"
+    assert client.get("/api/home/cards?keys=test:other").json()["cards"][0]["error"] == "Card failed to load"
+    assert client.get("/api/home/cards").status_code == 422
+    manager.change("test", "disable")
+    assert client.get("/api/home/cards?keys=test:monitor").json() == {"cards": []}

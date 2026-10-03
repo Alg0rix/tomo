@@ -95,10 +95,11 @@ class PluginAPI:
         kanji: str | None = None,
         id: str | None = None,
         default_visible: bool | None = None,
+        refresh_seconds: int | None = None,
     ) -> None:
         """Contribute a card to the Home page's Rooms grid.
 
-        ``handler(user_id)`` runs on each Home load and returns a typed card
+        ``handler(user_id)`` runs on Home load and configured refreshes, returning a typed card
         dict (metric, stats, chart, ring, heatmap, list, timeline, columns,
         actions, …). Core renders it; plugins never inject HTML into Home.
         ``size`` is ``s`` (one column), ``m`` (two), or ``l`` (full row);
@@ -107,6 +108,8 @@ class PluginAPI:
         registered. Only the first named card is visible by default; unnamed
         cards retain their previous defaults. Users choose their own widgets
         and sizes. ``default_visible`` overrides the initial visibility.
+        ``refresh_seconds`` opts into periodic refresh while Home is visible
+        (integer seconds, 5–3600); omitted cards refresh only on Home load.
         """
         import inspect
 
@@ -124,6 +127,10 @@ class PluginAPI:
             raise ValueError("Home card ids must be unique within a plugin")
         if default_visible is not None and not isinstance(default_visible, bool):
             raise ValueError("default_visible must be a boolean")
+        if refresh_seconds is not None and (
+            type(refresh_seconds) is not int or not 5 <= refresh_seconds <= 3600
+        ):
+            raise ValueError("refresh_seconds must be an integer between 5 and 3600")
         if len(self.home_cards) >= 12:
             raise ValueError("A plugin may register at most twelve home cards")
         self.home_cards.append(
@@ -133,6 +140,7 @@ class PluginAPI:
                 "size": size,
                 "kanji": kanji or "",
                 "id": id,
+                "refresh_seconds": refresh_seconds,
                 "default_visible": default_visible if default_visible is not None else (id is None or not self.home_cards),
             }
         )

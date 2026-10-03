@@ -751,12 +751,14 @@ def _core_cards(user_id: str, tz_minutes: int) -> list[dict[str, Any]]:
     return cards
 
 
-def rooms(user_id: str, tz_minutes: int) -> dict[str, Any]:
+def rooms(
+    user_id: str, tz_minutes: int, *, keys: set[str] | None = None
+) -> dict[str, Any]:
     from app.plugins.manager import get_manager
 
     manager = get_manager()
     meta = {p["id"]: p for p in manager.list() if p.get("running")}
-    contrib = manager.home_contributions(user_id)
+    contrib = manager.home_contributions(user_id, keys=keys)
     cards: list[dict[str, Any]] = []
     for card in contrib["cards"]:
         info = meta.get(card["plugin"]) or {}
@@ -772,6 +774,8 @@ def rooms(user_id: str, tz_minutes: int) -> dict[str, Any]:
             "size": card["size"],
             "href": pages[0]["path"] if pages else "/extensions",
         }
+        if "refresh_seconds" in card:
+            item["refresh_seconds"] = card["refresh_seconds"]
         if "error" in card:
             item["error"] = card["error"]
         else:
@@ -780,6 +784,8 @@ def rooms(user_id: str, tz_minutes: int) -> dict[str, Any]:
             except ValueError as exc:
                 item["error"] = str(exc)
         cards.append(item)
+    if keys is not None:
+        return {"cards": cards}
     with_cards = {c["plugin"] for c in cards}
     # Running plugins with pages but no card still get a simple doorway.
     for pid, info in meta.items():

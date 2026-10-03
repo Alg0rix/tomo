@@ -60,15 +60,31 @@ plugin or inject your own drag/resize scripts.
 
 | Call | Contract |
 | --- | --- |
-| `api.home_card(handler, *, title=None, size="s", kanji=None, id=None, default_visible=None)` | Synchronous `handler(user_id)`; `size` is `s` (1 column), `m` (2 columns), or `l` (full row); `kanji` is one CJK character shown as the room icon (else the manifest Lucide icon); at most 12 cards; title ≤40 chars |
+| `api.home_card(handler, *, title=None, size="s", kanji=None, id=None, default_visible=None, refresh_seconds=None)` | Synchronous `handler(user_id)`; `size` is `s` (1 column), `m` (2 columns), or `l` (full row); `kanji` is one CJK character shown as the room icon (else the manifest Lucide icon); at most 12 cards; title ≤40 chars |
 | `api.starter(label, prompt)` | Composer chip; label ≤60, prompt ≤500; at most 4 per plugin; clicking fills the composer, never sends |
 
-The handler runs on every Home load, in parallel with other plugins, with the
+The handler runs on Home load and configured refreshes, in parallel with other
+plugins, with the
 user bound as the current user (so `api.user_data_dir()` works without an
 argument). All handlers share a 2.5s deadline. A slow handler shows "Timed out";
 an exception or a non-dict return shows an error card and is logged. Keep it a
 cheap read: no network calls, no LLM calls, no writes. Always scope data to the
 `user_id` argument.
+
+Opt into periodic updates with `refresh_seconds` (integer seconds, 5–3600):
+
+```python
+api.home_card(monitor_card, id="server-monitor", title="Server monitor",
+              refresh_seconds=10)
+```
+
+Home refreshes only selected widgets whose intervals are due, while the tab is
+visible and Arrange mode is off. Updates preserve widget order and size. Failed
+updates keep the last successful readings and show a **Stale** badge until a
+successful refresh. Omitting the interval keeps refresh-on-load behavior.
+The authenticated `GET /api/home/cards?keys=<plugin-id>:<card-id>` endpoint
+returns normalized cards for requested widgets that opted into refresh.
+Keep the handler a cheap read of cached metrics; collect monitor data separately.
 
 ## Card fields
 

@@ -634,11 +634,14 @@ class PluginManager:
             scope, receive, send
         )
 
-    def home_contributions(self, user_id: str, timeout: float = 2.5) -> dict:
+    def home_contributions(
+        self, user_id: str, timeout: float = 2.5, *, keys: set[str] | None = None
+    ) -> dict:
         """Run each running plugin's Home card handlers for ``user_id``.
 
         Handlers run in parallel under a shared deadline; a slow or failing
-        handler yields an error card instead of blocking Home.
+        handler yields an error card instead of blocking Home. With ``keys``,
+        run only requested cards that opted into periodic refresh.
         """
         from concurrent.futures import ThreadPoolExecutor, wait
 
@@ -649,6 +652,10 @@ class PluginManager:
                 (plugin_id, index, card)
                 for plugin_id, inst in self._active.items()
                 for index, card in enumerate(inst["api"].home_cards)
+                if keys is None or (
+                    f"{plugin_id}:{card.get('id') or index}" in keys
+                    and card.get("refresh_seconds") is not None
+                )
             ]
             starters = [
                 {**starter, "plugin": plugin_id}
@@ -678,6 +685,8 @@ class PluginManager:
                     "size": card["size"],
                     "kanji": card.get("kanji", ""),
                 }
+                if card.get("refresh_seconds") is not None:
+                    item["refresh_seconds"] = card["refresh_seconds"]
                 if not future.done():
                     item["error"] = "Timed out"
                 elif future.exception() is not None:

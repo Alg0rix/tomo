@@ -19,22 +19,27 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
    const page = await browser.newPage({viewport: {width, height: 1000}});
    const errors = []; page.on('pageerror', e => errors.push(e.message));
    await page.route('http://home.test/**', route => route.fulfill({contentType: 'text/html', body: html}));
-   async function load(layout = {order: [], hidden: []}) {
+   async function load(layout = {order: [], hidden: []}, autoRefresh = false) {
     await page.goto('http://home.test/');
     await page.addStyleTag({path: path.join(root, 'app/static/css/tomo.css')});
     await page.addStyleTag({path: path.join(root, 'app/static/css/home.css')});
-    await page.evaluate(layout => {
-     window.saved = layout; window.toasts = [];
+    if (autoRefresh) await page.clock.install();
+    await page.evaluate(({layout, autoRefresh}) => {
+     window.saved = layout; window.toasts = []; window.refreshRequests = []; window.refreshFail = false;
      window.Tomo = {escapeHtml: s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])), avatarColor: () => '#777', toast: msg => toasts.push(msg),
       api: async (url, options) => {
        if (url === '/api/home/layout') { window.saved = JSON.parse(options.body); return saved; }
+       if (url.startsWith('/api/home/cards?')) {
+        window.refreshRequests.push(new URLSearchParams(url.split('?')[1]).getAll('keys'));
+        return {cards: [{key:'money:spending', ...(window.refreshFail ? {error:'Timed out'} : {data:{metric:{value:'Rp2jt'},actions:[{label:'Review',prompt:'Updated spending prompt'}]}})}]};
+       }
        if (url.startsWith('/api/home?')) return {layout: saved, rooms: [
-        {key:'money:spending', plugin:'money', plugin_name:'Money', title:'Spending', size:'s', default_visible:true, data:{status:{text:'On track',tone:'ok'},metric:{value:'Rp1.2jt',label:'spent this month'},caption:'14 transactions · October',chart:[{label:'Mon',value:120},{label:'Tue',value:80},{label:'Wed',value:190},{label:'Thu',value:100},{label:'Fri',value:160},{label:'Sat',value:240},{label:'Sun',value:140}],actions:[{label:'Review spending',prompt:'Break down my spending.'}]}},
-        {key:'money:budgets', plugin:'money', plugin_name:'Money', title:'Budgets', size:'m', default_visible:false, data:{caption:'Budget breakdown'}},
+        {key:'money:spending', refresh_seconds:autoRefresh ? 5 : null, plugin:'money', plugin_name:'Money', title:'Spending', size:'s', default_visible:true, data:{status:{text:'On track',tone:'ok'},metric:{value:'Rp1.2jt',label:'spent this month'},caption:'14 transactions · October',chart:[{label:'Mon',value:120},{label:'Tue',value:80},{label:'Wed',value:190},{label:'Thu',value:100},{label:'Fri',value:160},{label:'Sat',value:240},{label:'Sun',value:140}],actions:[{label:'Review spending',prompt:'Break down my spending.'}]}},
+        {key:'money:budgets', refresh_seconds:autoRefresh ? 5 : null, plugin:'money', plugin_name:'Money', title:'Budgets', size:'m', default_visible:false, data:{caption:'Budget breakdown'}},
         {key:'core:memory', core:'memory', title:'Memory', size:'s', data:{metric:{value:'+12',label:'facts this week'},caption:'A little more familiar every day',list:[{label:'Your morning routine',value:'Updated'},{label:'Current project',value:'Tomo'},{label:'Favourite workspace',value:'Home'}]}}]};
        return {};
       }};
-    }, layout);
+    }, {layout, autoRefresh});
     await page.addScriptTag({path: path.join(root, 'app/static/js/home.js')});
     await page.waitForSelector('[data-key="money:spending"]');
    }
@@ -110,8 +115,37 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
     await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'desktop-drawer.png')});
    }
    assert.deepEqual(errors, []); assert.deepEqual(await page.evaluate(() => toasts), []);
+   if (width > 720) {
+    await load({order:['core:memory','money:spending'], hidden:[], sizes:{'money:spending':{width:'l',height:320}}}, true);
+    await page.evaluate(() => window.originalCard = document.querySelector('[data-key="money:spending"]'));
+    await page.clock.runFor(6000);
+    assert.deepEqual(await page.evaluate(() => refreshRequests), [['money:spending']]);
+    assert.equal(await page.locator('[data-key="money:spending"] .home-metric').innerText(), 'Rp2jt');
+    assert(await page.evaluate(() => originalCard === document.querySelector('[data-key="money:spending"]') && originalCard.style.height === '320px' && originalCard.classList.contains('l')));
+    assert.equal(await page.locator('#homeRooms [data-key]').first().getAttribute('data-key'), 'core:memory');
+    await page.locator('[data-key="money:spending"] [data-prompt-i]').click();
+    assert.equal(await page.locator('#homeChatInput').inputValue(), 'Updated spending prompt');
+    await page.evaluate(() => window.refreshFail = true);
+    await page.clock.runFor(6000);
+    assert.equal(await page.locator('[data-key="money:spending"] .home-metric').innerText(), 'Rp2jt');
+    assert.equal(await page.locator('[data-key="money:spending"] .home-status').textContent(), 'Stale');
+    await page.evaluate(() => { window.refreshFail = false; Object.defineProperty(document, 'hidden', {configurable:true, value:true}); });
+    const paused = await page.evaluate(() => refreshRequests.length);
+    await page.clock.runFor(10000);
+    assert.equal(await page.evaluate(() => refreshRequests.length), paused);
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', {configurable:true, value:false}); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => !document.querySelector('[data-key="money:spending"] .home-status'));
+    assert.equal(await page.evaluate(() => refreshRequests.length), paused + 1);
+    await page.click('#homeArrange');
+    const arranging = await page.evaluate(() => refreshRequests.length);
+    await page.clock.runFor(6000);
+    assert.equal(await page.evaluate(() => refreshRequests.length), arranging);
+    await page.click('#homeEditDone');
+    await page.waitForFunction(n => refreshRequests.length === n + 1, arranging);
+    assert.deepEqual(errors, []);
+   }
    await page.close();
   }
-  console.log('Home widget selection, removal/restoration, ordering, resizing, and reload passed at desktop and phone widths.');
+  console.log('Home widget selection, removal/restoration, ordering, resizing, reload, and periodic refresh passed at desktop and phone widths.');
  } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
