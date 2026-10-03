@@ -157,8 +157,8 @@ def test_multi_term_query_needs_most_terms_on_one_fact(vault, tmp_path):
     write.add_entity('alice', 'user/profile', 'Favorite editor: Vim.', **opts)
     write.add_entity('alice', 'person/rina', "Rina is the user's wife.", **opts)
     write.add_entity('alice', 'person/budi', 'Budi is a friend.', **opts)
-    assert not read.search(conn, 'alice', 'What is my favorite pet?', home_root=tmp_path)
     assert not read.search(conn, 'alice', 'istri budi', home_root=tmp_path)
+    assert not read.search(conn, 'alice', 'favorite budi', home_root=tmp_path)
     assert read.search(conn, 'alice', 'favorite editor', home_root=tmp_path)[0]['slug'] == 'profile'
 
 
@@ -168,3 +168,23 @@ def test_lexicon_bridges_indonesian_queries_to_english_facts(vault, tmp_path):
     write.add_entity('alice', 'person/rina', "Rina is the user's wife.", **opts)
     assert read.search(conn, 'alice', 'jawaban singkat', home_root=tmp_path)[0]['slug'] == 'profile'
     assert read.search(conn, 'alice', 'siapa istri saya', home_root=tmp_path)[0]['slug'] == 'rina'
+
+
+def test_words_unknown_to_the_vault_do_not_block_retrieval(vault, tmp_path):
+    conn, opts = vault
+    write.add_entity('alice', 'tool/cadesia-ai', 'Runs cctv_proxy as the CCTV relay on port 8899.', **opts)
+    write.add_entity('alice', 'tool/omaxim', 'Hardware: omaxim server Tomo hanya 2 vCPU.', **opts)
+    hits = read.search(conn, 'alice', 'btw relay masih nyala?', home_root=tmp_path)
+    assert [h['slug'] for h in hits] == ['cadesia-ai']
+    assert read.search(conn, 'alice', 'port 8899 jalan di mana sih', home_root=tmp_path)[0]['slug'] == 'cadesia-ai'
+    assert not read.search(conn, 'alice', 'hmm coba search memory', home_root=tmp_path)
+
+
+def test_words_on_most_facts_of_a_large_vault_carry_no_signal(vault, tmp_path):
+    conn, opts = vault
+    for number in range(24):
+        write.add_entity('alice', f'topic/note-{number}', f'Server note number {number}.', **opts)
+    write.add_entity('alice', 'tool/relay', 'Relay server listens on 8899.', **opts)
+    hits = read.search(conn, 'alice', 'relay server', home_root=tmp_path)
+    assert [h['slug'] for h in hits] == ['relay']
+    assert not read.search(conn, 'alice', 'server status', home_root=tmp_path)

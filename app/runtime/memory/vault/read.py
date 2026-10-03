@@ -6,13 +6,11 @@ import sqlite3
 from pathlib import Path
 from . import doc, index
 
-# Question scaffolding should not retrieve unrelated facts on its own.
-_QUERY_STOPWORDS = frozenset("""
-    apa apakah siapa kapan dimana bagaimana berapa yang dan atau di ke dari
-    untuk dengan itu ini saya aku gw gue kamu tolong coba dong sih tentang
-    what who when where how which is are was were do does did the a an
-    and or of to for with my me please tell about on in at mana
-""".split())
+# No stopword list: a query word only constrains retrieval when the account's
+# vault uses it, so chat filler in any language drops out on its own. Once the
+# vault is large enough, words on most facts carry no signal either.
+_COMMON_SHARE = 0.5
+_COMMON_MIN_FACTS = 20
 
 # Small bilingual (ID/EN) lexicon for common personal-memory words. Lexical
 # retrieval cannot bridge languages, and facts are often stored in English.
@@ -75,6 +73,29 @@ def _variants(word: str) -> frozenset[str]:
     return frozenset(forms)
 
 
+def _known_groups(conn: sqlite3.Connection, user_id: str, words: list[str],
+                  include_superseded: bool) -> list[tuple[str, frozenset[str]]]:
+    """Query words (with variants) that occur in this account's vault facts."""
+    from app.runtime.memory.fts import _fts_query
+
+    scope = 'f.user_id=? AND (? OR f.superseded=0)'
+    total = conn.execute(f'SELECT COUNT(*) FROM vault_facts f WHERE {scope}',
+                         (user_id, int(include_superseded))).fetchone()[0]
+    known = []
+    for word in dict.fromkeys(words):
+        # One- and two-letter tokens (is, di, lu) are too ambiguous to require.
+        if len(word) < 3 and not any(c.isdigit() for c in word):
+            continue
+        group = _variants(word)
+        count = conn.execute(
+            f"""SELECT COUNT(*) FROM vault_facts_fts JOIN vault_facts f ON f.id=vault_facts_fts.id
+                WHERE vault_facts_fts MATCH ? AND {scope}""",
+            (_fts_query(' '.join(sorted(group))), user_id, int(include_superseded))).fetchone()[0]
+        if count and not (total >= _COMMON_MIN_FACTS and count > total * _COMMON_SHARE):
+            known.append((word, group))
+    return known
+
+
 def _coverage_ok(groups: list[frozenset[str]], row: sqlite3.Row) -> bool:
     """Multi-term queries must match most terms, not one incidental word."""
     if len(groups) < 2:
@@ -101,10 +122,10 @@ def search_facts(conn: sqlite3.Connection, user_id: str, query: str, *, limit: i
     exact.update(r['path'] for r in conn.execute(
         'SELECT path,type,slug FROM vault_docs WHERE user_id=? AND kind="entity"', (user_id,))
         if _normalize(f"{r['type']}/{r['slug']}") == normalized)
-    words = [w for w in normalized.split() if w not in _QUERY_STOPWORDS]
-    groups = [] if exact else [_variants(w) for w in dict.fromkeys(words)]
+    known = [] if exact else _known_groups(conn, user_id, normalized.split(), include_superseded)
+    groups = [g for _, g in known]
     # Original words first: _fts_query keeps only the first 24 tokens.
-    terms = dict.fromkeys([*words, *(v for g in groups for v in sorted(g))])
+    terms = dict.fromkeys([*(w for w, _ in known), *(v for g in groups for v in sorted(g))])
     fts_query = _fts_query(query if exact else ' '.join(terms))
     if not fts_query:
         return []

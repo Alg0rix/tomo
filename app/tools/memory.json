@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Save durable declarative facts proactively in the per-account Markdown vault, without a storage character quota. entity=type/slug: user/profile for user identity and preferences; agent/<slug> for agent lessons; project/<slug> for projects and repository conventions; person|tool|place|org|topic for facts about things. Link related pages with [[type/slug]]. Never create person/me or a person page for the user. Use list without entity for the complete index, list with entity for a page, search with query for recall. Use replace/remove with entity and old (unique substring of a live fact); replace requires content. Prefer one fact per add; aliases improves recall. supersedes must exactly match one live fact. Use session_search for past tasks and manage_skill for reusable procedures.",
+      "description": "Save durable declarative facts proactively in the per-account Markdown vault, without a storage character quota. entity=type/slug: user/profile for user identity and preferences; agent/<slug> for agent lessons; project/<slug> for projects and repository conventions; person|tool|place|org|topic for facts about things. Link related pages with [[type/slug]]. Never create person/me or a person page for the user. Use list without entity for the complete index, list with entity for a page, search with query for recall (keywords and entity names such as host, service or port, not a chat sentence). Use replace/remove with entity and old (unique substring of a live fact); replace requires content. Prefer one fact per add; aliases improves recall. supersedes must exactly match one live fact. Use session_search for past tasks and manage_skill for reusable procedures.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -33,7 +33,8 @@
             "description": "Unique substring of the live fact to replace/remove"
           },
           "query": {
-            "type": "string"
+            "type": "string",
+            "description": "Keywords or entity names, e.g. 'relay cctv proxy 8899'; filler words are ignored."
           },
           "source": {
             "type": "string"
