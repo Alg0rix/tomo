@@ -8,14 +8,16 @@
       </div>
       <div class="machine-field-control mono" id="tomoVersion">{{ app_version }}</div>
     </div>
-    <div class="machine-field" id="selfUpdateField" hidden>
+    <div class="machine-field" id="selfUpdateField" aria-busy="true">
       <div class="machine-field-copy">
-        <div class="machine-field-name">Update</div>
-        <p class="machine-field-hint">Script install. Pulls git, syncs deps, restarts the user service.</p>
+        <div class="machine-field-name">Update Tomo</div>
+        <p class="machine-field-hint" id="selfUpdateHint">Checking installation…</p>
+        <p class="machine-field-hint mono" id="selfUpdateDetails"></p>
       </div>
       <div class="machine-field-control">
-        <button class="btn primary sm" type="button" id="selfUpdateBtn">Update</button>
-        <p class="machine-field-hint" id="selfUpdateStatus"></p>
+        <button class="btn ghost sm" type="button" id="selfUpdateCheckBtn" disabled>Check for updates</button>
+        <button class="btn primary sm" type="button" id="selfUpdateBtn" disabled>Update now</button>
+        <p class="machine-field-hint" id="selfUpdateStatus" role="status" aria-live="polite">Loading update status…</p>
       </div>
     </div>
     <div class="machine-field">

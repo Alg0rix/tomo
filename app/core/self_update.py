@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 _CGROUP_HINTS = ("docker", "containerd", "kubepods", "lxc", "podman", "libpod", "nspawn")
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+# A git HEAD change can precede dependency sync and service restart.
+_INSTANCE_ID = uuid.uuid4().hex
 
 _spawn_lock = threading.Lock()
 _spawned_at: float | None = None
@@ -116,6 +120,7 @@ def status(*, home: Path | None = None) -> dict[str, Any]:
 
     branch = read_tracked_branch(_app_dir(home))
     return {
+        "instance_id": _INSTANCE_ID,
         "can_update": ok,
         "reason": reason,
         "kind": install_kind(home=home),

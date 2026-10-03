@@ -5477,7 +5477,9 @@ details.si-card > summary.si-card-hd::-webkit-details-marker { display: none; }
 }
 .machine-field:last-child { border-bottom: none; }
 .machine-field-stack { grid-template-columns: 1fr; }
-.machine-field[hidden], #profileForm [hidden] { display: none !important; }
+.machine-field[hidden], #profileForm [hidden], #selfUpdateField [hidden] { display: none !important; }
+#selfUpdateField .machine-field-control { gap: 6px; }
+#selfUpdateField .machine-field-hint { overflow-wrap: anywhere; }
 .machine-field-name {
   font-size: 14px;
   font-weight: 600;
