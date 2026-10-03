@@ -12,7 +12,11 @@ from app.services import store
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache(tmp_path, monkeypatch):
+    from app.core import config
+
+    # Rebinding the DB does not clear Markdown vault files from previous tests.
+    monkeypatch.setattr(config, "TOMO_HOME", tmp_path / "home")
     dashboard_prompts.clear_dashboard_prompts_cache()
     yield
     dashboard_prompts.clear_dashboard_prompts_cache()
