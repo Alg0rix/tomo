@@ -148,13 +148,62 @@ def classify_review_action(
     kind = "error" if err else ("write" if write else "read")
     if write and not err and not successful_write:
         kind = "noop"
-    return {
+    out: dict[str, Any] = {
         "tool": name,
         "type": mtype,
         "kind": kind,
         "saved_eligible": successful_write,
         "summary": text.splitlines()[0][:140] if text else "",
     }
+    detail = _action_detail(name, arguments or {}, text)
+    if detail:
+        out["detail"] = detail
+    return out
+
+
+def _clip(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _action_detail(name: str, args: dict[str, Any], result_text: str) -> dict[str, str]:
+    """What a write actually touched, so the Companion can say it in words.
+
+    Result strings like "Saved vault fact." carry no content; the arguments do.
+    """
+    if name == "memory":
+        action = str(args.get("action") or "").strip().lower()
+        if action not in {"add", "replace", "remove"}:
+            return {}
+        detail = {"action": action, "entity": _clip(args.get("entity"), 120)}
+        if args.get("content"):
+            detail["content"] = _clip(args["content"], 280)
+        if args.get("old"):
+            detail["old"] = _clip(args["old"], 140)
+        return detail
+    if name == "manage_skill":
+        sid = args.get("skill_id") or args.get("name") or ""
+        detail = {"action": _clip(args.get("action"), 20), "skill_id": _clip(sid, 80)}
+        if args.get("display_name"):
+            detail["name"] = _clip(args["display_name"], 80)
+        return detail
+    if name == "record_episode":
+        _, sep, label = result_text.partition(": ")
+        label = label if sep and result_text.startswith("Recorded episode") else ""
+        label = label or args.get("title") or args.get("objective") or ""
+        return {"title": _clip(label, 160)} if label else {}
+    if name == "save_artifact":
+        fname = args.get("filename") or args.get("name") or ""
+        return {"name": _clip(fname, 120)} if fname else {}
+    if name == "agent_state":
+        action = str(args.get("action") or "").strip().lower()
+        if action not in {"set", "delete"} or not args.get("key"):
+            return {}
+        detail = {"action": action, "key": _clip(args["key"], 60)}
+        if args.get("value"):
+            detail["value"] = _clip(args["value"], 200)
+        return detail
+    return {}
 
 
 def classify_actions(

@@ -1692,13 +1692,34 @@ class Store:
             )
 
     def companion_snapshot(
-        self, *, recent_limit: int = 20, user_id: str | None = None
+        self,
+        *,
+        recent_limit: int = 30,
+        user_id: str | None = None,
+        tz_minutes: int = 0,
     ) -> dict[str, Any]:
-        """Bond + growth log + profile for the Companion page (per account)."""
-        from app.runtime.agent.learning.companion import companion_snapshot as snap
+        """Bond, rhythm, profile, and diary for the Companion page (per account)."""
+        from app.runtime.agent.learning import companion
 
         with self._lock:
-            return snap(self._conn, recent_limit=recent_limit, user_id=user_id)
+            data = companion.companion_snapshot(
+                self._conn,
+                recent_limit=recent_limit,
+                user_id=user_id,
+                tz_minutes=tz_minutes,
+            )
+            coord = agents_store.get_coordinator(self._conn)
+        # Learning counters take their own lock and may hydrate via with_db.
+        data["learning"] = companion.learning_status(
+            coord["id"] if coord else None, enabled=data["learning_enabled"]
+        )
+        return data
+
+    def companion_diary(self, *, user_id: str, **kwargs: Any) -> dict[str, Any]:
+        from app.runtime.agent.learning.companion import diary_page
+
+        with self._lock:
+            return diary_page(self._conn, user_id=user_id, **kwargs)
 
     # -- Learning OS shared / execution lanes ----------------------------
     def insert_swarm_note(self, **kwargs: Any) -> dict[str, Any] | None:

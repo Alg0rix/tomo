@@ -1,746 +1,578 @@
-/* Companion — bento UI (Tomo Darkroom tokens) */
+/* Companion · 交換日記 — the exchange diary between you and Tomo.
+ *
+ * Cover (bond seal + stage), the diary Tomo keeps after each look-back,
+ * and side notes: what the learning loop is doing now, what Tomo knows
+ * about you (editable), your rhythm, and the skills you share.
+ */
 (function () {
   'use strict';
 
   var root = document.getElementById('companionRoot');
   if (!root) return;
 
+  var TZ = -new Date().getTimezoneOffset();
+  var WEEKDAYS = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
+  var GLYPH = { fact: '記', skill: '技', episode: '話', file: '紙', state: '状', note: '記' };
+  var FACTS_FOLDED = 6;
+
   var state = {
-    nextBefore: null,
-    loadingMore: false,
     data: null,
-    tab: 'bond',
-    selectedEventId: null,
-    savedOnly: false,
+    entries: [],
+    hasMore: false,
+    nextBefore: null,
+    filter: 'all',
+    loading: false,
+    factsOpen: false,
+    editing: null,
+    forgetting: null,
   };
 
-  var ICO = {
-    sparkles:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>',
-    more:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>',
-    calendar:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
-    activity:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12L16 9h5"/></svg>',
-    check:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
-    chat:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7A2.5 2.5 0 0 1 16.5 16H10l-4 3v-3H7.5A2.5 2.5 0 0 1 5 13.5v-7z"/></svg>',
-    flame:
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3c2 3 1 5 1 5s3-1 4 2c1 2 0 6-5 8-5-2-6-6-5-8 1-3 4-2 4-2s-1-2 1-5z"/></svg>',
-  };
-
+  // ── helpers ──────────────────────────────────────────────────────────
   function esc(s) {
-    var t = s == null ? '' : String(s);
-    if (window.Tomo && typeof Tomo.escapeHtml === 'function') {
-      return Tomo.escapeHtml(t);
-    }
-    return t
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    return Tomo.escapeHtml(s == null ? '' : String(s));
   }
 
-  function firstLine(s, maxLen) {
-    var line = String(s == null ? '' : s)
-      .split(/\r?\n/)[0]
-      .trim();
-    maxLen = maxLen || 80;
-    return line.length > maxLen ? line.slice(0, maxLen) : line;
+  function plural(n, one, many) {
+    return n + ' ' + (n === 1 ? one : many || one + 's');
   }
 
-  function fmtDate(ts) {
+  function localDay(ts) {
+    var d = new Date(Number(ts) * 1000);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+
+  function clock(ts) {
+    return new Date(Number(ts) * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function longDate(ts) {
+    return new Date(Number(ts) * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function ago(ts) {
     if (!ts) return '';
-    try {
-      return new Date(Number(ts) * 1000).toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch (e) {
-      return '';
-    }
+    var s = Math.max(0, Date.now() / 1000 - Number(ts));
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    if (s < 86400 * 30) return Math.round(s / 86400) + 'd ago';
+    return longDate(ts);
   }
 
-  function renderMostUsedSkills(skills) {
-    var rows = (skills || []).map(function (skill) {
-      return '<li><a href="/skills/' + encodeURIComponent(skill.id) + '" title="Last loaded: ' +
-        esc(fmtDate(skill.last_used_at)) + '"><span>' + esc(skill.name) +
-        '</span><span class="mono faint">' + esc(skill.use_count) + ' loads</span></a></li>';
+  function dayLabel(iso) {
+    var today = localDay(Date.now() / 1000);
+    var y = new Date(); y.setDate(y.getDate() - 1);
+    if (iso === today) return 'Today';
+    if (iso === localDay(y.getTime() / 1000)) return 'Yesterday';
+    return '';
+  }
+
+  function userName() {
+    var u = root.getAttribute('data-username') || '';
+    return u && u !== 'web' ? u : 'You';
+  }
+
+  // ── cover ────────────────────────────────────────────────────────────
+  function seal(d) {
+    var parts = d.bond_parts || [];
+    var R = 84, C = 2 * Math.PI * R, GAP = 7;
+    var usable = C - GAP * parts.length;
+    var at = 0;
+    var arcs = parts.map(function (p, i) {
+      var len = usable * (p.max / 100);
+      var fill = Math.max(0, Math.min(1, p.ratio)) * len;
+      var off = -at;
+      at += len + GAP;
+      return '<circle class="kn-arc-track" r="' + R + '" cx="100" cy="100" stroke-dasharray="' + len.toFixed(2) + ' ' + C.toFixed(2) +
+        '" stroke-dashoffset="' + off.toFixed(2) + '"/>' +
+        '<circle class="kn-arc" r="' + R + '" cx="100" cy="100" style="--len:' + fill.toFixed(2) + ';--i:' + i +
+        '" stroke-dasharray="' + fill.toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + off.toFixed(2) + '">' +
+        '<title>' + esc(p.label + ': ' + p.points + ' / ' + p.max) + '</title></circle>';
     }).join('');
-    return '<div class="cp-skills-head"><h4>Most-used skills</h4>' +
-      '<span class="faint">Shared library · chat loads</span></div>' +
-      (rows ? '<ol class="cp-skills-list">' + rows + '</ol>' :
-        '<p class="faint">No skill loads recorded yet.</p>');
+    var st = d.stage || {};
+    return '<div class="kn-seal" role="img" aria-label="Bond ' + d.bond + ' of 100, stage ' + esc(st.name) + '">' +
+      '<svg viewBox="0 0 200 200" aria-hidden="true"><g transform="rotate(-90 100 100)">' + arcs + '</g></svg>' +
+      '<div class="kn-hanko"><span class="kn-hanko-k">' + esc(st.kanji) + '</span></div>' +
+      '</div>';
   }
 
-  function fmtDay(iso) {
-    if (!iso) return '';
-    try {
-      return new Date(iso + 'T12:00:00Z').toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-    } catch (e) {
-      return iso;
-    }
+  function partsLegend(d) {
+    return '<ul class="kn-parts">' + (d.bond_parts || []).map(function (p) {
+      var pct = Math.round(Math.max(0, Math.min(1, p.ratio)) * 100);
+      return '<li title="' + esc(p.hint) + '"><span class="kn-part-name">' + esc(p.label) + '</span>' +
+        '<span class="kn-part-bar"><i style="width:' + pct + '%"></i></span>' +
+        '<span class="kn-part-pts">' + Math.round(p.points) + '<small>/' + p.max + '</small></span></li>';
+    }).join('') + '</ul>';
   }
 
-  function monthShort(ym) {
-    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    var mi = parseInt(String(ym).slice(5, 7), 10) - 1;
-    return months[mi] || ym;
-  }
-
-  function heatLevel(intensity, maxI) {
-    if (!intensity) return 0;
-    if (!maxI || maxI <= 1) return intensity > 0 ? 2 : 0;
-    var r = intensity / maxI;
-    if (r > 0.75) return 4;
-    if (r > 0.5) return 3;
-    if (r > 0.25) return 2;
-    return 1;
-  }
-
-  function displayName(data) {
-    var el = document.getElementById('companionRoot');
-    var user = (el && el.getAttribute('data-username')) || '';
-    if (user && user !== 'web') return user + "'s Tomo";
-    return 'Your Tomo';
-  }
-
-  function renderHeatmap(hm) {
-    hm = hm || {};
-    var days = hm.days || [];
-    var maxI = hm.max_intensity || 0;
-    var cells = days
-      .map(function (d) {
-        var lv = heatLevel(d.intensity, maxI);
-        var tip =
-          fmtDay(d.date) +
-          ' · ' +
-          d.chats +
-          ' chats, ' +
-          d.saves +
-          ' saves, ' +
-          d.reviews +
-          ' reviews';
-        return (
-          '<div class="cp-heat-cell lv-' +
-          lv +
-          '" title="' +
-          esc(tip) +
-          '" data-date="' +
-          esc(d.date) +
-          '"></div>'
-        );
-      })
-      .join('');
-
-    // Keep the activity grid legible on desktop while preserving the compact
-    // card on narrow screens.
-    var compact = window.matchMedia && window.matchMedia('(max-width: 899px)').matches;
-    var cellSize = compact ? 6 : 10;
-    var cellGap = compact ? 2 : 3;
-    var cellStep = cellSize + cellGap;
-    var cols = Math.max(1, Math.ceil(days.length / 7));
-    var gridW = cols * cellSize + Math.max(0, cols - 1) * cellGap;
-    var monthsHtml = (hm.months || [])
-      .map(function (m) {
-        // A month can begin near the end of a week column. Rounding keeps
-        // adjacent labels separated instead of rendering “FebMar”.
-        var col = Math.round((m.index || 0) / 7);
-        var left = col * cellStep;
-        return (
-          '<span class="cp-heat-month" style="left:' +
-          left +
-          'px">' +
-          esc(monthShort(m.month)) +
-          '</span>'
-        );
-      })
-      .join('');
-
-    return (
-      '<div class="cp-heatmap-wrap">' +
-      '<div class="cp-heatmap-inner">' +
-      '<div class="cp-heat-months" style="width:' +
-      gridW +
-      'px">' +
-      monthsHtml +
+  function cover(d) {
+    var st = d.stage || {};
+    var s = d.stats || {};
+    var r = d.rhythm || {};
+    var next = st.next;
+    var mark = root.getAttribute('data-mark');
+    var since = d.first_seen_at ? 'since ' + longDate(d.first_seen_at) : 'starting today';
+    var progress = Math.round((st.progress || 0) * 100);
+    var nextLine = next
+      ? '<strong>' + plural(next.to_go, 'point') + '</strong> to <span class="kn-k">' + esc(next.kanji) + '</span> ' + esc(next.name)
+      : 'The deepest bond there is. <span class="kn-k">親友</span>';
+    return '<header class="kn-cover">' +
+      '<div class="kn-cover-main">' +
+        '<div class="kn-label"><span class="kn-k">交換日記</span><span>exchange diary</span></div>' +
+        '<h1 class="kn-title">' + esc(userName()) + ' <span class="kn-amp">&amp;</span> ' +
+          '<span class="kn-tomo">' + (mark ? '<img src="' + esc(mark) + '" alt="">' : '') + 'Tomo</span></h1>' +
+        '<p class="kn-since">Day <strong>' + ((d.days_together || 0) + 1) + '</strong> together · ' + esc(since) + '</p>' +
+        '<dl class="kn-tally">' +
+          '<div><dt>chats</dt><dd>' + (s.chats || 0) + '</dd></div>' +
+          '<div><dt>lessons kept</dt><dd>' + (s.events_saved || 0) + '</dd></div>' +
+          '<div><dt>about you</dt><dd>' + (s.profile_facts || 0) + '</dd></div>' +
+          '<div><dt>day streak</dt><dd>' + (r.streak || 0) + '</dd></div>' +
+        '</dl>' +
+        '<div class="kn-next">' +
+          '<div class="kn-next-row"><span>' + nextLine + '</span><span class="kn-next-pct">' + progress + '%</span></div>' +
+          '<div class="kn-next-bar"><i style="width:' + progress + '%"></i></div>' +
+          (st.grow ? '<p class="kn-grow"><span>Grow it</span>' + esc(st.grow.hint) + '</p>' : '') +
+        '</div>' +
       '</div>' +
-      '<div class="cp-heatmap" role="img" aria-label="Activity heatmap">' +
-      cells +
+      '<div class="kn-cover-bond">' +
+        seal(d) +
+        '<div class="kn-stage"><span class="kn-stage-name">' + esc(st.name) + '</span>' +
+          '<span class="kn-stage-romaji">' + esc(st.romaji) + ' · bond ' + d.bond + '/100</span></div>' +
+        partsLegend(d) +
       '</div>' +
-      '<div class="cp-heat-legend">' +
-      '<span>Less</span>' +
-      '<div class="cp-heat-cell lv-0"></div>' +
-      '<div class="cp-heat-cell lv-1"></div>' +
-      '<div class="cp-heat-cell lv-2"></div>' +
-      '<div class="cp-heat-cell lv-3"></div>' +
-      '<div class="cp-heat-cell lv-4"></div>' +
-      '<span>More</span></div>' +
-      '</div></div>'
-    );
+    '</header>';
   }
 
-  function renderGrowthBars(growth) {
-    growth = growth || [];
-    var max = 1;
-    growth.forEach(function (g) {
-      if ((g.events || 0) > max) max = g.events;
-    });
-    var bars = growth
-      .map(function (g) {
-        var h = Math.max(6, Math.round(((g.events || 0) / max) * 80));
-        var sh = Math.max(0, Math.round(((g.saved || 0) / max) * 80));
-        return (
-          '<div class="companion-bar-col" title="' +
-          esc(g.month) +
-          ': ' +
-          (g.events || 0) +
-          ' reviews, ' +
-          (g.saved || 0) +
-          ' saved">' +
-          '<div class="companion-bar-track">' +
-          '<div class="companion-bar" style="height:' +
-          h +
-          'px">' +
-          (sh
-            ? '<div class="companion-bar-saved" style="height:' + sh + 'px"></div>'
-            : '') +
-          '</div></div>' +
-          '<div class="companion-bar-label mono">' +
-          esc(monthShort(g.month)) +
-          '</div></div>'
-        );
-      })
-      .join('');
-    return (
-      '<div class="companion-growth-chart">' +
-      bars +
-      '</div>' +
-      '<p class="faint companion-chart-legend" style="margin-top:12px;font-size:12px;color:var(--text-faint)">Bars = learning reviews · filled = saved lessons (12 months)</p>'
-    );
-  }
-
-  // Keep growth chart styles (from earlier) scoped here if missing in css
-  function ensureGrowthStyles() {
-    if (document.getElementById('cp-growth-inline')) return;
-    var s = document.createElement('style');
-    s.id = 'cp-growth-inline';
-    s.textContent =
-      '.companion-growth-chart{display:flex;align-items:flex-end;gap:6px;min-height:100px}' +
-      '.companion-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}' +
-      '.companion-bar-track{height:84px;width:100%;display:flex;align-items:flex-end;justify-content:center}' +
-      '.companion-bar{width:70%;max-width:28px;min-height:4px;border-radius:4px 4px 2px 2px;background:var(--surface-3);border:1px solid var(--border);position:relative;overflow:hidden;display:flex;align-items:flex-end}' +
-      '.companion-bar-saved{width:100%;background:var(--accent);border-radius:2px 2px 0 0;min-height:2px;box-shadow:0 0 8px var(--accent-glow)}' +
-      '.companion-bar-label{font-size:9px;color:var(--text-faint);font-family:var(--font-mono)}';
-    document.head.appendChild(s);
-  }
-
-  function memoryTypeChips(ev) {
-    var types = (ev && ev.memory_types) || [];
-    if ((!types || !types.length) && ev && ev.extract && ev.extract.memory_types) {
-      types = ev.extract.memory_types;
-    }
-    if (!types || !types.length) return '';
-    return types
-      .slice(0, 6)
-      .map(function (t) {
-        return '<span class="cp-chip is-type">' + esc(String(t)) + '</span>';
-      })
-      .join('');
-  }
-
-  function renderDiagnostics(diag) {
-    diag = diag || {};
-    if (!diag || typeof diag !== 'object') return '';
-    var bits = [];
-    if (diag.in_flight) bits.push('review in flight');
-    if (diag.memory_due) bits.push('memory due');
-    if (diag.skills_due) bits.push('skills due');
-    if (diag.cooldown_remaining_sec > 0) {
-      bits.push('cooldown ' + Math.ceil(diag.cooldown_remaining_sec) + 's');
-    }
-    bits.push(
-      'turns ' +
-        (diag.turns_since_memory != null ? diag.turns_since_memory : '—') +
-        '/' +
-        (diag.memory_nudge != null ? diag.memory_nudge : '—')
-    );
-    bits.push(
-      'reviews ' +
-        (diag.reviews_started || 0) +
-        ' · saved ' +
-        (diag.reviews_saved || 0)
-    );
-    if (diag.skipped_cooldown) bits.push('skip cool ' + diag.skipped_cooldown);
-    if (diag.skipped_inflight) bits.push('skip fly ' + diag.skipped_inflight);
-    return (
-      '<div class="cp-diag" title="Learning harness diagnostics">' +
-      bits
-        .map(function (b) {
-          return '<span class="cp-diag-pill">' + esc(b) + '</span>';
-        })
-        .join('') +
-      '</div>'
-    );
-  }
-
-  function diaryFeature(ev) {
-    if (!ev) return '';
-    if (ev.saved) {
-      return esc(ev.diary || ev.note || 'A durable lesson was recorded for future sessions.');
-    }
-    var note = (ev.note || '').toString();
-    // Hide provider/transport failure leftovers from older builds.
-    if (/empty choices|LLM request failed|Provider returned no output|no completion/i.test(note)) {
-      return esc('Review skipped — model returned no usable output. Chat still works; retry later.');
-    }
-    return esc(note || 'Nothing durable to save this pass.');
-  }
-
-  function timelineBullets(ev) {
-    var items = [];
-    if (ev.saved) items.push('Lesson saved');
-    else items.push('Review completed (idle)');
-    if (ev.review_memory) items.push('Memory focus');
-    if (ev.review_skills) items.push('Skills focus');
-    (ev.actions || []).slice(0, 3).forEach(function (a) {
-      items.push(firstLine(a, 80));
-    });
-    if (!items.length) return '';
-    return (
-      '<ul class="cp-tl-bullets">' +
-      items
-        .map(function (t) {
-          return '<li>' + ICO.check + '<span>' + esc(t) + '</span></li>';
-        })
-        .join('') +
-      '</ul>'
-    );
-  }
-
-  function renderTimeline(events) {
-    if (!events || !events.length) {
-      return (
-        '<div class="cp-empty">No milestones yet. Keep Learning on and work multi-step tasks — Tomo journals here.</div>'
-      );
-    }
-    var sel = state.selectedEventId || events[0].id;
-    return events
-      .map(function (ev, i) {
-        var active = String(ev.id) === String(sel);
-        var saved = !!ev.saved;
-        var text = saved
-          ? ev.diary || 'Saved a lesson'
-          : ev.note || 'Nothing to save';
-        return (
-          '<div class="cp-tl-item' +
-          (saved ? ' is-saved' : '') +
-          (active ? ' is-active' : '') +
-          '" data-event-id="' +
-          esc(ev.id) +
-          '" role="button" tabindex="0">' +
-          '<span class="cp-tl-dot"></span>' +
-          '<div class="cp-tl-date">' +
-          esc(fmtDate(ev.created_at)) +
-          (ev.agent_id ? ' · ' + esc(ev.agent_id) : '') +
-          '</div>' +
-          '<div class="cp-tl-text">' +
-          esc(String(text).slice(0, 160)) +
-          '</div>' +
-          (active ? timelineBullets(ev) : '') +
-          '</div>'
-        );
-      })
-      .join('');
-  }
-
-  function renderDiaryCard(events) {
-    if (!events || !events.length) {
-      return (
-        '<div class="cp-diary-card"><div class="cp-diary-meta">' +
-        '<div class="cp-diary-title">' +
-        ICO.sparkles +
-        ' Learning diary</div></div>' +
-        '<div class="cp-diary-body is-idle">When Tomo distills preferences or playbooks after a turn, the entry appears here — dated, inspectable, and durable.</div></div>'
-      );
-    }
-    var sel =
-      events.find(function (e) {
-        return String(e.id) === String(state.selectedEventId);
-      }) || events[0];
-    var chips = '';
-    if (sel.review_memory) chips += '<span class="cp-chip">memory</span>';
-    if (sel.review_skills) chips += '<span class="cp-chip">skills</span>';
-    chips += sel.saved
-      ? '<span class="cp-chip is-ok">saved</span>'
-      : '<span class="cp-chip">idle</span>';
-    chips += memoryTypeChips(sel);
-    (sel.actions || []).slice(0, 4).forEach(function (a) {
-      chips += '<span class="cp-chip mono">' + esc(String(a).slice(0, 60)) + '</span>';
-    });
-    return (
-      '<div class="cp-diary-card">' +
-      '<div class="cp-diary-meta">' +
-      '<div class="cp-diary-title">' +
-      ICO.sparkles +
-      ' Learning diary</div>' +
-      '<time class="cp-diary-date">' +
-      esc(fmtDate(sel.created_at)) +
-      '</time></div>' +
-      '<div class="cp-diary-body' +
-      (sel.saved ? '' : ' is-idle') +
-      '">' +
-      diaryFeature(sel) +
-      '</div>' +
-      '<div class="cp-diary-actions">' +
-      chips +
-      '</div></div>'
-    );
-  }
-
-  function visibleEvents(events) {
-    events = events || [];
-    if (!state.savedOnly) return events;
-    return events.filter(function (e) {
-      return !!e.saved;
-    });
-  }
-
-  function render(data) {
-    ensureGrowthStyles();
-    state.data = data;
-    var bond = data.bond != null ? data.bond : 0;
-    var stats = data.stats || {};
-    var parts = data.bond_parts || {};
-    var learning = !!data.learning_enabled;
-    var allEvents = data.recent_events || [];
-    var events = visibleEvents(allEvents);
-    var preview = data.user_profile_preview || [];
-    var streak = data.streak != null ? data.streak : (data.heatmap && data.heatmap.streak) || 0;
-
-    if (allEvents.length) {
-      state.nextBefore = allEvents[allEvents.length - 1].created_at || null;
-      if (!state.selectedEventId && events.length) state.selectedEventId = events[0].id;
+  // ── diary ────────────────────────────────────────────────────────────
+  function learnedItem(x) {
+    var head;
+    if (x.kind === 'fact' && x.fact) {
+      var where = x.entity === 'user/profile' ? 'about you' : x.entity;
+      head = '<span class="kn-verb">' + esc(x.verb) + '</span> ' +
+        (x.href ? '<a class="kn-chip" href="' + esc(x.href) + '">' + esc(where) + '</a>' : '<span class="kn-chip">' + esc(where) + '</span>') +
+        '<q class="kn-fact">' + esc(x.fact) + '</q>';
+    } else if (x.kind === 'skill' && x.name) {
+      head = '<span class="kn-verb">' + esc(x.verb) + ' skill</span> ' +
+        (x.href ? '<a class="kn-chip" href="' + esc(x.href) + '">' + esc(x.name) + '</a>' : '<span class="kn-chip">' + esc(x.name) + '</span>');
+    } else if (x.kind === 'episode' && x.title) {
+      head = '<span class="kn-verb">remembered</span> <span class="kn-plain">' + esc(x.title) + '</span>';
     } else {
-      state.nextBefore = null;
-      state.selectedEventId = null;
+      head = '<span class="kn-plain">' + esc(x.text) + '</span>';
     }
-
-    var profileHtml = preview.length
-      ? '<ul class="cp-profile-list">' +
-        preview
-          .map(function (e) {
-            return '<li>' + esc(e) + '</li>';
-          })
-          .join('') +
-        '</ul>'
-      : '<div class="cp-empty">No profile notes yet. Preferences and corrections land here after learning saves.</div>';
-
-    var name = displayName(data);
-    var initial = (name.replace(/^Your\s+/i, '').charAt(0) || '友').toUpperCase();
-
-    root.innerHTML =
-      /* Header */
-      '<section class="cp-bento cp-bento-pad cp-hero-card">' +
-      '<div class="cp-header">' +
-      '<div class="cp-header-main">' +
-      '<div class="cp-avatar-wrap">' +
-      '<div class="cp-avatar" aria-hidden="true">' +
-      esc(initial) +
-      '</div>' +
-      '<span class="cp-status' +
-      (learning ? '' : ' is-off') +
-      '" title="' +
-      (learning ? 'Learning on' : 'Learning off') +
-      '"></span></div>' +
-      '<div class="cp-title-block">' +
-      '<div class="cp-kicker">Companion</div>' +
-      '<h1 class="cp-title">' +
-      esc(name) +
-      '</h1>' +
-      '<p class="cp-subtitle">How Tomo grows with you — bond, lessons, and what it remembers.</p>' +
-      '</div></div>' +
-      '<div class="cp-header-actions">' +
-      '<a class="cp-icon-btn" href="/system" title="Settings" aria-label="Settings">' +
-      ICO.more +
-      '</a></div></div>' +
-      '<div class="cp-ribbon">' +
-      '<span class="cp-pill">' +
-      ICO.calendar +
-      '<strong>' +
-      esc(data.days_together || 0) +
-      '</strong> days together</span>' +
-      '<span class="cp-pill">' +
-      ICO.chat +
-      '<strong>' +
-      esc(parts.chats || 0) +
-      '</strong> chats</span>' +
-      '<span class="cp-pill">' +
-      ICO.flame +
-      '<strong>' +
-      esc(streak) +
-      '</strong> day streak</span>' +
-      '<span class="cp-pill"><span class="cp-dot"></span><strong>' +
-      esc(stats.events_saved || 0) +
-      '</strong> lessons saved</span>' +
-      '<span class="cp-pill">' +
-      ICO.activity +
-      '<strong>' +
-      esc(bond) +
-      '</strong> bond</span>' +
-      '</div>' +
-      '<div class="cp-learn-row">' +
-      '<div class="cp-learn-label"><span>Learning loop</span>' +
-      '<span class="badge ' +
-      (learning ? 'ok' : '') +
-      '" id="learnBadge">' +
-      (learning ? 'on' : 'off') +
-      '</span></div>' +
-      '<label class="toggle companion-toggle">' +
-      '<input type="checkbox" id="companionLearning" ' +
-      (learning ? 'checked' : '') +
-      '><span class="track"></span></label></div>' +
-      renderDiagnostics(data.diagnostics) +
-      '</section>' +
-      /* Activity and profile insights share a compact right-side rail. */
-      '<div class="cp-insights">' +
-      '<section class="cp-bento cp-bento-pad cp-activity-card">' +
-      '<div class="cp-activity-head">' +
-      '<div class="cp-activity-titles">' +
-      '<h3>Activity</h3>' +
-      '<p id="cpTabDesc">Bond reflects real collaboration: chats, saved lessons, profile notes, and skills.</p>' +
-      '</div>' +
-      '<div class="cp-tabs" role="tablist" aria-label="Activity view">' +
-      '<span class="cp-tab-ink" id="cpTabInk"></span>' +
-      '<button type="button" class="cp-tab is-active" role="tab" data-tab="bond" aria-selected="true">Bond</button>' +
-      '<button type="button" class="cp-tab" role="tab" data-tab="growth" aria-selected="false">Growth</button>' +
-      '</div></div>' +
-      '<div class="cp-panel" id="cpPanelBond" data-panel="bond">' +
-      '<div class="cp-bond-panel">' +
-      '<div class="cp-bond-score">' +
-      '<div class="cp-bond-num">' +
-      esc(bond) +
-      '</div>' +
-      '<div class="cp-bond-label">Bond</div></div>' +
-      '<div>' +
-      '<div class="cp-bond-meter" role="meter" aria-valuenow="' +
-      bond +
-      '" aria-valuemin="0" aria-valuemax="100">' +
-      '<div class="cp-bond-fill" style="width:' +
-      bond +
-      '%"></div></div>' +
-      '<div class="cp-bond-parts">' +
-      '<span class="cp-bond-part">chats <span>' +
-      esc(parts.chats || 0) +
-      '</span></span>' +
-      '<span class="cp-bond-part">saves <span>' +
-      esc(parts.saved_events || 0) +
-      '</span></span>' +
-      '<span class="cp-bond-part">profile <span>' +
-      esc(parts.user_memory_chars || 0) +
-      'c</span></span>' +
-      '<span class="cp-bond-part">skills <span>' +
-      esc(parts.library_skills || 0) +
-      '</span></span>' +
-      '<span class="cp-bond-part">active days <span>' +
-      esc(parts.days_active || 0) +
-      '</span></span></div></div></div>' +
-      renderHeatmap(data.heatmap) +
-      '</div>' +
-      '<div class="cp-panel" id="cpPanelGrowth" data-panel="growth" hidden>' +
-      renderGrowthBars(data.growth) +
-      '</div></section>' +
-      /* What I know */
-      '<section class="cp-bento cp-bento-pad cp-know-card">' +
-      '<div class="cp-know-head">' +
-      '<h3>What I know</h3>' +
-      '<div class="cp-know-links">' +
-      '<a class="btn ghost sm" href="/skills">Skills</a>' +
-      '<a class="btn ghost sm" href="/system#memory">Memory</a></div></div>' +
-      profileHtml +
-      renderMostUsedSkills(data.most_used_skills) +
-      '</section></div>' +
-      /* Growth log */
-      '<section class="cp-bento cp-bento-pad cp-growth-card">' +
-      '<div class="cp-log-head">' +
-      '<div><h3>Growth log</h3>' +
-      '<p>A record of every milestone as Tomo learns with you</p></div>' +
-      '<label class="cp-filter"><input type="checkbox" id="companionSavedOnly" ' +
-      (state.savedOnly ? 'checked' : '') +
-      '> Saved only</label></div>' +
-      '<div class="cp-log-grid">' +
-      '<div id="cpDiary">' +
-      renderDiaryCard(events) +
-      '</div>' +
-      '<div class="cp-timeline" id="cpTimeline">' +
-      renderTimeline(events) +
-      '</div></div>' +
-      '<div class="cp-log-foot" id="companionLogFoot"' +
-      (state.nextBefore && events.length >= 20 ? '' : ' hidden') +
-      '>' +
-      '<button type="button" class="btn ghost sm" id="companionLoadMore">Load more</button></div></section>';
-
-    bindControls();
-    positionTabInk();
+    return '<li class="kn-li k-' + esc(x.kind) + '"><span class="kn-glyph" aria-hidden="true">' + (GLYPH[x.kind] || '記') + '</span><div>' + head + '</div></li>';
   }
 
-  function positionTabInk() {
-    var ink = document.getElementById('cpTabInk');
-    var active = root.querySelector('.cp-tab.is-active');
-    if (!ink || !active) return;
-    ink.style.width = active.offsetWidth + 'px';
-    ink.style.transform = 'translateX(' + active.offsetLeft + 'px)';
+  function chatLink(sess, prefix) {
+    if (!sess) return '';
+    var title = sess.title || 'a chat';
+    if (!sess.exists) return '<span class="kn-from">' + esc(prefix) + ' a chat that was deleted</span>';
+    return '<a class="kn-from" href="/sessions?s=' + encodeURIComponent(sess.id) + '">' + esc(prefix) + ' “' + esc(title) + '” ↗</a>';
   }
 
-  function setTab(tab) {
-    state.tab = tab;
-    root.querySelectorAll('.cp-tab').forEach(function (btn) {
-      var on = btn.getAttribute('data-tab') === tab;
-      btn.classList.toggle('is-active', on);
-      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  function learnedEntry(e) {
+    // A story synthesized from the items just repeats them; only show a real diary line.
+    var learned = e.learned || [];
+    var echo = e.story && learned.length && learned.every(function (x) { return x.text && e.story.indexOf(x.text) !== -1; });
+    var story = e.story && !echo ? '<p class="kn-story">' + esc(e.story) + '</p>' : '';
+    return '<article class="kn-entry is-learned">' +
+      '<time class="kn-time">' + esc(clock(e.created_at)) + '</time>' +
+      '<div class="kn-page">' + story +
+        '<ul class="kn-learned">' + learned.map(learnedItem).join('') + '</ul>' +
+        '<footer>' + chatLink(e.session, 'from') + '</footer>' +
+      '</div></article>';
+  }
+
+  function quietRun(run) {
+    var skipped = run.filter(function (e) { return e.status === 'skipped'; }).length;
+    var quiet = run.length - skipped;
+    var bits = [];
+    if (quiet === 1 && !skipped) {
+      var e = run[0];
+      var t = e.session && e.session.exists && e.session.title
+        ? 'Looked back at ' + chatLink(e.session, '').replace('↗', '').trim()
+        : 'Looked back at a chat';
+      bits.push(t + ' — nothing new to keep.');
+    } else if (quiet) {
+      bits.push('Looked back ' + plural(quiet, 'time') + ' — nothing new to keep.');
+    }
+    if (skipped) {
+      bits.push(skipped === 1
+        ? 'One look-back didn’t finish — the model returned nothing.'
+        : plural(skipped, 'look-back') + ' didn’t finish — the model returned nothing.');
+    }
+    return '<div class="kn-entry is-quiet' + (skipped && !quiet ? ' is-skipped' : '') + '">' +
+      '<time class="kn-time">' + esc(clock(run[0].created_at)) + '</time>' +
+      '<p>' + bits.join(' ') + '</p></div>';
+  }
+
+  function dayGroups(entries) {
+    var days = [];
+    entries.forEach(function (e) {
+      var key = localDay(e.created_at);
+      var last = days[days.length - 1];
+      if (!last || last.key !== key) days.push(last = { key: key, ts: e.created_at, items: [] });
+      last.items.push(e);
     });
-    root.querySelectorAll('.cp-panel').forEach(function (p) {
-      p.hidden = p.getAttribute('data-panel') !== tab;
+    return days;
+  }
+
+  function renderDay(day) {
+    var body = [];
+    var run = [];
+    function flush() { if (run.length) { body.push(quietRun(run)); run = []; } }
+    day.items.forEach(function (e) {
+      if (e.status === 'learned') { flush(); body.push(learnedEntry(e)); }
+      else run.push(e);
     });
-    var desc = document.getElementById('cpTabDesc');
-    if (desc) {
-      desc.textContent =
-        tab === 'growth'
-          ? 'Monthly learning reviews and saved lessons — the curve of how Tomo improves its playbooks.'
-          : 'Bond reflects real collaboration: chats, saved lessons, profile notes, and skills.';
-    }
-    positionTabInk();
+    flush();
+    var dt = new Date(Number(day.ts) * 1000);
+    var rel = dayLabel(day.key);
+    return '<section class="kn-day">' +
+      '<header class="kn-day-head">' +
+        '<span class="kn-day-num">' + dt.getDate() + '</span>' +
+        '<span class="kn-day-meta"><b>' + esc(dt.toLocaleDateString(undefined, { month: 'long' })) + '</b>' +
+        esc(rel || dt.toLocaleDateString(undefined, { weekday: 'long' })) + '</span>' +
+      '</header>' +
+      '<div class="kn-day-body">' + body.join('') + '</div></section>';
   }
 
-  function selectEvent(id) {
-    state.selectedEventId = id;
-    var events = visibleEvents((state.data && state.data.recent_events) || []);
-    var diary = document.getElementById('cpDiary');
-    var tl = document.getElementById('cpTimeline');
-    if (diary) diary.innerHTML = renderDiaryCard(events);
-    if (tl) {
-      tl.innerHTML = renderTimeline(events);
-      bindTimeline();
+  function diaryBody() {
+    if (!state.entries.length) {
+      var learning = state.data && state.data.learning;
+      var every = learning && learning.memory_nudge ? 'every ' + plural(learning.memory_nudge, 'chat') : 'after a few chats';
+      return '<div class="kn-blank"><span class="kn-k">白</span>' +
+        (state.filter === 'learned'
+          ? '<p>No lessons kept yet.</p><span>Tomo writes here when a look-back finds something worth remembering.</span>'
+          : '<p>The first page is still blank.</p><span>Tomo looks back ' + esc(every) + ' and writes down what it learned about you and your work.</span>') +
+        '</div>';
     }
+    return dayGroups(state.entries).map(renderDay).join('') +
+      (state.hasMore
+        ? '<div class="kn-more"><button type="button" class="kn-btn" data-act="more">' + (state.loading ? 'Turning…' : 'Turn to older pages') + '</button></div>'
+        : '<p class="kn-end">— first page —</p>');
   }
 
-  function bindTimeline() {
-    root.querySelectorAll('.cp-tl-item').forEach(function (el) {
-      el.addEventListener('click', function () {
-        selectEvent(el.getAttribute('data-event-id'));
-      });
-      el.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          selectEvent(el.getAttribute('data-event-id'));
-        }
-      });
+  function diary() {
+    return '<section class="kn-diary" aria-labelledby="knDiaryH">' +
+      '<div class="kn-sec-head">' +
+        '<h2 id="knDiaryH"><span class="kn-k">日記</span> Diary</h2>' +
+        '<div class="kn-seg" role="group" aria-label="Diary filter">' +
+          '<button type="button" data-act="filter" data-filter="all" aria-pressed="' + (state.filter === 'all') + '">Everything</button>' +
+          '<button type="button" data-act="filter" data-filter="learned" aria-pressed="' + (state.filter === 'learned') + '">Lessons only</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="knDiary">' + diaryBody() + '</div></section>';
+  }
+
+  // ── side notes ───────────────────────────────────────────────────────
+  function nowCard(d) {
+    var L = d.learning || {};
+    var s = d.stats || {};
+    var line;
+    switch (L.mode) {
+      case 'off': line = 'Learning is paused. Tomo chats as usual but keeps nothing new.'; break;
+      case 'reviewing': line = 'Looking back at the last chat right now…'; break;
+      case 'resting': line = 'Resting after a look-back — ready again in ' + Math.max(1, Math.round(L.cooldown_remaining_sec)) + 's.'; break;
+      case 'due': line = 'A look-back is due after the next reply.'; break;
+      default:
+        line = L.turns_until_review
+          ? 'Listening. Next look-back after ' + plural(L.turns_until_review, 'more chat') + '.'
+          : 'Listening.';
+    }
+    var dots = '';
+    if (L.memory_nudge && L.mode !== 'off') {
+      var n = Math.min(L.memory_nudge, 12);
+      var filled = Math.min(n, Math.round((L.turns_since_review / L.memory_nudge) * n));
+      for (var i = 0; i < n; i++) dots += '<i' + (i < filled ? ' class="on"' : '') + '></i>';
+      dots = '<div class="kn-dots" aria-hidden="true">' + dots + '</div>';
+    }
+    var tally = (s.events_total || 0)
+      ? plural(s.events_total, 'look-back') + ' so far · ' + (s.events_saved || 0) + ' kept something'
+      : 'No look-backs yet';
+    if (L.last_review_at) tally += ' · last ' + ago(L.last_review_at);
+    return '<section class="kn-card kn-now" data-mode="' + esc(L.mode || 'listening') + '">' +
+      '<div class="kn-card-head"><h3><span class="kn-k">今</span> Tomo now</h3>' +
+        '<label class="toggle" title="Learning loop"><input type="checkbox" data-act="learning"' + (d.learning_enabled ? ' checked' : '') +
+        ' aria-label="Learning loop"><span class="track"></span></label></div>' +
+      '<p class="kn-now-line"><span class="kn-pulse" aria-hidden="true"></span>' + esc(line) + '</p>' + dots +
+      '<p class="kn-faint">' + esc(tally) + '</p></section>';
+  }
+
+  function factRow(f) {
+    var n = f.number;
+    if (state.editing === n) {
+      return '<li class="kn-fact-row is-editing" data-n="' + n + '">' +
+        '<textarea class="kn-input" rows="3" data-role="edit">' + esc(f.text) + '</textarea>' +
+        '<div class="kn-row-acts"><button type="button" class="kn-btn sm" data-act="cancel">Cancel</button>' +
+        '<button type="button" class="kn-btn sm primary" data-act="save" data-n="' + n + '">Save</button></div></li>';
+    }
+    if (state.forgetting === n) {
+      return '<li class="kn-fact-row is-forgetting" data-n="' + n + '">' +
+        '<span class="kn-fact-text">' + esc(f.text) + '</span>' +
+        '<div class="kn-row-acts"><span>Forget this?</span><button type="button" class="kn-btn sm" data-act="cancel">Keep</button>' +
+        '<button type="button" class="kn-btn sm danger" data-act="forget-yes" data-n="' + n + '">Forget</button></div></li>';
+    }
+    return '<li class="kn-fact-row" data-n="' + n + '">' +
+      '<span class="kn-fact-text">' + esc(f.text) + (f.origin === 'user' ? ' <span class="kn-yours" title="You wrote this">you</span>' : '') + '</span>' +
+      '<span class="kn-fact-tools">' +
+        '<button type="button" class="kn-icon" data-act="edit" data-n="' + n + '" title="Correct" aria-label="Correct this">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg></button>' +
+        '<button type="button" class="kn-icon" data-act="forget" data-n="' + n + '" title="Forget" aria-label="Forget this">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>' +
+      '</span></li>';
+  }
+
+  function aboutCard(d) {
+    var p = d.profile || { facts: [], total: 0 };
+    var facts = p.facts || [];
+    var shown = state.factsOpen ? facts : facts.slice(0, FACTS_FOLDED);
+    var list = facts.length
+      ? '<ol class="kn-facts">' + shown.map(factRow).join('') + '</ol>' +
+        (facts.length > FACTS_FOLDED
+          ? '<button type="button" class="kn-link" data-act="facts">' + (state.factsOpen ? 'Show fewer' : 'Show all ' + facts.length) + '</button>'
+          : '')
+      : '<p class="kn-faint kn-pad">Nothing yet. Tell Tomo how you like to work — it remembers across every chat.</p>';
+    var pages = d.vault_pages || {};
+    var also = Object.keys(pages).map(function (k) { return plural(pages[k], k); });
+    if ((d.stats || {}).episodes) also.push(plural(d.stats.episodes, 'episode'));
+    return '<section class="kn-card kn-about" id="knAbout">' +
+      '<div class="kn-card-head"><h3><span class="kn-k">覚</span> What Tomo knows about you</h3>' +
+        '<span class="kn-count">' + (p.total || 0) + '</span></div>' +
+      list +
+      '<form class="kn-teach" data-act="teach"><input class="kn-input" name="fact" maxlength="500" autocomplete="off" placeholder="Teach Tomo something about you…" aria-label="Teach Tomo something about you">' +
+        '<button type="submit" class="kn-btn sm">Add</button></form>' +
+      '<p class="kn-faint kn-also">' + (also.length ? 'Also remembers ' + esc(also.join(' · ')) + ' · ' : '') +
+        '<a href="/memory">Open memory →</a></p></section>';
+  }
+
+  function rhythmCard(d) {
+    var r = d.rhythm || {};
+    var days = r.days || [];
+    var max = r.max_intensity || 0;
+    var months = [];
+    var cells = days.map(function (x, i) {
+      var lv = !x.intensity ? 0 : max <= 1 ? 2 : Math.min(4, Math.ceil((x.intensity / max) * 4));
+      if (x.date.slice(8) <= '07' && x.weekday === 0) months.push({ col: Math.floor(i / 7), m: x.date });
+      var tip = x.date + ' · ' + plural(x.chats, 'chat') + (x.saves ? ' · ' + plural(x.saves, 'lesson') + ' kept' : '');
+      return '<i class="lv' + lv + (x.saves ? ' kept' : '') + (x.date === r.today ? ' today' : '') + '" title="' + esc(tip) + '"></i>';
+    }).join('');
+    var monthRow = months.map(function (m) {
+      var name = new Date(m.m + 'T12:00:00').toLocaleDateString(undefined, { month: 'short' });
+      return '<span style="grid-column:' + (m.col + 1) + '">' + esc(name) + '</span>';
+    }).join('');
+    var bits = [plural(r.streak || 0, 'day') + ' streak'];
+    if (r.longest_streak) bits.push('longest ' + plural(r.longest_streak, 'day'));
+    if (r.favourite_weekday != null) bits.push(WEEKDAYS[r.favourite_weekday] + ' are your day');
+    return '<section class="kn-card kn-rhythm">' +
+      '<div class="kn-card-head"><h3><span class="kn-k">季</span> Rhythm</h3><span class="kn-faint">' + (r.weeks || 20) + ' weeks</span></div>' +
+      '<div class="kn-heat" style="--weeks:' + Math.ceil(days.length / 7) + '">' +
+        '<div class="kn-heat-months">' + monthRow + '</div>' +
+        '<div class="kn-heat-grid" role="img" aria-label="Activity over ' + (r.weeks || 20) + ' weeks">' + cells + '</div>' +
+      '</div>' +
+      '<p class="kn-faint">' + esc(bits.join(' · ')) + '</p>' +
+      '<p class="kn-legend"><i class="lv1"></i><i class="lv2"></i><i class="lv4"></i> chats <i class="lv2 kept"></i> lesson kept</p>' +
+      '</section>';
+  }
+
+  function skillsCard(d) {
+    var sk = d.skills || {};
+    var rows = sk.most_used || [];
+    var top = rows.length ? rows[0].use_count : 1;
+    var body = rows.length
+      ? '<ol class="kn-skills">' + rows.map(function (s) {
+          return '<li><a href="/skills/' + encodeURIComponent(s.id) + '"><span>' + esc(s.name) + '</span>' +
+            '<span class="kn-skill-bar"><i style="width:' + Math.round((s.use_count / top) * 100) + '%"></i></span>' +
+            '<span class="kn-faint">' + s.use_count + '×</span></a></li>';
+        }).join('') + '</ol>'
+      : '<p class="kn-faint kn-pad">No shared skills yet. When a workflow repeats, Tomo can turn it into one.</p>';
+    return '<section class="kn-card kn-skillcard">' +
+      '<div class="kn-card-head"><h3><span class="kn-k">技</span> Skills you share</h3>' +
+        '<span class="kn-count">' + (sk.count || 0) + '</span></div>' + body +
+      (sk.library ? '<p class="kn-faint kn-also">' + plural(sk.library, 'skill') + ' in your library · <a href="/skills">All skills →</a></p>' : '') +
+      '</section>';
+  }
+
+  // ── render ───────────────────────────────────────────────────────────
+  function render() {
+    var d = state.data;
+    root.innerHTML = cover(d) +
+      '<div class="kn-grid">' +
+        '<div class="kn-main">' + diary() + '</div>' +
+        '<aside class="kn-side">' + nowCard(d) + aboutCard(d) + rhythmCard(d) + skillsCard(d) + '</aside>' +
+      '</div>';
+  }
+
+  function rerender(id, html) {
+    var el = document.getElementById(id);
+    if (el) el.outerHTML = html;
+  }
+
+  function redrawDiary() {
+    var el = document.getElementById('knDiary');
+    if (el) el.innerHTML = diaryBody();
+    root.querySelectorAll('[data-act="filter"]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-filter') === state.filter));
     });
   }
 
-  function bindControls() {
-    var toggle = document.getElementById('companionLearning');
-    if (toggle) {
-      toggle.addEventListener('change', async function () {
-        var on = !!toggle.checked;
-        try {
-          await Tomo.api('/api/settings', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ learning_enabled: on }),
-          });
-          var badge = document.getElementById('learnBadge');
-          if (badge) {
-            badge.textContent = on ? 'on' : 'off';
-            badge.className = 'badge' + (on ? ' ok' : '');
-          }
-          var st = root.querySelector('.cp-status');
-          if (st) st.classList.toggle('is-off', !on);
-          if (window.Tomo && Tomo.toast) Tomo.toast(on ? 'Learning loop on' : 'Learning loop off');
-        } catch (e) {
-          toggle.checked = !on;
-          if (window.Tomo && Tomo.toast) Tomo.toast('Could not update learning setting', 'error');
-        }
-      });
-    }
-    root.querySelectorAll('.cp-tab').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        setTab(btn.getAttribute('data-tab'));
-      });
-    });
-    bindTimeline();
-    var more = document.getElementById('companionLoadMore');
-    if (more) more.addEventListener('click', loadMore);
-    var savedOnly = document.getElementById('companionSavedOnly');
-    if (savedOnly) {
-      savedOnly.addEventListener('change', function () {
-        state.savedOnly = !!savedOnly.checked;
-        state.selectedEventId = null;
-        if (state.data) render(state.data);
-      });
-    }
-    window.addEventListener('resize', positionTabInk);
+  function setPage(page, append) {
+    state.entries = append ? state.entries.concat(page.entries || []) : (page.entries || []);
+    state.hasMore = !!page.has_more;
+    state.nextBefore = page.next_before;
   }
 
-  async function loadMore() {
-    if (state.loadingMore || !state.nextBefore) return;
-    state.loadingMore = true;
+  async function fetchDiary(append) {
+    if (state.loading) return;
+    state.loading = true;
+    if (append) redrawDiary();
     try {
-      var q =
-        '/api/companion/events?limit=30&before=' +
-        encodeURIComponent(state.nextBefore);
-      if (state.savedOnly) q += '&saved_only=true';
-      var data = await Tomo.api(q);
-      var events = (data && data.events) || [];
-      if (state.data && events.length) {
-        state.data.recent_events = (state.data.recent_events || []).concat(events);
-        state.nextBefore = data.next_before || null;
-        var shown = visibleEvents(state.data.recent_events);
-        var diary = document.getElementById('cpDiary');
-        var tl = document.getElementById('cpTimeline');
-        if (diary) diary.innerHTML = renderDiaryCard(shown);
-        if (tl) {
-          tl.innerHTML = renderTimeline(shown);
-          bindTimeline();
-        }
-        var foot = document.getElementById('companionLogFoot');
-        if (foot && !state.nextBefore) foot.hidden = true;
-      }
+      var q = '/api/companion/events?limit=30' + (state.filter === 'learned' ? '&saved_only=true' : '');
+      if (append && state.nextBefore) q += '&before=' + encodeURIComponent(state.nextBefore);
+      var page = await Tomo.api(q);
+      setPage(page || {}, append);
     } catch (e) {
-      if (window.Tomo && Tomo.toast) Tomo.toast('Could not load more', 'error');
+      Tomo.toast('Could not turn the page', 'error');
     } finally {
-      state.loadingMore = false;
+      state.loading = false;
+      redrawDiary();
     }
   }
+
+  async function refreshAbout() {
+    var d = await Tomo.api('/api/companion?tz=' + TZ);
+    if (!d) return;
+    var keep = state.entries;
+    state.data = d;
+    state.entries = keep;
+    rerender('knAbout', aboutCard(d));
+  }
+
+  function memoryPost(path, body) {
+    return Tomo.api('/api/memory/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function factByNumber(n) {
+    return ((state.data.profile || {}).facts || []).filter(function (f) { return f.number === n; })[0];
+  }
+
+  async function act(kind, el) {
+    var n = el.hasAttribute('data-n') ? Number(el.getAttribute('data-n')) : null;
+    switch (kind) {
+      case 'more': return fetchDiary(true);
+      case 'filter': {
+        var f = el.getAttribute('data-filter');
+        if (f === state.filter) return;
+        state.filter = f;
+        state.entries = [];
+        state.hasMore = false;
+        redrawDiary();
+        return fetchDiary(false);
+      }
+      case 'facts': state.factsOpen = !state.factsOpen; break;
+      case 'edit': state.editing = n; state.forgetting = null; break;
+      case 'forget': state.forgetting = n; state.editing = null; break;
+      case 'cancel': state.editing = state.forgetting = null; break;
+      case 'save': {
+        var ta = root.querySelector('[data-role="edit"]');
+        var text = ta ? ta.value.trim() : '';
+        var fact = factByNumber(n);
+        if (!text || !fact) return;
+        try {
+          await memoryPost('entity/user/profile/edit', { number: n, text: text, expected: fact.text });
+          state.editing = null;
+          Tomo.toast('Corrected. Tomo will use the new version.');
+          return refreshAbout();
+        } catch (e) { Tomo.toast(e.message || 'Could not save', 'error'); return; }
+      }
+      case 'forget-yes': {
+        try {
+          await memoryPost('entity/user/profile/forget', { number: n });
+          state.forgetting = null;
+          Tomo.toast('Forgotten.');
+          return refreshAbout();
+        } catch (e) { Tomo.toast(e.message || 'Could not forget', 'error'); return; }
+      }
+      default: return;
+    }
+    rerender('knAbout', aboutCard(state.data));
+    var focusEl = root.querySelector('[data-role="edit"]');
+    if (focusEl) { focusEl.focus(); focusEl.setSelectionRange(focusEl.value.length, focusEl.value.length); }
+  }
+
+  root.addEventListener('click', function (ev) {
+    var el = ev.target.closest('[data-act]');
+    if (!el || el.tagName === 'FORM' || el.tagName === 'INPUT') return;
+    act(el.getAttribute('data-act'), el);
+  });
+
+  root.addEventListener('keydown', function (ev) {
+    if (ev.target.getAttribute('data-role') !== 'edit') return;
+    if (ev.key === 'Escape') act('cancel', ev.target);
+    if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+      var save = root.querySelector('[data-act="save"]');
+      if (save) act('save', save);
+    }
+  });
+
+  root.addEventListener('submit', async function (ev) {
+    var form = ev.target.closest('[data-act="teach"]');
+    if (!form) return;
+    ev.preventDefault();
+    var input = form.querySelector('input');
+    var text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    try {
+      var res = await memoryPost('facts', { entity: 'user/profile', content: text });
+      Tomo.toast(res && res.added === false ? 'Tomo already knew that.' : 'Noted. Tomo will remember.');
+      await refreshAbout();
+      var again = root.querySelector('.kn-teach input');
+      if (again) again.focus();
+    } catch (e) {
+      input.disabled = false;
+      Tomo.toast(e.message || 'Could not save', 'error');
+    }
+  });
+
+  root.addEventListener('change', async function (ev) {
+    if (ev.target.getAttribute('data-act') !== 'learning') return;
+    var on = ev.target.checked;
+    try {
+      await Tomo.api('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ learning_enabled: on }),
+      });
+      var d = await Tomo.api('/api/companion?tz=' + TZ);
+      if (d) {
+        state.data = d;
+        var card = root.querySelector('.kn-now');
+        if (card) card.outerHTML = nowCard(d);
+      }
+      Tomo.toast(on ? 'Learning on — Tomo will keep lessons again.' : 'Learning paused.');
+    } catch (e) {
+      ev.target.checked = !on;
+      Tomo.toast('Could not update learning', 'error');
+    }
+  });
 
   async function boot() {
     try {
-      var data = await Tomo.api('/api/companion');
-      if (!data || typeof data !== 'object') {
-        throw new Error('empty companion payload');
-      }
-      render(data);
+      var d = await Tomo.api('/api/companion?tz=' + TZ);
+      if (!d) return;
+      state.data = d;
+      setPage(d.diary || {}, false);
+      render();
+      requestAnimationFrame(function () { root.classList.add('is-ready'); });
     } catch (e) {
-      if (typeof console !== 'undefined' && console.error) {
-        console.error('companion render failed', e);
-      }
-      root.innerHTML =
-        '<div class="cp-empty">Could not load companion data.' +
-        (e && e.message
-          ? '<br><span class="mono faint" style="font-size:12px">' +
-            esc(e.message) +
-            '</span>'
-          : '') +
-        '</div>';
+      console.error('companion load failed', e);
+      root.innerHTML = '<div class="kn-blank"><span class="kn-k">閉</span><p>The diary wouldn’t open.</p>' +
+        '<span>' + esc(e && e.message ? e.message : 'Unknown error') + '</span>' +
+        '<button type="button" class="kn-btn" onclick="location.reload()">Try again</button></div>';
     }
   }
 
