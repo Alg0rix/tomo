@@ -24,8 +24,12 @@ def run(arguments: dict[str, Any]) -> str:
             if not isinstance(query, str) or not query.strip():
                 return "Error: query is required"
             def searching(conn):
-                hits = read.search(conn, uid, query, limit=20)
-                return '\n\n'.join(f'[[{h["type"]}/{h["slug"]}]]\n{h["body"]}\n' +
+                hits = read.search(conn, uid, query, limit=20,
+                                   include_superseded=arguments.get("include_superseded") is True)
+                return '\n\n'.join(f'[[{h["type"]}/{h["slug"]}]]\n' + '\n'.join(
+                    ('[superseded] ' if f['superseded'] else '') + f['text'] +
+                    (f" (src: [[{f['source']}]])" if f['source'] else '')
+                    for f in h['matched_facts']) + '\n' +
                     read.related_text(conn, uid, [h['path']]) for h in hits)
             return store.with_db(searching) or 'Vault has no matching facts.'
         if action == "list" and not key:

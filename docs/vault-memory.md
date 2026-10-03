@@ -88,3 +88,46 @@ resolved counts and remaining unresolved destinations for each account.
 - `/api/memory/index` serves the current account's generated Markdown index.
 
 All routes use the authenticated account, not a client-supplied user ID.
+
+## Fact retrieval
+
+Vault recall uses SQLite FTS5 only: no embedding provider, model call or new
+service is required. `vault_facts`, `vault_facts_fts` and `vault_fact_pages` are
+additional rebuildable indexes. Existing accounts backfill them on their next
+rebuild/search without rewriting entity facts. File edits and deletion refresh
+both page and fact indexes.
+
+- Search ranks individual `§` facts with BM25. Field weights are entity 6,
+  aliases 5, title 4, tags 2 and fact text 1. An exact normalized alias or entity
+  key takes priority. Matching uses tokens rather than arbitrary substrings.
+- Common Indonesian/English question words are excluded unless the complete
+  query names an indexed alias/entity. Each remaining word expands to its
+  naive singular/plural and a small built-in ID/EN synonym group
+  (`_SYNONYM_GROUPS` in `read.py`, e.g. `singkat`/`concise`, `istri`/`wife`).
+  With two or more words, one fact must match at least two thirds of them, so
+  `favorite pet` does not return an unrelated `favorite editor` fact. A
+  lexical hit still does not prove the question is answerable.
+- Default recall excludes superseded facts and does not search provenance text.
+  `memory(action="search", query="8000", include_superseded=true)` explicitly
+  searches history and labels superseded results. Use `list` with an entity to
+  inspect its complete page; search returns matching facts with provenance.
+- Automatic context considers 30 candidate facts, keeps up to two facts per
+  page across three direct pages, and deduplicates text. It expands links in
+  selected facts to up to two additional entity pages, preferring query matches.
+  Unmatched explicit neighbors contribute their first live fact. Page-level
+  links from unrelated facts do not expand the prompt.
+- Context preserves whole facts within 1,100 characters and an estimated 350
+  tokens (the runtime's UTF-8 estimator). Oversized facts are skipped; tools
+  can still read them. This is an approximate token budget, not a tokenizer.
+
+Aliases can supply alternate names or extra bilingual vocabulary. Beyond the
+fixed lexicon there is no translation, synonym inference or temporal query
+interpretation.
+Historical questions require the explicit history option.
+
+Run `.venv/bin/python scripts/benchmark_retrieval.py` for an isolated,
+deterministic 34-query fixture (25 positive, 9 negative) reporting Recall@5,
+MRR@5, no-match accuracy and retrieval latency. It covers cross-language and
+partial-match queries. The cases were written alongside the lexicon, so they
+measure regressions in a small fixture, not production answer accuracy. `scripts/benchmark_memory.py`
+measures server RSS and is a separate benchmark.

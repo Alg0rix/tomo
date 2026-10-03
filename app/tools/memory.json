@@ -46,6 +46,10 @@
           },
           "supersedes": {
             "type": "string"
+          },
+          "include_superseded": {
+            "type": "boolean",
+            "description": "Search historical superseded facts too. Default false; use only for questions about previous facts."
           }
         },
         "required": [

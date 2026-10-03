@@ -1,39 +1,147 @@
 """Scoped vault queries and compact retrieval snippets."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from . import doc, index
 
+# Question scaffolding should not retrieve unrelated facts on its own.
+_QUERY_STOPWORDS = frozenset("""
+    apa apakah siapa kapan dimana bagaimana berapa yang dan atau di ke dari
+    untuk dengan itu ini saya aku gw gue kamu tolong coba dong sih tentang
+    what who when where how which is are was were do does did the a an
+    and or of to for with my me please tell about on in at mana
+""".split())
 
-def search(conn: sqlite3.Connection, user_id: str, query: str, *, limit: int = 5, home_root: Path | None = None) -> list[dict]:
+# Small bilingual (ID/EN) lexicon for common personal-memory words. Lexical
+# retrieval cannot bridge languages, and facts are often stored in English.
+_SYNONYM_GROUPS = [frozenset(g.split()) for g in """
+    singkat ringkas pendek concise brief short
+    jawaban jawab answer reply response
+    suka favorit favorite favourite prefer preference preferensi
+    minuman minum beverage drink
+    makanan makan food eat
+    kopi coffee
+    teh tea
+    kantor office
+    alamat address
+    rumah home house
+    tinggal live lives living
+    pekerjaan kerja kerjaan job work works
+    istri wife
+    suami husband
+    teman kawan friend
+    keluarga family
+    anak child children kid
+    ibu mother mom
+    ayah father dad
+    nama name
+    ultah birthday
+    peliharaan pet
+    kucing cat
+    anjing dog
+    bahasa language
+    kota city
+    mobil car
+    jadwal schedule
+    rapat meeting
+    proyek project
+    laporan report
+    kuliah kampus college university
+    sekolah school
+    alergi allergy allergic
+    hobi hobby
+    olahraga sport exercise
+    warna color colour
+    lagu song
+    musik music
+    buku book
+    dokter doctor
+""".strip().splitlines()]
+_SYNONYMS = {word: group for group in _SYNONYM_GROUPS for word in group}
+
+
+def _normalize(text: str) -> str:
+    return ' '.join(re.findall(r'\w+', text.casefold()))
+
+
+def _variants(word: str) -> frozenset[str]:
+    """A query word, its lexicon synonyms and naive singular/plural forms."""
+    words = _SYNONYMS.get(word, {word})
+    forms = set(words)
+    for w in words:
+        forms.add(w[:-1] if w.endswith('s') and len(w) > 3 else w + 's')
+    return frozenset(forms)
+
+
+def _coverage_ok(groups: list[frozenset[str]], row: sqlite3.Row) -> bool:
+    """Multi-term queries must match most terms, not one incidental word."""
+    if len(groups) < 2:
+        return True
+    tokens = set(_normalize(' '.join(
+        str(row[k] or '') for k in ('entity', 'fts_title', 'aliases', 'tags', 'text'))).split())
+    matched = sum(bool(group & tokens) for group in groups)
+    return matched * 3 >= len(groups) * 2
+
+
+def search_facts(conn: sqlite3.Connection, user_id: str, query: str, *, limit: int = 30,
+                 home_root: Path | None = None, include_superseded: bool = False) -> list[dict]:
+    """Rank individual facts with weighted BM25; exact entity aliases win ties."""
     from app.runtime.memory.fts import _fts_query
 
     index.rebuild(conn, user_id, home_root=home_root)
-    words = [w.casefold() for w in query.split() if len(w) > 1]
-    if not words:
+    if limit <= 0:
         return []
-    fts_query = _fts_query(query)
-    fts_paths = []
-    if fts_query:
-        fts_paths = [r['path'] for r in conn.execute(
-            'SELECT path FROM vault_fts WHERE vault_fts MATCH ? AND user_id=? ORDER BY rank LIMIT 30',
-            (fts_query, user_id)).fetchall()]
-    rows = conn.execute('SELECT * FROM vault_docs WHERE user_id=? AND kind="entity"', (user_id,)).fetchall()
-    aliases = conn.execute('SELECT alias,path FROM vault_aliases WHERE path IN (SELECT path FROM vault_docs WHERE user_id=?)', (user_id,)).fetchall()
-    by_path: dict[str, list[str]] = {}
-    for row in aliases:
-        by_path.setdefault(row['path'], []).append(row['alias'])
-    ranked = []
-    for row in rows:
-        hay = f'{row["title"]} {row["tags"]} {row["body"]}'.casefold()
-        matches = sum(3 if any(w in a for a in by_path.get(row['path'], [])) else 1 if w in hay else 0 for w in words)
-        if row['path'] in fts_paths:
-            matches += 2 + max(0, 10 - fts_paths.index(row['path'])) / 10
-        if matches:
-            ranked.append((matches, dict(row)))
-    ranked.sort(key=lambda pair: (-pair[0], pair[1]['path']))
-    return [row for _, row in ranked[:limit]]
+    normalized = _normalize(query)
+    aliases = conn.execute(
+        'SELECT a.alias,a.path FROM vault_aliases a JOIN vault_docs d ON d.path=a.path WHERE d.user_id=?',
+        (user_id,)).fetchall()
+    exact = {r['path'] for r in aliases if _normalize(r['alias']) == normalized}
+    exact.update(r['path'] for r in conn.execute(
+        'SELECT path,type,slug FROM vault_docs WHERE user_id=? AND kind="entity"', (user_id,))
+        if _normalize(f"{r['type']}/{r['slug']}") == normalized)
+    words = [w for w in normalized.split() if w not in _QUERY_STOPWORDS]
+    groups = [] if exact else [_variants(w) for w in dict.fromkeys(words)]
+    # Original words first: _fts_query keeps only the first 24 tokens.
+    terms = dict.fromkeys([*words, *(v for g in groups for v in sorted(g))])
+    fts_query = _fts_query(query if exact else ' '.join(terms))
+    if not fts_query:
+        return []
+    # Scope before LIMIT, so other accounts and timeline entries cannot consume
+    # the candidate budget. Exact aliases precede broader keyword matches.
+    exact_placeholders = ','.join('?' for _ in exact) or 'NULL'
+    rows = conn.execute(
+        f"""SELECT f.*, d.type,d.slug,d.title,
+                  vault_facts_fts.entity, vault_facts_fts.title AS fts_title,
+                  vault_facts_fts.aliases, vault_facts_fts.tags,
+                  bm25(vault_facts_fts,0,0,6,4,5,2,1) AS score
+           FROM vault_facts_fts JOIN vault_facts f ON f.id=vault_facts_fts.id
+           JOIN vault_docs d ON d.path=f.path
+           WHERE vault_facts_fts MATCH ? AND f.user_id=?
+             AND (? OR f.superseded=0)
+           ORDER BY CASE WHEN f.path IN ({exact_placeholders}) THEN 0 ELSE 1 END,
+                    score,f.path,f.ordinal LIMIT ?""",
+        (fts_query, user_id, int(include_superseded), *sorted(exact), limit * 4)).fetchall()
+    return [dict(r) for r in rows if _coverage_ok(groups, r)][:limit]
+
+
+def search(conn: sqlite3.Connection, user_id: str, query: str, *, limit: int = 5,
+           home_root: Path | None = None, include_superseded: bool = False) -> list[dict]:
+    """Compatibility page results, ordered by their best matching fact."""
+    facts = search_facts(conn, user_id, query, limit=100, home_root=home_root,
+                         include_superseded=include_superseded)
+    pages: dict[str, dict] = {}
+    for fact in facts:
+        if fact['path'] not in pages:
+            if len(pages) >= max(0, limit):
+                continue
+            row = conn.execute('SELECT * FROM vault_docs WHERE path=? AND user_id=?',
+                               (fact['path'], user_id)).fetchone()
+            pages[fact['path']] = dict(row)
+            pages[fact['path']]['matched_facts'] = []
+        pages[fact['path']]['matched_facts'].append(fact)
+    return list(pages.values())
 
 
 def related(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limit: int = 4) -> list[dict]:
@@ -49,17 +157,62 @@ def related_text(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *,
     return 'Related: ' + ' '.join(f'[[{r["type"]}/{r["slug"]}]]' for r in rows) if rows else ''
 
 
-def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int = 1100, home_root: Path | None = None) -> str:
-    hits = search(conn, user_id, query, limit=3, home_root=home_root)
-    neighbors = related(conn, user_id, [h['path'] for h in hits], limit=2)
-    words = [w.casefold().strip('?!.,') for w in query.split() if len(w) > 1]
-    lines = []
-    for row in [*hits, *neighbors]:
-        facts = [doc.fact_data(e)['text'] for e in doc.parse(row['body']).entries if not e.startswith('~~')]
-        matching = [f for f in facts if any(w and w in f.casefold() for w in words)]
-        for fact in (matching or facts)[:2]:
-            lines.append(f'- [[{row["type"]}/{row["slug"]}]]: {fact[:220]}')
-    return ('Vault [linked memory]:\n' + '\n'.join(lines))[:budget] if lines else ''
+def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int = 1100,
+            home_root: Path | None = None, token_budget: int = 350) -> str:
+    from app.runtime.agent.compress import _estimate_tokens
+
+    hits = search_facts(conn, user_id, query, limit=30, home_root=home_root)
+    if not hits:
+        return ''
+    header = 'Vault [linked memory]:\n'
+    lines: list[str] = []
+    seen: set[str] = set()
+    per_page: dict[str, int] = {}
+
+    def append_fact(hit: dict) -> bool:
+        text = hit['text'].strip()
+        normalized = ' '.join(text.casefold().split())
+        if not text or normalized in seen or per_page.get(hit['path'], 0) >= 2:
+            return False
+        line = f'- [[{hit["type"]}/{hit["slug"]}]]: {text}'
+        candidate = header + '\n'.join([*lines, line])
+        # Keep whole facts. Oversized candidates do not consume page slots.
+        if len(candidate) > budget or _estimate_tokens(candidate) > token_budget:
+            return False
+        lines.append(line)
+        seen.add(normalized)
+        per_page[hit['path']] = per_page.get(hit['path'], 0) + 1
+        return True
+
+    direct = []
+    for hit in hits:
+        if hit['path'] not in per_page and len(per_page) >= 3:
+            continue
+        if append_fact(hit):
+            direct.append(hit)
+
+    # Expand only links in selected facts, avoiding unrelated page-level edges.
+    linked_paths = set()
+    for hit in direct:
+        for link in doc.links(hit['text']):
+            row = conn.execute('SELECT dst_resolved FROM vault_links WHERE src=? AND dst=?',
+                               (hit['path'], link)).fetchone()
+            if row and row['dst_resolved'] and row['dst_resolved'] not in per_page:
+                linked_paths.add(row['dst_resolved'])
+    neighbors = [h for h in hits if h['path'] in linked_paths]
+    matched_paths = {h['path'] for h in neighbors}
+    for path in sorted(linked_paths - matched_paths):
+        neighbors.extend(dict(r) for r in conn.execute(
+            """SELECT f.*,d.type,d.slug FROM vault_facts f JOIN vault_docs d ON d.path=f.path
+               WHERE f.path=? AND f.user_id=? AND f.superseded=0 ORDER BY f.ordinal LIMIT 1""",
+            (path, user_id)))
+    neighbor_pages = set()
+    for hit in neighbors:
+        if hit['path'] not in neighbor_pages and len(neighbor_pages) >= 2:
+            continue
+        if append_fact(hit):
+            neighbor_pages.add(hit['path'])
+    return header + '\n'.join(lines) if lines else ''
 
 
 def world_card(conn: sqlite3.Connection, user_id: str, *, home_root: Path | None = None,

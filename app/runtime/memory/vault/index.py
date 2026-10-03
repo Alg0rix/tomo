@@ -12,6 +12,10 @@ CREATE INDEX IF NOT EXISTS vault_docs_user ON vault_docs(user_id, kind);
 CREATE TABLE IF NOT EXISTS vault_aliases (alias TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(alias,path));
 CREATE TABLE IF NOT EXISTS vault_links (src TEXT NOT NULL, dst TEXT NOT NULL, dst_resolved TEXT, PRIMARY KEY(src,dst));
 CREATE INDEX IF NOT EXISTS vault_links_dst ON vault_links(dst_resolved);
+CREATE TABLE IF NOT EXISTS vault_fact_pages (path TEXT PRIMARY KEY, hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS vault_facts (id TEXT PRIMARY KEY, path TEXT NOT NULL, user_id TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL, superseded INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS vault_facts_user ON vault_facts(user_id, path, superseded);
+CREATE VIRTUAL TABLE IF NOT EXISTS vault_facts_fts USING fts5(id UNINDEXED, user_id UNINDEXED, entity, title, aliases, tags, text);
 CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(path UNINDEXED, user_id UNINDEXED, title, aliases, tags, body);
 '''
 
@@ -23,6 +27,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _remove(conn: sqlite3.Connection, key: str) -> None:
+    conn.execute('DELETE FROM vault_facts_fts WHERE id IN (SELECT id FROM vault_facts WHERE path=?)', (key,))
+    conn.execute('DELETE FROM vault_facts WHERE path=?', (key,))
+    conn.execute('DELETE FROM vault_fact_pages WHERE path=?', (key,))
     conn.execute('DELETE FROM vault_fts WHERE path=?', (key,))
     conn.execute('DELETE FROM vault_aliases WHERE path=?', (key,))
     conn.execute('DELETE FROM vault_links WHERE src=?', (key,))
@@ -88,7 +95,8 @@ def reindex_file(conn: sqlite3.Connection, user_id: str, path: Path, *, home_roo
     raw = path.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
     old = conn.execute('SELECT hash FROM vault_docs WHERE path=?', (key,)).fetchone()
-    if old and old['hash'] == digest:
+    facts_indexed = conn.execute('SELECT hash FROM vault_fact_pages WHERE path=?', (key,)).fetchone()
+    if old and old['hash'] == digest and facts_indexed and facts_indexed['hash'] == digest:
         return False
     parsed = doc.parse(raw.decode('utf-8'))
     title = next((line[2:].strip() for line in parsed.body.splitlines() if line.startswith('# ')), slug)
@@ -101,6 +109,15 @@ def reindex_file(conn: sqlite3.Connection, user_id: str, path: Path, *, home_roo
     if kind == 'entity':
         for alias in {slug.casefold(), title.casefold(), *(a.casefold() for a in aliases)}:
             conn.execute('INSERT OR IGNORE INTO vault_aliases VALUES (?,?)', (alias,key))
+    if kind == 'entity':
+        for ordinal, entry in enumerate(parsed.entries):
+            fact = doc.fact_data(entry)
+            fact_id = f'{key}#{ordinal}'
+            conn.execute('INSERT INTO vault_facts VALUES (?,?,?,?,?,?,?)',
+                         (fact_id, key, user_id, ordinal, fact['text'], fact['source'], int(fact['superseded'])))
+            conn.execute('INSERT INTO vault_facts_fts VALUES (?,?,?,?,?,?,?)',
+                         (fact_id, user_id, f'{typ}/{slug}', title, ' '.join([slug, *aliases]), ' '.join(tags), fact['text']))
+    conn.execute('INSERT INTO vault_fact_pages VALUES (?,?)', (key, digest))
     for link in doc.links(parsed.body):
         conn.execute('INSERT OR IGNORE INTO vault_links(src,dst) VALUES (?,?)', (key,link))
     conn.execute('INSERT INTO vault_fts VALUES (?,?,?,?,?,?)', (key,user_id,title,' '.join(aliases), ' '.join(tags),parsed.body))
