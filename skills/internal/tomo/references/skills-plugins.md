@@ -105,8 +105,9 @@ uninstall. There is no `tomo config modules` resource or old module API.
 
 Home (`/`) shows each enabled plugin as a room card in the 間 Rooms grid and
 in the rail's "Rooms" group. Plugins that register `api.home_card(handler)` show
-live per-user status (metric, stats, charts, donut, heatmap, kanban columns,
-agenda, checklist, actions); others get a door
+live per-user status (metric, stats, charts, series, donut, gauge, heatmap,
+tables, steps, status bands, kanban columns, agenda, checklist, notice, image,
+actions); others get a door
 card linking to their first page. `api.starter(label, prompt)` adds composer
 chips. Cards are typed JSON rendered by core, never plugin HTML. Read
 `use_skill(skill_id="plugin-development", file="references/home.md")` before

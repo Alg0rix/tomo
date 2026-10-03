@@ -431,28 +431,76 @@
     }).join('');
     return '<div class="home-heat"><div class="g">' + cells + '</div>' + (h.label ? '<div class="cap">' + esc(h.label) + '</div>' : '') + '</div>';
   }
+  function seriesHtml(s) {
+    var all = [];
+    s.lines.forEach(function (l) { all = all.concat(l.values); });
+    var min = Math.min.apply(null, all), max = Math.max.apply(null, all);
+    var span = max - min || 1, w = 240, h = 64;
+    var axis = '';
+    if (min < 0 && max > 0) {
+      var y = (h - 4 - (0 - min) / span * (h - 8)).toFixed(1);
+      axis = '<line x1="0" y1="' + y + '" x2="' + w + '" y2="' + y + '" stroke="var(--border-strong)" stroke-width="1"/>';
+    }
+    var polys = s.lines.map(function (l, i) {
+      var n = l.values.length;
+      var color = TONE_VAR[l.tone] || SERIES[i % SERIES.length];
+      l._color = color;
+      var pts = l.values.map(function (v, j) {
+        return (j * w / (n - 1)).toFixed(1) + ',' + (h - 4 - (v - min) / span * (h - 8)).toFixed(1);
+      });
+      return '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="1.6" vector-effect="non-scaling-stroke"/>';
+    }).join('');
+    var out = '<svg class="home-series" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true">' + axis + polys + '</svg>';
+    var bits = [];
+    s.lines.forEach(function (l) {
+      if (l.label) bits.push('<span><i style="background:' + l._color + '"></i>' + esc(l.label) + '</span>');
+    });
+    if (s.labels && s.labels.length > 1) bits.push('<span class="sl">' + esc(s.labels[0]) + ' → ' + esc(s.labels[s.labels.length - 1]) + '</span>');
+    if (bits.length) out += '<div class="home-slegend">' + bits.join('') + '</div>';
+    return out;
+  }
+  function gaugeHtml(g) {
+    var len = Math.PI * 40, pct = Math.max(0, Math.min(1, g.value || 0));
+    var arc = 'M10 50 A40 40 0 0 1 90 50';
+    var color = TONE_VAR[g.tone] || 'var(--accent)';
+    return '<div class="home-gauge"><div class="dial"><svg viewBox="0 0 100 58" aria-hidden="true">' +
+      '<path d="' + arc + '" fill="none" stroke="var(--surface-3)" stroke-width="8" stroke-linecap="round"/>' +
+      '<path d="' + arc + '" fill="none" stroke="' + color + '" stroke-width="8" stroke-linecap="round" stroke-dasharray="' + (pct * len).toFixed(1) + ' ' + len.toFixed(1) + '"/></svg>' +
+      (g.text ? '<b class="gv">' + esc(g.text) + '</b>' : '') + '</div>' +
+      (g.label ? '<div class="gl">' + esc(g.label) + '</div>' : '') + '</div>';
+  }
   function cardBody(d) {
     var html = '';
-    var rich = ['metric', 'caption', 'stats', 'chart', 'ring', 'heatmap', 'spark', 'bars', 'columns', 'timeline', 'checklist', 'list', 'tags', 'quote', 'meter'];
+    var rich = ['metric', 'caption', 'stats', 'chart', 'ring', 'heatmap', 'spark', 'bars', 'columns', 'timeline', 'checklist', 'list', 'tags', 'quote', 'meter', 'notice', 'image', 'steps', 'table', 'code', 'foot', 'series', 'gauge', 'states'];
     if (d.empty && !rich.some(function (k) { return d[k]; })) {
       return '<div class="empty">' + esc(d.empty) + '</div>' + actionsHtml(d);
     }
-    if (d.metric) html += '<div class="home-metric">' + esc(d.metric.value) + (d.metric.label ? '<small>' + esc(d.metric.label) + '</small>' : '') + '</div>';
+    if (d.notice) html += '<div class="home-notice ' + esc(d.notice.tone || '') + '">' + esc(d.notice.text) + '</div>';
+    if (d.metric) html += '<div class="home-metric' + (d.metric.tone ? ' ' + esc(d.metric.tone) : '') + '">' + esc(d.metric.value) + (d.metric.label ? '<small>' + esc(d.metric.label) + '</small>' : '') + '</div>';
     if (d.caption || d.trend) {
       var trend = trendHtml(d.trend);
       html += '<div class="home-cap">' + trend + (trend && d.caption ? ' · ' : '') + esc(d.caption || '') + '</div>';
     }
+    if (d.image) html += '<img class="home-img" src="' + esc(d.image.src) + '" alt="' + esc(d.image.alt || '') + '" loading="lazy">';
     if (d.stats) html += '<div class="home-stats" style="--n:' + d.stats.length + '">' + d.stats.map(function (st) {
-      return '<div class="st"><span class="v">' + esc(st.value) + '</span><span class="k">' + esc(st.label) + '</span>' +
+      return '<div class="st' + (st.tone ? ' ' + esc(st.tone) : '') + '"><span class="v">' + esc(st.value) + '</span><span class="k">' + esc(st.label) + '</span>' +
         (st.trend ? '<span class="t">' + trendHtml(st.trend) + '</span>' : '') + '</div>';
     }).join('') + '</div>';
     if (d.chart) html += chartHtml(d.chart);
     if (d.spark) html += sparkSvg(d.spark);
+    if (d.series) html += seriesHtml(d.series);
     if (d.ring) html += ringHtml(d.ring);
+    if (d.gauge) html += gaugeHtml(d.gauge);
     if (d.heatmap) html += heatHtml(d.heatmap);
     if (d.bars) html += '<div class="home-bars">' + d.bars.map(function (b) {
       return '<div class="home-bar ' + esc(b.tone || '') + '"><div class="l"><span>' + esc(b.label) + '</span><span>' + esc(b.text || '') + '</span></div>' +
         '<div class="tr"><b style="width:' + Math.round(b.value * 100) + '%"></b></div></div>';
+    }).join('') + '</div>';
+    if (d.steps) html += '<ol class="home-steps">' + d.steps.map(function (s) {
+      return '<li class="' + esc(s.state || '') + '"><i></i><span>' + esc(s.label) + '</span></li>';
+    }).join('') + '</ol>';
+    if (d.states) html += '<div class="home-states">' + d.states.map(function (s) {
+      return '<i class="' + esc(s.tone || '') + '" style="flex-grow:' + s.value + '"' + (s.text ? ' title="' + esc(s.text) + '"' : '') + '></i>';
     }).join('') + '</div>';
     if (d.columns) html += '<div class="home-kcols" style="--cols:' + d.columns.length + '">' + d.columns.map(function (c) {
       return '<div class="home-kcol' + (c.muted ? ' muted' : '') + '"><div class="kh"><span>' + esc(c.title) + '</span><span>' + esc(c.count) + '</span></div>' +
@@ -476,16 +524,23 @@
         '<span>' + esc(r.value || '') + '</span>';
       return r.href ? '<a class="li" href="' + esc(r.href) + '">' + inner + '</a>' : '<div class="li">' + inner + '</div>';
     }).join('') + '</div>';
+    if (d.table) html += '<table class="home-tbl"><thead><tr>' + d.table.columns.map(function (c) {
+      return '<th>' + esc(c) + '</th>';
+    }).join('') + '</tr></thead><tbody>' + d.table.rows.map(function (r) {
+      return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
+    }).join('') + '</tbody></table>';
     if (d.tags) html += '<div class="home-tags">' + d.tags.map(function (t) {
       return '<span class="' + esc(t.tone || '') + '">' + esc(t.label) + '</span>';
     }).join('') + '</div>';
     if (d.quote) html += '<p class="home-quote">' + esc(d.quote) + '</p>';
+    if (d.code) html += '<pre class="home-code">' + esc(d.code) + '</pre>';
     if (d.meter) {
       var filled = Math.round(d.meter.value * 10);
       var cells = '';
       for (var i = 0; i < 10; i++) cells += '<i' + (i < filled ? ' class="f"' : '') + '></i>';
       html += '<div class="home-meter"><div class="l"><span>' + esc(d.meter.label || '') + '</span><span>' + esc(d.meter.text || '') + '</span></div><div class="home-bond">' + cells + '</div></div>';
     }
+    if (d.foot) html += '<div class="home-foot">' + esc(d.foot) + '</div>';
     return html + actionsHtml(d);
   }
   function actionsHtml(d) {

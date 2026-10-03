@@ -121,6 +121,83 @@ def test_normalize_card_rich_fields():
     assert done["muted"] is True and done["count"] == 0
 
 
+def test_normalize_card_extended_fields():
+    card = home.normalize_card(
+        {
+            "notice": {"text": "Gmail token expired", "tone": "hot"},
+            "image": {"src": "https://evil.example/x.png", "alt": "x"},
+            "steps": [
+                {"label": "Fetched", "state": "done"},
+                {"label": "Importing", "state": "active"},
+                {"label": "Verify", "state": "weird"},
+                {"nope": 1},
+            ] * 2,
+            "table": {
+                "columns": ["Date", "Item", "Amt", "x", "extra"],
+                "rows": [["10-01", "Coffee", "42", "orphan", "dropped"], "not-a-row", ["10-02", "Tea"]],
+            },
+            "code": "first\n" + "x\n" * 10,
+            "foot": "updated 10:32 · 3 sources",
+        }
+    )
+    assert card["notice"] == {"text": "Gmail token expired", "tone": "hot"}
+    assert "image" not in card
+    assert card["steps"] == [
+        {"label": "Fetched", "state": "done"},
+        {"label": "Importing", "state": "active"},
+        {"label": "Verify"},
+        {"label": "Fetched", "state": "done"},
+        {"label": "Importing", "state": "active"},
+    ]
+    assert card["table"]["columns"] == ["Date", "Item", "Amt", "x"]
+    assert card["table"]["rows"] == [
+        ["10-01", "Coffee", "42", "orphan"],
+        ["10-02", "Tea", "", ""],
+    ]
+    assert card["code"].splitlines() == ["first", "x", "x", "x", "x", "x"]
+    assert card["foot"] == "updated 10:32 · 3 sources"
+
+    image = home.normalize_card({"image": {"src": "/plugins/money/static/r.png", "alt": "receipt"}})
+    assert image["image"] == {"src": "/plugins/money/static/r.png", "alt": "receipt"}
+
+
+def test_normalize_card_dashboard_fields():
+    card = home.normalize_card(
+        {
+            "metric": {"value": "87%", "label": "cpu", "tone": "hot"},
+            "stats": [{"label": "p99", "value": "410ms", "tone": "warm"}],
+            "series": {
+                "labels": ["00:00", "now"],
+                "lines": [
+                    {"label": "cpu", "values": [1, -2, 3, "x", 4], "tone": "warm"},
+                    {"values": [0]},
+                    "junk",
+                ],
+            },
+            "gauge": {"value": 0.7, "label": "memory", "text": "70%", "tone": "warm"},
+            "states": [
+                {"tone": "ok", "value": 20, "text": "up"},
+                {"tone": "hot", "value": -3},
+                {"tone": "warm"},
+                {"bad": 1},
+            ],
+        }
+    )
+    assert card["metric"] == {"value": "87%", "label": "cpu", "tone": "hot"}
+    assert card["stats"][0]["tone"] == "warm"
+    assert card["series"] == {
+        "lines": [{"values": [1.0, -2.0, 3.0, 4.0], "label": "cpu", "tone": "warm"}],
+        "labels": ["00:00", "now"],
+    }
+    assert card["gauge"] == {"value": 0.7, "label": "memory", "text": "70%", "tone": "warm"}
+    assert card["states"] == [
+        {"tone": "ok", "value": 20.0, "text": "up"},
+        {"tone": "hot", "value": 1},
+        {"tone": "warm", "value": 1},
+        {"tone": "", "value": 1},
+    ]
+
+
 def test_normalize_card_rejects_non_dict():
     with pytest.raises(ValueError):
         home.normalize_card(["not", "a", "card"])

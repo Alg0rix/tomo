@@ -528,20 +528,35 @@ def normalize_card(data: Any) -> dict[str, Any]:
     status = data.get("status")
     if isinstance(status, dict) and status.get("text"):
         out["status"] = {"text": _text(status["text"], 20), "tone": _tone(status.get("tone"))}
+    notice = data.get("notice")
+    if isinstance(notice, dict) and notice.get("text"):
+        out["notice"] = {"text": _text(notice["text"], 140), "tone": _tone(notice.get("tone"))}
     metric = data.get("metric")
     if isinstance(metric, dict) and metric.get("value") not in (None, ""):
-        out["metric"] = {"value": _text(metric["value"], 24), "label": _text(metric.get("label"), 48)}
+        out["metric"] = _with(
+            {"value": _text(metric["value"], 24), "label": _text(metric.get("label"), 48)},
+            tone=_tone(metric.get("tone")),
+        )
     if data.get("caption"):
         out["caption"] = _text(data["caption"], 140)
     if trend := _trend(data.get("trend")):
         out["trend"] = trend
     stats = [
-        _with({"label": _text(s["label"], 24), "value": _text(s["value"], 16)}, trend=_trend(s.get("trend")))
+        _with(
+            {"label": _text(s["label"], 24), "value": _text(s["value"], 16)},
+            trend=_trend(s.get("trend")),
+            tone=_tone(s.get("tone")),
+        )
         for s in _items(data.get("stats"))
         if isinstance(s, dict) and s.get("label") and s.get("value") not in (None, "")
     ]
     if stats:
         out["stats"] = stats[:4]
+    image = data.get("image")
+    if isinstance(image, dict):
+        src = _local_href(image.get("src"))
+        if src:
+            out["image"] = _with({"src": src}, alt=_text(image.get("alt"), 80))
     bars = []
     for bar in _items(data.get("bars")):
         if not isinstance(bar, dict) or not bar.get("label") or (value := _unit(bar.get("value") or 0)) is None:
@@ -563,6 +578,14 @@ def normalize_card(data: Any) -> dict[str, Any]:
                 segments.append(_with({"label": _text(seg["label"], 24), "value": value}, text=_text(seg.get("text"), 16), tone=_tone(seg.get("tone"))))
         if segments:
             out["ring"] = _with({"segments": segments[:6]}, value=_text(ring.get("value"), 12), label=_text(ring.get("label"), 20))
+    gauge = data.get("gauge")
+    if isinstance(gauge, dict) and (value := _unit(gauge.get("value") or 0)) is not None:
+        out["gauge"] = _with(
+            {"value": value},
+            label=_text(gauge.get("label"), 40),
+            text=_text(gauge.get("text"), 24),
+            tone=_tone(gauge.get("tone")),
+        )
     heatmap = data.get("heatmap")
     if isinstance(heatmap, dict):
         cells = [max(0.0, v) for v in (_number(v) for v in _items(heatmap.get("values"))) if v is not None]
@@ -571,6 +594,20 @@ def normalize_card(data: Any) -> dict[str, Any]:
     if spark := [v for v in (_number(v) for v in _items(data.get("spark"))) if v is not None][-30:]:
         if len(spark) >= 2:
             out["spark"] = spark
+    series = data.get("series")
+    if isinstance(series, dict):
+        lines = []
+        for ln in _items(series.get("lines")):
+            if not isinstance(ln, dict):
+                continue
+            vals = [v for v in (_number(x) for x in _items(ln.get("values"))) if v is not None][-30:]
+            if len(vals) >= 2:
+                lines.append(_with({"values": vals}, label=_text(ln.get("label"), 24), tone=_tone(ln.get("tone"))))
+        if lines:
+            out["series"] = _with(
+                {"lines": lines[:4]},
+                labels=[_text(x, 12) for x in _items(series.get("labels"))][:6],
+            )
     rows = []
     for row in _items(data.get("list")):
         if isinstance(row, dict) and row.get("label"):
@@ -580,6 +617,16 @@ def normalize_card(data: Any) -> dict[str, Any]:
             ))
     if rows:
         out["list"] = rows[:6]
+    table = data.get("table")
+    if isinstance(table, dict):
+        headers = [_text(c, 16) for c in _items(table.get("columns"))][:4]
+        if any(headers):
+            body = []
+            for r in _items(table.get("rows")):
+                if isinstance(r, list):
+                    row = [_text(c, 24) for c in r[: len(headers)]]
+                    body.append(row + [""] * (len(headers) - len(row)))
+            out["table"] = {"columns": headers, "rows": body[:5]}
     timeline = []
     for event in _items(data.get("timeline")):
         if isinstance(event, dict) and event.get("label"):
@@ -612,6 +659,23 @@ def normalize_card(data: Any) -> dict[str, Any]:
         ))
     if cols:
         out["columns"] = cols[:4]
+    steps = [
+        _with({"label": _text(s["label"], 24)}, state=s["state"] if s.get("state") in {"done", "active"} else "")
+        for s in _items(data.get("steps"))
+        if isinstance(s, dict) and s.get("label")
+    ]
+    if steps:
+        out["steps"] = steps[:5]
+    states = []
+    for st in _items(data.get("states")):
+        if isinstance(st, dict):
+            w = _number(st.get("value"))
+            states.append(_with(
+                {"tone": _tone(st.get("tone")), "value": w if w and w > 0 else 1},
+                text=_text(st.get("text"), 40),
+            ))
+    if states:
+        out["states"] = states[:20]
     tags = [
         {"label": _text(t["label"], 24), "tone": _tone(t.get("tone"))}
         for t in _items(data.get("tags"))
@@ -621,9 +685,14 @@ def normalize_card(data: Any) -> dict[str, Any]:
         out["tags"] = tags[:8]
     if data.get("quote"):
         out["quote"] = _text(data["quote"], 240)
+    code = "\n".join(str(data.get("code") or "").splitlines()[:6])[:400].rstrip()
+    if code:
+        out["code"] = code
     meter = data.get("meter")
     if isinstance(meter, dict) and (value := _unit(meter.get("value") or 0)) is not None:
         out["meter"] = {"value": value, "label": _text(meter.get("label"), 40), "text": _text(meter.get("text"), 30)}
+    if data.get("foot"):
+        out["foot"] = _text(data["foot"], 80)
     actions = []
     for action in _items(data.get("actions")):
         if not isinstance(action, dict) or not action.get("label"):
