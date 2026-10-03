@@ -25,6 +25,7 @@ class PluginAPI:
         self.path = path
         self.data_dir = data_dir
         self.router = APIRouter()
+        self.public_router = APIRouter()
         self.pages: list[dict] = []
         self.tools: dict[str, tuple[dict, Callable]] = {}
         self.skills: list = []
@@ -36,6 +37,14 @@ class PluginAPI:
     @property
     def base_url(self) -> str:
         return f"/plugins/{self.id}"
+
+    @property
+    def public_base_url(self) -> str:
+        return self.base_url + "/public"
+
+    @property
+    def static_url(self) -> str:
+        return self.base_url + "/static"
 
     def page(self, path: str, label: str) -> None:
         if (
@@ -165,8 +174,43 @@ class PluginAPI:
         return path
 
     def render(self, request: Request, template: str, **context):
-        from app.core.deps import templates
         from app.web.context import page_ctx
+
+        return self._render(
+            request,
+            template,
+            page_ctx(
+                request,
+                f"plugin-{self.id}",
+                plugin={
+                    "id": self.id,
+                    "base_url": self.base_url,
+                    "public_base_url": self.public_base_url,
+                    "static_url": self.static_url,
+                    "pages": self.pages,
+                },
+                **context,
+            ),
+        )
+
+    def render_public(self, request: Request, template: str, **context):
+        """Render a standalone public template without account/navigation context."""
+        return self._render(
+            request,
+            template,
+            {
+                "plugin": {
+                    "id": self.id,
+                    "base_url": self.public_base_url,
+                    "public_base_url": self.public_base_url,
+                    "static_url": self.static_url,
+                },
+                **context,
+            },
+        )
+
+    def _render(self, request: Request, template: str, context: dict):
+        from app.core.deps import templates
 
         renderer = Jinja2Templates(directory=str(self.path / "templates"))
         renderer.env.loader = ChoiceLoader(
@@ -176,12 +220,7 @@ class PluginAPI:
         return renderer.TemplateResponse(
             request,
             template,
-            page_ctx(
-                request,
-                f"plugin-{self.id}",
-                plugin={"id": self.id, "base_url": self.base_url, "pages": self.pages},
-                **context,
-            ),
+            context,
         )
 
     def on_turn_end(self, callback: Callable) -> None:

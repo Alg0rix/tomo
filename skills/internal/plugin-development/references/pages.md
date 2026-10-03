@@ -13,10 +13,24 @@ theme, global stylesheet, and Tomo browser helpers. Reuse `page`, `page-head`,
 and `--accent`. Scope plugin CSS to a page class. Keep URLs relative and verify
 390px mobile and desktop widths, keyboard interaction, and empty/error states.
 
-A `static/` directory is automatically served at `api.base_url + '/static'`
-while enabled. Link assets through that base URL. Assets and pages become
-unavailable when disabled. Authentication is enforced by the runtime for routes
-and assets; handlers still enforce their own ownership and mutation rules.
+A `static/` directory is automatically served publicly at `api.static_url`
+while enabled. Link assets through `plugin.static_url` in either renderer.
+Store only shipped CSS, JavaScript, and images there, never private data.
+Assets and pages become unavailable when disabled. Authentication is enforced
+for `api.router`; handlers still enforce ownership and mutation rules.
+
+For a public survey or landing page, register handlers on `api.public_router`
+instead. These explicitly allow anonymous access below `api.public_base_url`
+(`/plugins/<id>/public`). Use `api.render_public()` with standalone HTML or your
+own base template; it omits Tomo account/navigation context and sets
+`plugin.base_url` to the public URL. Assets use the shared `static/` directory
+and `plugin.static_url`. When used, `/public` is reserved: private `api.router`
+paths there fail loading. Public
+handlers and assets disappear when the plugin is disabled. Keep dashboards and
+response exports on `api.router`. Validate submissions and apply abuse limits;
+anonymous visitors have no required Tomo user identity. Store responses with
+explicit survey/response IDs, rather than treating the `web` fallback as an
+owner. See `docs/plugins.md` for a complete registration example.
 
 Use a named Lucide icon in the manifest. Supported names: `puzzle`, `wallet`,
 `chart-column`, `columns-3`, `library`, `notebook`, `calendar`, `globe`, `code`,

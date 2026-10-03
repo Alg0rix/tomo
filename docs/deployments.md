@@ -192,6 +192,73 @@ TOMO_COOKIE_SECURE=1
 WebSocket tunnels for **tomo-connector** and SSE chat need proxy buffering
 disabled / long timeouts — use your proxy’s streaming WebSocket settings.
 
+For nginx, put the following in a file included inside its `http` block (for
+example, `/etc/nginx/conf.d/tomo.conf`). Replace the hostname and certificate
+paths with your own TLS configuration:
+
+```nginx
+map $http_upgrade $tomo_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+limit_req_zone $binary_remote_addr zone=plugin_public:10m rate=5r/s;
+
+server {
+    listen 443 ssl;
+    server_name tomo.example.com;
+    ssl_certificate /etc/letsencrypt/live/tomo.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tomo.example.com/privkey.pem;
+
+    client_max_body_size 1m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    # Replace client-supplied forwarding headers at this public edge.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $tomo_connection_upgrade;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_cache off;
+
+    location ~ ^/plugins/[^/]+/public(?:/|$) {
+        limit_req zone=plugin_public burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8787;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+    }
+}
+```
+
+This caps request bodies at 1 MiB across Tomo and limits public plugin requests
+per client IP to 5 requests/second, with a burst of 20. Increase the body cap
+if your deployment needs larger uploads. It also supports chat streaming and
+connector WebSocket upgrades. See nginx's [rate-limit reference](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html)
+and [WebSocket proxying guide](https://nginx.org/en/docs/http/websocket.html).
+Keep `TOMO_TRUST_PROXY=1` and `TOMO_COOKIE_SECURE=1` as above. Expose only nginx
+to the internet: bind Tomo to loopback, or publish Docker's port on loopback
+(`127.0.0.1:8787:8787`). For a proxy in another container, use Tomo's service
+address on a private network instead of `127.0.0.1`.
+
+Proxy plugin assets through Tomo too; do not use nginx `alias` or `root` to
+serve plugin folders from disk. Plugin install paths can be anywhere on disk,
+and Tomo controls which plugins are enabled and which source is active after
+a reload. The shared `static/` directory contains public shipped assets; it
+must never contain private data. These assets become unavailable when disabled.
+Caching is off in this example so lifecycle changes take effect immediately.
+If you later enable `proxy_cache` for `/plugins/<id>/static/`, cached assets
+can outlive a disable or reload until expiry or a cache purge.
+
+The body and rate limits above are nginx controls, not SDK guarantees. Running
+Tomo directly or using Caddy's basic example does not add these protections;
+configure equivalent limits or implement them in the public plugin handler.
+Check your configuration with `nginx -t` before reloading nginx.
+
 ### 7. Connector / workplaces from Docker
 
 - **Tunnel workplaces:** pair `tomo-connector` on remote machines against the

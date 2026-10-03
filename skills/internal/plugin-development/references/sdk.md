@@ -6,8 +6,12 @@
 | `api.id`, `api.path` | Stable plugin ID and server-local source directory |
 | `api.base_url` | `/plugins/<id>` |
 | `api.router` | FastAPI APIRouter; HTTP handlers may be async |
+| `api.public_router` | Anonymous FastAPI APIRouter mounted at `/plugins/<id>/public`; explicit opt-in |
+| `api.public_base_url` | `/plugins/<id>/public` |
+| `api.static_url` | `/plugins/<id>/static`; also available as `plugin.static_url` in both renderers |
 | `api.page(path, label)` | Declare navigation; local absolute path, no query/hash/traversal |
 | `api.render(request, template, **context)` | Plugin templates plus Tomo base, shared navigation/theme |
+| `api.render_public(request, template, **context)` | Standalone plugin template without account/navigation context; `plugin.base_url` points to the public namespace |
 | `api.tool(name, description, parameters, handler)` | Object schema, synchronous handler(arguments), namespaced tool ID |
 | `api.data_dir` | Persistent plugin data directory |
 | `api.user_data_dir(user_id=None)` | Private data; HTTP must pass authenticated user explicitly |
@@ -15,7 +19,7 @@
 | `api.starter(label, prompt)` | Home composer prompt chip; ≤4 per plugin |
 | `api.on_turn_end(callback)` | Synchronous callback receiving TurnEndContext |
 | `api.on_dispose(callback)` | Synchronous cleanup callback |
-| `static/` | Automatically mounted while enabled |
+| `static/` | Public shipped assets at `/plugins/<id>/static/`, automatically mounted while enabled; never private data |
 | `skills/<name>/SKILL.md` | Automatically namespaced and discovered while enabled |
 
 `TurnEndContext` has `session_id`, `agent_id`, `message`, `prompt_tokens`, and

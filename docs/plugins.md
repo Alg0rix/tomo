@@ -141,8 +141,11 @@ def setup(api):
 Templates can extend Tomo's `base.html`. `plugin.base_url` and `plugin.pages` are
 available in rendered context. Routes are automatically mounted under
 `/plugins/<id>` and require Tomo authentication. Register application routes
-through `api.router`; do not modify global Tomo routers. A `static/` directory is served at `/plugins/<id>/static/` and follows plugin
-enablement. Register `api.on_turn_end(callback)` to receive a `TurnEndContext`
+through `api.router`; do not modify global Tomo routers. A `static/` directory is
+served publicly at `/plugins/<id>/static/` and follows plugin enablement. Put
+only shipped assets there, never private data. `api.static_url` and
+`plugin.static_url` provide this asset URL in both renderers.
+Register `api.on_turn_end(callback)` to receive a `TurnEndContext`
 with session, agent, message, and token counts. WebSockets are not supported in this version.
 Tools have ids `plugin__<id>__<name>` and synchronous handlers returning strings
 or JSON-serializable values. Validate tool arguments in the handler.
@@ -152,6 +155,57 @@ handlers use `api.user_data_dir(session_user_id(request))`. The Money example
 stores amounts as integer minor units and uses the same ledger in both its pages
 and agent tools. Agents use Tomo's existing models and conversation; the plugin
 needs no separate AI key or agent loop.
+
+### Public landing pages and forms
+
+Use `api.public_router` to opt individual handlers into anonymous access at
+`/plugins/<id>/public`. `api.router` continues to require login. Public routes
+can serve a plugin's own landing page, survey, or submission endpoint:
+
+```python
+from fastapi import Request
+from pydantic import BaseModel, Field
+
+class SurveyResponse(BaseModel):
+    answer: str = Field(min_length=1, max_length=1000)
+
+def setup(api):
+    @api.public_router.get("/")
+    def landing(request: Request):
+        return api.render_public(request, "survey.html")
+
+    @api.public_router.post("/responses")
+    def submit(body: SurveyResponse):
+        # Validate and save the response in plugin-owned storage here.
+        return {"accepted": True}
+```
+
+`api.public_base_url` is `/plugins/<id>/public`. In `render_public`,
+`plugin.base_url` and `plugin.public_base_url` both point there, so a template
+can submit to `{{ plugin.base_url }}/responses`. Write standalone HTML (or
+extend your own plugin template) for your landing page. Public rendering does
+not load Tomo's account or navigation context; `api.render` remains the renderer
+for authenticated dashboards.
+
+Put CSS, JavaScript, and images in `static/`; they are served publicly at
+`api.static_url` (`/plugins/<id>/static`). In either renderer, use
+`{{ plugin.static_url }}/style.css` for assets. The `/public`
+namespace is reserved when the plugin registers public routes; enable
+and reload fail if `api.router` also defines `/public` paths. Missing public
+pages return a plain "Page not found" page to browsers and JSON to API clients. Public
+routes and assets follow the same enable, reload, disable, and uninstall
+lifecycle as private routes, without a restart. You can optionally register
+`api.page("/public/", "Survey")` to link the public landing page from Tomo.
+
+Public handlers have no required Tomo identity. Do not use the anonymous
+`session_user_id(request)` fallback (`web`) as a survey owner or store all
+visitors in `api.user_data_dir()`. Use plugin-owned storage with explicit survey
+and response identifiers. Authors are responsible for input validation, abuse
+limits, and any additional access tokens needed by public submissions. Keep
+administration and response exports on `api.router` with ownership checks.
+The [nginx deployment example](deployments.md#6-reverse-proxy) applies request
+size and rate limits at the proxy. Direct deployments need equivalent limits
+in their proxy or plugin handlers.
 
 ### Home cards
 

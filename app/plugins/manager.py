@@ -15,13 +15,33 @@ import time
 import types
 import uuid
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Match
 
 from app.plugins.sdk import PluginAPI
 
 logger = logging.getLogger(__name__)
+
+
+def _not_found_page():
+    from starlette.responses import HTMLResponse
+
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>Page not found</title>"
+        '<main style="font:16px system-ui;max-width:32rem;margin:15vh auto;padding:0 1rem">'
+        "<h1>Page not found</h1><p>This page doesn’t exist or is no longer available.</p></main>",
+        status_code=404,
+    )
+
+
+async def _public_not_found(request: Request, exc: Exception):
+    """Show anonymous visitors a page; keep JSON 404s for API clients."""
+    if "text/html" in request.headers.get("accept", ""):
+        return _not_found_page()
+    from fastapi.exception_handlers import http_exception_handler
+
+    return await http_exception_handler(request, exc)
 
 
 class PluginManager:
@@ -202,6 +222,23 @@ class PluginManager:
                 openapi_url=None,
                 dependencies=[Depends(require_auth)],
             )
+            # Mounts skip app dependencies: /public is the explicit anonymous
+            # namespace, and static/ holds shipped assets that are public too.
+            if api.public_router.routes:
+                shadowed = sorted(
+                    route.path
+                    for route in api.router.routes
+                    if route.path == "/public" or route.path.startswith("/public/")
+                )
+                if shadowed:
+                    raise ValueError(
+                        "/public is reserved for api.public_router; move private routes: "
+                        + ", ".join(shadowed)
+                    )
+                public_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+                public_app.add_exception_handler(404, _public_not_found)
+                public_app.include_router(api.public_router)
+                app.mount("/public", public_app, name="plugin_public")
             app.include_router(api.router)
             if (path / "static").is_dir():
                 from fastapi.staticfiles import StaticFiles
@@ -637,9 +674,13 @@ class PluginManager:
                 finally:
                     lease.__exit__(None, None, None)
                 return
-        await JSONResponse({"detail": "Plugin unavailable"}, status_code=404)(
-            scope, receive, send
+        accept = dict(scope.get("headers") or []).get(b"accept", b"")
+        response = (
+            _not_found_page()
+            if b"text/html" in accept
+            else JSONResponse({"detail": "Plugin unavailable"}, status_code=404)
         )
+        await response(scope, receive, send)
 
     def home_contributions(
         self, user_id: str, timeout: float = 2.5, *, keys: set[str] | None = None

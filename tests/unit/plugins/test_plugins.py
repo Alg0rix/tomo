@@ -116,6 +116,130 @@ def test_plugin_pages_require_authentication(manager, tmp_path):
     assert response.headers["location"].startswith("/login")
 
 
+PUBLIC_PLUGIN = '''
+from fastapi import Request
+
+def setup(api):
+    @api.router.get("/")
+    def dashboard():
+        return {"private": True}
+
+    @api.router.post("/responses")
+    def private_submit():
+        return {"private": True}
+
+    @api.router.get("/publicity")
+    def private_prefix():
+        return {"private": True}
+
+    @api.public_router.get("/")
+    def landing(request: Request):
+        return api.render_public(request, "survey.html")
+
+    @api.public_router.post("/responses")
+    def submit(answer: dict):
+        return {"accepted": answer["answer"]}
+'''
+
+
+@pytest.fixture
+def public_plugin(manager, tmp_path):
+    path = source(tmp_path, PUBLIC_PLUGIN)
+    (path / "templates").mkdir()
+    (path / "templates/survey.html").write_text(
+        '<h1>Survey</h1><form action="{{ plugin.base_url }}/responses"></form>'
+        '<link rel="stylesheet" href="{{ plugin.static_url }}/style.css">'
+        '{{ current_user_id|default("anonymous") }}'
+    )
+    (path / "static").mkdir()
+    (path / "static/style.css").write_text("static")
+    manager.install(str(path))
+    return path
+
+
+def test_public_routes_allow_anonymous_visitors(manager, public_plugin, monkeypatch):
+    def no_account_context(*args, **kwargs):
+        raise AssertionError("Public rendering must not load account context")
+
+    monkeypatch.setattr("app.web.context.page_ctx", no_account_context)
+    anonymous = client_for(manager, authenticated=False)
+    assert anonymous.get("/plugins/test/public/").status_code == 404
+    manager.change("test", "enable")
+    landing = anonymous.get("/plugins/test/public/")
+    assert landing.status_code == 200
+    assert "<h1>Survey</h1>" in landing.text
+    assert 'action="/plugins/test/public/responses"' in landing.text
+    assert 'href="/plugins/test/static/style.css"' in landing.text
+    assert "anonymous" in landing.text
+    assert anonymous.post("/plugins/test/public/responses", json={"answer": "yes"}).json() == {
+        "accepted": "yes"
+    }
+
+
+def test_private_routes_stay_authenticated(manager, public_plugin):
+    manager.change("test", "enable")
+    anonymous = client_for(manager, authenticated=False)
+    for url in ("/plugins/test/", "/plugins/test/publicity"):
+        assert anonymous.get(url).status_code == 303
+    assert anonymous.post("/plugins/test/responses", json={"answer": "yes"}).status_code == 303
+    signed_in = client_for(manager)
+    assert signed_in.get("/plugins/test/").json() == {"private": True}
+    assert signed_in.get("/plugins/test/static/style.css").text == "static"
+    assert signed_in.head("/plugins/test/static/style.css").status_code == 200
+
+
+def test_public_assets_and_not_found_pages(manager, public_plugin):
+    manager.change("test", "enable")
+    anonymous = client_for(manager, authenticated=False)
+    assert anonymous.get("/plugins/test/static/style.css").text == "static"
+    assert anonymous.head("/plugins/test/static/style.css").status_code == 200
+    assert anonymous.get("/plugins/test/static/missing.css").status_code == 404
+    assert anonymous.get("/plugins/test/static/%2e%2e/plugin.py").status_code == 404
+    api_missing = anonymous.get("/plugins/test/public/missing")
+    assert api_missing.status_code == 404
+    assert api_missing.json() == {"detail": "Not Found"}
+    page_missing = anonymous.get("/plugins/test/public/missing", headers={"accept": "text/html"})
+    assert page_missing.status_code == 404
+    assert "Page not found" in page_missing.text
+    manager.change("test", "disable")
+    disabled = anonymous.get("/plugins/test/public/", headers={"accept": "text/html"})
+    assert disabled.status_code == 404
+    assert "Page not found" in disabled.text
+
+
+def test_public_routes_follow_plugin_lifecycle(manager, public_plugin):
+    manager.change("test", "enable")
+    anonymous = client_for(manager, authenticated=False)
+    (public_plugin / "templates/survey.html").write_text("Updated survey")
+    (public_plugin / "static/style.css").write_text("updated")
+    manager.change("test", "reload")
+    assert anonymous.get("/plugins/test/public/").text == "Updated survey"
+    assert anonymous.get("/plugins/test/static/style.css").text == "updated"
+    (public_plugin / "plugin.py").write_text("def setup(api):\n    raise ValueError('broken')\n")
+    with pytest.raises(ValueError, match="broken"):
+        manager.change("test", "reload")
+    assert anonymous.get("/plugins/test/public/").status_code == 200
+    manager.change("test", "disable")
+    assert anonymous.get("/plugins/test/public/").status_code == 404
+    assert anonymous.get("/plugins/test/static/style.css").status_code == 404
+
+
+def test_private_routes_cannot_use_reserved_public_prefix(manager, tmp_path):
+    path = source(tmp_path, '''
+def setup(api):
+    @api.public_router.get("/")
+    def landing():
+        return {}
+
+    @api.router.get("/public/admin")
+    def admin():
+        return {}
+''')
+    manager.install(str(path))
+    with pytest.raises(ValueError, match="/public is reserved.*/public/admin"):
+        manager.change("test", "enable")
+
+
 def test_setup_cleanup_and_uninstall_keep_data(manager, tmp_path):
     path = source(
         tmp_path,
