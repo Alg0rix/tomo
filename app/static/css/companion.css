@@ -8,12 +8,6 @@
   --paper-edge: color-mix(in srgb, var(--border-strong) 70%, var(--accent) 20%);
   --rule: color-mix(in srgb, var(--text) 7%, transparent);
   --mincho: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
-  --hand: "Zen Kurenaido", "Klee One", var(--font-sans);
-  --part-0: #f0a83a;
-  --part-1: #d4523c;
-  --part-2: #6cb6e8;
-  --part-3: #5bb98b;
-  --part-4: #c9a6e8;
   max-width: 1320px;
 }
 [data-theme="light"] .kn {
@@ -21,11 +15,6 @@
   --paper: #fffaf0;
   --paper-edge: rgba(120, 84, 30, 0.2);
   --rule: rgba(120, 84, 30, 0.1);
-  --part-0: #c47616;
-  --part-1: #b8361f;
-  --part-2: #2b7bb0;
-  --part-3: #2f9460;
-  --part-4: #8a5cc0;
 }
 
 .kn-k { font-family: var(--mincho); font-weight: 800; letter-spacing: 0.02em; }
@@ -85,44 +74,44 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
 }
 .kn-cover::after {
   content: "縁"; position: absolute; right: -30px; bottom: -90px;
-  font: 800 300px/1 var(--mincho); color: var(--text); opacity: 0.035; pointer-events: none;
+  font: 800 300px/1 var(--mincho); color: var(--text); opacity: 0.025; pointer-events: none;
 }
 .kn-label {
   display: inline-flex; gap: 10px; align-items: baseline;
-  font: 600 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: 0.16em; color: var(--text-faint);
+  font: 500 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint);
 }
 .kn-label .kn-k { font-size: 15px; color: var(--shu); letter-spacing: 0.12em; text-transform: none; }
 .kn-title {
-  margin: 12px 0 6px; font: 800 clamp(30px, 4vw, 46px)/1.08 var(--mincho); letter-spacing: -0.01em; color: var(--text);
+  margin: 12px 0 6px; font: 700 clamp(28px, 3.6vw, 40px)/1.1 var(--font-display); letter-spacing: -0.03em; color: var(--text);
 }
-.kn-amp { color: var(--shu); font-weight: 600; }
+.kn-amp { color: var(--accent); font-weight: 500; }
 .kn-tomo { display: inline-flex; align-items: center; gap: 10px; }
 .kn-tomo img { width: 0.95em; height: 0.95em; object-fit: contain; }
 .kn-since { margin: 0; color: var(--text-dim); font-size: 14px; }
-.kn-since strong { color: var(--text); font-family: var(--mincho); font-size: 17px; }
+.kn-since strong { color: var(--text); font-family: var(--font-display); font-weight: 700; }
 
 .kn-tally { display: flex; flex-wrap: wrap; gap: 0; margin: 24px 0 0; }
 .kn-tally > div { padding: 2px 22px; border-left: 1px solid var(--rule); }
 .kn-tally > div:first-child { padding-left: 0; border-left: 0; }
-.kn-tally dt { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.1em; order: 2; }
-.kn-tally dd { margin: 0 0 2px; font: 800 28px/1.1 var(--mincho); color: var(--text); font-variant-numeric: tabular-nums; }
+.kn-tally dt { font: 500 10.5px var(--font-mono); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+.kn-tally dd { margin: 0 0 4px; font: 700 30px/1 var(--font-display); letter-spacing: -0.03em; color: var(--text); font-variant-numeric: tabular-nums; }
 .kn-tally > div { display: flex; flex-direction: column-reverse; }
 
 .kn-next { margin-top: 24px; max-width: 520px; }
 .kn-next-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--text-dim); }
 .kn-next-row strong { color: var(--text); }
 .kn-next-row .kn-k { color: var(--shu); }
-.kn-next-pct { font-variant-numeric: tabular-nums; color: var(--text-faint); }
+.kn-next-pct { font: 12px var(--font-mono); color: var(--text-faint); }
 .kn-next-bar { height: 6px; margin-top: 8px; border-radius: 6px; background: var(--rule); overflow: hidden; }
 .kn-next-bar i {
   display: block; height: 100%; border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--shu));
+  background: var(--accent);
   transform-origin: left; animation: kn-grow 1s cubic-bezier(.2,.7,.2,1) both 0.2s;
 }
 @keyframes kn-grow { from { transform: scaleX(0); } }
 .kn-grow { margin: 12px 0 0; font-size: 13px; color: var(--text-dim); display: flex; gap: 10px; align-items: baseline; }
 .kn-grow span {
-  flex: none; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em;
+  flex: none; font: 500 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--accent); border: 1px solid var(--border-accent); border-radius: var(--r-pill); padding: 3px 8px;
 }
 
@@ -131,11 +120,7 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
 .kn-seal svg { width: 100%; height: 100%; overflow: visible; }
 .kn-seal circle { fill: none; stroke-width: 12; stroke-linecap: butt; }
 .kn-arc-track { stroke: var(--rule); }
-.kn-arc { stroke: var(--part-0); }
-.kn-arc:nth-of-type(4) { stroke: var(--part-1); }
-.kn-arc:nth-of-type(6) { stroke: var(--part-2); }
-.kn-arc:nth-of-type(8) { stroke: var(--part-3); }
-.kn-arc:nth-of-type(10) { stroke: var(--part-4); }
+.kn-arc { stroke: var(--accent); }
 .kn.is-ready .kn-arc { animation: kn-draw 1.1s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i) * 90ms + 150ms); }
 @keyframes kn-draw { from { stroke-dasharray: 0 999; } }
 
@@ -150,18 +135,14 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
 .kn-hanko-k { font: 800 34px/1.05 var(--mincho); writing-mode: vertical-rl; letter-spacing: 0.06em; }
 
 .kn-stage { display: grid; justify-items: center; gap: 2px; text-align: center; }
-.kn-stage-name { font: 800 20px/1.2 var(--mincho); color: var(--text); }
-.kn-stage-romaji { font-size: 12px; color: var(--text-faint); letter-spacing: 0.04em; }
+.kn-stage-name { font: 700 19px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text); }
+.kn-stage-romaji { font: 11.5px var(--font-mono); color: var(--text-faint); }
 
 .kn-parts { list-style: none; margin: 4px 0 0; padding: 0; width: 100%; display: grid; gap: 6px; }
 .kn-parts li { display: grid; grid-template-columns: 104px 1fr 44px; gap: 10px; align-items: center; font-size: 12px; color: var(--text-dim); cursor: help; }
 .kn-part-bar { height: 5px; background: var(--rule); border-radius: 5px; overflow: hidden; }
-.kn-part-bar i { display: block; height: 100%; border-radius: inherit; background: var(--part-0); }
-.kn-parts li:nth-child(2) .kn-part-bar i { background: var(--part-1); }
-.kn-parts li:nth-child(3) .kn-part-bar i { background: var(--part-2); }
-.kn-parts li:nth-child(4) .kn-part-bar i { background: var(--part-3); }
-.kn-parts li:nth-child(5) .kn-part-bar i { background: var(--part-4); }
-.kn-part-pts { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.kn-part-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.kn-part-pts { text-align: right; font: 11.5px var(--font-mono); color: var(--text); }
 .kn-part-pts small { color: var(--text-faint); }
 
 /* ── layout ───────────────────────────────────────────────────── */
@@ -181,7 +162,7 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
 /* ── diary ────────────────────────────────────────────────────── */
 .kn-day { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 18px; padding-bottom: 26px; }
 .kn-day-head { position: sticky; top: 18px; align-self: start; display: grid; justify-items: start; gap: 4px; padding-top: 2px; }
-.kn-day-num { font: 800 44px/0.9 var(--mincho); color: var(--text); font-variant-numeric: tabular-nums; }
+.kn-day-num { font: 700 38px/0.95 var(--font-display); letter-spacing: -0.04em; color: var(--text); font-variant-numeric: tabular-nums; }
 .kn-day-meta { font-size: 11.5px; color: var(--text-faint); line-height: 1.35; display: grid; }
 .kn-day-meta b { color: var(--text-dim); font-weight: 600; }
 .kn-day-body { display: grid; gap: 12px; border-left: 1px dashed var(--rule); padding-left: 20px; min-width: 0; }
@@ -192,7 +173,7 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
   background: var(--bg); border: 2px solid var(--text-faint);
 }
 .kn-entry.is-learned::before { background: var(--shu); border-color: var(--shu); }
-.kn-time { white-space: nowrap; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.kn-time { white-space: nowrap; font: 11px var(--font-mono); color: var(--text-faint); }
 
 .kn-page {
   margin-top: 6px; padding: 16px 20px 12px;
@@ -203,19 +184,15 @@ textarea.kn-input { resize: vertical; min-height: 64px; }
 }
 .kn-page:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }
 .kn-story {
-  margin: 0 0 12px; padding-bottom: 2px; font: 17px/28px var(--hand); color: var(--text);
-  background: repeating-linear-gradient(to bottom, transparent 0 27px, var(--rule) 27px 28px);
+  margin: 0 0 12px; font: 500 14.5px/1.6 var(--font-sans); color: var(--text);
 }
 .kn-learned { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .kn-li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
 .kn-glyph {
   display: grid; place-items: center; width: 24px; height: 24px; margin-top: 1px;
-  font: 800 13px/1 var(--mincho); color: var(--shu);
-  border: 1.5px solid color-mix(in srgb, var(--shu) 55%, transparent); border-radius: 5px;
-  background: color-mix(in srgb, var(--shu) 8%, transparent);
+  font: 800 12.5px/1 var(--mincho); color: var(--accent);
+  border: 1px solid var(--border-accent); border-radius: 6px; background: var(--accent-soft);
 }
-.k-skill .kn-glyph { color: var(--accent); border-color: var(--border-accent); background: var(--accent-soft); }
-.k-episode .kn-glyph { color: var(--info); border-color: color-mix(in srgb, var(--info) 50%, transparent); background: var(--info-soft); }
 .k-file .kn-glyph, .k-state .kn-glyph { color: var(--text-dim); border-color: var(--border-strong); background: var(--surface-2); }
 .kn-verb { color: var(--text-faint); font-size: 12px; text-transform: lowercase; }
 .kn-chip {
@@ -236,14 +213,14 @@ a.kn-from:hover { color: var(--accent); }
 .kn-entry.is-skipped::before { border-style: dashed; }
 
 .kn-more { display: flex; justify-content: center; padding: 6px 0 10px 92px; }
-.kn-end { text-align: center; color: var(--text-faint); font: 13px var(--mincho); letter-spacing: 0.2em; margin: 6px 0 0 92px; }
+.kn-end { text-align: center; color: var(--text-faint); font: 11px var(--font-mono); letter-spacing: 0.1em; margin: 6px 0 0 92px; }
 
 .kn-blank {
   display: grid; justify-items: center; text-align: center; gap: 6px; padding: 54px 20px;
   border: 1px dashed var(--paper-edge); border-radius: 16px; background: var(--paper); color: var(--text-dim);
 }
 .kn-blank .kn-k { font-size: 54px; color: var(--shu); opacity: 0.5; line-height: 1; margin-bottom: 8px; }
-.kn-blank p { margin: 0; font: 600 18px var(--mincho); color: var(--text); }
+.kn-blank p { margin: 0; font: 700 18px var(--font-display); letter-spacing: -0.02em; color: var(--text); }
 .kn-blank > span:not(.kn-k) { font-size: 13.5px; max-width: 40ch; line-height: 1.55; }
 .kn-blank .kn-btn { margin-top: 12px; }
 
@@ -284,7 +261,7 @@ a.kn-from:hover { color: var(--accent); }
 .kn-fact-row:first-child { border-top: 0; }
 .kn-fact-row::before {
   content: counter(kn); position: absolute; left: 0; top: 9px; width: 18px; text-align: right;
-  font: 600 12px/1.5 var(--mincho); color: var(--text-faint); font-variant-numeric: tabular-nums;
+  font: 11.5px/1.75 var(--font-mono); color: var(--text-faint);
 }
 .kn-fact-text { overflow-wrap: anywhere; }
 .kn-yours {
