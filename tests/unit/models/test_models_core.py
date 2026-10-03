@@ -11,7 +11,6 @@ import pytest
 from app.services import store
 from fastapi.testclient import TestClient
 from app.core.deps import require_auth
-from app.core.passwords import hash_password, verify_password
 from app.main import app
 import time
 import sqlite3

@@ -9,12 +9,10 @@ import pytest
 from app.runtime.agent.loop import _execute_authorized
 from app.runtime.llm.base import ToolCall
 from app.runtime.permissions.gate import Decision
-from app.runtime.tools import registry
 from app.runtime.agent.atg.interfaces import get_tool_interface
 from app.runtime.agent.compress import maybe_compress_messages
-from app.runtime.agent.retry import is_transient_llm_error, with_llm_retry
 from app.runtime.agent.tool_errors import tool_result_is_error
-from app.runtime.llm.base import LLMResponse, ToolCall
+from app.runtime.llm.base import LLMResponse
 from app.runtime.agent.loop import run_turn
 from tests.fakes.llm import ScriptedLLM, text_reply
 

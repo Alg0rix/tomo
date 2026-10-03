@@ -13,7 +13,6 @@ import json
 from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools import todo as todo_mod
-from app.runtime.tools.registry import execute, reset_registry
 import re
 from app.services import store
 

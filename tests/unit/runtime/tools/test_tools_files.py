@@ -10,7 +10,6 @@ from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
 from app.services import store
-from app.runtime.tools.registry import execute, reset_registry
 
 
 # --- from test_files.py ---

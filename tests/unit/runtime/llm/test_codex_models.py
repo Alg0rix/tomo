@@ -9,7 +9,6 @@ import httpx2
 
 from app.runtime.llm.codex_models import (
     DEFAULT_CODEX_MODELS,
-    _extract_chatgpt_account_id,
     list_codex_models,
 )
 

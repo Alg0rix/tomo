@@ -15,7 +15,7 @@ from app.runtime.tools import sandbox, user_ctx
 from app.services import store
 from app.services.background_jobs import manager, _group_alive
 from app.runtime.agent.context import history_to_messages
-from app.services.compact import compact_session, entries_after_last_compact
+from app.services.compact import compact_session
 from tests.fakes.llm import ScriptedLLM, text_reply
 
 

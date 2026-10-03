@@ -13,7 +13,6 @@ import pytest
 from app.services import store
 from app.workplaces import pairing as pairing_mod
 from app.workplaces.hub import ConnectorSession, hub
-from app.workplaces.pairing import generate_pairing_code, pairing_expires_at
 
 
 def _rebind(tmp_path: Path) -> None:

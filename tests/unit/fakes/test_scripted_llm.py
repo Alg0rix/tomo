@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.runtime.llm.base import LLMClient, LLMResponse
-from tests.fakes.llm import ScriptedLLM, bash_call, text_reply, tool_then_text
+from app.runtime.llm.base import LLMClient
+from tests.fakes.llm import ScriptedLLM, text_reply
 
 
 def test_scripted_satisfies_llm_client_protocol() -> None:

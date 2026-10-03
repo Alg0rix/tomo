@@ -15,7 +15,6 @@ from app.channels.telegram import (
     poll_once,
     process_update,
     run_channel_turn,
-    user_id_for_chat,
 )
 from app.services import store
 from tests.fakes.llm import ScriptedLLM, text_reply

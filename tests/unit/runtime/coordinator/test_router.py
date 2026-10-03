@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.runtime.coordinator.router import parse_leading_mention, resolve_target
+from app.runtime.coordinator.router import resolve_target
 
 _AGENTS = [
     {"id": "main", "name": "Tomo"},

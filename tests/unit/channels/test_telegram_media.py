@@ -12,7 +12,6 @@ from app.channels.telegram import TelegramAPI, TelegramDispatcher, process_updat
 from app.channels.telegram_media import (
     MediaError,
     ingest_media,
-    media_descriptor,
     transcribe_audio,
 )
 from app.services import store

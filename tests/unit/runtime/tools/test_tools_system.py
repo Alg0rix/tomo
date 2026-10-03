@@ -24,7 +24,6 @@ from app.runtime.artifacts.fs import (
     reset_session,
     write_artifact_text,
 )
-from app.runtime.tools.registry import execute, reset_registry
 from app.runtime.tools.sandbox import bind_agent, reset_agent
 from unittest.mock import MagicMock, patch
 import httpx2

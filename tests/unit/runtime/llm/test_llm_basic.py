@@ -9,7 +9,7 @@ import pytest
 from app.runtime.llm import OpenAICompatClient, get_llm
 from app.runtime.llm.openai_compat import LLMConfigError
 from app.services import store
-from app.runtime.llm.base import LLMClient, LLMResponse
+from app.runtime.llm.base import LLMClient
 from app.runtime.llm.mock import MockLLMClient, _BASH_FINAL, _DEFAULT_REPLY
 
 

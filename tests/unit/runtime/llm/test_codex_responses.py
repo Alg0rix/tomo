@@ -16,7 +16,6 @@ from app.runtime.llm.base import LLMResponse
 from app.runtime.llm.codex_responses import (
     CodexResponsesClient,
     _messages_to_responses_input,
-    _responses_tools,
 )
 from app.runtime.llm.openai_compat import LLMConfigError, LLMRequestError
 

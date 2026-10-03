@@ -13,7 +13,7 @@ from app.core import config
 from app.core import home
 import json
 import sqlite3
-from app.core.secrets import decrypt_secret, encrypt_secret
+from app.core.secrets import decrypt_secret
 from app.models.db import get_connection
 from app.models.mixins import settings as settings_store
 from app.models.schema import migrate

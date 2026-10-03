@@ -15,7 +15,7 @@ from app.runtime.memory.vault.paths import timeline_path
 from datetime import date
 from fastapi import Request
 from starlette.datastructures import Headers
-from app.api.openai_compat import last_user_message, parse_sse_block, resolve_session_id
+from app.api.openai_compat import last_user_message, resolve_session_id
 
 
 # --- from test_companion_api.py ---

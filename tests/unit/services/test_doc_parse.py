@@ -6,7 +6,6 @@ import pytest
 
 from app.services.doc_parse import (
     MAX_BODY_CHARS,
-    MAX_TITLE_CHARS,
     parse_document,
 )
 
