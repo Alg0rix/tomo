@@ -216,6 +216,12 @@ def test_layout_api_roundtrip_and_isolation(monkeypatch):
         assert r.status_code == 200
         assert r.json() == {"order": ["core:memory", "money:0"], "hidden": ["core:companion"]}
         assert client.get("/api/home?tz=0").json()["layout"]["hidden"] == ["core:companion"]
+        layout = {"selected": ["money:spending"], "sizes": {"money:spending": {"width": "m", "height": 320}}}
+        r = client.put("/api/home/layout", json=layout)
+        assert r.status_code == 200
+        assert client.get("/api/home?tz=0").json()["layout"] == {"order": [], "hidden": [], **layout}
+        assert client.put("/api/home/layout", json={"sizes": {"money:spending": {"width": [], "height": 320}}}).status_code == 400
+        assert client.put("/api/home/layout", json={"sizes": {"money:spending": {"width": "m", "height": 321}}}).status_code == 400
         user["id"] = "usr_bob"
         assert client.get("/api/home/live").status_code == 200
         assert client.get("/api/home/badges").json() == {"needs": 0, "running": 0}

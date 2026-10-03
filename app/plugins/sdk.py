@@ -93,6 +93,8 @@ class PluginAPI:
         title: str | None = None,
         size: str = "s",
         kanji: str | None = None,
+        id: str | None = None,
+        default_visible: bool | None = None,
     ) -> None:
         """Contribute a card to the Home page's Rooms grid.
 
@@ -101,6 +103,10 @@ class PluginAPI:
         actions, …). Core renders it; plugins never inject HTML into Home.
         ``size`` is ``s`` (one column), ``m`` (two), or ``l`` (full row);
         ``kanji`` is an optional single CJK character used as the room icon.
+        ``id`` is a stable name within the plugin. Up to twelve cards can be
+        registered. Only the first named card is visible by default; unnamed
+        cards retain their previous defaults. Users choose their own widgets
+        and sizes. ``default_visible`` overrides the initial visibility.
         """
         import inspect
 
@@ -110,14 +116,24 @@ class PluginAPI:
             raise ValueError("Home card size must be 's', 'm', or 'l'")
         if kanji is not None and not _is_kanji(kanji):
             raise ValueError("Home card kanji must be a single CJK character")
-        if len(self.home_cards) >= 2:
-            raise ValueError("A plugin may register at most two home cards")
+        import re
+
+        if id is not None and (not isinstance(id, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", id)):
+            raise ValueError("Home card id must be a lowercase name, up to 64 characters")
+        if id is not None and any(card.get("id") == id for card in self.home_cards):
+            raise ValueError("Home card ids must be unique within a plugin")
+        if default_visible is not None and not isinstance(default_visible, bool):
+            raise ValueError("default_visible must be a boolean")
+        if len(self.home_cards) >= 12:
+            raise ValueError("A plugin may register at most twelve home cards")
         self.home_cards.append(
             {
                 "handler": handler,
                 "title": (title or "").strip()[:40],
                 "size": size,
                 "kanji": kanji or "",
+                "id": id,
+                "default_visible": default_visible if default_visible is not None else (id is None or not self.home_cards),
             }
         )
 

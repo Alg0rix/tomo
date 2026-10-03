@@ -313,7 +313,7 @@ from app.runtime.tools.user_ctx import current_user_id
 
 def setup(api):
     api.page("/", "Overview")
-    api.home_card(lambda uid: {"metric": {"value": uid, "label": current_user_id()}}, title="Spend", size="m", kanji="金")
+    api.home_card(lambda uid: {"metric": {"value": uid, "label": current_user_id()}}, title="Spend", size="m", kanji="金", id="spending")
     api.home_card(lambda uid: 1 / 0)
     api.starter("Check spend", "How much did I spend this week?")
 """,
@@ -324,7 +324,8 @@ def setup(api):
     good, broken = out["cards"]
     assert good == {
         "plugin": "test",
-        "key": "test:0",
+        "key": "test:spending",
+        "default_visible": True,
         "title": "Spend",
         "size": "m",
         "kanji": "金",
@@ -372,7 +373,14 @@ def test_home_card_and_starter_validation(tmp_path):
         with pytest.raises(ValueError):
             api.home_card(lambda uid: {}, kanji=bad)
     api.home_card(lambda uid: {}, size="l", kanji="板")
-    api.home_card(lambda uid: {})
+    api.home_card(lambda uid: {}, id="budgets")
+    assert api.home_cards[-1]["default_visible"] is False
+    with pytest.raises(ValueError):
+        api.home_card(lambda uid: {}, id="budgets")
+    with pytest.raises(ValueError):
+        api.home_card(lambda uid: {}, id="Bad ID")
+    for i in range(10):
+        api.home_card(lambda uid: {}, id=f"widget-{i}")
     with pytest.raises(ValueError):
         api.home_card(lambda uid: {})
     with pytest.raises(ValueError):

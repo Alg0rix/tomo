@@ -17,7 +17,7 @@ Read only the references relevant to the work with
 - [Quickstart](references/quickstart.md): package layout, manifest, and first page.
 - [Pages and design](references/pages.md): routing, templates, assets, icons, sidebar.
 - [Agent tools and data](references/tools-data.md): schemas, user isolation, persistence.
-- [Home cards](references/home.md): per-user room card and composer starters on Home.
+- [Home cards](references/home.md): multiple per-user widgets, stable IDs, dashboard selection/resizing, and composer starters.
 - [Plugin skills](references/plugin-skills.md): package usage guidance for agents.
 - [Lifecycle and testing](references/testing.md): validation, live loop, rollback, hooks.
 - [SDK contract](references/sdk.md): supported API signatures and limits.
@@ -28,6 +28,12 @@ The installed SDK is the contract; inspect `app/plugins/sdk.py` if present,
 not a BB TypeScript API. Tomo does not support provider registration, core UI
 replacement, arbitrary client scripts, background-service management, or npm
 plugins. Do not invent those surfaces.
+
+Give Home widgets stable IDs with `api.home_card(..., id="spending")`. A plugin
+can offer up to twelve independent widgets. Users pick which to add, arrange,
+remove, and resize; only the first named widget shows by default. Do not force
+all plugin widgets onto a user's customized dashboard. Read the Home and SDK
+references when adding widgets, and verify removal/restoration and saved sizes.
 
 Reuse Tomo's existing agents, models, permissions, navigation, and skill loader.
 A domain plugin exposes tools; it does not create a second AI client. Respect

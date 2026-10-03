@@ -764,6 +764,8 @@ def rooms(user_id: str, tz_minutes: int) -> dict[str, Any]:
         item = {
             "key": card["key"],
             "plugin": card["plugin"],
+            "default_visible": card.get("default_visible", True),
+            "plugin_name": info.get("name") or card["plugin"],
             "title": card["title"] or info.get("name") or card["plugin"],
             "icon": info.get("icon") or "puzzle",
             "kanji": card.get("kanji") or "",
@@ -814,24 +816,44 @@ def _layout_path(user_id: str) -> Path:
     return TOMO_HOME / "state" / "home" / f"{digest}.json"
 
 
-def get_layout(user_id: str) -> dict[str, list[str]]:
+def get_layout(user_id: str) -> dict[str, Any]:
     try:
         data = json.loads(_layout_path(user_id).read_text())
     except (OSError, ValueError):
         return {"order": [], "hidden": []}
-    return {
+    if not isinstance(data, dict):
+        return {"order": [], "hidden": []}
+    layout = {
         "order": [str(k) for k in data.get("order") or []][:100],
         "hidden": [str(k) for k in data.get("hidden") or []][:100],
     }
+    for key in ("selected", "sizes"):
+        if key in data:
+            layout[key] = data[key]
+    return layout
 
 
-def save_layout(user_id: str, data: dict[str, Any]) -> dict[str, list[str]]:
+def save_layout(user_id: str, data: dict[str, Any]) -> dict[str, Any]:
     def keys(value: Any) -> list[str]:
         if not isinstance(value, list):
             raise ValueError("order and hidden must be lists")
         return [str(k)[:120] for k in value if isinstance(k, str)][:100]
 
     layout = {"order": keys(data.get("order", [])), "hidden": keys(data.get("hidden", []))}
+    if "selected" in data:
+        layout["selected"] = keys(data["selected"])
+    if "sizes" in data:
+        sizes = data["sizes"]
+        if not isinstance(sizes, dict) or len(sizes) > 100:
+            raise ValueError("sizes must be an object with at most 100 widgets")
+        layout["sizes"] = {}
+        for key, size in sizes.items():
+            if not isinstance(size, dict) or size.get("width") not in ("s", "m", "l"):
+                raise ValueError("Widget width must be s, m, or l")
+            height = size.get("height")
+            if height is not None and (type(height) is not int or not 180 <= height <= 900 or height % 20):
+                raise ValueError("Widget height must be 180–900 pixels in steps of 20")
+            layout["sizes"][str(key)[:120]] = {"width": size["width"], "height": height}
     path = _layout_path(user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")

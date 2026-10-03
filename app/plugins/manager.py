@@ -672,7 +672,8 @@ class PluginManager:
             for (plugin_id, index, card), future in futures:
                 item = {
                     "plugin": plugin_id,
-                    "key": f"{plugin_id}:{index}",
+                    "key": f"{plugin_id}:{card.get('id') or index}",
+                    "default_visible": card.get("default_visible", True),
                     "title": card["title"],
                     "size": card["size"],
                     "kanji": card.get("kanji", ""),

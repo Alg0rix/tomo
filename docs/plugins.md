@@ -155,14 +155,23 @@ needs no separate AI key or agent loop.
 
 ### Home cards
 
-`api.home_card(handler, title=None, size="s", kanji=None)` adds a room card to Home's
+`api.home_card(handler, title=None, size="s", kanji=None, id=None, default_visible=None)` adds a room card to Home's
 Rooms grid; `handler(user_id)` is synchronous, runs per Home load under a 2.5s
 shared deadline with the user bound, and returns a typed dict (`status`,
 `metric`, `caption`, `trend`, `stats`, `chart`, `spark`, `ring`, `heatmap`,
 `bars`, `columns`, `timeline`, `checklist`, `list`, `tags`, `quote`, `meter`,
 `actions`, `empty`). `size` is `s`, `m`, or `l`; `kanji` sets a one-character
 room icon. Core validates and renders it (`app/services/home.py::normalize_card`);
-unknown fields and non-local links are dropped. At most two cards per plugin.
+unknown fields and non-local links are dropped. At most twelve cards per plugin.
+Give each widget a stable `id` (lowercase letters, digits, `_`, `-`, starting
+with a letter, up to 64 characters). Keys become `<plugin-id>:<id>`; unnamed
+cards retain `<plugin-id>:<index>`. Only the first named card is visible by
+default; `default_visible=True` or `False` overrides this. Unnamed cards retain
+their previous visible defaults. Users choose widgets individually with Home →
+Add widget, and arrange, remove, or resize them with Arrange. Selection, order,
+and size are saved per account. Removing a widget preserves plugin data and its
+saved size; it remains available in the picker. Mobile stacks cards with automatic
+height while keeping desktop sizes saved.
 `api.starter(label, prompt)` adds up to four composer prompt chips. Plugins
 without a card get a door card. Full field table: the plugin-development
 skill's `references/home.md`. Guard calls with `hasattr(api, "home_card")` when

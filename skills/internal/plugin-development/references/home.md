@@ -1,6 +1,6 @@
 # Home cards and starters
 
-Home (`/`) shows each enabled plugin as a room in its 間 Rooms grid. A plugin
+Home (`/`) offers widgets from enabled plugins in its 間 Rooms grid. A plugin
 without a card gets a plain door card linking to its first page. Register a card
 to show live, per-user status instead. Core renders the card from typed JSON;
 plugins never inject HTML, CSS, or scripts into Home.
@@ -31,17 +31,36 @@ def setup(api):
 
     if hasattr(api, "home_card"):  # older Tomo has no Home SDK
         try:
-            api.home_card(home_card, title="Money", size="m", kanji="金")
+            api.home_card(home_card, id="spending", title="Money", size="m", kanji="金")
         except (TypeError, ValueError):  # Tomo without size "l"/kanji support
             api.home_card(home_card, title="Money")
         api.starter("This month's spending", "How much did I spend this month?")
 ```
 
+## Multiple widgets
+
+Register each view independently with a stable ID. Keep IDs unchanged across
+releases; never conditionally register cards based on one user's preferences.
+Tomo saves dashboard choices per user, separately from plugin data.
+
+```python
+def setup(api):
+    api.home_card(spending_card, id="spending", title="Spending", size="m")
+    api.home_card(budget_card, id="budgets", title="Budgets", size="s",
+                  default_visible=False)
+```
+
+`spending_card(user_id)` and `budget_card(user_id)` return their own typed data.
+Users can keep Spending alone, add Budgets later, and remove/restore either
+without disabling the plugin. `size` is only the initial size; the user's saved
+width and height take precedence. Do not store dashboard preferences in the
+plugin or inject your own drag/resize scripts.
+
 ## Registration limits
 
 | Call | Contract |
 | --- | --- |
-| `api.home_card(handler, *, title=None, size="s", kanji=None)` | Synchronous `handler(user_id)`; `size` is `s` (1 column), `m` (2 columns), or `l` (full row); `kanji` is one CJK character shown as the room icon (else the manifest Lucide icon); at most 2 cards; title ≤40 chars |
+| `api.home_card(handler, *, title=None, size="s", kanji=None, id=None, default_visible=None)` | Synchronous `handler(user_id)`; `size` is `s` (1 column), `m` (2 columns), or `l` (full row); `kanji` is one CJK character shown as the room icon (else the manifest Lucide icon); at most 12 cards; title ≤40 chars |
 | `api.starter(label, prompt)` | Composer chip; label ≤60, prompt ≤500; at most 4 per plugin; clicking fills the composer, never sends |
 
 The handler runs on every Home load, in parallel with other plugins, with the
@@ -110,7 +129,15 @@ Good combinations:
 ## Verify
 
 Reload the plugin, open `/`, and check the card in both the empty state and the
-populated state, at desktop and 390px widths. Arrange mode (Home → Arrange) lets
-each user reorder or hide rooms; card keys are `<plugin-id>:<index>`, so keep
-registration order stable across releases. Test the handler directly with two
+populated state, at desktop and 390px widths. Home → Add widget lets each user choose widgets separately, even when a plugin
+provides several. Home → Arrange lets users move, remove, and resize widgets;
+removed widgets can be restored from the picker, with their saved sizes.
+Use stable `id` names (lowercase letters, digits, `_`, `-`, starting with a letter,
+up to 64 characters); keys are `<plugin-id>:<id>`. Only the first named widget
+is visible initially unless `default_visible` overrides it. Unnamed cards
+remain visible by default and use `<plugin-id>:<index>`; keep their registration
+order stable. Once users customize selection, new widgets are available in the
+picker rather than automatically added. Desktop widths snap to small, medium,
+or full row; heights snap to 20px steps (180–900px), or automatic. Mobile stacks
+cards with automatic height and preserves desktop sizes. Test the handler directly with two
 user IDs to prove isolation.

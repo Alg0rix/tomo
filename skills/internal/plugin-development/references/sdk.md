@@ -11,7 +11,7 @@
 | `api.tool(name, description, parameters, handler)` | Object schema, synchronous handler(arguments), namespaced tool ID |
 | `api.data_dir` | Persistent plugin data directory |
 | `api.user_data_dir(user_id=None)` | Private data; HTTP must pass authenticated user explicitly |
-| `api.home_card(handler, *, title=None, size="s", kanji=None)` | Synchronous handler(user_id) returning a typed card dict; size s/m/l; optional single-kanji icon; ≤2 cards; see [Home cards](home.md) |
+| `api.home_card(handler, *, title=None, size="s", kanji=None, id=None, default_visible=None)` | Synchronous handler(user_id) returning a typed card dict; size s/m/l; optional single-kanji icon; ≤12 cards; stable id; first named widget visible by default; users choose and resize independently; see [Home cards](home.md) |
 | `api.starter(label, prompt)` | Home composer prompt chip; ≤4 per plugin |
 | `api.on_turn_end(callback)` | Synchronous callback receiving TurnEndContext |
 | `api.on_dispose(callback)` | Synchronous cleanup callback |

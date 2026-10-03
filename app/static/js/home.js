@@ -329,18 +329,22 @@
       box.innerHTML = '<div class="home-empty">A fresh day. What Tomo does and learns will show up here.</div>';
       return;
     }
+    /* journal text is raw markdown; strip the noise so rows stay one or two lines */
+    function plain(t) { return String(t || '').replace(/[*`_#>|]+/g, ' ').replace(/-{3,}/g, ' ').replace(/\s+/g, ' ').trim(); }
     function row(it, future) {
       var cls = 'home-ti' + (future ? ' future' : '');
       var label = '';
       if (it.kind === 'learned') { cls += ' learned'; label = 'Learned'; }
       else if (it.kind === 'routine') { cls += it.status === 'error' ? ' err' : ' done'; label = future ? 'Routine' : 'Ran'; }
       else { cls += ' done'; }
-      var x = (label ? '<b>' + esc(label) + '</b> · ' : '') + esc(it.title) + (it.meta ? ' <small>· ' + esc(it.meta) + '</small>' : '');
+      var x = (label ? '<b>' + esc(label) + '</b> · ' : '') + esc(plain(it.title)) + (it.meta ? ' <small>· ' + esc(it.meta) + '</small>' : '');
       return '<a class="' + cls + '" href="' + esc(it.href || '#') + '"><div class="h">' + esc(clock(it.at)) + '</div><div class="x">' + x + '</div></a>';
     }
     box.innerHTML = '<div class="home-tl">' + items.map(function (it) { return row(it, false); }).join('') +
       '<div class="home-ti now">NOW · ' + esc(clock(Date.now() / 1000)) + '</div>' +
       (t.upcoming || []).map(function (it) { return row(it, true); }).join('') + '</div>';
+    var now = box.querySelector('.now');
+    if (now && box.scrollHeight > box.clientHeight) box.scrollTop = Math.max(0, now.offsetTop - box.clientHeight * 0.6);
   }
 
   /* ---------------- 話 recent ---------------- */
@@ -552,7 +556,41 @@
     }).join('') + '</div>';
   }
   var CORE_KANJI = { memory: '記', companion: '友' };
-  function roomHtml(r, hidden) {
+  function isSelected(r) {
+    if (Array.isArray(state.layout.selected)) return state.layout.selected.indexOf(r.key) !== -1;
+    return r.default_visible !== false && state.layout.hidden.indexOf(r.key) === -1;
+  }
+  function selectWidget(key, selected) {
+    if (!Array.isArray(state.layout.selected)) state.layout.selected = state.data.rooms.filter(isSelected).map(function (r) { return r.key; });
+    state.layout.selected = state.layout.selected.filter(function (k) { return k !== key; });
+    if (selected) state.layout.selected.push(key);
+    renderRooms(); renderPicker(); saveLayout();
+  }
+  var WIDTHS = [['s', 'Small'], ['m', 'Medium'], ['l', 'Full']];
+  var HEIGHTS = [null, 240, 360, 480];
+  function heightLabel(h) { return h ? h + 'px' : 'Auto'; }
+  function setSize(key, width, height) {
+    if (!state.layout.sizes) state.layout.sizes = {};
+    state.layout.sizes[key] = { width: width, height: height };
+  }
+  /* one place that applies a size to state, DOM and controls */
+  function applySize(el, width, height) {
+    setSize(el.dataset.key, width, height);
+    el.classList.remove('s', 'm', 'l'); el.classList.add(width);
+    el.classList.toggle('fixed', !!height);
+    el.style.height = height ? height + 'px' : '';
+    el.querySelectorAll('[data-width]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.width === width)); });
+    el.querySelector('[data-height-cycle]').textContent = heightLabel(height);
+  }
+  function sizeOf(el) {
+    var r = state.data.rooms.filter(function (x) { return x.key === el.dataset.key; })[0];
+    return widgetSize(r);
+  }
+  function widgetSize(r) {
+    return (state.layout.sizes || {})[r.key] || { width: r.size || 's', height: null };
+  }
+  function roomHtml(r) {
+    var size = widgetSize(r);
     var kanji = r.core ? (CORE_KANJI[r.core] || '家') : r.kanji;
     var ico = kanji
       ? '<span class="home-room-ico kanji" aria-hidden="true">' + esc(kanji) + '</span>'
@@ -560,12 +598,20 @@
     var status = r.data && r.data.status
       ? '<span class="home-status ' + esc(r.data.status.tone || '') + '">' + esc(r.data.status.text) + '</span>' : '';
     var body = r.error ? '<div class="err">' + esc(r.error) + '</div>' : cardBody(r.data || {});
-    return '<div class="home-room' + (r.size === 'm' || r.size === 'l' ? ' ' + r.size : '') + (hidden ? ' hidden-room' : '') + '" data-key="' + esc(r.key) + '">' +
-      '<div class="home-handle"><button type="button" class="home-hb" data-hide title="' + (hidden ? 'Show room' : 'Hide room') + '" aria-label="' + (hidden ? 'Show ' : 'Hide ') + esc(r.title) + '">' + (hidden ? '+' : '–') + '</button></div>' +
+    var t = esc(r.title);
+    return '<div class="home-room ' + esc(size.width) + (size.height ? ' fixed' : '') + '"' + (size.height ? ' style="height:' + size.height + 'px"' : '') + ' data-key="' + esc(r.key) + '">' +
+      '<div class="home-handle" role="toolbar" aria-label="Arrange ' + t + '">' +
+      '<button type="button" class="home-hb grip" data-drag aria-label="Drag ' + t + ' to reorder" title="Drag to reorder">⠿</button>' +
+      '<button type="button" class="home-hb" data-move="-1" aria-label="Move ' + t + ' earlier" title="Move earlier">↑</button>' +
+      '<button type="button" class="home-hb" data-move="1" aria-label="Move ' + t + ' later" title="Move later">↓</button>' +
+      '<span class="home-seg" role="group" aria-label="Width of ' + t + '">' +
+      WIDTHS.map(function (w) { return '<button type="button" class="home-hb" data-width="' + w[0] + '" aria-pressed="' + (w[0] === size.width) + '" aria-label="' + w[1] + ' width" title="' + w[1] + ' width">' + w[0].toUpperCase() + '</button>'; }).join('') + '</span>' +
+      '<button type="button" class="home-hb txt" data-height-cycle aria-label="Height of ' + t + '" title="Change height">' + heightLabel(size.height) + '</button>' +
+      '<button type="button" class="home-hb danger" data-remove aria-label="Remove ' + t + '" title="Remove from Home">×</button></div>' +
       '<div class="home-room-h">' + ico + '<span class="n">' + esc(r.title) + '</span>' +
       '<span class="src">' + (r.core ? 'core' : 'plugin') + '</span>' + status +
       '<a class="open" href="' + esc(r.href || '#') + '" aria-label="Open ' + esc(r.title) + '">' + SVG.open + '</a></div>' +
-      body + '</div>';
+      '<div class="home-widget-body">' + body + '</div><button type="button" class="home-resize" data-resize aria-label="Resize ' + t + ' (arrow keys change size, Delete resets height)" title="Drag to resize">◢</button></div>';
   }
   function orderedRooms() {
     var rooms = (state.data && state.data.rooms) || [];
@@ -579,12 +625,8 @@
   }
   function renderRooms() {
     var box = $('homeRooms');
-    var rooms = orderedRooms();
-    var hidden = {};
-    state.layout.hidden.forEach(function (k) { hidden[k] = true; });
-    box.innerHTML = rooms.map(function (r) { return roomHtml(r, !!hidden[r.key]); }).join('') +
-      '<a class="home-room home-addroom" href="/extensions"><span class="kanji" aria-hidden="true">間</span>' +
-      '<span class="n">Add a room</span><span>Install a plugin to give Tomo a new space.</span></a>';
+    var rooms = orderedRooms().filter(isSelected);
+    box.innerHTML = rooms.map(roomHtml).join('') || '<div class="home-empty">Your dashboard is empty. Choose Add widget to make it yours.</div>';
     rooms.forEach(function (r) {
       var el = box.querySelector('[data-key="' + CSS.escape(r.key) + '"]');
       if (!el) return;
@@ -592,29 +634,41 @@
         b.addEventListener('click', function () { prefill(r.data.actions[Number(b.dataset.promptI)].prompt); });
       });
     });
-    syncDraggable();
   }
 
   /* arrange mode */
-  var dragKey = null;
-  function syncDraggable() {
-    $('homeRooms').querySelectorAll('.home-room[data-key]').forEach(function (el) {
-      el.draggable = state.editing;
-    });
-  }
   function currentOrder() {
     return Array.prototype.map.call($('homeRooms').querySelectorAll('.home-room[data-key]'), function (el) { return el.dataset.key; });
   }
   var saveTimer = null;
+  var saving = Promise.resolve();
+  var msgTimer = null;
+  /* status line in the arrange bar: saved/undo feedback, announced politely */
+  function say(text, undo) {
+    var box = $('homeEditMsg');
+    clearTimeout(msgTimer);
+    box.textContent = text;
+    if (undo) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'home-undo'; b.textContent = 'Undo';
+      b.addEventListener('click', function () { undo(); say(''); });
+      box.appendChild(b);
+    }
+    if (text && !undo) msgTimer = setTimeout(function () { box.textContent = ''; }, 2500);
+  }
   function saveLayout() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(async function () {
-      try {
-        state.layout = await Tomo.api('/api/home/layout', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(state.layout),
-        });
-      } catch (e) { Tomo.toast('Could not save layout', 'err'); }
+    saveTimer = setTimeout(function () {
+      var body = JSON.stringify(state.layout);
+      saving = saving.then(async function () {
+        try {
+          await Tomo.api('/api/home/layout', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: body,
+          });
+          if (!$('homeEditMsg').querySelector('.home-undo')) say('Saved ✓');
+        } catch (e) { say('Not saved'); Tomo.toast('Could not save layout', 'err'); }
+      });
     }, 300);
   }
   function setEditing(on) {
@@ -622,50 +676,188 @@
     root.classList.toggle('editing', on);
     $('homeEditBar').hidden = !on;
     $('homeArrange').setAttribute('aria-pressed', on ? 'true' : 'false');
-    syncDraggable();
+    if (!on) say('');
   }
   $('homeArrange').addEventListener('click', function () { setEditing(!state.editing); });
-  $('homeEditDone').addEventListener('click', function () { setEditing(false); });
+  $('homeEditDone').addEventListener('click', function () { setEditing(false); $('homeArrange').focus(); });
+  var resetTimer = null;
   $('homeResetLayout').addEventListener('click', function () {
+    var btn = this;
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1'; btn.textContent = 'Reset everything?';
+      resetTimer = setTimeout(disarm, 3500);
+      return;
+    }
+    disarm();
+    var before = JSON.parse(JSON.stringify(state.layout));
     state.layout = { order: [], hidden: [] };
     renderRooms();
     saveLayout();
+    say('Layout reset', function () { state.layout = before; renderRooms(); saveLayout(); });
   });
+  function disarm() {
+    var btn = $('homeResetLayout');
+    clearTimeout(resetTimer); delete btn.dataset.armed; btn.textContent = 'Reset';
+  }
   var roomsBox = $('homeRooms');
+  var justAdded = [];
+  function renderPicker() {
+    var groups = Object.create(null), total = 0;
+    orderedRooms().forEach(function (r) {
+      var group = r.plugin_name || r.plugin || 'Tomo';
+      (groups[group] || (groups[group] = [])).push(r);
+    });
+    $('homeWidgetChoices').innerHTML = Object.keys(groups).map(function (name) {
+      return '<section><h3>' + esc(name) + '</h3>' + groups[name].map(function (r) {
+        var added = isSelected(r);
+        if (added) total++;
+        return '<div class="home-widget-choice' + (added ? ' on' : '') + '"><span class="t">' + esc(r.title) + '</span>' +
+          '<button type="button" class="btn sm ' + (added ? 'ghost' : 'primary') + '" data-add-widget="' + esc(r.key) + '" aria-label="' + (added ? 'Remove ' : 'Add ') + esc(r.title) + '">' + (added ? '✓ On Home' : 'Add') + '</button></div>';
+      }).join('') + '</section>';
+    }).join('') || '<p>No widgets available. Enable a plugin to add its widgets.</p>';
+    $('homePickerCount').textContent = total + (total === 1 ? ' widget' : ' widgets') + ' on Home';
+  }
+  $('homeAddWidget').addEventListener('click', function () {
+    if (!state.data) return;
+    justAdded = []; renderPicker(); $('homeWidgetPicker').showModal();
+  });
+  var picker = $('homeWidgetPicker');
+  $('homePickerClose').addEventListener('click', function () { picker.close(); });
+  picker.addEventListener('click', function (e) { if (e.target === picker) picker.close(); });
+  picker.addEventListener('close', function () {
+    var key = justAdded[justAdded.length - 1];
+    justAdded = [];
+    if (!key) return;
+    var el = roomsBox.querySelector('[data-key="' + CSS.escape(key) + '"]');
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    el.classList.add('just-added');
+    setTimeout(function () { el.classList.remove('just-added'); }, 1800);
+  });
+  $('homeWidgetChoices').addEventListener('click', function (e) {
+    var button = e.target.closest('[data-add-widget]');
+    if (!button) return;
+    var key = button.dataset.addWidget;
+    var room = state.data.rooms.filter(function (r) { return r.key === key; })[0];
+    var on = !isSelected(room);
+    selectWidget(key, on);
+    justAdded = justAdded.filter(function (k) { return k !== key; });
+    if (on) justAdded.push(key);
+    var again = $('homeWidgetChoices').querySelector('[data-add-widget="' + CSS.escape(key) + '"]');
+    if (again) again.focus();
+  });
   roomsBox.addEventListener('click', function (e) {
-    var hb = e.target.closest('[data-hide]');
-    if (!hb || !state.editing) return;
-    var key = hb.closest('.home-room').dataset.key;
-    var i = state.layout.hidden.indexOf(key);
-    if (i === -1) state.layout.hidden.push(key); else state.layout.hidden.splice(i, 1);
-    renderRooms();
-    saveLayout();
-  });
-  roomsBox.addEventListener('dragstart', function (e) {
+    if (!state.editing) return;
     var el = e.target.closest('.home-room[data-key]');
-    if (!el || !state.editing) return;
-    dragKey = el.dataset.key;
-    el.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', dragKey);
+    if (!el) return;
+    var key = el.dataset.key;
+    if (e.target.closest('[data-remove]')) {
+      var room = state.data.rooms.filter(function (r) { return r.key === key; })[0];
+      var next = el.nextElementSibling || el.previousElementSibling;
+      selectWidget(key, false);
+      say('Removed ' + room.title + ' ', function () { selectWidget(key, true); });
+      var focusEl = next && next.dataset.key && roomsBox.querySelector('[data-key="' + CSS.escape(next.dataset.key) + '"] [data-remove]');
+      if (focusEl) focusEl.focus();
+      return;
+    }
+    var move = e.target.closest('[data-move]');
+    if (move) {
+      var dir = Number(move.dataset.move);
+      var sib = dir < 0 ? el.previousElementSibling : el.nextElementSibling;
+      if (!sib || !sib.dataset.key) return;
+      roomsBox.insertBefore(el, dir < 0 ? sib : sib.nextSibling);
+      state.layout.order = currentOrder(); saveLayout(); move.focus();
+      el.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    var wb = e.target.closest('[data-width]');
+    if (wb) { applySize(el, wb.dataset.width, sizeOf(el).height); saveLayout(); return; }
+    if (e.target.closest('[data-height-cycle]')) {
+      var cur = sizeOf(el).height, i = HEIGHTS.indexOf(cur);
+      var nextH = i !== -1 ? HEIGHTS[(i + 1) % HEIGHTS.length]
+        : (HEIGHTS.filter(function (h) { return h && h > cur; })[0] || null);
+      applySize(el, sizeOf(el).width, nextH); saveLayout();
+    }
   });
-  roomsBox.addEventListener('dragover', function (e) {
-    if (!dragKey) return;
-    var over = e.target.closest('.home-room[data-key]');
-    if (!over || over.dataset.key === dragKey) return;
+  var WIDTH_ORDER = ['s', 'm', 'l'];
+  roomsBox.addEventListener('keydown', function (e) {
+    var handle = e.target.closest('[data-resize]');
+    if (!state.editing || !handle) return;
+    var el = handle.closest('[data-key]'), size = sizeOf(el);
+    var w = WIDTH_ORDER.indexOf(size.width), h = size.height;
+    if (e.key === 'ArrowRight') w = Math.min(2, w + 1);
+    else if (e.key === 'ArrowLeft') w = Math.max(0, w - 1);
+    else if (e.key === 'ArrowDown') h = Math.min(900, (h || Math.round(el.getBoundingClientRect().height / 20) * 20) + 40);
+    else if (e.key === 'ArrowUp') h = Math.max(180, (h || Math.round(el.getBoundingClientRect().height / 20) * 20) - 40);
+    else if (e.key === 'Delete' || e.key === 'Backspace') h = null;
+    else return;
     e.preventDefault();
-    var dragging = roomsBox.querySelector('.home-room.dragging');
-    var rect = over.getBoundingClientRect();
-    var after = (e.clientY - rect.top) > rect.height / 2 || (e.clientX - rect.left) > rect.width / 2;
-    roomsBox.insertBefore(dragging, after ? over.nextSibling : over);
+    applySize(el, WIDTH_ORDER[w], h); saveLayout();
   });
-  roomsBox.addEventListener('dragend', function () {
-    if (!dragKey) return;
-    var el = roomsBox.querySelector('.home-room.dragging');
-    if (el) el.classList.remove('dragging');
-    dragKey = null;
-    state.layout.order = currentOrder();
-    saveLayout();
+  roomsBox.addEventListener('dblclick', function (e) {
+    var handle = e.target.closest('[data-resize]');
+    if (!state.editing || !handle) return;
+    var el = handle.closest('[data-key]');
+    applySize(el, sizeOf(el).width, null); saveLayout();
+  });
+  roomsBox.addEventListener('pointerdown', function (e) {
+    var handle = e.target.closest('[data-resize]');
+    if (!state.editing || !handle) return;
+    e.preventDefault();
+    var el = handle.closest('[data-key]'), rect = el.getBoundingClientRect();
+    var x = e.clientX, y = e.clientY;
+    var columns = getComputedStyle(roomsBox).gridTemplateColumns.split(' ').length;
+    var gap = parseFloat(getComputedStyle(roomsBox).columnGap) || 14;
+    var unit = (roomsBox.clientWidth - gap * (columns - 1)) / columns;
+    handle.setPointerCapture(e.pointerId);
+    el.classList.add('resizing');
+    function resize(event) {
+      var span = Math.max(1, Math.min(columns, Math.round((rect.width + event.clientX - x + gap) / (unit + gap))));
+      var width = columns === 1 ? sizeOf(el).width : span === 1 ? 's' : span >= columns ? 'l' : 'm';
+      var height = Math.max(180, Math.min(900, Math.round((rect.height + event.clientY - y) / 20) * 20));
+      applySize(el, width, height);
+    }
+    function finish() {
+      handle.removeEventListener('pointermove', resize); handle.removeEventListener('pointerup', finish); handle.removeEventListener('pointercancel', finish);
+      el.classList.remove('resizing');
+      saveLayout();
+    }
+    handle.addEventListener('pointermove', resize); handle.addEventListener('pointerup', finish); handle.addEventListener('pointercancel', finish);
+  });
+  /* reorder: pointer events cover mouse, pen and touch with one code path */
+  roomsBox.addEventListener('pointerdown', function (e) {
+    var grip = e.target.closest('[data-drag]');
+    if (!state.editing || !grip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    var el = grip.closest('.home-room[data-key]'), x = e.clientX, y = e.clientY, raf = 0;
+    el.classList.add('dragging');
+    function reorder() {
+      var under = document.elementFromPoint(x, y);
+      var over = under && under.closest('.home-room[data-key]');
+      if (!over || over === el || over.parentNode !== roomsBox) return;
+      var rect = over.getBoundingClientRect();
+      var after = rect.height > rect.width * .6 || over.classList.contains('l')
+        ? (y - rect.top) > rect.height / 2
+        : (x - rect.left) > rect.width / 2;
+      var ref = after ? over.nextSibling : over;
+      if (ref !== el && ref !== el.nextSibling) roomsBox.insertBefore(el, ref);
+    }
+    function tick() {
+      var edge = 70, step = y < edge ? -(edge - y) / 5 : y > innerHeight - edge ? (y - (innerHeight - edge)) / 5 : 0;
+      if (step) { scrollBy(0, step); reorder(); }
+      raf = requestAnimationFrame(tick);
+    }
+    function move(ev) { x = ev.clientX; y = ev.clientY; reorder(); }
+    function finish() {
+      cancelAnimationFrame(raf);
+      removeEventListener('pointermove', move); removeEventListener('pointerup', finish); removeEventListener('pointercancel', finish);
+      el.classList.remove('dragging');
+      var order = currentOrder();
+      if (order.join() !== (state.layout.order || []).join()) { state.layout.order = order; saveLayout(); }
+      grip.focus();
+    }
+    addEventListener('pointermove', move); addEventListener('pointerup', finish); addEventListener('pointercancel', finish);
+    raf = requestAnimationFrame(tick);
   });
 
   /* ---------------- load + live poll ---------------- */

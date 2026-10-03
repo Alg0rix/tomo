@@ -111,7 +111,8 @@ actions); others get a door
 card linking to their first page. `api.starter(label, prompt)` adds composer
 chips. Cards are typed JSON rendered by core, never plugin HTML. Read
 `use_skill(skill_id="plugin-development", file="references/home.md")` before
-adding or changing a card. Users reorder or hide rooms with Home → Arrange;
+adding or changing a card. Users choose individual widgets with Home → Add widget, then reorder, remove,
+restore, or resize them with Home → Arrange and the widget picker;
 that layout is per user (`PUT /api/home/layout`) and is not plugin state.
 
 Git branch updates compare source commits; version bumps are optional. Tags and
