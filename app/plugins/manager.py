@@ -624,6 +624,62 @@ class PluginManager:
             scope, receive, send
         )
 
+    def home_contributions(self, user_id: str, timeout: float = 2.5) -> dict:
+        """Run each running plugin's Home card handlers for ``user_id``.
+
+        Handlers run in parallel under a shared deadline; a slow or failing
+        handler yields an error card instead of blocking Home.
+        """
+        from concurrent.futures import ThreadPoolExecutor, wait
+
+        from app.runtime.tools.user_ctx import bind_user, reset_user
+
+        with self._lock:
+            jobs = [
+                (plugin_id, index, card)
+                for plugin_id, inst in self._active.items()
+                for index, card in enumerate(inst["api"].home_cards)
+            ]
+            starters = [
+                {**starter, "plugin": plugin_id}
+                for plugin_id, inst in self._active.items()
+                for starter in inst["api"].starters
+            ]
+
+        def run(plugin_id: str, card: dict):
+            with self.lease(plugin_id):
+                token = bind_user(user_id)
+                try:
+                    return card["handler"](user_id)
+                finally:
+                    reset_user(token)
+
+        cards: list[dict] = []
+        if jobs:
+            pool = ThreadPoolExecutor(max_workers=min(8, len(jobs)))
+            futures = [(job, pool.submit(run, job[0], job[2])) for job in jobs]
+            wait([f for _, f in futures], timeout=timeout)
+            for (plugin_id, index, card), future in futures:
+                item = {
+                    "plugin": plugin_id,
+                    "key": f"{plugin_id}:{index}",
+                    "title": card["title"],
+                    "size": card["size"],
+                    "kanji": card.get("kanji", ""),
+                }
+                if not future.done():
+                    item["error"] = "Timed out"
+                elif future.exception() is not None:
+                    logger.warning(
+                        "Plugin %s home card failed: %s", plugin_id, future.exception()
+                    )
+                    item["error"] = "Card failed to load"
+                else:
+                    item["data"] = future.result()
+                cards.append(item)
+            pool.shutdown(wait=False, cancel_futures=True)
+        return {"cards": cards, "starters": starters}
+
     def on_turn_end(self, context) -> None:
         with self._lock:
             plugin_ids = list(self._active)

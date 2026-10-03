@@ -629,24 +629,6 @@ class Store:
             skills = skills_store.list_skills(self._conn)
             return self._stats_from(agents, sessions, len(wps), len(skills))
 
-    def dashboard_data(self, user_id: str | None = None) -> dict[str, Any]:
-        with self._lock:
-            agents = agents_store.list_agents(self._conn, self._busy.ids())
-            # Recent chats + session stat are per-account (strict isolation).
-            sessions = sessions_store.list_sessions(self._conn, user_id=user_id)
-            workplaces = workplaces_store.list_workplaces(self._conn)
-            skills = skills_store.list_skills(self._conn)
-            schedules = schedules_store.list_schedules(self._conn)
-            recent_agents = sorted(agents, key=lambda a: a["created_at"], reverse=True)[:5]
-            return {
-                "stats": self._stats_from(agents, sessions, len(workplaces), len(skills)),
-                "recent_agents": recent_agents,
-                "recent_sessions": sessions[:6],
-                "busy_agents": [a["id"] for a in agents if a["busy"]],
-                "workplaces": workplaces[:3],
-                "schedules": schedules[:3],
-            }
-
     # -- settings (SQLite) -----------------------------------------------
     def get_settings(self) -> dict[str, Any]:
         """Full settings including raw ``llm_api_key`` (runtime / internal)."""

@@ -9,7 +9,7 @@ marketplace catalogs; Installed shows runtime status, pages, tools, and lifecycl
 controls. Use **New plugin** (`/extensions#create`) to describe a plugin, pick an
 enabled agent and local build folder, and start a new development conversation.
 Plugin ideas are generated from the user’s activity and memory using the same
-auxiliary model as dashboard suggestions. They are cached separately per user
+auxiliary model as Home prompt suggestions. They are cached separately per user
 and installed-plugin set. More ideas regenerates them; unavailable models use
 random fallback ideas. Suggestions fill the composer without sending it. The selected agent uses its
 existing model and permission settings. **Install from source** accepts local
@@ -152,6 +152,21 @@ handlers use `api.user_data_dir(session_user_id(request))`. The Money example
 stores amounts as integer minor units and uses the same ledger in both its pages
 and agent tools. Agents use Tomo's existing models and conversation; the plugin
 needs no separate AI key or agent loop.
+
+### Home cards
+
+`api.home_card(handler, title=None, size="s", kanji=None)` adds a room card to Home's
+Rooms grid; `handler(user_id)` is synchronous, runs per Home load under a 2.5s
+shared deadline with the user bound, and returns a typed dict (`status`,
+`metric`, `caption`, `trend`, `stats`, `chart`, `spark`, `ring`, `heatmap`,
+`bars`, `columns`, `timeline`, `checklist`, `list`, `tags`, `quote`, `meter`,
+`actions`, `empty`). `size` is `s`, `m`, or `l`; `kanji` sets a one-character
+room icon. Core validates and renders it (`app/services/home.py::normalize_card`);
+unknown fields and non-local links are dropped. At most two cards per plugin.
+`api.starter(label, prompt)` adds up to four composer prompt chips. Plugins
+without a card get a door card. Full field table: the plugin-development
+skill's `references/home.md`. Guard calls with `hasattr(api, "home_card")` when
+supporting older Tomo releases.
 
 Use `api.on_dispose(callback)` for cleanup. Callbacks run on replacement,
 disable, uninstall, shutdown, or failed activation. Imports have a fresh package

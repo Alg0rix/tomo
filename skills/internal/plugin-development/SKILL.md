@@ -1,6 +1,6 @@
 ---
 name: plugin-development
-description: Build or change Tomo plugins with pages, agent tools, and usage skills.
+description: Build Tomo plugins — pages, agent tools, Home cards, usage skills.
 ---
 
 # Develop Tomo plugins
@@ -17,6 +17,7 @@ Read only the references relevant to the work with
 - [Quickstart](references/quickstart.md): package layout, manifest, and first page.
 - [Pages and design](references/pages.md): routing, templates, assets, icons, sidebar.
 - [Agent tools and data](references/tools-data.md): schemas, user isolation, persistence.
+- [Home cards](references/home.md): per-user room card and composer starters on Home.
 - [Plugin skills](references/plugin-skills.md): package usage guidance for agents.
 - [Lifecycle and testing](references/testing.md): validation, live loop, rollback, hooks.
 - [SDK contract](references/sdk.md): supported API signatures and limits.

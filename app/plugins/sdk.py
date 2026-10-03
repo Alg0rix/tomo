@@ -11,6 +11,14 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, FileSystemLoader
 
 
+def _is_kanji(value: object) -> bool:
+    """One CJK ideograph or kana (Home room icons use the kanji font)."""
+    if not isinstance(value, str) or len(value) != 1:
+        return False
+    code = ord(value)
+    return 0x3040 <= code <= 0x30FF or 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF
+
+
 class PluginAPI:
     def __init__(self, plugin_id: str, path: Path, data_dir: Path):
         self.id = plugin_id
@@ -20,6 +28,8 @@ class PluginAPI:
         self.pages: list[dict] = []
         self.tools: dict[str, tuple[dict, Callable]] = {}
         self.skills: list = []
+        self.home_cards: list[dict] = []
+        self.starters: list[dict] = []
         self._turn_end: list[Callable] = []
         self._cleanup: list[Callable] = []
 
@@ -75,6 +85,51 @@ class PluginAPI:
             handler,
         )
         return tool_id
+
+    def home_card(
+        self,
+        handler: Callable,
+        *,
+        title: str | None = None,
+        size: str = "s",
+        kanji: str | None = None,
+    ) -> None:
+        """Contribute a card to the Home page's Rooms grid.
+
+        ``handler(user_id)`` runs on each Home load and returns a typed card
+        dict (metric, stats, chart, ring, heatmap, list, timeline, columns,
+        actions, …). Core renders it; plugins never inject HTML into Home.
+        ``size`` is ``s`` (one column), ``m`` (two), or ``l`` (full row);
+        ``kanji`` is an optional single CJK character used as the room icon.
+        """
+        import inspect
+
+        if not callable(handler) or inspect.iscoroutinefunction(handler):
+            raise ValueError("Home cards require a synchronous handler")
+        if size not in {"s", "m", "l"}:
+            raise ValueError("Home card size must be 's', 'm', or 'l'")
+        if kanji is not None and not _is_kanji(kanji):
+            raise ValueError("Home card kanji must be a single CJK character")
+        if len(self.home_cards) >= 2:
+            raise ValueError("A plugin may register at most two home cards")
+        self.home_cards.append(
+            {
+                "handler": handler,
+                "title": (title or "").strip()[:40],
+                "size": size,
+                "kanji": kanji or "",
+            }
+        )
+
+    def starter(self, label: str, prompt: str) -> None:
+        """Suggest a prompt in the Home composer's starter chips."""
+        label = (label or "").strip()
+        prompt = (prompt or "").strip()
+        if not label or not prompt or len(label) > 60 or len(prompt) > 500:
+            raise ValueError("Starters need a label (≤60) and prompt (≤500)")
+        if len(self.starters) >= 4:
+            raise ValueError("A plugin may register at most four starters")
+        self.starters.append({"label": label, "prompt": prompt})
 
     def user_data_dir(self, user_id: str | None = None) -> Path:
         if user_id is None:

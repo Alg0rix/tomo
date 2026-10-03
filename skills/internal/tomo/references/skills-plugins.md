@@ -103,6 +103,16 @@ Disabled plugins have no active pages, tools, or packaged skills. Usage skills
 have IDs `plugin__<plugin-id>__<skill-id>` and are loaded with `use_skill`. Plugin data survives reload and
 uninstall. There is no `tomo config modules` resource or old module API.
 
+Home (`/`) shows each enabled plugin as a room card in the 間 Rooms grid and
+in the rail's "Rooms" group. Plugins that register `api.home_card(handler)` show
+live per-user status (metric, stats, charts, donut, heatmap, kanban columns,
+agenda, checklist, actions); others get a door
+card linking to their first page. `api.starter(label, prompt)` adds composer
+chips. Cards are typed JSON rendered by core, never plugin HTML. Read
+`use_skill(skill_id="plugin-development", file="references/home.md")` before
+adding or changing a card. Users reorder or hide rooms with Home → Arrange;
+that layout is per user (`PUT /api/home/layout`) and is not plugin state.
+
 Git branch updates compare source commits; version bumps are optional. Tags and
 commit references are pinned. Check updates in Installed; use Update to download
 and apply the selected commit live. Local sources use Reload after edits.

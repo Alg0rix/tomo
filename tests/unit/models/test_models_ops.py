@@ -768,15 +768,3 @@ def test_prune_drafts_only_own_user(tmp_path) -> None:
     assert store.get_session(alice_draft) is None
 
 
-def test_dashboard_recent_sessions_scoped(tmp_path) -> None:
-    _rebind(tmp_path)
-    store.create_swarm_session(["main"], user_id="usr_alice")
-    store.create_swarm_session(["main"], user_id="usr_bob")
-    data = store.dashboard_data(user_id="usr_alice")
-    ids = {s["id"] for s in data["recent_sessions"]}
-    assert all(
-        store.get_session(sid)["user_id"] == "usr_alice" for sid in ids
-    )
-    assert data["stats"]["session_count"] == 1
-
-

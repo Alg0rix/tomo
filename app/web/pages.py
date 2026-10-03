@@ -24,7 +24,7 @@ def _eval_disabled_redirect() -> RedirectResponse | None:
 async def dashboard(request: Request, _: AuthDep):
     if not store.is_setup_complete():
         return RedirectResponse("/setup", status_code=303)
-    return templates.TemplateResponse(request, "index.html", page_ctx(request, "dashboard"))
+    return templates.TemplateResponse(request, "index.html", page_ctx(request, "home"))
 
 
 @router.get("/agents", response_class=HTMLResponse)

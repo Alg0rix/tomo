@@ -47,11 +47,11 @@
     </div>
 
     <nav class="app-rail-nav" id="nav" aria-label="Primary">
-      <a class="app-rail-item {{ 'active' if page == 'dashboard' }}" href="/" title="Dashboard">
+      <a class="app-rail-item {{ 'active' if page == 'home' }}" href="/" title="Home">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
         </span>
-        <span class="app-rail-label">Dashboard</span>
+        <span class="app-rail-label">Home</span>
       </a>
       <a class="app-rail-item {{ 'active' if page == 'sessions' }}" href="/sessions" title="Chat">
         <span class="app-rail-ico" aria-hidden="true">
@@ -89,6 +89,9 @@
         <span class="app-rail-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="18" cy="19" r="2"/><path d="m10.5 10.5-4-4m7-3 3.5 1.5m-3 9 3 4"/></svg></span>
         <span class="app-rail-label">Memory</span>
       </a>
+      {% if plugin_nav and page != 'sessions' %}
+      <div class="app-rail-section-label app-rail-rooms-label">Rooms · <span lang="ja" style="font-family:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;letter-spacing:0">間</span></div>
+      {% endif %}
       {% for item in plugin_nav|default([]) %}
       {% if page != 'sessions' %}
       <a class="app-rail-item {{ 'active' if page == item.page }}" href="{{ item.path }}" title="{{ item.label }}">
@@ -123,11 +126,11 @@
         </div>
       </div>
       {% else %}
-      <a class="app-rail-item {{ 'active' if page == 'scheduler' }}" href="/scheduler" title="Scheduler">
+      <a class="app-rail-item {{ 'active' if page == 'scheduler' }}" href="/scheduler" title="Routines">
         <span class="app-rail-ico" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5L15 15"/></svg>
         </span>
-        <span class="app-rail-label">Scheduler</span>
+        <span class="app-rail-label">Routines</span>
       </a>
       <a class="app-rail-item {{ 'active' if page == 'system' }}" href="/system" title="System">
         <span class="app-rail-ico" aria-hidden="true">

@@ -45,14 +45,34 @@ async def dashboard_prompts_api(request: Request, _: AuthDep):
     return await dashboard_prompts.get_dashboard_prompts(session_user_id(request))
 
 
-@router.get("/dashboard/data")
-async def dashboard_data(request: Request, _: AuthDep):
-    data = store.dashboard_data(user_id=session_user_id(request))
-    coord = store.get_coordinator()
-    data["coordinator"] = (
-        {"id": coord["id"], "name": coord["name"]} if coord else None
-    )
-    return data
+@router.get("/home")
+async def home_api(
+    request: Request, _: AuthDep, tz: int = Query(0, ge=-840, le=840)
+):
+    """Full Home snapshot; ``tz`` is minutes east of UTC for the local day."""
+    from app.services import home
+
+    return await asyncio.to_thread(home.snapshot, session_user_id(request), tz)
+
+
+@router.get("/home/live")
+async def home_live_api(request: Request, _: AuthDep):
+    """Cheap polled slice: needs, live work, household, recent chats."""
+    from app.services import home
+
+    return home.live_snapshot(session_user_id(request))
+
+
+@router.put("/home/layout")
+async def home_layout_api(request: Request, body: dict, _: AuthDep):
+    from app.services import home
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    try:
+        return home.save_layout(session_user_id(request), body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/companion")
@@ -205,11 +225,6 @@ async def companion_events_api(
         agent_id=agent_id,
         learned_only=saved_only,
     )
-
-
-@router.get("/dashboard/sidebar")
-async def dashboard_sidebar(_: AuthDep):
-    return {"agents": store.list_agents()}
 
 
 @router.get("/agents")

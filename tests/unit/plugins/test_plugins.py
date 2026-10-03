@@ -302,3 +302,84 @@ def test_live_registry_respects_agent_tool_selection(manager, tmp_path):
     assert registry.get_definition("plugin__test__value")["backend"] == "plugin:test"
     manager.change("test", "disable")
     assert registry.get_openai_tools(enabled=["plugin__test__value"]) == []
+
+
+def test_home_cards_and_starters_contribute_per_user(manager, tmp_path):
+    path = source(
+        tmp_path,
+        """
+import time
+from app.runtime.tools.user_ctx import current_user_id
+
+def setup(api):
+    api.page("/", "Overview")
+    api.home_card(lambda uid: {"metric": {"value": uid, "label": current_user_id()}}, title="Spend", size="m", kanji="金")
+    api.home_card(lambda uid: 1 / 0)
+    api.starter("Check spend", "How much did I spend this week?")
+""",
+    )
+    manager.install(str(path))
+    manager.change("test", "enable")
+    out = manager.home_contributions("usr_alice")
+    good, broken = out["cards"]
+    assert good == {
+        "plugin": "test",
+        "key": "test:0",
+        "title": "Spend",
+        "size": "m",
+        "kanji": "金",
+        "data": {"metric": {"value": "usr_alice", "label": "usr_alice"}},
+    }
+    assert broken["key"] == "test:1" and broken["error"] == "Card failed to load"
+    assert out["starters"] == [
+        {"label": "Check spend", "prompt": "How much did I spend this week?", "plugin": "test"}
+    ]
+    manager.change("test", "disable")
+    assert manager.home_contributions("usr_alice") == {"cards": [], "starters": []}
+
+
+def test_slow_home_card_times_out(manager, tmp_path):
+    path = source(
+        tmp_path,
+        """
+import threading
+gate = threading.Event()
+
+def setup(api):
+    api.home_card(lambda uid: gate.wait(5) and {})
+    api.on_dispose(gate.set)
+""",
+    )
+    manager.install(str(path))
+    manager.change("test", "enable")
+    out = manager.home_contributions("usr_alice", timeout=0.05)
+    assert out["cards"][0]["error"] == "Timed out"
+
+
+def test_home_card_and_starter_validation(tmp_path):
+    from app.plugins.sdk import PluginAPI
+
+    api = PluginAPI("x", tmp_path, tmp_path)
+
+    async def coro(uid):
+        return {}
+
+    with pytest.raises(ValueError):
+        api.home_card(coro)
+    with pytest.raises(ValueError):
+        api.home_card(lambda uid: {}, size="xl")
+    for bad in ("", "ab", "A", "😀", 7):
+        with pytest.raises(ValueError):
+            api.home_card(lambda uid: {}, kanji=bad)
+    api.home_card(lambda uid: {}, size="l", kanji="板")
+    api.home_card(lambda uid: {})
+    with pytest.raises(ValueError):
+        api.home_card(lambda uid: {})
+    with pytest.raises(ValueError):
+        api.starter("", "prompt")
+    with pytest.raises(ValueError):
+        api.starter("label", "x" * 501)
+    for i in range(4):
+        api.starter(f"s{i}", "go")
+    with pytest.raises(ValueError):
+        api.starter("s5", "go")
