@@ -40,7 +40,7 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
    }
    await load();
    assert.equal(await page.locator('[data-key="money:budgets"]').count(), 0);
-   await page.click('#homeAddWidget');
+   await page.click('#homeAddTile');
    await page.click('[data-add-widget="money:budgets"]');
    await page.click('#homePickerClose');
    await page.click('#homeArrange');
@@ -78,7 +78,7 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
     assert((await page.evaluate(() => window.saved.sizes['money:spending'].height)) > 240);
    }
    {
-    const order = () => page.evaluate(() => [...document.querySelectorAll('#homeRooms .home-room')].map(e => e.dataset.key));
+    const order = () => page.evaluate(() => [...document.querySelectorAll('#homeRooms .home-room[data-key]')].map(e => e.dataset.key));
     const before = await order();
     await page.locator(`[data-key="${before[0]}"]`).evaluate(el => el.scrollIntoView({block: 'start'})); await page.evaluate(() => scrollBy(0, -60));
     const grip = await page.locator(`[data-key="${before[0]}"] [data-drag]`).boundingBox();
@@ -91,7 +91,7 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
     assert.deepEqual(await page.evaluate(() => window.saved.order), after);
    }
    await page.locator('[data-key="money:spending"] [data-remove]').click();
-   await page.click('#homeAddWidget'); await page.click('[data-add-widget="money:spending"]');
+   await page.click('#homeAddTile'); await page.click('[data-add-widget="money:spending"]');
    assert.match(await page.locator('#homePickerCount').innerText(), /widgets? on Home/);
    await page.click('#homePickerClose');
    if (width > 720) assert(await page.locator('[data-key="money:spending"]').evaluate(el => el.classList.contains('l')));
@@ -101,11 +101,13 @@ print(env.get_template('index.html').render(brand='Tomo', page='home', static_ve
    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
    if (process.env.SCREENSHOT_DIR && width > 720) {
     await page.click('#homeEditDone');
+    await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'desktop-full.png'), fullPage:true});
     await page.locator('section[aria-labelledby="roomsTitle"]').screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'dashboard.png')});
     await page.click('#homeArrange');
     await page.locator('section[aria-labelledby="roomsTitle"]').screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'dashboard-arrange.png')});
-    await page.click('#homeAddWidget');
+    await page.click('#homeAddTile');
     await page.locator('#homeWidgetPicker').screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'widget-picker.png')});
+    await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR, 'desktop-drawer.png')});
    }
    assert.deepEqual(errors, []); assert.deepEqual(await page.evaluate(() => toasts), []);
    await page.close();

@@ -589,12 +589,16 @@
   function widgetSize(r) {
     return (state.layout.sizes || {})[r.key] || { width: r.size || 's', height: null };
   }
-  function roomHtml(r) {
-    var size = widgetSize(r);
+  function roomIco(r) {
     var kanji = r.core ? (CORE_KANJI[r.core] || '家') : r.kanji;
-    var ico = kanji
+    return kanji
       ? '<span class="home-room-ico kanji" aria-hidden="true">' + esc(kanji) + '</span>'
       : '<span class="home-room-ico">' + pluginIcon(r.icon) + '</span>';
+  }
+  var ADD_TILE = '<button type="button" class="home-room home-addtile" id="homeAddTile"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><b>Add widget</b><span>from your plugins</span></button>';
+  function roomHtml(r) {
+    var size = widgetSize(r);
+    var ico = roomIco(r);
     var status = r.data && r.data.status
       ? '<span class="home-status ' + esc(r.data.status.tone || '') + '">' + esc(r.data.status.text) + '</span>' : '';
     var body = r.error ? '<div class="err">' + esc(r.error) + '</div>' : cardBody(r.data || {});
@@ -626,7 +630,7 @@
   function renderRooms() {
     var box = $('homeRooms');
     var rooms = orderedRooms().filter(isSelected);
-    box.innerHTML = rooms.map(roomHtml).join('') || '<div class="home-empty">Your dashboard is empty. Choose Add widget to make it yours.</div>';
+    box.innerHTML = rooms.map(roomHtml).join('') + ADD_TILE;
     rooms.forEach(function (r) {
       var el = box.querySelector('[data-key="' + CSS.escape(r.key) + '"]');
       if (!el) return;
@@ -704,23 +708,26 @@
   function renderPicker() {
     var groups = Object.create(null), total = 0;
     orderedRooms().forEach(function (r) {
-      var group = r.plugin_name || r.plugin || 'Tomo';
+      var group = r.plugin_name || (r.plugin || 'Tomo').replace(/[_-]+/g, ' ').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
       (groups[group] || (groups[group] = [])).push(r);
     });
     $('homeWidgetChoices').innerHTML = Object.keys(groups).map(function (name) {
       return '<section><h3>' + esc(name) + '</h3>' + groups[name].map(function (r) {
         var added = isSelected(r);
         if (added) total++;
-        return '<div class="home-widget-choice' + (added ? ' on' : '') + '"><span class="t">' + esc(r.title) + '</span>' +
-          '<button type="button" class="btn sm ' + (added ? 'ghost' : 'primary') + '" data-add-widget="' + esc(r.key) + '" aria-label="' + (added ? 'Remove ' : 'Add ') + esc(r.title) + '">' + (added ? '✓ On Home' : 'Add') + '</button></div>';
+        var w = widgetSize(r).width;
+        return '<div class="home-widget-choice' + (added ? ' on' : '') + '">' + roomIco(r) +
+          '<div class="m"><div class="t">' + esc(r.title) + '</div><div class="d">' + esc(name) + ' · ' + (w === 'l' ? 'Full' : w === 'm' ? 'Medium' : 'Small') + '</div></div>' +
+          '<button type="button" class="btn sm ' + (added ? 'ghost' : 'primary') + '" data-add-widget="' + esc(r.key) + '" aria-label="' + (added ? 'Remove ' : 'Add ') + esc(r.title) + '">' + (added ? '✓ Added' : 'Add') + '</button></div>';
       }).join('') + '</section>';
     }).join('') || '<p>No widgets available. Enable a plugin to add its widgets.</p>';
-    $('homePickerCount').textContent = total + (total === 1 ? ' widget' : ' widgets') + ' on Home';
+    $('homePickerCount').textContent = total + (total === 1 ? ' widget' : ' widgets') + ' on Home · from enabled plugins';
   }
-  $('homeAddWidget').addEventListener('click', function () {
+  function openPicker() {
     if (!state.data) return;
     justAdded = []; renderPicker(); $('homeWidgetPicker').showModal();
-  });
+  }
+  $('homeRooms').addEventListener('click', function (e) { if (e.target.closest('#homeAddTile')) openPicker(); });
   var picker = $('homeWidgetPicker');
   $('homePickerClose').addEventListener('click', function () { picker.close(); });
   picker.addEventListener('click', function (e) { if (e.target === picker) picker.close(); });

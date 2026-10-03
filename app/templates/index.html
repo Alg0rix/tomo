@@ -14,10 +14,6 @@
         <p id="homeSummary" class="home-summary">&nbsp;</p>
       </div>
     </div>
-    <button type="button" class="btn ghost sm" id="homeArrange" aria-pressed="false">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      Arrange
-    </button>
   </header>
 
   <nav class="home-found" id="homeFoundations" aria-label="System health"></nav>
@@ -71,7 +67,7 @@
   </div>
 
   <section class="home-sec" aria-labelledby="roomsTitle">
-    <div class="home-sec-h"><span class="k" aria-hidden="true">間</span><h2 id="roomsTitle">Rooms</h2><span class="sub">plugins and the places Tomo keeps</span><div class="act"><button type="button" class="btn ghost sm" id="homeAddWidget">Add widget</button><a href="/extensions">Browse plugins ↗</a></div></div>
+    <div class="home-sec-h"><span class="k" aria-hidden="true">間</span><h2 id="roomsTitle">Rooms</h2><span class="sub">plugins and the places Tomo keeps</span><div class="act"><button type="button" class="btn ghost sm" id="homeArrange" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Arrange</button><a href="/extensions">Browse plugins ↗</a></div></div>
     <div class="home-edit-bar" id="homeEditBar" hidden>
       <span class="home-edit-hint">Drag ⠿ to reorder, or use the tab on each card to move, resize, or remove it. Changes save automatically.</span>
       <span class="home-edit-msg" id="homeEditMsg" role="status" aria-live="polite"></span>
@@ -80,10 +76,9 @@
     </div>
     <div class="home-rooms" id="homeRooms"><div class="home-skel tall"></div></div>
     <dialog class="home-widget-picker" id="homeWidgetPicker" aria-labelledby="widgetPickerTitle">
-      <div class="home-picker-head"><h2 id="widgetPickerTitle">Add widget</h2><button type="button" class="btn ghost sm" id="homePickerClose">Close</button></div>
-      <p>Choose individual widgets from your enabled plugins.</p>
+      <div class="home-picker-head"><div><h2 id="widgetPickerTitle">Add widget</h2><p id="homePickerCount" aria-live="polite">Widgets come from enabled plugins.</p></div><button type="button" class="home-picker-x" id="homePickerClose" aria-label="Close">×</button></div>
       <div id="homeWidgetChoices"></div>
-      <div class="home-picker-foot"><span id="homePickerCount" aria-live="polite"></span><a href="/extensions">Browse plugins ↗</a></div>
+      <p class="home-picker-note">Need one that doesn't exist? Ask an agent to build a plugin, and its widget lands here. <a href="/extensions">Browse plugins ↗</a></p>
     </dialog>
   </section>
 
