@@ -302,8 +302,33 @@
 
     function currentSessionId() { return sessionId; }
 
+    const mobileComposer = matchMedia('(max-width: 760px)');
+    const actionSlots = [];
+    if (morePanel) {
+      [attachBtn, modeBtn, wrap.querySelector('.chat-swarm-toggle'), wrap.querySelector('.ctx-usage-trigger')].forEach(function (node) {
+        if (!node) return;
+        const anchor = document.createComment('composer action');
+        node.before(anchor);
+        actionSlots.push({ node: node, anchor: anchor });
+      });
+    }
+    function placeMobileActions() {
+      if (!morePanel) return;
+      const actions = morePanel.querySelector('.composer-actions');
+      if (mobileComposer.matches) actions.prepend.apply(actions, actionSlots.map(function (slot) { return slot.node; }));
+      else actionSlots.forEach(function (slot) { slot.anchor.after(slot.node); });
+      closeMoreMenu();
+    }
+    on(mobileComposer, 'change', placeMobileActions);
+    placeMobileActions();
+
     function closeMoreMenu() {
       if (!moreWrap || !moreBtn || !morePanel) return;
+      if (morePanel.contains(document.activeElement)) moreBtn.focus();
+      scroll.inert = false;
+      var bar = document.querySelector('.app-mobile-bar');
+      if (bar) bar.inert = false;
+      morePanel.removeAttribute('aria-modal');
       moreBtn.setAttribute('aria-expanded', 'false');
       morePanel.setAttribute('aria-hidden', 'true');
       moreWrap.classList.remove('is-open');
@@ -314,6 +339,15 @@
       moreBtn.setAttribute('aria-expanded', 'true');
       morePanel.setAttribute('aria-hidden', 'false');
       moreWrap.classList.add('is-open');
+      if (mobileComposer.matches) {
+        if (window.Tomo && Tomo.setRailOpen) Tomo.setRailOpen(false);
+        morePanel.setAttribute('aria-modal', 'true');
+        scroll.inert = true;
+        var bar = document.querySelector('.app-mobile-bar');
+        if (bar) bar.inert = true;
+        var first = morePanel.querySelector('button:not(:disabled)');
+        if (first) first.focus();
+      }
     }
 
     function toggleMoreMenu() {
@@ -328,6 +362,12 @@
 
     function onMoreEscape(event) {
       if (event.key === 'Escape') closeMoreMenu();
+      if (event.key === 'Tab' && mobileComposer.matches && moreWrap && moreWrap.classList.contains('is-open')) {
+        var buttons = Array.from(morePanel.querySelectorAll('button:not(:disabled)')).filter(function (el) { return el.getClientRects().length; });
+        var first = buttons[0], last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
     }
 
     // All composer bindings belong to this view and are retired on switch.
@@ -337,6 +377,8 @@
         event.stopPropagation();
         toggleMoreMenu();
       });
+      const backdrop = moreWrap.querySelector('.composer-more-backdrop');
+      if (backdrop) on(backdrop, 'click', closeMoreMenu);
       on(morePanel, 'click', function (event) {
         var action = event.target.closest('button');
         if (!action || action === moreBtn) return;
@@ -1293,11 +1335,12 @@
       if (!input) return;
       input.style.height = 'auto';
       var compact = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
-      var minHeight = compact ? 56 : 80;
-      var maxHeight = compact ? 160 : 200;
+      var minHeight = compact ? 48 : 80;
+      var maxHeight = compact ? 144 : 200;
       var next = Math.max(minHeight, Math.min(input.scrollHeight, maxHeight));
       input.style.height = next + 'px';
     }
+    on(window, 'resize', resize);
 
     function nextQueryIndex() {
       var max = -1;
@@ -2225,6 +2268,8 @@
       destroy: function () {
         if (destroyed) return;
         destroyed = true;
+        closeMoreMenu();
+        actionSlots.forEach(function (slot) { slot.anchor.after(slot.node); slot.anchor.remove(); });
         if (window.TomoProcesses) TomoProcesses.detach(wrap);
         bindings.abort();
         if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();

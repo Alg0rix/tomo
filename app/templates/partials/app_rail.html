@@ -16,9 +16,7 @@
       </button>
       <button type="button" class="icon-btn app-rail-mobile-close" id="navToggle"
               title="Close menu" aria-label="Close menu">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18"/>
-        </svg>
+        {% with icon='x' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
       </button>
     </div>
 
@@ -135,11 +133,21 @@
   </svg>
 </button>
 
-<button type="button" class="app-rail-mobile-open icon-btn" id="railMobileOpen"
-        title="Open menu" aria-label="Open menu">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-    <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-  </svg>
-</button>
+<header class="app-mobile-bar" aria-label="Mobile navigation">
+  <button type="button" class="app-rail-mobile-open icon-btn" id="railMobileOpen"
+          title="Open menu" aria-label="Open menu" aria-expanded="false" aria-controls="appRail">
+    {% with icon='menu' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
+  </button>
+  <span class="app-mobile-title" id="mobilePageTitle">{{ 'New chat' if page == 'sessions' else brand }}</span>
+  {% if page == 'sessions' %}
+  <button type="button" class="icon-btn" id="mobileNewChat" aria-label="New chat" title="New chat">
+    {% with icon='square-pen' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
+  </button>
+  <button type="button" class="icon-btn app-mobile-workspace" id="mobileWorkspaceOpen"
+          aria-label="Open workspace" title="Files and artifacts" aria-expanded="false">
+    {% with icon='panel-right' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
+  </button>
+  {% endif %}
+</header>
 
 <div class="app-rail-backdrop" id="railBackdrop" hidden></div>

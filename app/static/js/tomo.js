@@ -43,6 +43,10 @@
 
   function setRailOpen(open) {
     document.documentElement.classList.toggle('is-rail-open', !!open);
+    var trigger = document.getElementById('railMobileOpen');
+    if (trigger) trigger.setAttribute('aria-expanded', String(!!open));
+    var rail = document.getElementById('appRail');
+    if (rail && window.matchMedia('(max-width: 760px)').matches) rail.inert = !open;
     var backdrop = document.getElementById('railBackdrop');
     if (backdrop) {
       if (open) backdrop.removeAttribute('hidden');
@@ -123,6 +127,7 @@
     }
   }
   Tomo.setRailCollapsed = setRailCollapsed;
+  Tomo.setRailOpen = setRailOpen;
 
   // ---- rail badges: needs on Home, running dot on Chat ----
   var badgeTimer = null;

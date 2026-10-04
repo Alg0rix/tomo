@@ -36,6 +36,11 @@ print(response.text)
       if (fs.existsSync(file)) res.end(fs.readFileSync(file)); else { res.statusCode = 404; res.end(); }
       return;
     }
+    if (url.pathname === '/mobile-preview.html') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><style>body{margin:0;padding:24px;background:#faf9f6;color:#252525;font:16px/1.6 system-ui}h1{font-size:28px;line-height:1.2}p{color:#666}button{padding:12px;border:1px solid #ddd;border-radius:8px;background:white}</style><small>SESSION ARTIFACT</small><h1>Your mobile workspace</h1><p>Preview files here without leaving the conversation.</p><button>Preview action</button>');
+      return;
+    }
     if (url.pathname === '/sessions') { res.setHeader('Content-Type', 'text/html'); res.end(html); return; }
     if (url.pathname === '/api/sessions' && req.method === 'GET') return json({ sessions, agents });
     if (url.pathname === '/api/sessions' && req.method === 'POST') {
@@ -247,8 +252,79 @@ print(response.text)
     await page.locator('#sessionList [data-id="b"]').click();
     assert.equal(await page.locator('html.is-rail-open').count(), 0, 'Mobile switching closes the drawer');
     await page.waitForTimeout(300);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+    const swipe = async (x1, y1, x2, y2, cancel = false) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x1, y: y1 }] });
+      for (let i = 1; i <= 8; i++) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x1 + (x2 - x1) * i / 8, y: y1 + (y2 - y1) * i / 8 }] });
+        await page.waitForTimeout(16);
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(250);
+    };
+    await swipe(18, 220, 18, 110);
+    assert.equal(await page.locator('html.is-rail-open').count(), 0, 'Vertical scroll must not open a drawer');
+    await swipe(18, 180, 200, 180, true);
+    assert.equal(await page.locator('html.is-rail-open').count(), 0, 'Cancelled opening restores the closed drawer');
+    await swipe(18, 180, 200, 180);
+    assert.equal(await page.locator('html.is-rail-open').count(), 1, 'Left-edge swipe opens sidebar');
+    if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'mobile-sidebar.png') });
+    await swipe(245, 230, 24, 230);
+    assert.equal(await page.locator('html.is-rail-open').count(), 0, 'Reverse swipe closes sidebar');
+    await swipe(375, 220, 100, 220);
+    assert.equal(await page.locator('.chat-agent-panel').getAttribute('data-cap-open'), '1', 'Right-edge swipe opens workspace');
+    await page.evaluate(() => TomoArtifacts.openPreview({ url: '/mobile-preview.html', filename: 'mobile-preview.html', title: 'Mobile workspace preview', session_id: 'b' }));
+    await page.locator('.ap-html-frame').waitFor({ state: 'visible' });
+    await swipe(100, 85, 200, 85, true);
+    assert.equal(await page.locator('.ap-html-frame').count(), 1, 'Cancelling a close keeps the current artifact preview');
+    if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'mobile-workspace.png') });
+    await swipe(100, 85, 375, 85);
+    assert.equal(await page.locator('.chat-agent-panel').getAttribute('data-cap-open'), '0', 'Reverse swipe closes workspace');
+    await page.locator('.composer-mobile-more-btn').click();
+    await page.locator('.composer-mobile-more-panel').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.composer-mobile-more-panel').getAttribute('aria-modal'), 'true');
+    assert.equal(await page.locator('.composer-actions .attach-btn').count(), 1);
+    assert.equal(await page.locator('.composer-actions .composer-mode').count(), 1);
+    if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'mobile-chat-options.png') });
+    await page.keyboard.press('Escape');
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.waitForTimeout(100);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'No horizontal overflow at ' + width);
+      const bar = await page.locator('.app-mobile-bar').boundingBox();
+      const scroll = await page.locator('.chat-scroll').boundingBox();
+      assert.equal(scroll.y, bar.y, 'Chat scrolls underneath the floating controls');
+      await page.locator('.chat-scroll').evaluate(el => { el.scrollTop = 0; });
+      const firstMessage = await page.locator('.chat-scroll .msg').first().boundingBox();
+      assert.ok(firstMessage.y >= bar.y + bar.height, 'Initial message clears the controls');
+      const composer = await page.locator('.composer-shell').boundingBox();
+      assert.ok(composer.height <= 120, 'Compact composer at ' + width + ': ' + JSON.stringify(await page.locator('.composer-shell').evaluate(el => Array.from(el.children, child => ({ class: child.className, height: child.getBoundingClientRect().height })))));
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('#mobileNewChat').click();
+    await page.locator('#newChatModal').waitFor({ state: 'visible' });
+    await page.locator('#newChatModal .modal-foot [data-close]').click();
+    assert.equal(sessions.length, 4, 'Mobile New chat uses the existing draft flow, not an immediate session creation');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.equal(await page.locator('.app-mobile-bar').evaluate(el => getComputedStyle(el, '::before').transitionDuration), '0.16s');
+    for (const res of subscribers.get('b') || []) event(res, 'delta', { agent_id: 'main', content: '\n\n' + 'Files stay with this conversation. Open the workspace to preview an artifact, then return to the same chat without losing your place.\n\n'.repeat(8) });
+    await page.waitForFunction(() => document.querySelector('.chat-scroll').scrollHeight > document.querySelector('.chat-scroll').clientHeight + 80);
+    await page.locator('.chat-scroll').evaluate(el => { el.scrollTop = 0; });
+    await page.waitForFunction(() => document.querySelector('.app-mobile-bar').style.getPropertyValue('--mobile-chrome-opacity') === '0.000');
+    await page.waitForTimeout(180);
     if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'multi-chat-mobile.png') });
-    console.log('Multi-chat passed: local draft attachments/permissions, cancelled drafts, first-send upload, isolated sends, resume, scoped stop, late create, reduced motion');
+    await page.locator('.chat-scroll').evaluate(el => { el.scrollTop = 40; });
+    await page.waitForFunction(() => document.querySelector('.app-mobile-bar').style.getPropertyValue('--mobile-chrome-opacity') === '1.000');
+    assert.match(await page.locator('.app-mobile-bar').evaluate(el => getComputedStyle(el, '::before').backdropFilter), /blur/);
+    await page.waitForTimeout(180);
+    if (process.env.BB_THREAD_STORAGE) await page.screenshot({ path: path.join(process.env.BB_THREAD_STORAGE, 'mobile-scroll-overlay.png') });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForFunction(() => document.querySelector('.composer-toolbar-left .attach-btn'));
+    assert.equal(await page.locator('.composer-toolbar-left .attach-btn').count(), 1, 'Desktop restores existing toolbar');
+    assert.equal(await page.locator('.composer-toolbar-left .composer-mode').count(), 1);
+    assert.deepEqual(errors, []);
+    console.log('Multi-chat passed: isolated chats, resume, mobile drawer swipes, cancellation, sheet, compact widths and desktop restoration');
   } finally {
     await browser.close();
     server.closeAllConnections();

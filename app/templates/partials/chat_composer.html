@@ -17,9 +17,8 @@
     <div class="composer-toolbar composer-footer">
       <div class="composer-toolbar-left">
         <button class="attach-btn" type="button" aria-label="Attach files" title="Attach files">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-          </svg>
+          <span class="attach-label">Attach files</span>
+          {% with icon='paperclip' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
         </button>
         <button type="button" class="composer-mode" id="composerModeBtn" data-mode="smart" title="Permission mode — click to cycle (/manual /smart /auto)" aria-label="Permission mode">
           <span class="composer-mode-key">Smart</span><span class="composer-mode-suffix"> Mode</span>
@@ -47,11 +46,12 @@
           <button class="composer-mobile-more-btn" type="button"
                   aria-label="More chat options" aria-expanded="false"
                   aria-controls="{{ panel_id }}">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/>
-            </svg>
+            <span class="composer-more-dots">{% with icon='ellipsis' %}{% include 'partials/plugin_icon.html' %}{% endwith %}</span>
+            <span class="composer-more-plus">{% with icon='plus' %}{% include 'partials/plugin_icon.html' %}{% endwith %}</span>
           </button>
-          <div id="{{ panel_id }}" class="composer-mobile-more-panel" aria-hidden="true">
+          <button type="button" class="composer-more-backdrop" tabindex="-1" aria-label="Close chat options"></button>
+          <div id="{{ panel_id }}" class="composer-mobile-more-panel" aria-hidden="true" role="dialog" aria-label="Chat options">
+            <div class="composer-sheet-head"><span>Chat options</span><button class="composer-sheet-close" type="button" aria-label="Close chat options">{% with icon='x' %}{% include 'partials/plugin_icon.html' %}{% endwith %}</button></div>
             <div class="composer-actions">
               <button class="composer-ghost chat-files-btn" type="button" title="Session files / artifacts">Files</button>
               <button class="composer-ghost chat-mcp-resources-btn" type="button" title="Insert an MCP resource into the message">Resources</button>
