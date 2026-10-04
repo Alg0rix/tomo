@@ -115,6 +115,50 @@ print(response.text)
     await page.waitForFunction(() => document.querySelector('.composer').classList.contains('is-generating'));
     await page.locator('.session-group-running [data-id="a"]').waitFor();
     await page.waitForFunction(() => document.querySelector('.chat-scroll').textContent.includes('Working in a'));
+    // Streaming must respect reading older output, until bottom/Follow is chosen.
+    const emitDelta = content => {
+      for (const res of subscribers.get('a') || []) event(res, 'delta', { agent_id: 'main', content });
+    };
+    emitDelta('\n\n' + 'Streaming line\n\n'.repeat(100));
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.chat-scroll');
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 3 && el.scrollHeight > el.clientHeight * 2;
+    });
+    await page.locator('.chat-scroll').hover();
+    await page.mouse.wheel(0, -350);
+    await page.locator('.chat-follow').waitFor({ state: 'visible' });
+    await page.waitForTimeout(250);
+    const readingTop = await page.locator('.chat-scroll').evaluate(el => el.scrollTop);
+    for (let n = 0; n < 5; n++) {
+      emitDelta(`\n\nContinued ${n}\n\n`);
+      await page.waitForTimeout(100);
+    }
+    for (const res of subscribers.get('a') || []) {
+      event(res, 'tool', { tool: 'read_file', call_id: 'read-slow', args: { path: 'slow' }, agent_id: 'main' });
+      event(res, 'tool', { tool: 'read_file', call_id: 'read-fast', args: { path: 'fast' }, agent_id: 'main' });
+      event(res, 'tool_result', { tool: 'read_file', call_id: 'read-fast', result: 'Fast file output', agent_id: 'main' });
+    }
+    await page.waitForFunction(() => document.querySelector('[data-call-id="read-fast"]')?._res.textContent.includes('Fast file output'));
+    assert.equal(await page.locator('[data-call-id="read-slow"]').evaluate(el => el.classList.contains('loading')), true);
+    for (const res of subscribers.get('a') || []) event(res, 'tool_result', {
+      tool: 'read_file', call_id: 'read-slow', result: 'Slow file output', agent_id: 'main',
+    });
+    await page.waitForFunction(() => document.querySelector('[data-call-id="read-slow"]')?._res.textContent.includes('Slow file output'));
+    await page.waitForTimeout(200);
+    assert.ok(Math.abs(await page.locator('.chat-scroll').evaluate(el => el.scrollTop) - readingTop) < 3, 'Streaming or parallel tool results pulled the reader down');
+    await page.screenshot({ path: path.join(os.tmpdir(), 'tomo-stream-follow.png') });
+    await page.locator('.chat-follow').click();
+    await page.waitForFunction(() => !document.querySelector('.chat-follow').offsetParent);
+    await page.locator('.chat-scroll').hover();
+    await page.mouse.wheel(0, -350);
+    await page.locator('.chat-follow').waitFor({ state: 'visible' });
+    await page.mouse.wheel(0, 100000);
+    await page.locator('.chat-follow').waitFor({ state: 'hidden' });
+    emitDelta('\n\nFollowing again\n\n');
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.chat-scroll');
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 3;
+    });
     const imageFile = {
       name: 'image.png', mimeType: 'image/png',
       buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT4sAAAAASUVORK5CYII=', 'base64'),

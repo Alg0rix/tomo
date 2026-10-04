@@ -37,7 +37,7 @@
        (el.classList.contains('msg') && el.classList.contains('streaming')));
   }
 
-  function createGroup() {
+  function createGroup(host) {
     var g = document.createElement('section');
     g.className = 'work is-open';
     g.innerHTML =
@@ -47,9 +47,17 @@
       '</button>' +
       '<ol class="work-steps"></ol>';
     g.querySelector('.work-head').addEventListener('click', function () {
+      var open = !g.classList.contains('is-open');
+      host.dataset.workUserOpen = open ? '1' : '0';
       g.dataset.userToggled = '1';
-      setOpen(g, !g.classList.contains('is-open'));
+      setOpen(g, open);
     });
+    // Later thinking rounds can create a new block in the same turn.
+    // Carry the user's choice forward instead of opening that block again.
+    if (host.dataset.workUserOpen !== undefined) {
+      g.dataset.userToggled = '1';
+      setOpen(g, host.dataset.workUserOpen === '1');
+    }
     return g;
   }
 
@@ -107,7 +115,7 @@
         continue;
       }
       if (!group) {
-        group = createGroup();
+        group = createGroup(host);
         host.insertBefore(group, el);
       }
       step = place(el, group, step);

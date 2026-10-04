@@ -1066,7 +1066,60 @@
     let messageQueue = [];
     const MAX_QUEUE = 20;
 
+    // Follow is user-controlled, not reset by each streaming token/tool event.
+    var followBtn = document.createElement('button');
+    followBtn.type = 'button';
+    followBtn.className = 'chat-follow';
+    followBtn.textContent = '↓ Follow';
+    followBtn.setAttribute('aria-label', 'Follow latest messages');
+    followBtn.hidden = true;
+    (composerEl || wrap).appendChild(followBtn);
+    scroll._tomoFollowPaused = false;
+    var lastScrollTop = scroll.scrollTop;
+    var touchY = null;
+
+    function pauseFollow() {
+      scroll._tomoFollowPaused = true;
+      if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();
+      followBtn.hidden = false;
+    }
+    function resumeFollow() {
+      scroll._tomoFollowPaused = false;
+      followBtn.hidden = true;
+      if (Tomo.stickScrollBottom) Tomo.stickScrollBottom(scroll, { holdMs: 120000 });
+      else atBottom();
+      lastScrollTop = scroll.scrollTop;
+    }
+    on(followBtn, 'click', resumeFollow);
+    on(scroll, 'wheel', function (ev) {
+      if (ev.deltaY < 0) pauseFollow();
+    });
+    on(scroll, 'touchstart', function (ev) {
+      touchY = ev.touches.length ? ev.touches[0].clientY : null;
+    });
+    on(scroll, 'touchmove', function (ev) {
+      if (touchY === null || !ev.touches.length) return;
+      var y = ev.touches[0].clientY;
+      if (y > touchY) pauseFollow();
+      touchY = y;
+    });
+    on(wrap, 'keydown', function (ev) {
+      if (ev.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (ev.key === 'PageUp' || ev.key === 'Home' || ev.key === 'ArrowUp') pauseFollow();
+    });
+    on(scroll, 'scroll', function () {
+      var top = scroll.scrollTop;
+      var movingDown = top > lastScrollTop;
+      if (top < lastScrollTop) pauseFollow();
+      lastScrollTop = top;
+      // A layout change alone must never re-enable follow.
+      if (scroll._tomoFollowPaused && movingDown && scroll.scrollHeight - top - scroll.clientHeight <= 2) {
+        resumeFollow();
+      }
+    });
+
     function atBottom() {
+      if (scroll._tomoFollowPaused) return;
       if (Tomo.nudgeScrollBottom) {
         // If a stick is active, go() through the RO path without restarting the stick.
         // Otherwise fall through to a one-shot instant scroll (don't start a stick on
@@ -2174,6 +2227,9 @@
         destroyed = true;
         if (window.TomoProcesses) TomoProcesses.detach(wrap);
         bindings.abort();
+        if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();
+        delete scroll._tomoFollowPaused;
+        followBtn.remove();
         messageQueue = [];
         closeStream();
         if (window.TomoContextUsage && TomoContextUsage.destroy) {

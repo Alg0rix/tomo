@@ -210,7 +210,7 @@
    * Exported so other modules can use it without duplicating the pattern.
    */
   Tomo.scrollToBottomInstant = function (el) {
-    if (!el) return;
+    if (!el || el._tomoFollowPaused) return;
     var prev = el.style.scrollBehavior;
     el.style.scrollBehavior = 'auto';
     el.scrollTop = el.scrollHeight;
@@ -234,7 +234,7 @@
    * @param {number}  [opts.holdMs=20000]   auto-cleanup after this many ms
    */
   Tomo.stickScrollBottom = function (el, opts) {
-    if (!el) return;
+    if (!el || el._tomoFollowPaused) return;
     opts = opts || {};
     var gap = opts.userGap != null ? opts.userGap : 80;
     var times = opts.times || [50, 200, 500, 1000, 2000, 4000];
@@ -383,7 +383,7 @@
    * @param {object}  [opts]  start options when no stick is active
    */
   Tomo.nudgeScrollBottom = function (el, opts) {
-    if (!el) return;
+    if (!el || el._tomoFollowPaused) return;
     if (typeof el._tomoStickGo === 'function') {
       el._tomoStickGo();
       return;

@@ -48,6 +48,26 @@ print(env.get_template('system.html').render(brand='Tomo', page='system', app_ve
         assert.equal(await page.locator('#vaultUpload').isVisible(), station === 'memory');
         assert.equal(await page.locator('#sec-memory a[href="/memory"]').isVisible(), station === 'memory');
       }
+      await page.locator('#systemNav a[data-section="mcp"]').click();
+      await page.evaluate(() => {
+        window.Tomo.api = async (url, opts) => {
+          if (opts?.body) {
+            window.savedMcp = { id: 'test', ...JSON.parse(opts.body) };
+            return window.savedMcp;
+          }
+          return url.endsWith('/test') ? { ...window.savedMcp, items: [] } : { servers: [] };
+        };
+      });
+      await page.addScriptTag({ path: path.join(root, 'app/static/js/mcp.js') });
+      await page.locator('#addMcpServerBtn').click();
+      assert.equal(await page.locator('#mcpParallel').isChecked(), false);
+      await page.locator('#mcpName').fill('Test');
+      await page.locator('#mcpCommand').fill('echo');
+      await page.locator('label.toggle:has(#mcpParallel)').click();
+      await page.locator('#mcpSave').click();
+      await page.waitForFunction(() => window.savedMcp?.supports_parallel_tool_calls === true);
+      assert.equal(await page.locator('#mcpParallel').isChecked(), true);
+      await page.screenshot({ path: `/tmp/tomo-mcp-parallel-${width}.png` });
       await load('#memory');
       assert.equal(await page.locator('#vaultFactForm').isVisible(), true, 'Direct Memory link works');
       await page.evaluate(() => { location.hash = 'general'; });

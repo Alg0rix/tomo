@@ -529,6 +529,16 @@
 .chat-wrap .sw-live.is-err::before { content: "× "; color: var(--danger); }
 .chat-wrap .sw-live.is-answer { color: var(--text); white-space: normal; }
 .chat-wrap .sw-live.is-answer::before { content: "✓ "; color: var(--ok); }
+.chat-wrap .chat-follow {
+  position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%);
+  z-index: 20; padding: 7px 14px; border-radius: var(--r-lg);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: 500 13px var(--font-sans); box-shadow: var(--shadow-1); cursor: pointer; pointer-events: auto;
+}
+.chat-wrap .chat-follow[hidden] { display: none; }
+.chat-wrap .chat-follow:hover { border-color: var(--border-accent); }
+.chat-wrap .chat-follow:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* The latest step of a working agent glints so the lane reads as alive. */
 .chat-wrap .swarm-row.active .sw-live:is(.is-note, .is-tool) {
   background: linear-gradient(90deg, var(--text-faint) 0 38%, var(--text) 50%, var(--text-faint) 62% 100%) 0 0 / 260% 100%;
