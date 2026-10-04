@@ -527,6 +527,13 @@ Approved chats can use `/help`, `/new`, `/stop`, `/status`, `/manual`, and `/sma
 
 ---
 
+## Runtime logs
+
+Use `tomo logs -f` for rotation-aware live logs, `--type llm` / `--type tool`
+for specific subsystems, or `--session SESSION_ID` to trace a conversation.
+Logs include levels, lifecycle events, correlation IDs and durations. See
+[Logging and retention](docs/logging.md) for filters, coverage and configuration.
+
 ## Extending Tomo
 
 Adding a new capability is intentionally boring (in a good way).

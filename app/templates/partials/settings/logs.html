@@ -1,13 +1,25 @@
-{% from 'partials/page_head.html' import section_head %}
-
-<section id="sec-logs" class="sys-section" style="display:none">
-  {{ section_head('Logs', 'Runtime log viewer — stubbed until coordinator connects.') }}
-  <div class="card">
-    <div class="card-body" style="padding:16px">
-      <pre class="mono log-viewer">[info] Tomo web UI started
-[info] Agent backend: stub mode
-[info] 4 agents loaded from store.json
-[warn] Coordinator runtime not connected — chat replies are simulated</pre>
-    </div>
+{% if current_role == 'admin' %}
+<section id="sec-logs" class="sys-section machine-station" hidden style="display:none">
+  <form id="logFilters" class="runtime-log-filters">
+    <label>Minimum level<select class="input" name="level"><option value="">All levels</option>{% for level in ['DEBUG','INFO','WARNING','ERROR','CRITICAL'] %}<option>{{ level }}</option>{% endfor %}</select></label>
+    <label>Type<select class="input" name="type"><option value="">All types</option>{% for type in ['http','chat','agent','llm','tool','scheduler','telegram','session_title','mcp','plugin','system'] %}<option>{{ type }}</option>{% endfor %}</select></label>
+    <label>Session ID<input class="input" name="session" placeholder="Any session" maxlength="160" autocomplete="off"></label>
+    <label>Request ID<input class="input" name="request_id" placeholder="Any request" maxlength="160" autocomplete="off"></label>
+    <label>Event<select class="input" name="event"><option value="">All events</option>{% for event in ['started','completed','failed','cancelled','closed','skipped','saved','unchanged'] %}<option>{{ event }}</option>{% endfor %}</select></label>
+    <button class="btn sm" type="submit">Apply filters</button>
+  </form>
+  <div class="machine-toolbar runtime-log-toolbar">
+    <p id="logStatus" role="status">Connecting…</p>
+    <span id="logCount" class="mono">0 records</span>
+    <label class="runtime-log-follow"><input id="logAutoScroll" type="checkbox" checked> Follow latest</label>
+    <button id="logPause" class="btn ghost sm" type="button">Pause</button>
+    <button id="logClear" class="btn ghost sm" type="button">Clear view</button>
   </div>
+  <p class="machine-field-hint">Click a record for correlation IDs and traceback. Showing up to 500 records. Logs are private; redact before sharing.</p>
+  <div id="logViewport" class="runtime-log-viewport" tabindex="0" aria-label="Runtime log records">
+    <p id="logEmpty" class="runtime-log-empty">Waiting for logs…</p>
+    <div id="logRecords"></div>
+  </div>
+  <p class="machine-field-hint">CLI: <code>tomo logs -f --type plugin</code> · Rotated files are retained on the server.</p>
 </section>
+{% endif %}

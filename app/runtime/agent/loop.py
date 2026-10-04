@@ -65,6 +65,7 @@ from app.runtime.agent.context import (
     freeze_prompt_clock,
     reset_prompt_clock,
 )
+from app.core.observability import observe
 from app.runtime.agent.metrics import TurnMetrics
 from app.runtime.agent.tool_batches import plan_tool_segments
 from app.runtime.agent.retry import context_window_from_error, is_context_window_error, is_transient_llm_error
@@ -191,6 +192,7 @@ def _stream_stale_seconds(client: LLMClient) -> float:
     )
 
 
+@observe("llm")
 async def _llm_round(
     client: LLMClient,
     messages: list[dict[str, Any]],
@@ -851,6 +853,7 @@ async def _execute_tool_segment(
                        parallel=min(len(pending), 8))
 
 
+@observe("agent")
 async def run_turn(
     user_message: str | None,
     *,

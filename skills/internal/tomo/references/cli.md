@@ -6,6 +6,7 @@ The binary on a script install is the symlink `~/.local/bin/tomo` into `~/.local
 
 | Command | Effect |
 |---------|--------|
+| `tomo logs [-f] [-n N] [--level LEVEL] [--type TYPE] [--session ID] [--request ID] [--event EVENT] [--json]` | Inspect retained logs or follow across rotation. For diagnosis, load the `tomo-cli` skill. UI: System → Logs (admin only). |
 | `tomo update [-y]` | Stash a dirty tree, fetch, fast-forward the tracked branch, hard-reset to `origin/<branch>` when fast-forward fails, `uv sync`, restart the user service. |
 | `tomo service status\|start\|stop\|restart` | `systemctl --user` on `tomo.service`. |
 | `tomo uninstall [-y] [--purge]` | Stop and disable the unit, remove the unit file and the managed-install symlink, delete `~/.local/share/tomo/app`. `--purge` also deletes `TOMO_HOME` and `TOMO_WORK` when both are under the user home. |

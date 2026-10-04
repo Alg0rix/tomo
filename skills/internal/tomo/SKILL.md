@@ -45,6 +45,7 @@ support files needed for the task.
 | Telegram, transcription, settings, approval defaults, limits, learning controls | [Channels and settings](references/channels-settings.md) |
 | Full memory lifecycle: storage/scope, capture, wikilinks/aliases, recall, correction/move/forget, learning/consolidation, backup/restore | [Memory lifecycle and knowledge](references/memory-knowledge.md) |
 | Accounts/passwords, API keys, sessions/history, approvals, saved/shared artifacts | [Accounts and sessions](references/accounts-sessions.md) |
+| Inspect logs, diagnose runtime/plugin failures, trace a session/request | Load `use_skill(skill_id="tomo-cli")` |
 | Update Tomo, control its service, manage skill packages, or uninstall | [CLI lifecycle](references/cli.md) |
 | Install, pair, repair, or use a connector; configure/discover MCP | [Connections](references/connector.md) |
 | Run tools on a specific tunnel/SSH host, `workplace=` arguments, wrong-host results | [Workplace targeting](references/workplaces.md) |

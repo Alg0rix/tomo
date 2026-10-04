@@ -9,6 +9,7 @@ title and never fail the chat turn.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from app.models.mixins.messages import derive_session_title
@@ -74,7 +75,7 @@ def llm_title_skip_reason(
     provisional = derive_session_title(first)
     current = session.get("title") or ""
     if current != provisional:
-        return f"title already set title={current!r} provisional={provisional!r}"
+        return "title already set"
     return None
 
 
@@ -94,6 +95,9 @@ async def generate_session_title(
     session_id: str | None = None,
 ) -> str | None:
     """Ask the agent's LLM for a short title; return sanitized text or ``None``."""
+    started = time.monotonic()
+    context = {"log_type": "session_title", "session_id": session_id, "agent_id": agent_id}
+    logger.info("Session title generation started", extra={**context, "event": "started"})
     try:
         client = llm
         if client is None:
@@ -106,6 +110,7 @@ async def generate_session_title(
             "session title LLM request user_chars=%d asst_chars=%d",
             len(user_snip),
             len(asst_snip),
+            extra={**context, "event": "request"},
         )
         messages = [
             {"role": "system", "content": _SYSTEM},
@@ -121,16 +126,17 @@ async def generate_session_title(
         resp = await client.complete(messages, tools=None)
         raw = (resp.content or "").strip()
         title = sanitize_llm_title(raw)
-        logger.info(
-            "session title LLM response raw=%r sanitized=%r",
-            raw[:120],
-            title,
-        )
-        if not title:
-            logger.warning("session title discarded after sanitize (empty or unusable)")
+        result_context = {**context, "duration_ms": round((time.monotonic() - started) * 1000)}
+        if title:
+            logger.info("Session title generated", extra={**result_context, "event": "generated"})
+        else:
+            logger.warning("Session title discarded: empty or unusable response", extra={**result_context, "event": "discarded"})
         return title
     except Exception as exc:
-        logger.warning("session title generation failed: %s", exc, exc_info=True)
+        logger.warning(
+            "session title generation failed: %s", exc, exc_info=True,
+            extra={**context, "event": "failed", "duration_ms": round((time.monotonic() - started) * 1000)},
+        )
         return None
     finally:
         if llm is None and 'client' in locals() and client is not None and hasattr(client, 'aclose'):

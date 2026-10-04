@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+
+from app.core.observability import observe
 from typing import Any, AsyncIterator
 
 from app.channels.sse_map import fmt_sse, map_loop_event, now, session_busy_sse
@@ -353,42 +355,38 @@ async def _maybe_upgrade_title(
     """LLM session-title upgrade; yields ``(chunk, seq)`` when a title changes."""
     session = store.get_session(session_id)
     history = store.get_session_history(session_id)
+    context = {"log_type": "session_title", "session_id": session_id}
     skip = llm_title_skip_reason(session, history)
     if skip:
         logger.info(
-            "session title skip session_id=%s reason=%s title=%r",
-            session_id,
-            skip,
-            (session or {}).get("title"),
+            "Session title skipped: %s", skip,
+            extra={**context, "event": "skipped", "reason": skip},
         )
         return
     pair = first_user_and_final(history)
     if not pair:
         logger.info(
-            "session title skip session_id=%s reason=missing user/final pair",
-            session_id,
+            "Session title skipped: missing user/final pair",
+            extra={**context, "event": "skipped", "reason": "missing user/final pair"},
         )
         return
     logger.info(
-        "session title generating session_id=%s provisional=%r",
-        session_id,
-        (session or {}).get("title"),
+        "Session title upgrade requested",
+        extra={**context, "event": "upgrade_requested"},
     )
     llm_title = await generate_session_title(
         pair[0], pair[1], agent_id=session.get("coordinator_id"), session_id=session_id
     )
     if not llm_title:
         logger.warning(
-            "session title unchanged session_id=%s kept=%r",
-            session_id,
-            (session or {}).get("title"),
+            "Session title unchanged: keeping provisional title",
+            extra={**context, "event": "unchanged"},
         )
         return
     store.set_session_title(session_id, llm_title)
     logger.info(
-        "session title saved session_id=%s title=%r",
-        session_id,
-        llm_title,
+        "Session title saved",
+        extra={**context, "event": "saved"},
     )
     seq += 1
     yield (
@@ -403,6 +401,7 @@ async def _maybe_upgrade_title(
     )
 
 
+@observe("chat")
 async def stream_turn_sse(
     session_id: str,
     coordinator_id: str,
@@ -458,11 +457,11 @@ async def stream_turn_sse(
         should_dispatch_turn_end = True
 
     logger.info(
-        "turn begin session_id=%s coordinator_id=%s start_seq=%s message=%r",
+        "turn begin session_id=%s coordinator_id=%s start_seq=%s message_chars=%s",
         session_id,
         coordinator_id,
         start_seq,
-        (message or "")[:120],
+        len(message or ""),
     )
     try:
         from app.runtime.permissions.slash import handle_approval_slash

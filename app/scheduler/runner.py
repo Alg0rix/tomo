@@ -14,12 +14,15 @@ import logging
 import time
 from typing import Any
 
+from app.core.observability import observe
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_SECONDS = 5.0  # legacy; safety sweep interval lives in engine
 MAX_PARALLEL_FIRES = 4
 
 
+@observe("scheduler")
 async def fire_schedule(
     schedule: dict[str, Any],
     *,

@@ -843,11 +843,11 @@ async def run_session_turn(
         )
         return
     logger.info(
-        "turn accept session_id=%s user_id=%s coordinator_id=%s message=%r",
+        "turn accept session_id=%s user_id=%s coordinator_id=%s message_chars=%s",
         session_id,
         user_id,
         coordinator_id,
-        (message or "")[:120],
+        len(message or ""),
     )
     # aclosing ensures that closing this generator (on disconnect — see the
     # route-level aclosing in app/api/stream.py) cascades into stream_turn_sse's

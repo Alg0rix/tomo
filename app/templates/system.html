@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/logs.css') }}?v={{ static_ver }}">
+{% endblock %}
 {% block content %}
 <div class="machine">
   <header class="machine-mast">
@@ -27,6 +30,7 @@
       {% include 'partials/settings/plugins.html' %}
       {% include 'partials/settings/shared_channel.html' %}
       {% include 'partials/settings/users.html' %}
+      {% include 'partials/settings/logs.html' %}
     </div>
   </section>
   <button type="button" class="machine-dock-back" id="machineDockBack" hidden aria-label="Close inspector"></button>
@@ -37,4 +41,5 @@
 <script src="{{ url_for('static', path='js/mcp.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/system.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/self_update.js') }}?v={{ static_ver }}"></script>
+<script src="{{ url_for('static', path='js/logs.js') }}?v={{ static_ver }}"></script>
 {% endblock %}

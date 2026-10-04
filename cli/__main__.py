@@ -13,6 +13,9 @@ def build_parser() -> argparse.ArgumentParser:
     from cli.plugins_cmd import add_parser as add_plugins_parser
 
     add_plugins_parser(sub)
+    from cli.logs_cmd import add_parser as add_logs_parser
+
+    add_logs_parser(sub)
     up = sub.add_parser("update", help="Update managed install from git")
     up.add_argument("-y", "--yes", action="store_true", help="Assume yes for prompts")
 
@@ -58,6 +61,10 @@ def _run(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.cmd == "logs":
+        from cli.logs_cmd import run
+
+        return run(args)
     if args.cmd == "plugins":
         from cli.plugins_cmd import run
         return run(args)

@@ -14,6 +14,8 @@ import contextlib
 import hashlib
 import json
 import logging
+
+from app.core.observability import observe
 import mimetypes
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -567,6 +569,7 @@ class TelegramAPI:
             await self._client.aclose()
 
 
+@observe("telegram")
 async def run_channel_turn(
     session_id: str,
     message: str,
@@ -824,6 +827,7 @@ async def handle_inbound_text(
     return {"session_id": session_id, "reply": reply, "agent_id": resolved}
 
 
+@observe("telegram")
 async def process_update(
     update: dict[str, Any],
     *,

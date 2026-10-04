@@ -18,6 +18,8 @@ import asyncio
 import hashlib
 import json
 import logging
+
+from app.core.observability import observe
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -319,6 +321,7 @@ class CodexResponsesClient:
             payload["reasoning"] = {"summary": "auto"}
         return payload
 
+    @observe("llm")
     async def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
     ) -> LLMResponse:
@@ -335,6 +338,7 @@ class CodexResponsesClient:
             raise LLMRequestError("LLM request failed: stream ended without a completion")
         return response
 
+    @observe("llm")
     async def stream_complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
     ) -> AsyncIterator[dict[str, Any]]:

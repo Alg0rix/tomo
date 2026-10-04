@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+from app.core.observability import observe
 import re
 from typing import Any, AsyncIterator
 
@@ -700,6 +702,7 @@ class OpenAICompatClient:
             )
         return assembled
 
+    @observe("llm")
     async def complete(
         self,
         messages: list[dict[str, Any]],
@@ -772,6 +775,7 @@ class OpenAICompatClient:
             **parse_usage_details(usage),
         )
 
+    @observe("llm")
     async def stream_complete(
         self,
         messages: list[dict[str, Any]],

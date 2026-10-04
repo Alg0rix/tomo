@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from app.core import config
+from app.core.observability import observe
 from app.runtime.tools import swarm_board as _swarm_board_backend
 
 ToolRunner = Callable[[dict[str, Any]], str]
@@ -214,6 +215,7 @@ def is_mcp_tool_name(name: str) -> bool:
     return is_mcp_runtime_id(name)
 
 
+@observe("tool")
 async def execute_async(name: str, arguments: dict[str, Any]) -> str:
     """MCP/channel I/O awaits its live transport; other built-ins use a worker thread."""
     denial = _swarm_board_backend.authorize(name, arguments)

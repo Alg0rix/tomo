@@ -22,6 +22,7 @@ empty to disable external discovery.
 Bundled packages:
 
 - [Tomo](internal/tomo/SKILL.md): operate and configure Tomo.
+- [Tomo CLI](internal/tomo-cli/SKILL.md): logs, runtime diagnosis, CLI configuration and service control.
 - [Plugin development](internal/plugin-development/SKILL.md): build pages, tools, and usage skills.
 - [Plugin management](internal/plugin-management/SKILL.md): install and manage live plugins and catalogs.
 - [Plugin publishing](internal/plugin-publishing/SKILL.md): release official plugins or submit community listings.

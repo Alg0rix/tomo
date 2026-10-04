@@ -81,6 +81,14 @@
           <span class="machine-node-key">Channels</span>
           <span class="machine-node-val">{{ voice_label }}</span>
         </a>
+        {% if current_role == 'admin' %}
+        <a href="#logs" data-section="logs" class="machine-node" data-state="ok" data-kicker="Logs" data-title="Runtime log stream" data-lede="Trace requests, agents, models, tools, channels and plugins. Admin access only.">
+          <span class="machine-node-pip" aria-hidden="true"></span>
+          <span class="machine-node-name">Logs</span>
+          <span class="machine-node-key">Inspect</span>
+          <span class="machine-node-val">Live stream</span>
+        </a>
+        {% endif %}
         <a href="#users" data-section="users" class="machine-node" data-state="{{ 'ok' if users_on else 'warn' }}" data-kicker="Pack" data-title="Who can command it" data-lede="Login accounts and API keys. Every account is a full admin.">
           <span class="machine-node-pip" aria-hidden="true"></span>
           <span class="machine-node-name">Pack</span>

@@ -15,6 +15,10 @@ from app.core.allocator import configure_allocator
 
 configure_allocator()
 
+from app.core.logging import configure_logging  # noqa: E402
+
+configure_logging()
+
 from app.api import router as api_router  # noqa: E402
 from app.core import config  # noqa: E402
 from app.core.config import (  # noqa: E402
@@ -59,13 +63,13 @@ async def _lifespan(_app: FastAPI):
     try:
         ensure_tomo_home()
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Startup home initialization failed")
     try:
         from app.services import store as _store
 
         _store.sync_skills()
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Startup skill sync failed")
     # Background supervisors (event-driven; not generic task queues):
     # * telegram — long-poll inbound messages
     # * scheduler — APScheduler wake engine over SQLite schedules (agent turns)
@@ -79,6 +83,7 @@ async def _lifespan(_app: FastAPI):
     await recover_web_turns()
     start_telegram_supervisor()
     start_scheduler()
+    logging.getLogger(__name__).info("Runtime started", extra={"event": "started"})
     try:
         yield
     finally:
@@ -96,8 +101,9 @@ async def _lifespan(_app: FastAPI):
 
             await mcp_manager.close_all()
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("MCP shutdown failed")
         get_manager().close()
+        logging.getLogger(__name__).info("Runtime stopped", extra={"event": "stopped"})
 
 
 def create_app() -> FastAPI:
@@ -110,6 +116,9 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    from app.core.observability import RequestLoggingMiddleware
+
+    app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         SessionMiddleware,
         secret_key=config.SESSION_SECRET,
@@ -161,25 +170,6 @@ def create_app() -> FastAPI:
 
 _bootstrap_runtime()
 app = create_app()
-
-
-def _configure_logging() -> None:
-    """Set up console logging for the ``app`` namespace at INFO level."""
-    _app_logger = logging.getLogger("app")
-    _app_logger.setLevel(logging.INFO)
-    if not _app_logger.handlers:
-        _h = logging.StreamHandler()
-        _h.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-                datefmt="%H:%M:%S",
-            )
-        )
-        _app_logger.addHandler(_h)
-    _app_logger.propagate = False
-
-
-_configure_logging()
 
 
 def _websocket_protocol(*args, **kwargs):
