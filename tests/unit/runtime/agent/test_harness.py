@@ -99,22 +99,14 @@ def test_compress_collapses_old_tool_exchanges() -> None:
 
 
 @pytest.mark.asyncio
-async def test_parallel_readonly_tools_in_one_round(monkeypatch) -> None:
-    """Two read_file calls in one round should both execute (order preserved)."""
-    calls: list[str] = []
+async def test_parallel_readonly_tools_in_one_round(tmp_path) -> None:
+    """Existing independent files execute concurrently, with correctly paired results."""
+    from app.runtime.tools import sandbox
 
-    def _exec(name, args):
-        calls.append(args.get("path") or name)
-        return f"content:{args.get('path')}"
-
-    monkeypatch.setattr("app.runtime.tools.registry.execute", _exec)
-    # Bypass permission gate evaluate → always allow.
-    from app.runtime.permissions.gate import Decision
-
-    monkeypatch.setattr(
-        "app.runtime.agent.loop.evaluate",
-        lambda *a, **k: Decision(allowed=True),
-    )
+    aid = "parallel-harness-" + tmp_path.name
+    root = sandbox.resolve_work_root(aid)
+    for name in ("a.py", "b.py"):
+        (root / name).write_text(f"content:{name}")
 
     llm = ScriptedLLM(
         [
@@ -137,12 +129,12 @@ async def test_parallel_readonly_tools_in_one_round(monkeypatch) -> None:
         ]
     )
     tools = [{"type": "function", "function": {"name": "read_file"}}]
-    events = [ev async for ev in run_turn("read both", llm=llm, tools=tools)]
-    results = [e for e in events if e["kind"] == "tool_result"]
+    events = [ev async for ev in run_turn("read both", llm=llm, tools=tools, agent_id=aid)]
+    results = {e["call_id"]: e for e in events if e["kind"] == "tool_result"}
     assert len(results) == 2
-    assert results[0]["result"] == "content:a.py"
-    assert results[1]["result"] == "content:b.py"
-    assert set(calls) == {"a.py", "b.py"}
+    assert not any(e["error"] for e in results.values())
+    assert "content:a.py" in results["c1"]["result"]
+    assert "content:b.py" in results["c2"]["result"]
     final = next(e for e in events if e["kind"] == "final")
     assert final.get("metrics", {}).get("parallel_tool_peak", 0) >= 2
 

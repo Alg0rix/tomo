@@ -31,9 +31,10 @@ stop after delegating. Depth is capped at :data:`MAX_DELEGATE_DEPTH`.
 repeated identical tool calls (window 10, threshold 5) by injecting a
 force-stop — preventing token-burn spin loops.
 
-**Parallel read-only tools.** When a round carries multiple independent
-read-only tool calls, they run concurrently via :func:`asyncio.gather`;
-mutating tools run serially. Events are emitted in original call order.
+**Ordered tool batches.** Independent safe calls and disjoint local file
+operations run concurrently (up to eight); path conflicts and unknown,
+interactive, or terminal tools form serial barriers. Results stream as
+calls finish; model messages retain original call order.
 
 **Planning.** Session planning is prompt-gated via the ``todo`` tool (the
 model decides when to track multi-step work). Optional ATG: pass
@@ -65,6 +66,7 @@ from app.runtime.agent.context import (
     reset_prompt_clock,
 )
 from app.runtime.agent.metrics import TurnMetrics
+from app.runtime.agent.tool_batches import plan_tool_segments
 from app.runtime.agent.retry import context_window_from_error, is_context_window_error, is_transient_llm_error
 from app.runtime.agent.subagent import (
     MAX_TOOL_RESULT_CHARS,
@@ -105,24 +107,6 @@ _PAGINATED_RESULT_LIMITS = {
 _CONTINUATION_RE = re.compile(
     r"Continue with offset=\d+(?:\s+\(limit=\d+\))?\.?", re.IGNORECASE
 )
-
-# Read-only tools safe to run in parallel within one round (after gating).
-_READ_ONLY_TOOLS = frozenset(
-    {
-        "read_file",
-        "search_files",
-        "web_fetch",
-        "web_search",
-        "render_ui",
-        "session_search",
-        "list_skills",
-        "list_workplaces",
-        "todo",
-        "use_skill",
-        "agent_state",
-    }
-)
-
 
 # Tools whose output is streamed to the UI while they run.
 _STREAMING_TOOLS = frozenset({"bash"})
@@ -758,6 +742,115 @@ async def _maybe_run_atg(
         return None
 
 
+async def _execute_tool_segment(
+    segment: list[tuple[str, ToolCall]], *, messages: list[dict[str, Any]],
+    metrics: TurnMetrics, session_id: str | None, agent_id: str | None,
+    origin: str | None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Authorize serially, execute an admitted run, publish live, commit in call order."""
+    from app.runtime.tools import todo as todo_mod
+
+    results: dict[str, tuple[str, bool]] = {}
+    pending: list[tuple[str, ToolCall, Decision]] = []
+
+    async def publish(cid: str, call: ToolCall, text: str, error: bool):
+        if call.name == "start_swarm" and not error:
+            from app.runtime.tools.start_swarm import ACCEPTED
+
+            if text == ACCEPTED:
+                from app.runtime.coordinator.swarm import run_swarm_turn
+
+                text, error = "Error: swarm returned no worker results", True
+                async with aclosing(run_swarm_turn(
+                    call.arguments["request"].strip(), session_id=session_id,
+                    coordinator_id=agent_id, history=None,
+                    initial_plan=call.arguments["plan"], origin=origin,
+                )) as events:
+                    async for ev in events:
+                        if ev.get("kind") == "swarm_result":
+                            text, error = ev["result"], bool(ev.get("error"))
+                        else:
+                            yield ev
+        results[cid] = text, error
+        payload = {"kind": "tool_result", "tool": call.name,
+                   "call_id": cid, "result": text, "error": error}
+        if call.name == "todo" and not error:
+            todos = todo_mod.parse_todos_payload(text)
+            if todos is not None:
+                payload["todos"] = todos
+                yield {"kind": "todos", "todos": todos, "source": "tool", "agent_id": agent_id or ""}
+        yield payload
+        if call.name == "render_ui" and not error:
+            from app.runtime.tools.render_ui import parse_result
+
+            ui = parse_result(text)
+            if ui is not None:
+                yield {"kind": "ui", **ui}
+
+    for cid, call in segment:
+        yield {"kind": "tool", "tool": call.name, "args": call.arguments, "call_id": cid}
+        if call.name == "clarify":
+            text, error = "Error: no tool result", True
+            async for ev in _handle_clarify(call, session_id=session_id):
+                if ev.get("kind") == "clarify_required":
+                    yield ev
+                elif ev.get("kind") == "tool_result":
+                    text, error = _truncate_result(ev.get("result")), bool(ev.get("error"))
+            async for ev in publish(cid, call, text, error):
+                yield ev
+            continue
+        decision: Decision | None = None
+        async for item in _authorize_tool(call, session_id=session_id, origin=origin):
+            if isinstance(item, Decision):
+                decision = item
+            else:
+                yield item
+        assert decision is not None
+        if not decision.allowed:
+            async for ev in publish(cid, call, decision.message or "BLOCKED: denied", True):
+                yield ev
+        else:
+            pending.append((cid, call, decision))
+
+    if len(pending) > 1:
+        limit = asyncio.Semaphore(8)
+
+        async def execute(cid: str, call: ToolCall, decision: Decision):
+            async with limit:
+                text = _truncate_result(await _execute_authorized(call, decision), tool_name=call.name)
+                return cid, call, text, tool_result_is_error(text)
+
+        tasks = [asyncio.create_task(execute(cid, call, decision)) for cid, call, decision in pending]
+        try:
+            for completed in asyncio.as_completed(tasks):
+                cid, call, text, error = await completed
+                async for ev in publish(cid, call, text, error):
+                    yield ev
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    else:
+        for cid, call, decision in pending:
+            if call.name in _STREAMING_TOOLS:
+                box: list[str] = []
+                async for ev in _execute_streaming(call, decision, cid, box):
+                    yield ev
+                raw = box[0] if box else "Error: no tool result"
+            else:
+                raw = await _execute_authorized(call, decision)
+            text = _truncate_result(raw, tool_name=call.name)
+            async for ev in publish(cid, call, text, tool_result_is_error(text)):
+                yield ev
+
+    for cid, _call in segment:
+        text, _error = results[cid]
+        messages.append({"role": "tool", "tool_call_id": cid, "content": text})
+    metrics.mark_tools(len(segment), errors=sum(error for _text, error in results.values()),
+                       parallel=min(len(pending), 8))
+
+
 async def run_turn(
     user_message: str | None,
     *,
@@ -1169,281 +1262,79 @@ async def run_turn(
                         ),
                     }
 
-            # ── Tool execution: gate serially, run auto-allowed RO in parallel ──
-            delegate_calls = [
-                (cid, c) for cid, c in paired if c.name == "delegate"
-            ]
-            other_calls = [
-                (cid, c) for cid, c in paired if c.name != "delegate"
-            ]
-            if delegate_calls or other_calls:
-                _logger.info(
-                    "exec: delegate=%d tools=%d nested=%d",
-                    len(delegate_calls),
-                    len(other_calls),
-                    current_depth(),
-                )
-
-            # Results keyed by call id. ``already_yielded`` tracks early emits
-            # (clarify / blocked) so we do not double-emit after parallel exec.
-            result_by_cid: dict[str, tuple[str, bool]] = {}
-            already_yielded: set[str] = set()
-            pending_ro: list[tuple[str, ToolCall, Decision]] = []
-            pending_mut: list[tuple[str, ToolCall, Decision]] = []
-
-            for cid, call in other_calls:
-                yield {
-                    "kind": "tool",
-                    "tool": call.name,
-                    "args": call.arguments,
-                    "call_id": cid,
-                }
-
-                if call.name == "clarify":
-                    result_text = "Error: no tool result"
-                    error = True
-                    async for ev in _handle_clarify(call, session_id=session_id):
-                        if ev.get("kind") == "clarify_required":
+            # Execute ordered segments; no call crosses a serial/path-conflict barrier.
+            for segment in plan_tool_segments(paired):
+                if segment[0][1].name != "delegate":
+                    async with aclosing(_execute_tool_segment(
+                        segment, messages=messages, metrics=metrics,
+                        session_id=session_id, agent_id=agent_id, origin=origin,
+                    )) as tool_events:
+                        async for ev in tool_events:
                             yield ev
-                            continue
-                        if ev.get("kind") == "tool_result":
-                            result_text = _truncate_result(ev.get("result"))
-                            error = bool(ev.get("error"))
-                            yield {
-                                "kind": "tool_result",
-                                "tool": call.name,
-                                "result": result_text,
-                                "error": error,
-                                "call_id": cid,
-                            }
-                    result_by_cid[cid] = (result_text, error)
-                    already_yielded.add(cid)
                     continue
 
-                decision: Decision | None = None
-                async for item in _authorize_tool(
-                    call, session_id=session_id, origin=origin
-                ):
-                    if isinstance(item, Decision):
-                        decision = item
-                    else:
-                        yield item
-                assert decision is not None
-                if not decision.allowed:
-                    result_text = decision.message or "BLOCKED: denied"
-                    yield {
-                        "kind": "tool_result",
-                        "tool": call.name,
-                        "result": result_text,
-                        "error": True,
-                        "call_id": cid,
-                    }
-                    result_by_cid[cid] = (result_text, True)
-                    already_yielded.add(cid)
-                    continue
+                # Consecutive delegates retain live parallel subagent streams.
+                delegate_calls = segment
+                parallel_total = len(delegate_calls)
+                metrics.delegates += parallel_total
+                if parallel_total > 1:
+                    merge_q: asyncio.Queue = asyncio.Queue()
+                    results_by_cid: dict[str, str] = {}
 
-                if call.name in _READ_ONLY_TOOLS:
-                    pending_ro.append((cid, call, decision))
-                else:
-                    pending_mut.append((cid, call, decision))
+                    async def _run_one(_cid: str, _call: ToolCall, _idx: int) -> None:
+                        box: list[str] = []
+                        try:
+                            async for ev in _stream_delegate_bundle(
+                                cid=_cid, call=_call, agent_id=agent_id,
+                                user_request=user_request, parallel_index=_idx + 1,
+                                parallel_total=parallel_total, session_id=session_id,
+                                result_out=box,
+                            ):
+                                await merge_q.put(("ev", ev))
+                        except Exception as exc:
+                            box.clear()
+                            box.append(f"Error: subagent failed: {exc}")
+                            await merge_q.put(("ev", {
+                                "kind": "tool_result", "tool": _call.name,
+                                "result": box[0], "error": True, "call_id": _cid,
+                            }))
+                        finally:
+                            results_by_cid[_cid] = box[0] if box else "Error: no output from subagent"
+                            await merge_q.put(("done", _cid))
 
-            # Parallel execute auto-allowed read-only tools.
-            if len(pending_ro) > 1:
-                ro_results = await asyncio.gather(
-                    *(_execute_authorized(c, d) for _cid, c, d in pending_ro),
-                    return_exceptions=True,
-                )
-                for (cid, _call, _d), res in zip(pending_ro, ro_results):
-                    if isinstance(res, Exception):
-                        res = f"Error: {res}"
-                    text_res = _truncate_result(res, tool_name=_call.name)
-                    result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
-            else:
-                for cid, call, decision in pending_ro:
-                    text_res = _truncate_result(
-                        await _execute_authorized(call, decision),
-                        tool_name=call.name,
-                    )
-                    result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
-
-            # Mutating tools stay serial; terminal-like ones stream live output.
-            for cid, call, decision in pending_mut:
-                if call.name in _STREAMING_TOOLS:
-                    box: list[str] = []
-                    async for ev in _execute_streaming(call, decision, cid, box):
-                        yield ev
-                    raw_res = box[0] if box else "Error: no tool result"
-                else:
-                    raw_res = await _execute_authorized(call, decision)
-                text_res = _truncate_result(raw_res, tool_name=call.name)
-                result_by_cid[cid] = (text_res, tool_result_is_error(text_res))
-
-            # Emit remaining tool_results in original call order; append all.
-            errors_this_round = 0
-            for cid, call in other_calls:
-                text_res, err = result_by_cid.get(cid, ("Error: no tool result", True))
-                if call.name == "start_swarm" and not err:
-                    from app.runtime.tools.start_swarm import ACCEPTED
-
-                    if text_res == ACCEPTED:
-                        from app.runtime.coordinator.swarm import run_swarm_turn
-
-                        text_res, err = "Error: swarm returned no worker results", True
-                        async with aclosing(run_swarm_turn(
-                            call.arguments["request"].strip(), session_id=session_id,
-                            coordinator_id=agent_id, history=None,
-                            initial_plan=call.arguments["plan"], origin=origin,
-                        )) as swarm_events:
-                            async for swarm_event in swarm_events:
-                                if swarm_event.get("kind") == "swarm_result":
-                                    text_res = swarm_event["result"]
-                                    err = bool(swarm_event.get("error"))
-                                else:
-                                    yield swarm_event
-                if cid not in already_yielded:
-                    payload = {
-                        "kind": "tool_result",
-                        "tool": call.name,
-                        "call_id": cid,
-                        "result": text_res,
-                        "error": err,
-                    }
-                    if call.name == "todo" and not err:
-                        todos = todo_mod.parse_todos_payload(text_res)
-                        if todos is not None:
-                            payload["todos"] = todos
-                            yield {
-                                "kind": "todos",
-                                "todos": todos,
-                                "source": "tool",
-                                "agent_id": agent_id or "",
-                            }
-                    yield payload
-                    if call.name == "render_ui" and not err:
-                        from app.runtime.tools.render_ui import parse_result
-
-                        ui_payload = parse_result(text_res)
-                        if ui_payload is not None:
-                            yield {"kind": "ui", **ui_payload}
-                elif call.name == "todo" and not err:
-                    # Already yielded (shouldn't happen for todo) — still sync UI.
-                    todos = todo_mod.parse_todos_payload(text_res)
-                    if todos is not None:
-                        yield {
-                            "kind": "todos",
-                            "todos": todos,
-                            "source": "tool",
-                            "agent_id": agent_id or "",
-                        }
-                if err:
-                    errors_this_round += 1
-                messages.append(
-                    {"role": "tool", "tool_call_id": cid, "content": text_res}
-                )
-
-            metrics.mark_tools(
-                len(other_calls),
-                errors=errors_this_round,
-                parallel=len(pending_ro) if len(pending_ro) > 1 else 0,
-            )
-
-            # ── Subagent delegation (stream live; parallel merges via queue) ──
-            parallel_total = len(delegate_calls)
-            metrics.delegates += parallel_total
-
-            if parallel_total > 1:
-                merge_q: asyncio.Queue = asyncio.Queue()
-                results_by_cid: dict[str, str] = {}
-
-                async def _run_one(
-                    _cid: str,
-                    _call: ToolCall,
-                    _idx: int,
-                ) -> None:
-                    box: list[str] = []
+                    tasks = [asyncio.create_task(_run_one(cid, call, idx))
+                             for idx, (cid, call) in enumerate(delegate_calls)]
+                    finished = 0
                     try:
-                        async for ev in _stream_delegate_bundle(
-                            cid=_cid,
-                            call=_call,
-                            agent_id=agent_id,
-                            user_request=user_request,
-                            parallel_index=_idx + 1,
-                            parallel_total=parallel_total,
-                            session_id=session_id,
-                            result_out=box,
-                        ):
-                            await merge_q.put(("ev", ev))
-                    except Exception as exc:
-                        box.clear()
-                        box.append(f"Error: subagent failed: {exc}")
-                        await merge_q.put(
-                            (
-                                "ev",
-                                {
-                                    "kind": "tool_result",
-                                    "tool": _call.name,
-                                    "result": box[0],
-                                    "error": True,
-                                    "call_id": _cid,
-                                },
-                            )
-                        )
+                        while finished < parallel_total:
+                            kind, payload = await merge_q.get()
+                            if kind == "ev":
+                                yield payload
+                            else:
+                                finished += 1
                     finally:
-                        results_by_cid[_cid] = (
-                            box[0] if box else "Error: no output from subagent"
-                        )
-                        await merge_q.put(("done", _cid))
-
-                tasks = [
-                    asyncio.create_task(_run_one(cid, call, idx))
-                    for idx, (cid, call) in enumerate(delegate_calls)
-                ]
-                finished = 0
-                try:
-                    while finished < parallel_total:
-                        kind, payload = await merge_q.get()
-                        if kind == "ev":
-                            yield payload
-                        else:
-                            finished += 1
-                finally:
-                    for task in tasks:
-                        if not task.done():
-                            task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                for cid, _call in delegate_calls:
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": cid,
-                            "content": results_by_cid.get(
-                                cid, "Error: no output from subagent"
-                            ),
-                        }
-                    )
-            else:
-                for idx, (cid, call) in enumerate(delegate_calls):
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    for cid, _call in delegate_calls:
+                        messages.append({
+                            "role": "tool", "tool_call_id": cid,
+                            "content": results_by_cid.get(cid, "Error: no output from subagent"),
+                        })
+                else:
+                    cid, call = delegate_calls[0]
                     box: list[str] = []
                     async for ev in _stream_delegate_bundle(
-                        cid=cid,
-                        call=call,
-                        agent_id=agent_id,
-                        user_request=user_request,
-                        parallel_index=idx + 1,
-                        parallel_total=max(parallel_total, 1),
-                        session_id=session_id,
-                        result_out=box,
+                        cid=cid, call=call, agent_id=agent_id,
+                        user_request=user_request, parallel_index=1, parallel_total=1,
+                        session_id=session_id, result_out=box,
                     ):
                         yield ev
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": cid,
-                            "content": box[0]
-                            if box
-                            else "Error: no output from subagent",
-                        }
-                    )
+                    messages.append({
+                        "role": "tool", "tool_call_id": cid,
+                        "content": box[0] if box else "Error: no output from subagent",
+                    })
 
             if loop_nudge is not None:
                 messages.append(loop_nudge)

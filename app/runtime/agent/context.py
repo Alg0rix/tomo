@@ -228,6 +228,13 @@ def build_system_prompt(
     if not base:
         base = coordinator_system_prompt()
     parts.append(base)
+    parts.append(
+        "## Parallel tool calls\n"
+        "Request independent reads, searches, and file operations together in one response. "
+        "The runtime runs safe calls concurrently, serializes overlapping file targets, "
+        "and preserves terminal/interactive barriers. Only batch calls whose arguments "
+        "are already known; wait for a prerequisite result before requesting dependent work."
+    )
 
     if agent_id:
         agent_soul = _read_md(home.agent_soul_path(agent_id, root), home_root=root)

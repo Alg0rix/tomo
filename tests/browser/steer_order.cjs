@@ -51,6 +51,7 @@ const root = path.resolve(__dirname, '../..');
       emit('tool', { tool: 'bash', call_id: 'new', args: {} });
       emit('tool_result', { tool: 'bash', call_id: 'old', result: 'Old tool finished' });
       const oldResult = document.querySelector('[data-call-id="old"]')._res.textContent;
+      emit('tool_result', { tool: 'bash', call_id: 'missing', result: 'Unmatched result' });
       const newRunning = document.querySelector('[data-call-id="new"]').classList.contains('loading');
       const second = addUser('Also this');
       second.dataset.steerId = 'second';

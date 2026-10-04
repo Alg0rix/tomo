@@ -17,6 +17,7 @@ class McpServerCreate(BaseModel):
     env: dict[str, str] | None = None
     headers: dict[str, str] | None = None
     enabled: bool = True
+    supports_parallel_tool_calls: bool = False
 
 
 class McpServerUpdate(BaseModel):
@@ -28,6 +29,7 @@ class McpServerUpdate(BaseModel):
     env: dict[str, str] | None = None
     headers: dict[str, str] | None = None
     enabled: bool | None = None
+    supports_parallel_tool_calls: bool | None = None
 
 
 class McpItemEnabled(BaseModel):

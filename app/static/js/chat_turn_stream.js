@@ -530,7 +530,8 @@
 
     function applyToolResult(d) {
       var last = findStreamTool(d);
-      if (!last) {
+      // An identified result must never finish a different parallel tool.
+      if (!last && !(d.call_id || d.callId || d.atg_node)) {
         var cards = ctx.turn.querySelectorAll('.tool.loading');
         last = cards[0] || ctx.turn.querySelectorAll('.tool')[ctx.turn.querySelectorAll('.tool').length - 1];
       }

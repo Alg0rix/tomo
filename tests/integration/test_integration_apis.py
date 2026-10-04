@@ -320,6 +320,26 @@ def test_create_saves_and_discovers_with_masked_secrets(client: TestClient) -> N
     assert "headers_ciphertext" not in body
 
 
+def test_mcp_parallelism_requires_persisted_server_opt_in(client: TestClient) -> None:
+    from app.runtime.agent.tool_batches import plan_tool_segments
+    from app.runtime.llm.base import ToolCall
+
+    created = client.post("/api/mcp-servers", json={
+        "id": "parallel", "name": "Parallel", "transport": "stdio", "command": "echo",
+    })
+    assert created.status_code == 200
+    assert created.json()["supports_parallel_tool_calls"] is False
+    item = store.list_mcp_items("parallel", kind="tool")[0]
+    calls = [(str(n), ToolCall(id=str(n), name=item["runtime_id"], arguments={})) for n in range(2)]
+    assert [len(s) for s in plan_tool_segments(calls)] == [1, 1]
+    saved = client.put("/api/mcp-servers/parallel", json={"supports_parallel_tool_calls": True})
+    assert saved.status_code == 200
+    assert client.get("/api/mcp-servers/parallel").json()["supports_parallel_tool_calls"] is True
+    assert [len(s) for s in plan_tool_segments(calls)] == [2]
+    client.put("/api/mcp-servers/parallel", json={"supports_parallel_tool_calls": False})
+    assert [len(s) for s in plan_tool_segments(calls)] == [1, 1]
+
+
 def test_create_stdio_requires_command(client: TestClient) -> None:
     res = client.post("/api/mcp-servers", json={"name": "x", "transport": "stdio"})
     assert res.status_code == 400

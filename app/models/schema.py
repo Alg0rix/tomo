@@ -574,6 +574,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     env_ciphertext      TEXT NOT NULL DEFAULT '',
     headers_ciphertext  TEXT NOT NULL DEFAULT '',
     enabled             INTEGER NOT NULL DEFAULT 1,
+    supports_parallel_tool_calls INTEGER NOT NULL DEFAULT 0,
     status              TEXT NOT NULL DEFAULT 'unknown',
     status_message      TEXT NOT NULL DEFAULT '',
     server_info_json    TEXT NOT NULL DEFAULT '{}',
@@ -715,6 +716,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     for col, ddl in _wp_alters.items():
         if col not in wp_cols:
             conn.execute(ddl)
+    mcp_cols = {r[1] for r in conn.execute("PRAGMA table_info(mcp_servers)")}
+    if "supports_parallel_tool_calls" not in mcp_cols:
+        conn.execute("ALTER TABLE mcp_servers ADD COLUMN supports_parallel_tool_calls INTEGER NOT NULL DEFAULT 0")
     skill_cols = {r[1] for r in conn.execute("PRAGMA table_info(skills)")}
     if "path" not in skill_cols:
         conn.execute("ALTER TABLE skills ADD COLUMN path TEXT NOT NULL DEFAULT ''")

@@ -337,6 +337,154 @@ async def test_hung_builtin_returns_tool_error_and_turn_finishes(monkeypatch) ->
         release.set()
 
 
+async def test_parallel_results_stream_before_slowest_tool_and_keep_model_order(monkeypatch, tmp_path) -> None:
+    from app.runtime.tools import registry, sandbox
+
+    release = threading.Event()
+    started = threading.Event()
+    prompts = []
+
+    def read(args):
+        if args["path"] == "slow":
+            started.set()
+            release.wait(3)
+        else:
+            assert started.wait(2), "Read-only tools did not start concurrently"
+        return args["path"] + " output"
+
+    class RecordingLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            prompts.append([dict(m) for m in messages])
+            return await super().complete(messages, tools)
+
+    monkeypatch.setitem(registry._BACKENDS, "read_file", read)
+    llm = RecordingLLM(tool_then_text(LLMResponse(content=None, tool_calls=[
+        ToolCall(id="slow", name="read_file", arguments={"path": "slow"}),
+        ToolCall(id="fast", name="read_file", arguments={"path": "fast"}),
+    ]), "done"))
+    aid = "parallel-read-" + tmp_path.name
+    root = sandbox.resolve_work_root(aid)
+    for name in ("slow", "fast"):
+        (root / name).write_text(name)
+    results = []
+    try:
+        async with asyncio.timeout(5):
+            async for ev in run_turn("Read both", llm=llm, agent_id=aid, enable_atg=False,
+                                     tools=[{"type": "function", "function": {"name": "read_file"}}]):
+                if ev["kind"] == "tool_result":
+                    results.append(ev)
+                    if len(results) == 1:
+                        assert ev["call_id"] == "fast", "Fast result was held behind slow tool"
+                        assert ev["result"] == "fast output"
+                        release.set()
+        assert [e["call_id"] for e in results] == ["fast", "slow"]
+        assert [m["tool_call_id"] for m in prompts[-1] if m["role"] == "tool"] == ["slow", "fast"]
+    finally:
+        release.set()
+
+
+async def test_disjoint_writes_parallel_but_conflicting_reads_and_bash_keep_order(monkeypatch, tmp_path) -> None:
+    from app.runtime.tools import registry, sandbox, write_file
+
+    release = threading.Event()
+    started = threading.Event()
+    original_write = write_file.run
+
+    def paced_write(args):
+        if args["path"] == "a.txt":
+            started.set()
+            assert release.wait(3), "Disjoint writes were serialized"
+        else:
+            assert started.wait(2)
+        return original_write(args)
+
+    monkeypatch.setitem(registry._BACKENDS, "write_file", paced_write)
+    aid = "parallel-" + tmp_path.name
+    root = sandbox.resolve_work_root(aid)
+    (root / "alias.txt").symlink_to(root / "a.txt")
+    calls = [
+        ToolCall(id="a", name="write_file", arguments={"path": "a.txt", "content": "first"}),
+        ToolCall(id="b", name="write_file", arguments={"path": "b.txt", "content": "independent"}),
+        ToolCall(id="read", name="read_file", arguments={"path": "alias.txt"}),
+        ToolCall(id="cmd", name="bash", arguments={"command": "printf changed > a.txt"}),
+        ToolCall(id="after", name="read_file", arguments={"path": "a.txt"}),
+    ]
+    llm = ScriptedLLM(tool_then_text(LLMResponse(content=None, tool_calls=calls), "done"))
+    results = {}
+    try:
+        async with asyncio.timeout(8):
+            async for ev in run_turn("Update the files", llm=llm, agent_id=aid,
+                                     origin="scheduler", enable_atg=False,
+                                     tools=registry.get_openai_tools(["write_file", "read_file", "bash"])):
+                if ev["kind"] == "tool_result":
+                    assert not ev["error"], ev["result"]
+                    results[ev["call_id"]] = ev["result"]
+                    if ev["call_id"] == "b":
+                        release.set()
+        assert list(results) == ["b", "a", "read", "cmd", "after"]
+        assert "first" in results["read"]
+        assert "changed" in results["after"]
+    finally:
+        release.set()
+
+
+async def test_vision_calls_run_parallel_and_wait_before_overlapping_write(monkeypatch, tmp_path) -> None:
+    import base64
+    from app.runtime.llm import vision
+    from app.runtime.tools import registry, sandbox
+
+    release, started = threading.Event(), threading.Event()
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    aid = "parallel-vision-" + tmp_path.name
+    root = sandbox.resolve_work_root(aid)
+    (root / "shot.png").write_bytes(png)
+    (root / "alias.png").symlink_to(root / "shot.png")
+
+    async def analyze(agent_id, data_url, question=""):
+        assert agent_id == aid
+        assert data_url.startswith("data:image/")
+        if question.endswith("slow"):
+            started.set()
+            assert await asyncio.to_thread(release.wait, 3), "Vision calls were serialized"
+            return "slow image analyzed"
+        assert await asyncio.to_thread(started.wait, 2)
+        return "fast image analyzed"
+
+    monkeypatch.setattr(vision, "analyze_image_data_url", analyze)
+    calls = [
+        ToolCall(id="slow", name="vision_analyze", arguments={"source": "alias.png", "question": "slow"}),
+        ToolCall(id="fast", name="vision_analyze", arguments={"image_url": "data:image/png;base64," + base64.b64encode(png).decode(), "question": "fast"}),
+        ToolCall(id="write", name="write_file", arguments={"path": "shot.png", "content": "updated"}),
+    ]
+    llm = ScriptedLLM(tool_then_text(LLMResponse(content=None, tool_calls=calls), "done"))
+    results = []
+    try:
+        async with asyncio.timeout(8):
+            async for ev in run_turn("Analyze both", llm=llm, agent_id=aid,
+                                     origin="scheduler", enable_atg=False,
+                                     tools=registry.get_openai_tools(["vision_analyze", "write_file"])):
+                if ev["kind"] == "tool_result":
+                    assert not ev["error"], ev["result"]
+                    results.append(ev["call_id"])
+                    if ev["call_id"] == "fast":
+                        release.set()
+        assert results == ["fast", "slow", "write"]
+        assert (root / "shot.png").read_text() == "updated"
+    finally:
+        release.set()
+
+
+def test_ui_updates_are_serial_barriers_between_parallel_lookups():
+    from app.runtime.agent.tool_batches import plan_tool_segments
+
+    names = ["recall_episodes", "agent_info", "render_ui", "list_workplaces", "list_skills", "render_ui"]
+    calls = [(str(i), ToolCall(id=str(i), name=name, arguments={})) for i, name in enumerate(names)]
+    assert [[call.name for _cid, call in s] for s in plan_tool_segments(calls)] == [
+        ["recall_episodes", "agent_info"], ["render_ui"],
+        ["list_workplaces", "list_skills"], ["render_ui"],
+    ]
+
+
 async def test_bash_path_emits_tool_then_result_then_final() -> None:
     llm = ScriptedLLM(tool_then_text(bash_call("echo 4"), _BASH_FINAL))
     events = await _collect("run: echo 4", llm=llm, tools=_bash_tools())

@@ -571,11 +571,18 @@ def test_mcp_tables_have_runtime_columns(tmp_path):
         "env_ciphertext", "headers_ciphertext", "enabled", "status",
         "status_message", "server_info_json", "capabilities_json",
         "last_connected_at", "last_discovered_at", "created_at", "updated_at",
+        "supports_parallel_tool_calls",
     } <= server_cols
     assert {
         "id", "server_id", "kind", "runtime_id", "name", "title",
         "description", "uri", "mime_type", "schema_json", "metadata_json",
         "enabled", "created_at", "updated_at",
     } <= item_cols
+    # Upgrade a pre-option database: saved servers survive, opt-in stays off.
+    conn.execute("ALTER TABLE mcp_servers DROP COLUMN supports_parallel_tool_calls")
+    conn.execute("INSERT INTO mcp_servers (id, name, transport, command) VALUES ('old', 'Old', 'stdio', 'echo')")
+    migrate(conn)
+    migrate(conn)
+    assert conn.execute("SELECT command, supports_parallel_tool_calls FROM mcp_servers WHERE id='old'").fetchone() == ("echo", 0)
 
 

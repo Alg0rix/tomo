@@ -59,7 +59,31 @@ tomo config llm-profiles create --data @profile.json --json
 tomo config agent-tools update builder --data '{"enabled":{"bash":true,"read_file":true}}'
 tomo config agent-skills update builder --data '{"skill_ids":["tomo"]}'
 tomo config mcp-items update item_id --set enabled=false
+tomo config mcp-servers update server_id --set supports_parallel_tool_calls=true
 ```
+
+MCP parallel calls are off by default. Enable them only for servers that safely
+support concurrent calls (also available in System → MCP). Local file tools can
+run concurrently on disjoint paths; overlapping reads/writes and terminal,
+interactive, or unknown tools preserve call order as execution barriers. Remote
+file tools stay serial because host-side path resolution cannot prove they are disjoint.
+
+### Built-in tool scheduling audit
+
+Classification covers all 38 built-in backends; new/unknown tools default to a
+serial barrier. Execution hooks count as effects too, not just the backend's return value.
+
+| Scheduling | Tools | Reason |
+| --- | --- | --- |
+| Parallel lookups | `web_fetch`, `web_search`, `session_search`, `recall_episodes`, `agent_info`, `list_skills`, `list_workplaces`, `use_skill` | Independent reads; skill usage bookkeeping remains protected by the store lock. |
+| Path-scoped reads | `read_file`, `search_files`, `list_dir`, `vision_analyze`, `list_artifacts` | Readers may overlap; overlapping writers must finish first. Vision URL/data sources have no local reservation; attachments reserve their actual stored file. Missing read-file paths stay serial because spelling fallback may change the target. |
+| Path-scoped writes | `write_file`, `patch`, `str_replace`, `delete_file` | Parallel only on disjoint local targets. |
+| Delegation | `delegate` | Consecutive delegates retain parallel subagent streams; ordinary tools cannot cross that boundary. |
+| Serial barriers | `agent_state`, `bash`, `clarify`, `create_agent`, `fetch_artifact`, `manage_skill`, `memory`, `plugin_manager`, `portal`, `process`, `record_episode`, `register_workplace`, `render_ui`, `runpy`, `save_artifact`, `schedule`, `start_swarm`, `swarm_board`, `telegram_send_file`, `todo` | Commands, mutable/shared state, transfers, interactive work, or UI patches whose application order matters. Mixed read/write tools remain serial even for their read actions. |
+
+MCP tools require persisted server opt-in. `vision_analyze` runs concurrently
+for independent images, while local image files and attachments retain path
+conflict tracking.
 
 Tool and skill assignments replace the selected set, matching the web UI's Save
 operation. Use `show` first and send the complete intended selection. Existing

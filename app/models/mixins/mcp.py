@@ -96,6 +96,7 @@ def _base_server(row: sqlite3.Row) -> dict[str, Any]:
         "env_ciphertext": row["env_ciphertext"],
         "headers_ciphertext": row["headers_ciphertext"],
         "enabled": bool(row["enabled"]),
+        "supports_parallel_tool_calls": bool(row["supports_parallel_tool_calls"]),
         "status": row["status"],
         "status_message": row["status_message"],
         "server_info": _safe_json(row["server_info_json"], {}),
@@ -174,9 +175,9 @@ def create_server(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, A
     conn.execute(
         "INSERT INTO mcp_servers "
         "(id, name, transport, command, args_json, url, env_ciphertext, "
-        "headers_ciphertext, enabled, status, status_message, server_info_json, "
+        "headers_ciphertext, enabled, supports_parallel_tool_calls, status, status_message, server_info_json, "
         "capabilities_json, last_connected_at, last_discovered_at, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             sid,
             name,
@@ -187,6 +188,7 @@ def create_server(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, A
             _encrypt_map(dict(data.get("env") or {})),
             _encrypt_map(dict(data.get("headers") or {})),
             1 if data.get("enabled", True) else 0,
+            1 if data.get("supports_parallel_tool_calls") is True else 0,
             "unknown",
             "",
             "{}",
@@ -240,6 +242,9 @@ def update_server(
     if "enabled" in data and data["enabled"] is not None:
         sets.append("enabled=?")
         params.append(1 if data["enabled"] else 0)
+    if "supports_parallel_tool_calls" in data and data["supports_parallel_tool_calls"] is not None:
+        sets.append("supports_parallel_tool_calls=?")
+        params.append(1 if data["supports_parallel_tool_calls"] is True else 0)
     if sets:
         sets.append("updated_at=?")
         params.append(_now())

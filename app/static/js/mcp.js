@@ -14,6 +14,7 @@
   var fArgs = document.getElementById('mcpArgs');
   var fUrl = document.getElementById('mcpUrl');
   var fEnabled = document.getElementById('mcpEnabled');
+  var fParallel = document.getElementById('mcpParallel');
   var stdioFields = document.getElementById('mcpStdioFields');
   var httpFields = document.getElementById('mcpHttpFields');
   var envRows = document.getElementById('mcpEnvRows');
@@ -193,6 +194,7 @@
     if (mode === 'add') {
       fId.value = ''; fName.value = ''; fTransport.value = 'stdio';
       fCommand.value = ''; fArgs.value = ''; fUrl.value = ''; fEnabled.checked = true;
+      fParallel.checked = false;
       syncTransportFields();
       listEl.querySelectorAll('[data-id]').forEach(function (r) { r.classList.remove('is-selected'); });
       formCard.classList.remove('hidden');
@@ -207,6 +209,7 @@
     fArgs.value = (s.args || []).join(', ');
     fUrl.value = s.url || '';
     fEnabled.checked = !!s.enabled;
+    fParallel.checked = !!s.supports_parallel_tool_calls;
     syncTransportFields();
     (s.env_keys || []).forEach(function (k) { addKvRow(envRows, k, '••••'); });
     (s.headers_keys || []).forEach(function (k) { addKvRow(headerRows, k, '••••'); });
@@ -256,7 +259,8 @@
   });
 
   function formBody() {
-    var body = { name: fName.value.trim(), transport: fTransport.value, enabled: fEnabled.checked };
+    var body = { name: fName.value.trim(), transport: fTransport.value, enabled: fEnabled.checked,
+      supports_parallel_tool_calls: fParallel.checked };
     if (fTransport.value === 'stdio') {
       body.command = fCommand.value.trim();
       body.args = fArgs.value.split(',').map(function (a) { return a.trim(); }).filter(Boolean);
