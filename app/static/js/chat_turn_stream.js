@@ -170,6 +170,9 @@
       skipResults = resultSeen;
       skipThinking = thinkingSeen;
       skipUi = uiSeen;
+      // Only the unfinished reasoning round survives replay. Completed
+      // rounds already have durable cards and must not seed live reasoning.
+      if (reasoningText) streamedReasoning = appendReasoningCard(reasoningText);
       // Partial assistant text is not in durable history yet. Restore the
       // replayed tail before the first new token arrives after reconnect.
       if (replayRaw && !/^\s*\[Swarm\]/.test(replayRaw)) {
@@ -1034,6 +1037,9 @@
       adoptAgent(d.agent_id, d.agent);
       clearPending();
       reasoningText += d.content || '';
+      // Buffer replay deltas until we know whether this round is already
+      // in history; caught_up restores only the still-active tail.
+      if (inReplaySkip()) return;
       if (!streamedReasoning) streamedReasoning = appendReasoningCard(reasoningText);
       else {
         Tomo.updateReasoningCard(streamedReasoning, reasoningText);
@@ -1051,7 +1057,10 @@
         bumpSwarmProgress(ik);
         return;
       }
-      if (inReplaySkip()) replayRaw = '';
+      if (inReplaySkip()) {
+        replayRaw = '';
+        reasoningText = '';
+      }
       adoptAgent(d.agent_id, d.agent);
       clearPending();
       var content = d.content || '';
@@ -1089,7 +1098,10 @@
         bumpSwarmProgress(ik);
         return;
       }
-      if (inReplaySkip()) replayRaw = '';
+      if (inReplaySkip()) {
+        replayRaw = '';
+        reasoningText = '';
+      }
       if (!isLive) {
         toolSeen++;
         if (toolSeen <= skipTools) {

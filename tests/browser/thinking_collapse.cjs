@@ -13,7 +13,7 @@ const root = path.resolve(__dirname, '../..');
     await page.route('http://thinking.test/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }));
     await page.goto('http://thinking.test/');
     await page.setContent('<div class="chat-wrap"><div class="composer is-generating"></div><div class="chat-scroll"><div class="turn" id="main"></div></div><div class="si-timeline" id="inspector"></div></div>');
-    for (const file of ['tomo.js', 'chat_worknotes.js']) {
+    for (const file of ['tomo.js', 'chat_worknotes.js', 'chat_turn_stream.js']) {
       await page.addScriptTag({ path: path.join(root, 'app/static/js', file) });
     }
     for (const host of ['main', 'inspector']) {
@@ -58,7 +58,46 @@ const root = path.resolve(__dirname, '../..');
       turn.appendChild(Tomo.buildReasoningCard('New turn'));
     });
     await page.waitForFunction(() => document.querySelector('#next > .work.is-open'));
+    const resumed = await page.evaluate(async () => {
+      const turn = document.createElement('div');
+      turn.className = 'turn';
+      document.querySelector('.chat-scroll').appendChild(turn);
+      turn.appendChild(Tomo.buildReasoningCard('Historical thinking'));
+      turn.appendChild(Tomo.buildToolCard({ tool: 'read_file', call_id: 'old', args: {} }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const es = new EventTarget();
+      const noop = () => {};
+      const attachment = TomoTurnStream.attach(es, {
+        mode: 'resume', wrap: document.querySelector('.chat-wrap'), turn,
+        defaultAgentName: 'Tomo', agentId: 'main', esc: Tomo.escapeHtml,
+        agentColor: () => '', setSending: noop, setStatus: noop,
+        busyStatusLabel: () => 'Working', refreshSendBtn: noop, atBottom: noop,
+      });
+      const emit = (type, data) => es.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
+      try {
+        emit('thinking_delta', { content: 'Historical thinking' });
+        emit('thinking', { content: 'Historical thinking' });
+        emit('tool', { tool: 'read_file', call_id: 'old', args: {} });
+        emit('thinking_delta', { content: 'Active thinking' });
+        emit('caught_up', {});
+        emit('thinking_delta', { content: ' continued' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const notes = Array.from(turn.querySelectorAll('.si-think'), el => el.textContent);
+        emit('thinking', { content: 'Active thinking continued' });
+        emit('tool', { tool: 'read_file', call_id: 'new', args: {} });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        emit('thinking_delta', { content: 'Newest thinking' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const timeline = Array.from(turn.querySelectorAll('.si-think, .tool'), el =>
+          el.classList.contains('tool') ? el.dataset.callId : el.textContent);
+        return { notes, timeline };
+      } finally { attachment.dispose(); }
+    });
+    assert.deepEqual(resumed.notes, ['Historical thinking', 'Active thinking continued']);
+    assert.deepEqual(resumed.timeline, [
+      'Historical thinking', 'old', 'Active thinking continued', 'new', 'Newest thinking',
+    ]);
     assert.deepEqual(errors, []);
-    console.log('Thinking collapse survives streaming and new rounds in chat and inspector; reopening and new turns passed');
+    console.log('Thinking collapse and resumed thinking/tool timeline ordering passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
