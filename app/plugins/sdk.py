@@ -33,6 +33,12 @@ class PluginAPI:
         self.starters: list[dict] = []
         self._turn_end: list[Callable] = []
         self._cleanup: list[Callable] = []
+        from app.plugins.services import PluginSettings
+
+        self.settings = PluginSettings(data_dir)
+        self._background: list = []
+        self._activated = False
+        self._disposed = False
 
     @property
     def base_url(self) -> str:
@@ -173,6 +179,184 @@ class PluginAPI:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _workplace_user(self, user_id: str | None) -> None:
+        self._require_live()
+        from app.runtime.tools.user_ctx import current_user_id
+        from app.services import store
+
+        user = store.get_user(user_id if user_id is not None else current_user_id())
+        # Workplaces are global today; do not imply a per-user ACL exists.
+        if not user or not user.get("enabled") or user.get("role") != "admin":
+            raise PermissionError("Workplace SDK access requires an active administrator")
+
+    def list_workplaces(self, *, user_id: str | None = None) -> list[dict]:
+        """List enabled tunnel workplaces, without credentials or pairing codes.
+
+        HTTP handlers must pass the authenticated account ID. Tools and Home
+        cards can use the bound account. Only active administrators have access.
+        """
+        from app.services import store
+        from app.workplaces.hub import hub
+
+        self._workplace_user(user_id)
+        return [
+            {
+                "id": wp["id"],
+                "name": wp["name"],
+                "kind": "tunnel",
+                "online": hub.is_online(wp["id"]),
+                "hostname": wp.get("connector_hostname") or "",
+                "version": wp.get("connector_version") or "",
+                "last_seen_at": wp.get("connector_last_seen_at") or 0,
+            }
+            for wp in store.list_workplaces()
+            if wp.get("enabled") and wp.get("kind") == "tunnel"
+        ]
+
+    def workplace_status(self, workplace_id: str, *, user_id: str | None = None) -> dict:
+        """Return live connector connectivity, not a server health assessment."""
+        for wp in self.list_workplaces(user_id=user_id):
+            if wp["id"] == workplace_id:
+                return wp
+        raise ValueError("Enabled tunnel workplace not found")
+
+    def exec_workplace(
+        self,
+        workplace_id: str,
+        command: str,
+        *,
+        timeout: float = 10,
+        user_id: str | None = None,
+    ) -> dict:
+        """Run bash on an explicit tunnel; return stdout/stderr/exit_code.
+
+        Synchronous: use a sync HTTP handler or offload to a worker thread.
+        Offline/transport failures raise ConnectionError, never run locally.
+        Nonzero command exits are returned normally. This does not use agent
+        tool approvals or inject secret capabilities; plugins must enforce
+        their own command policy.
+        """
+        import math
+
+        from app.workplaces.hub import hub
+
+        wp = self.workplace_status(workplace_id, user_id=user_id)
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("Command must be a nonempty string")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or not 0 < timeout <= 60
+        ):
+            raise ValueError("Timeout must be finite and between 0 and 60 seconds")
+        if not wp["online"]:
+            raise ConnectionError("Tunnel workplace is offline")
+        payload = hub.call(
+            workplace_id, "exec_bash", {"command": command, "timeout": timeout},
+            timeout=timeout + 5,
+        )
+        if not payload.get("ok"):
+            raise ConnectionError(str(payload.get("error") or "Tunnel execution failed"))
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise ConnectionError("Invalid tunnel execution response")
+        return result
+
+    def read_workplace_file(
+        self, workplace_id: str, path: str, *, max_bytes: int = 65536,
+        timeout: float = 10, user_id: str | None = None,
+    ) -> dict:
+        """Read bounded UTF-8 text via tunnel bash (requires POSIX head).
+
+        Relative paths use the connector work root; binary files are not
+        supported. This shares exec_workplace's admin and availability checks.
+        """
+        import shlex
+
+        if not isinstance(path, str) or not path or "\x00" in path:
+            raise ValueError("Path must be a nonempty string without NUL")
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
+            raise ValueError("max_bytes must be between 1 and 1048576")
+        result = self.exec_workplace(
+            workplace_id, f"head -c {max_bytes + 1} -- {shlex.quote(path)}",
+            timeout=timeout, user_id=user_id,
+        )
+        if result.get("exit_code") != 0:
+            raise OSError(result.get("stderr") or "Remote file read failed")
+        data = result.get("stdout", "").encode("utf-8")
+        return {"path": path, "content": data[:max_bytes].decode("utf-8", errors="replace"), "truncated": len(data) > max_bytes}
+
+    def background_task(self, callback: Callable, *, interval_seconds: float = 10) -> None:
+        """Register a periodic sync callback(stop_event), started after activation.
+
+        Calls never overlap within a task. Use stop_event for cooperative
+        cancellation and bounded I/O; no authenticated user is inherited.
+        """
+        import inspect
+        import math
+        from app.plugins.services import BackgroundTask
+
+        if self._activated or self._disposed:
+            raise RuntimeError("Background tasks must be registered during setup")
+        if not callable(callback) or inspect.iscoroutinefunction(callback):
+            raise ValueError("Background callback must be synchronous")
+        inspect.signature(callback).bind(None)
+        if (
+            isinstance(interval_seconds, bool)
+            or not isinstance(interval_seconds, (int, float))
+            or not math.isfinite(interval_seconds)
+            or not 1 <= interval_seconds <= 3600
+        ):
+            raise ValueError("Background interval must be between 1 and 3600 seconds")
+        if len(self._background) >= 8:
+            raise ValueError("A plugin may register at most eight background tasks")
+        self._background.append(BackgroundTask(self.id, callback, interval_seconds))
+
+    def _activate(self) -> None:
+        import logging
+
+        if self._activated or self._disposed:
+            return
+        self._activated = True
+        for task in self._background:
+            try:
+                task.start()
+            except Exception:
+                logging.getLogger(__name__).exception("Plugin %s worker start failed", self.id)
+
+    def _require_live(self) -> None:
+        if self._disposed:
+            raise RuntimeError("Plugin has been disposed")
+
+    def capture_notification_target(self, *, user_id: str | None = None) -> str:
+        """Capture the current owned channel destination as an opaque saved ID."""
+        from app.plugins.services import capture_notification
+
+        self._require_live()
+        return capture_notification(self, user_id)
+
+    async def notify(self, target_id: str, message: str, *, user_id: str | None = None) -> dict:
+        """Send to a captured destination, rechecking account/channel access."""
+        from app.plugins.services import notify
+
+        self._require_live()
+        return await notify(self, target_id, message, user_id)
+
+    async def generate(
+        self, prompt: str, *, profile_id: str | None = None,
+        max_output_tokens: int = 1024, timeout: float = 60,
+        user_id: str | None = None,
+    ) -> dict:
+        """One tool-free LLM call using Tomo profiles, recorded usage and caps."""
+        from app.plugins.services import generate
+
+        self._require_live()
+        return await generate(
+            self, prompt, profile_id=profile_id, max_output_tokens=max_output_tokens,
+            timeout=timeout, user_id=user_id,
+        )
+
     def render(self, request: Request, template: str, **context):
         from app.web.context import page_ctx
 
@@ -232,7 +416,16 @@ class PluginAPI:
 
     def dispose(self) -> None:
         import logging
+        import time
 
+        if self._disposed:
+            return
+        self._disposed = True
+        for task in self._background:
+            task.cancel()
+        deadline = time.monotonic() + 5
+        for task in self._background:
+            task.join(timeout=max(0, deadline - time.monotonic()))
         for callback in reversed(self._cleanup):
             try:
                 callback()

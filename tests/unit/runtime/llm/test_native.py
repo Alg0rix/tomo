@@ -127,7 +127,10 @@ async def test_native_tool_roundtrip_and_truncated_stream(protocol):
                 {"role": "tool", "tool_call_id": call.id, "content": "found"},
             ]
         )
+        client.max_output_tokens = 123
         await client.complete(history, tools)
+        output_limit = requests[1].get("max_tokens") if protocol == "messages" else requests[1]["generationConfig"]["maxOutputTokens"]
+        assert output_limit == 123
         if protocol == "messages":
             assert (
                 requests[0]["messages"][0]["content"][1]["source"]["media_type"]

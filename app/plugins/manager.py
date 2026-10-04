@@ -86,6 +86,7 @@ class PluginManager:
                             raise ValueError("Installed plugin id changed")
                         self._active[plugin_id] = instance
                         self._errors.pop(plugin_id, None)
+                        instance["api"]._activate()
                     except Exception as exc:
                         self._errors[plugin_id] = str(exc)
                         logger.exception("Plugin %s activation failed", plugin_id)
@@ -490,6 +491,8 @@ class PluginManager:
                 self._errors.pop(plugin_id, None)
                 if old:
                     old["api"].dispose()
+                if new:
+                    new["api"]._activate()
                 return {
                     "id": plugin_id,
                     "updated": True,
@@ -615,6 +618,8 @@ class PluginManager:
             self._errors.pop(plugin_id, None)
             if old:
                 old["api"].dispose()
+            if new:
+                new["api"]._activate()
             return {
                 "id": plugin_id,
                 "enabled": new is not None,

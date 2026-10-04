@@ -715,6 +715,8 @@ class OpenAICompatClient:
             "model": self._model,
             "messages": messages,
         }
+        if limit := getattr(self, "max_output_tokens", None):
+            payload["max_tokens"] = limit
         if self._reasoning_effort:
             payload["reasoning_effort"] = self._reasoning_effort
 
@@ -795,6 +797,8 @@ class OpenAICompatClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if limit := getattr(self, "max_output_tokens", None):
+            payload["max_tokens"] = limit
         if self._reasoning_effort:
             payload["reasoning_effort"] = self._reasoning_effort
         if tools:

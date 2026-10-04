@@ -233,6 +233,8 @@ class NativeMessagesClient:
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         payload = _message_payload(self._model, messages, tools)
+        if limit := getattr(self, "max_output_tokens", None):
+            payload["max_tokens"] = limit
         if window := getattr(self, "context_window", None):
             payload["max_tokens"] = min(payload["max_tokens"], max(1, window // 4))
         endpoint = self._base_url + "/messages"

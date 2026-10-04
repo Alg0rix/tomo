@@ -303,6 +303,8 @@ class CodexResponsesClient:
             payload["extra_headers"] = {"session-id": payload["prompt_cache_key"]}
         elif opencode := session_headers(self._base_url, self._model, messages):
             payload["extra_headers"] = {**opencode, "User-Agent": user_agent()}
+        if limit := getattr(self, "max_output_tokens", None):
+            payload["max_output_tokens"] = limit
         responses_tools = stable_tools(_responses_tools(tools))
         if responses_tools:
             payload["tools"] = responses_tools

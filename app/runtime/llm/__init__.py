@@ -25,6 +25,7 @@ from app.runtime.llm.openai_compat import (
 def get_llm(
     agent_id: str | None = None, reasoning_effort: str | None = None, *, profile_id: str | None = None,
     session_id: str | None = None, model: str | None = None,
+    max_output_tokens: int | None = None,
 ) -> LLMClient:
     """Return an OpenAI-compatible client resolved from LLM profiles.
 
@@ -62,11 +63,17 @@ def get_llm(
             raise LLMConfigError("Selected model is not in the profile's catalog")
         profile = {**profile, "model": model}
     effective_effort = effective_reasoning_effort(profile, reasoning_effort)
+    if max_output_tokens is not None:
+        if type(max_output_tokens) is not int or max_output_tokens < 1:
+            raise LLMConfigError("Output token limit must be a positive integer")
+        if profile.get("auth_mode") == "subscription":
+            raise LLMConfigError("Bounded generation requires an API profile; subscription output limits are unsupported")
 
     def configured(client):
         # Freeze the actual route/model so a mid-turn picker change cannot
         # resolve a context window for a different client.
         client.context_profile = dict(profile)
+        client.max_output_tokens = max_output_tokens
         return client
 
     if profile.get("auth_mode") == "subscription":

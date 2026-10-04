@@ -114,6 +114,7 @@ async def test_public_api_key_uses_responses_wire_format() -> None:
         assert body["stream"] is True
         assert body["store"] is False
         assert body["reasoning"]["summary"] == "auto"
+        assert body["max_output_tokens"] == 123
         assert "session-id" not in request.headers
         return _completed_sse({"id": "resp_1", "output": [
             {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}
@@ -121,6 +122,7 @@ async def test_public_api_key_uses_responses_wire_format() -> None:
 
     client = CodexResponsesClient(base_url="https://api.openai.com/v1", access_token="sk-test",
                                   model="gpt-5", transport=httpx2.MockTransport(handler))
+    client.max_output_tokens = 123
     try:
         assert (await client.complete([{"role": "user", "content": "hi"}])).content == "ok"
     finally:

@@ -156,6 +156,153 @@ stores amounts as integer minor units and uses the same ledger in both its pages
 and agent tools. Agents use Tomo's existing models and conversation; the plugin
 needs no separate AI key or agent loop.
 
+### Tunnel workplaces
+
+Reuse existing paired Tomo connectors for monitoring; no separate SSH connection
+or agent turn is needed. These synchronous SDK methods support **enabled tunnel
+workplaces only**:
+
+- `api.list_workplaces(*, user_id=None)` returns safe metadata: `id`, `name`,
+  `kind`, `online`, `hostname`, `version`, `last_seen_at`. No pairing codes or credentials.
+- `api.workplace_status(workplace_id, *, user_id=None)` returns the same metadata
+  for an explicit ID. `online` means connector connected, not server healthy.
+- `api.exec_workplace(workplace_id, command, *, timeout=10, user_id=None)` runs
+  bash in the connector's default work root. Returns the connector result dict
+  (`stdout`, `stderr`, `exit_code`, `execution_time`); nonzero exits are normal
+  results. Timeout must be finite, greater than zero and at most 60 seconds.
+
+Workplaces currently have no per-user sharing ACL, so all three methods require
+an **active administrator**, checked on every call. Tools/Home callbacks may use
+Tomo's bound user; HTTP handlers must pass `session_user_id(request)` from
+`app.core.deps`. Background collectors must supply the actual administrator ID
+that configured monitoring, not an anonymous fallback or user-supplied identity.
+Disabled or unknown accounts raise `PermissionError`. Missing, disabled, local,
+or SSH workplaces raise `ValueError`; offline tunnels and failed RPC responses
+raise `ConnectionError`. Transport exceptions may also propagate. Execution
+never falls back to the Tomo host. This is a trusted plugin service, not an agent
+tool dispatch: agent command approvals and secret capabilities are not applied.
+Use fixed metric-collection commands, not arbitrary commands from visitors.
+
+```python
+from app.core.deps import session_user_id
+
+@api.router.get("/servers")
+def servers(request: Request):
+    return api.list_workplaces(user_id=session_user_id(request))
+
+# In a collector worker, with the configuring admin's ID:
+result = api.exec_workplace(server_id, "uptime", user_id=admin_id, timeout=5)
+```
+
+Use synchronous routes or offload these calls to a worker thread; do not block
+an async HTTP handler/the server event loop. Collect separately and cache metrics;
+Home card handlers should only read that cache within their shared deadline.
+Handle offline/failed collection as stale data. Stop collector threads with
+`api.on_dispose()` when disabling or reloading a plugin.
+
+### Background collectors
+
+`api.background_task(callback, *, interval_seconds=10)` registers up to eight
+serial periodic workers during `setup`. `callback(stop_event)` is synchronous;
+its first call starts **after successful activation/registry persistence**, not
+while preparing a speculative reload. Subsequent calls wait 1–3600 seconds after
+the preceding callback returns. Exceptions are logged and retried next interval.
+Failed setup/save never starts workers. On reload/update, old workers are
+cancelled before replacement workers start; disable, uninstall and server shutdown
+also signal cancellation. Workers inherit **no user/session context**.
+
+```python
+import threading
+
+def setup(api):
+    def collect(stop: threading.Event):
+        if stop.is_set():
+            return
+        # Read configured admin IDs and use short timeouts for remote I/O.
+        # Update plugin-owned cached metrics; Home only reads this cache.
+    api.background_task(collect, interval_seconds=10)
+```
+
+Cancellation is cooperative: check the event, use `stop.wait(delay)` instead of
+`sleep`, and bound all I/O. Disposal signals all workers and waits up to five
+seconds total before cleanup callbacks. Python cannot forcibly kill a blocked
+thread; a noncooperative worker is logged and may outlive disposal. SDK remote,
+notification and generation calls reject disposed instances. Never depend on an
+unbounded callback being stopped or on long-running workers holding manager leases.
+Task runtime errors do not deactivate the plugin. No cron, process isolation,
+async callbacks or multi-worker scheduling is implied.
+
+### Persistent per-account settings
+
+`api.settings.get(key, default=None, *, user_id=None)`,
+`api.settings.set(key, value, *, user_id=None)` and
+`api.settings.delete(key, *, user_id=None)` store JSON in plugin-owned SQLite at
+`api.data_dir / "sdk.sqlite3"`. Values are isolated by account and survive
+reload/update/uninstall, with atomic writes across threads. Keys contain 1–128
+characters; each JSON value is at most 64 KiB. NaN/non-JSON values are rejected.
+These methods require an active Tomo account. For HTTP, pass the authenticated
+account ID; never accept an owner ID from the request body. Worker threads must
+pass the configuring account explicitly. This is settings storage, **not a secret
+vault**; do not put credentials here.
+
+```python
+api.settings.set("monitor", {"interval": 10, "server_id": server_id}, user_id=uid)
+config = api.settings.get("monitor", {}, user_id=uid)
+```
+
+### Captured-channel notifications
+
+`api.capture_notification_target(*, user_id=None)` captures the current owned
+session's channel destination and returns an opaque, persistent ID. Capture from
+an agent tool while the channel turn is bound, not from an arbitrary HTTP body.
+`await api.notify(target_id, message, *, user_id=None)` sends 1–4000 characters to
+that saved destination. Background workers can use `asyncio.run(api.notify(...))`
+with the configuring account ID. No chat IDs, bot tokens or arbitrary recipients
+are accepted. Ownership of the saved session and active account are rechecked;
+the channel also checks current destination authorization and bot identity.
+Deleting the originating session invalidates its targets.
+
+Currently Telegram is the built-in delivery channel. Browser-only sessions have
+no notification destination and capture raises `ValueError`; this does not add a
+web notification inbox. Denied/revoked targets raise `PermissionError` or the
+channel's `DeliveryBlocked`; transport failures propagate. The receipt is the
+channel's result dict. Sends have no automatic retries or exactly-once guarantee;
+plugins should deduplicate alerts and treat uncertain sends carefully.
+
+### Bounded remote text reads
+
+`api.read_workplace_file(workplace_id, path, *, max_bytes=65536, timeout=10,
+user_id=None)` returns `{"path": ..., "content": ..., "truncated": ...}`.
+It reuses tunnel bash with shell-quoted paths and POSIX `head`; it does not download
+the entire file. `max_bytes` is 1–1048576. Relative paths use the connector work
+root. UTF-8 decoding replaces incomplete/invalid characters; this is a text API,
+not a binary download API. Nonzero reads raise `OSError`. The same active-admin,
+timeout, explicit-workplace and no-local-fallback rules as `exec_workplace` apply.
+Plugins must choose safe log/config paths and avoid leaking sensitive contents.
+
+### One-shot LLM generation
+
+`await api.generate(prompt, *, profile_id=None, max_output_tokens=1024, timeout=60,
+user_id=None)` uses Tomo's configured API model profile (explicit enabled ID, or
+global default). It returns `content`, `prompt_tokens` and `completion_tokens`.
+No tools, agent loop or extra API key are needed. Calls require an active account;
+HTTP/collectors pass the authenticated/configuring account ID explicitly.
+
+Guards: nonempty prompt up to 32 KiB UTF-8, output limit 1–4096 tokens sent to the
+provider, timeout greater than zero and at most 60 seconds, and **30 attempted
+calls per account/plugin/calendar hour**, persisted across reloads. Failed provider
+requests consume reservations too. Provider-reported successful usage enters the
+existing `usage_events` ledger under `agent_id="plugin:<id>"`, with zero agent turns
+and an account-namespaced synthetic session; prompt contents are not recorded.
+Limits depend on provider enforcement and are not a monetary billing ceiling.
+Timed-out/failed requests may still incur provider costs not reported in usage.
+Clients are closed after success, error, or cancellation.
+
+Subscription profiles are explicitly rejected for bounded generation: their
+backend does not support the output cap. There is no silent unbounded fallback.
+For synchronous plugin tools/worker threads use `asyncio.run(api.generate(...))`;
+async HTTP handlers should await it directly.
+
 ### Public landing pages and forms
 
 Use `api.public_router` to opt individual handlers into anonymous access at
