@@ -349,7 +349,7 @@ a.home-ti:hover .x b { color: var(--accent); }
 .home-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 6px; }
 .home-app { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 7px 4px 6px; border-radius: var(--r-sm); min-width: 0; text-align: center; }
 a.home-app:hover { background: var(--surface-2); }
-.home-app .tile { position: relative; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--surface-3); color: #fff; font: 600 16px var(--font-display); overflow: hidden; }
+.home-app .tile { position: relative; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 11px; display: grid; place-items: center; background: var(--surface-3); color: #fff; font: 600 16px var(--font-display); overflow: hidden; }
 .home-app .tile.luc { background: var(--accent-soft); color: var(--accent); }
 .home-app .tile.luc svg { width: 20px; height: 20px; }
 .home-app .tile.img img { width: 100%; height: 100%; object-fit: cover; }
