@@ -110,6 +110,12 @@ def test_attachment_import_never_falls_back_and_checks_owner(http):
                    files={'file': ('input.pdf', b'untrusted', 'application/pdf')}).status_code == 404
     from app.services import secret_store
     admin_sid = ac.post('/api/sessions/home', json={}).json()['session_id']
+    # This regression checks restricted broker admission, not the Admin's new
+    # host default. Explicitly opt the Admin chat into the same tested boundary.
+    admin_access = ac.get('/api/sessions/' + admin_sid + '/access').json()
+    assert ac.put('/api/sessions/' + admin_sid + '/access', json={
+        'active_workplace_id': admin_access['active_workplace_id'], 'execution_mode': 'restricted',
+    }).status_code == 200
     for caller, owner, session in ((ac, admin, admin_sid), (c, alice, sid)):
         token = secret_store.issue_capability(session, owner['id'])
         for endpoint in ('/api/secret-broker/apply', '/api/connection-broker/http'):

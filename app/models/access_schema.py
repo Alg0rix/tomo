@@ -94,3 +94,26 @@ def migrate_access(conn: sqlite3.Connection) -> None:
         # do not reinterpret Member sessions or future chats as unrestricted.
         conn.execute("INSERT OR IGNORE INTO resource_grants(user_id,resource_type,resource_id,permission,state,granted_by,updated_at) SELECT DISTINCT s.user_id,'unrestricted',s.workplace_id,'use','active',s.user_id,s.updated_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.role='admin' AND u.enabled=1 AND s.workplace_id<>''")
         conn.execute("UPDATE sessions SET execution_mode='unrestricted' WHERE workplace_id<>'' AND user_id IN (SELECT id FROM users WHERE role='admin' AND enabled=1)")
+    # Repair the first multi-user release's automatic Admin personal-space
+    # default (web and linked Telegram). Generation-zero chats have never had
+    # a user access mutation; do not override explicit Restricted choices,
+    # revocations or pending teardown. Bump the ceiling so old durable work
+    # cannot silently widen from restricted to host execution after restart.
+    conn.execute("""
+        UPDATE sessions SET execution_mode='unrestricted', access_generation=1
+        WHERE execution_mode='restricted' AND access_generation=0 AND access_pending=0
+          AND user_id IN (SELECT id FROM users WHERE role='admin' AND enabled=1 AND access_pending=0)
+          AND EXISTS (SELECT 1 FROM workplaces w WHERE w.id=sessions.workplace_id
+                      AND w.owner_user_id=sessions.user_id AND w.storage_kind='personal'
+                      AND w.enabled=1 AND w.access_pending=0)
+          AND NOT EXISTS (SELECT 1 FROM access_audit a WHERE a.session_id=sessions.id AND a.action='chat.access')
+          AND NOT EXISTS (SELECT 1 FROM resource_grants g WHERE g.user_id=sessions.user_id
+                          AND g.resource_type='unrestricted' AND g.resource_id=sessions.workplace_id
+                          AND g.state='pending')
+          AND (EXISTS (SELECT 1 FROM resource_grants g WHERE g.user_id=sessions.user_id
+                       AND g.resource_type='unrestricted' AND g.resource_id=sessions.workplace_id
+                       AND g.state='active')
+               OR NOT EXISTS (SELECT 1 FROM access_audit a WHERE a.subject_user_id=sessions.user_id
+                              AND a.resource_type='unrestricted' AND a.destination_id=sessions.workplace_id
+                              AND a.action='grant.revoke'))
+    """)

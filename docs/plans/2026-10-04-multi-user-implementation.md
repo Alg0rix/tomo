@@ -14,7 +14,7 @@ Verification: [test coverage and reproduction](2026-10-04-multi-user-integration
 
 ## Chat and execution context
 
-- `set_chat_access` persists an owned active resource, enabled additional resources and mode. Unrestricted mode requires a destination-specific grant AND explicit chat acknowledgement; it does not change the user's platform role.
+- `set_chat_access` persists an owned active resource, enabled additional resources and mode. Member unrestricted mode requires a destination-specific grant AND explicit chat acknowledgement; it does not change the user's platform role. Trusted Admin chats default to host execution on accessible writable destinations without either setup step, including linked Telegram and root installations. Explicit Restricted selections and revocations are preserved.
 - `resolve_context` returns immutable `ExecutionContext`; `revalidate` intersects current policy with its original ceiling. Missing execution identity fails closed.
 - `require_tool` enforces current agent capabilities; `authorize_resource` enforces enabled read/write scope. Delegation narrows the parent ceiling.
 - `execution_scope`, `bind_execution` and `reset_execution` bind runtime identity at every ingress. Serialized durable context must be revalidated after deserialization.

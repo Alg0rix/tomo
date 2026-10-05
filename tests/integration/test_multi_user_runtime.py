@@ -45,6 +45,21 @@ def context(accounts, index=0):
     return store.access.resolve_context(accounts[index], accounts[2][index])
 
 
+def test_root_install_admin_uses_host_without_sandbox_setup_but_member_cannot(accounts, monkeypatch, tmp_path):
+    import os
+
+    monkeypatch.setattr(os, "getuid", lambda: 0)
+    sid = store.create_home_session("usr_admin")["session_id"]
+    admin = store.access.resolve_context("usr_admin", sid)
+    assert admin.execution_mode == "unrestricted"
+    with execution_scope(admin):
+        assert "admin-ready" in execute("bash", {"command": "test -d /tmp && printf admin-ready"})
+    marker = tmp_path / "member-must-not-run-host"
+    with execution_scope(context(accounts)):
+        assert execute("bash", {"command": f"touch {marker}"}).startswith("Error:")
+    assert not marker.exists()
+
+
 def test_dispatch_requires_identity_and_approval_cannot_grant_platform_or_resources(accounts, tmp_path):
     from app.runtime.permissions.grants import set_outside_grant, reset_outside_grant
     marker = tmp_path / "privileged-host-executed"

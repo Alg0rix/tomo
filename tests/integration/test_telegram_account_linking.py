@@ -130,6 +130,35 @@ async def test_web_dm_link_merges_memory_and_keeps_transport_separate(setup, mon
         await api.aclose()
 
 
+async def test_linked_admin_keeps_host_tools_without_assignments(setup, monkeypatch):
+    client, _, _ = setup
+    admin = store.create_user({'username': 'linked_admin', 'password': 'password1', 'role': 'admin'})
+    legacy = store.get_or_create_session('main', 'tg_42')
+    store.append_session_history(legacy, {'type': 'user', 'content': 'Existing Telegram conversation'})
+    client.post('/login', data={'username': 'linked_admin', 'password': 'password1'})
+    code_response = client.post(f'/api/users/{admin["id"]}/telegram/link-code')
+    assert code_response.status_code == 200
+    assert 'Linked to linked_admin' in (await process_update(update(code_response.json()['code'])))['reply']
+    adopted = store.get_session(legacy)
+    assert adopted['user_id'] == admin['id'] and adopted['execution_mode'] == 'unrestricted'
+    assert store.access.resolve_context(admin['id'], legacy).role == 'admin'
+    assert not [g for g in store.access.list_grants(admin['id'], admin['id']) if g['resource_type'] == 'unrestricted']
+    llm = RecordingLLM([calls(('bash', {'command': 'printf telegram-admin-ready'})), text_reply('Done.')])
+    monkeypatch.setattr('app.runtime.agent.loop.get_llm', lambda agent_id=None, **kwargs: llm)
+    bot = Bot()
+    api = TelegramAPI('test-token', transport=httpx2.MockTransport(bot.transport))
+    dispatcher = TelegramDispatcher(api)
+    try:
+        await dispatcher.dispatch(message('Run the command'))
+        await until(lambda: not dispatcher.tasks)
+        results = [e for e in store.get_session_history(legacy) if e.get('type') == 'tool_output']
+        assert any('telegram-admin-ready' in str(e) and not e.get('error') for e in results)
+        assert store.get_session(legacy)['telegram_chat_id'] == '42'
+    finally:
+        await dispatcher.close()
+        await api.aclose()
+
+
 async def test_link_codes_require_owner_private_dm_valid_account_and_single_use(setup, monkeypatch):
     client, uid, bob = setup
     assert client.post(f'/api/users/{bob}/telegram/link-code').status_code == 403
