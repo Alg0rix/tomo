@@ -10,7 +10,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY app ./app
 COPY cli ./cli
-COPY modules ./modules
 COPY defaults ./defaults
 COPY skills ./skills
 
