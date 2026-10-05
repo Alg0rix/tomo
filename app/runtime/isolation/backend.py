@@ -88,6 +88,40 @@ class ContainerBackend:
             raise AccessUnavailable("Local container runtime rejected the operation")
         return result.stdout
 
+    def _known_idle(self, session_id: str) -> bool:
+        rows = self.access.store.with_db(lambda c: dict(c.execute(
+            "SELECT session_id,pending FROM container_admissions WHERE namespace=? AND session_id IN ('',?)",
+            (self.namespace, session_id),
+        ).fetchall()))
+        # A specific uncertain admission overrides a clean namespace marker.
+        return rows.get(session_id, rows.get('', 1)) == 0
+
+    def _record_admission(self, session_id: str, *, pending: bool) -> None:
+        def record(c):
+            c.execute("INSERT INTO container_admissions(namespace,session_id,pending) VALUES (?,?,?) "
+                      "ON CONFLICT(namespace,session_id) DO UPDATE SET pending=excluded.pending",
+                      (self.namespace, session_id, int(pending)))
+            c.commit()
+        self.access.store.with_db(record)
+
+    def _record_empty_namespace(self) -> None:
+        # Only after real inventory recovery, or an explicit offline operator
+        # recovery. Never inferred from root, missing Docker or an empty dict.
+        def record(c):
+            c.execute("DELETE FROM container_admissions WHERE namespace=?", (self.namespace,))
+            c.execute("INSERT INTO container_admissions(namespace,session_id,pending) VALUES (?,'',0)", (self.namespace,))
+            c.commit()
+        self.access.store.with_db(record)
+
+    def _recover_namespace(self) -> None:
+        query = ["ps", "-aq", "--filter", f"label=org.tomo.sandbox.namespace={self.namespace}"]
+        orphans = self._cli(query).split()
+        if orphans:
+            self._cli(["rm", "-f", *orphans])
+        if self._cli(query).strip():
+            raise AccessUnavailable("Local sandbox orphan teardown is unconfirmed")
+        self._record_empty_namespace()
+
     def _initialize(self):
         if self._closed:
             # A previous shutdown released the lease and removed every
@@ -118,12 +152,7 @@ class ContainerBackend:
             # Recovery is cleanup, not admission. Remove retained execution
             # before checking NEW image/cgroup capabilities, which may have
             # become unavailable since the previous coordinator process.
-            orphan_query = ["ps", "-aq", "--filter", f"label=org.tomo.sandbox.namespace={self.namespace}"]
-            orphans = self._cli(orphan_query).split()
-            if orphans:
-                self._cli(["rm", "-f", *orphans])
-            if self._cli(orphan_query).strip():
-                raise AccessUnavailable("Local sandbox orphan teardown is unconfirmed")
+            self._recover_namespace()
             info = json.loads(self._cli(["info", "--format", "json"]))
             if "podman" in self.runtime:
                 controllers = info.get("host", {}).get("cgroupControllers", [])
@@ -277,6 +306,9 @@ class ContainerBackend:
             args.extend(["--tmpfs", f"{path}:rw,nosuid,nodev,size={scratch}m,uid={uid},gid={gid},mode=1777"])
         active = next(r for r in context.resources if r.workplace_id == context.active_workplace_id)
         args.extend([*mounts, "--workdir", active.mount_path, "--entrypoint", "/bin/sleep", self._image_id, "infinity"])
+        # Commit uncertainty BEFORE run: a CLI timeout or coordinator crash
+        # can leave a real container even when no in-memory handle survives.
+        self._record_admission(context.session_id, pending=True)
         environment = Environment(name, context, signature, capacities, scratch)
         self._environments[context.session_id] = environment
         try:
@@ -450,6 +482,7 @@ class ContainerBackend:
             for pipe in (proc.stdin, proc.stdout, proc.stderr):
                 if pipe:
                     pipe.close()
+        self._record_admission(environment.context.session_id, pending=False)
         if self._environments.get(environment.context.session_id) is environment:
             del self._environments[environment.context.session_id]
 
@@ -463,10 +496,10 @@ class ContainerBackend:
             environment = self._environments.get(session_id)
             if environment:
                 self._remove(environment)
-            elif not self._ready:
-                # Recovery/revocation can precede first execution after restart.
-                # Don't need an image to terminate an orphan, but confirmation
-                # does require the actual runtime (failure leaves policy pending).
+            elif not self._known_idle(session_id):
+                # Known-idle host-only chats do not depend on Docker. Unknown
+                # history/uncertain admission still requires real confirmation,
+                # including after restart; runtime failure keeps policy pending.
                 name = f"tomo-chat-{self.namespace}-{hashlib.sha256(session_id.encode()).hexdigest()[:24]}"
                 query = ["ps", "-aq", "--filter", f"label=org.tomo.sandbox.namespace={self.namespace}", "--filter", f"name={name}"]
                 handles = self._cli(query).split()
@@ -474,6 +507,7 @@ class ContainerBackend:
                     self._cli(["rm", "-f", *handles])
                 if self._cli(query).strip():
                     raise AccessUnavailable("Selected local container recovery teardown is unconfirmed")
+                self._record_admission(session_id, pending=False)
 
     def _reap_idle(self):
         while not self._closed:

@@ -184,13 +184,17 @@ class Store:
             coord = agents_store.get_coordinator(self._conn, self._busy.ids())
             if not coord:
                 raise ValueError("No enabled coordinator agent available")
-            if self.get_user(user_id):
+            account = self.get_user(user_id)
+            wid = ''
+            if account:
                 self.access.require_use(user_id, "agent", coord["id"])
+                wid = self.access.ensure_personal_space(user_id)['id']
+                self.access.default_execution_mode(user_id, wid)
             session_id = sessions_store.create_swarm_session(
                 self._conn, [coord["id"]], user_id, coord["id"]
             )
-            if self.get_user(user_id):
-                self.access.initialize_chat(user_id, session_id)
+            if account:
+                self.access.initialize_chat(user_id, session_id, wid)
             return {
                 "session_id": session_id,
                 "coordinator_id": coord["id"],
@@ -327,6 +331,8 @@ class Store:
                     self.access.require_use(user_id, "agent", coordinator_id)
                 if workplace_id:
                     self.access.workplace_permission(user_id, workplace_id)
+                wid = workplace_id or self.access.ensure_personal_space(user_id)['id']
+                self.access.default_execution_mode(user_id, wid)
             sid = sessions_store.create_swarm_session(
                 self._conn,
                 agent_ids,
@@ -336,7 +342,7 @@ class Store:
                 telegram_chat_id=telegram_chat_id,
             )
             if account:
-                self.access.initialize_chat(user_id, sid, workplace_id or "")
+                self.access.initialize_chat(user_id, sid, wid)
             return sid
 
     def set_session_workplace(
@@ -362,6 +368,12 @@ class Store:
                 if not selected:
                     row = self._conn.execute("SELECT id FROM llm_profiles WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
                     selected = row["id"] if row else ""
+            if selected:
+                grant = self.access._grant(account['id'], 'model', selected)
+                if grant and grant['state'] == 'pending':
+                    # Filtering a pending selection to None hides the actual
+                    # recovery state and becomes a misleading 403 downstream.
+                    self.access.require_use(account['id'], 'model', selected)
             if not selected or not self.access.can_use(account["id"], "model", selected):
                 return None
             profile = llm_profiles_store.get_profile(self._conn, selected)
@@ -509,9 +521,12 @@ class Store:
             if account:
                 self.access.require_use(user_id, "agent", agent_id)
             existing = sessions_store.find_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
+            if account and not existing:
+                wid = self.access.ensure_personal_space(user_id)['id']
+                self.access.default_execution_mode(user_id, wid)
             sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
             if account and not existing:
-                self.access.initialize_chat(user_id, sid)
+                self.access.initialize_chat(user_id, sid, wid)
             return sid
 
     def find_session(self, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str | None:

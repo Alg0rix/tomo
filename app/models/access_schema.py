@@ -52,6 +52,15 @@ def migrate_access(conn: sqlite3.Connection) -> None:
             max_concurrent_jobs INTEGER NOT NULL DEFAULT 2 CHECK(max_concurrent_jobs > 0),
             gpu_allowed INTEGER NOT NULL DEFAULT 0 CHECK(gpu_allowed IN (0,1))
         );
+        -- No foreign key: deleting a chat/account must not erase evidence
+        -- of a possibly live container. Empty session_id certifies namespace
+        -- recovery; missing evidence always requires real runtime teardown.
+        CREATE TABLE IF NOT EXISTS container_admissions (
+            namespace TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            pending INTEGER NOT NULL CHECK(pending IN (0,1)),
+            PRIMARY KEY(namespace,session_id)
+        );
         CREATE TABLE IF NOT EXISTS access_audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             actor_id TEXT NOT NULL,

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.runtime.access import (
-    AccessDenied, AccessUnavailable, ExecutionContext, ExecutionQuota, ResourceAccess,
+    AccessChangePending, AccessDenied, AccessUnavailable, ExecutionContext, ExecutionQuota, ResourceAccess,
 )
 
 _PERMISSION_RANK = {"read": 1, "read_write": 2}
@@ -138,6 +138,10 @@ class AccessService:
             return False
 
     def require_use(self, user_id: str, kind: str, rid: str) -> None:
+        self.require_user(user_id)
+        grant = self._grant(user_id, kind, rid)
+        if grant and grant['state'] == 'pending':
+            raise AccessChangePending(f"Selected {kind} access change is pending managed execution teardown; an Admin must complete or recover the change")
         if not self.can_use(user_id, kind, rid):
             raise AccessDenied("Selected resource is unavailable")
 
@@ -432,7 +436,13 @@ class AccessService:
     def default_execution_mode(self, user_id: str, workplace_id: str) -> str:
         """Admins keep host workflows; Members never inherit that default."""
         user = self.require_user(user_id)
-        return "unrestricted" if user["role"] == "admin" and self.can_use(user_id, "unrestricted", workplace_id) else "restricted"
+        if user['role'] == 'admin':
+            grant = self._grant(user_id, 'unrestricted', workplace_id)
+            if grant and grant['state'] == 'pending':
+                raise AccessChangePending("Admin host access change is pending managed execution teardown; complete or recover it before creating a chat")
+            if self.can_use(user_id, 'unrestricted', workplace_id):
+                return 'unrestricted'
+        return 'restricted'
 
     def initialize_chat(self, user_id: str, session_id: str, workplace_id: str = "") -> None:
         """Only used immediately after creation, before any execution starts."""

@@ -12,7 +12,7 @@ from starlette.routing import Match
 from starlette.staticfiles import StaticFiles
 
 from app.core.deps import authenticated_user, require_owned_session
-from app.runtime.access import AccessDenied, AccessUnavailable, execution_scope
+from app.runtime.access import AccessChangePending, AccessDenied, AccessUnavailable, execution_scope
 from app.services import store
 
 # Use actual matched endpoint identities, not URL prefixes (plugins can mount
@@ -204,7 +204,7 @@ class AccessPolicyMiddleware:
                 else:
                     response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
             else:
-                response = JSONResponse({"detail": "Execution access unavailable"},
+                response = JSONResponse({"detail": str(exc) if isinstance(exc, AccessChangePending) else "Execution access unavailable"},
                                         status_code=503 if isinstance(exc, AccessUnavailable) else 403)
             return await response(scope, receive, send)
 
