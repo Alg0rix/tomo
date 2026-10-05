@@ -11,7 +11,7 @@ supported (pure-computation) plugin tools run sandboxed; anything else
 fails closed with an explicit boundary error instead of running on the host.
 
 Like MCP Member calls, this rides on :meth:`ContainerBackend.execute`, so
-owner-scoped mounts (kernel RO), quota-ledger admission,
+owner-scoped mounts (kernel RO), resource limits,
 duration/process-tree supervision, generation-gated revocation and
 confirmed teardown all apply. Plugin install/enable/disable/reload stay
 Admin-only management operations.

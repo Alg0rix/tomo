@@ -55,10 +55,10 @@ def test_account_project_sharing_catalog_and_admin_controls(http):
                   json={'permission': 'use'}).status_code == 200
     assert c.get('/api/sessions/' + sid + '/access').json()['execution_mode'] == 'restricted'
     quota_url = '/api/users/' + alice['id'] + '/quota'
-    assert ac.put(quota_url, json={'disk_mb': 1234, 'max_concurrent_jobs': 3}).status_code == 200
+    assert ac.put(quota_url, json={'disk_mb': 1234}).status_code == 200
     assert ac.put(quota_url, json={'duration_seconds': 45}).status_code == 200
     quota = ac.get(quota_url).json()
-    assert quota['disk_mb'] == 1234 and quota['max_concurrent_jobs'] == 3 and quota['duration_seconds'] == 45
+    assert quota['disk_mb'] == 1234 and 'max_concurrent_jobs' not in quota and quota['duration_seconds'] == 45
     assert c.put(quota_url, json={'disk_mb': 9999}).status_code == 403
 
 

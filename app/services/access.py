@@ -628,7 +628,7 @@ class AccessService:
                 raise ValueError("Quotas must be positive finite numbers")
         sessions = self.stop_user_execution(user_id)
         def update(c):
-            c.execute("INSERT INTO user_execution_quotas(user_id,cpu,memory_mb,disk_mb,duration_seconds,max_concurrent_jobs,gpu_allowed) VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET cpu=excluded.cpu,memory_mb=excluded.memory_mb,disk_mb=excluded.disk_mb,duration_seconds=excluded.duration_seconds,max_concurrent_jobs=excluded.max_concurrent_jobs,gpu_allowed=excluded.gpu_allowed", (user_id, *asdict(quota).values()))
+            c.execute("INSERT INTO user_execution_quotas(user_id,cpu,memory_mb,disk_mb,duration_seconds,gpu_allowed) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET cpu=excluded.cpu,memory_mb=excluded.memory_mb,disk_mb=excluded.disk_mb,duration_seconds=excluded.duration_seconds,gpu_allowed=excluded.gpu_allowed", (user_id, *asdict(quota).values()))
             c.commit()
         self.store.with_db(update)
         self.finish_user_change(user_id, sessions)

@@ -4,7 +4,7 @@ Covers the Member invocation boundary delivered in this stage:
 
 * Member MCP ``stdio`` (Python) tools execute in the caller's own per-chat
   restricted container — never the shared host subprocess — with owner
-  mounts (kernel RO), quota-ledger admission, duration enforcement,
+  mounts (kernel RO), resource limits, duration enforcement,
   generation-gated revocation and no server-secret inheritance.
 * Member ``streamable_http`` tools run as sanitized one-shot sessions
   (stored headers never inherited) behind scoped-egress + SSRF guards.

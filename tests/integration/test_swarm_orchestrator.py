@@ -16,18 +16,11 @@ from app.services.store import store
 
 
 
-def owned_swarm_session(tmp_path, db_name, quota_jobs=8):
-    """Owned Admin session with explicit aggregate quota for swarm workloads.
-
-    A minimal reviewed swarm holds three concurrent slots (orchestration +
-    worker + coordinator review); parallel workers need more. The default
-    quota (2) cannot sustain that, so tests provision it explicitly instead
-    of bypassing admission. Quotas are test-only values, never production.
-    """
+def owned_swarm_session(tmp_path, db_name):
+    """Owned Admin session for swarm workloads."""
     from tests.fakes.access import owned_host_session
     store.rebind(tmp_path / db_name)
     sid = owned_host_session()
-    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": quota_jobs})
     return sid
 
 

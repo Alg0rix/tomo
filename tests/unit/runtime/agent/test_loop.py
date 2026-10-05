@@ -955,9 +955,6 @@ async def test_cancelling_parent_stops_parallel_subagents(monkeypatch) -> None:
     # turns to start (and then be cancelled).
     store.create_agent({"id": "writer", "name": "Writer"})
     sid = owned_host_session()
-    # Parent plus two parallel subagents need three concurrent slots; raise
-    # the real quota instead of bypassing aggregate admission.
-    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": 4})
 
     async def consume():
         async for _ in run_turn("delegate", llm=parent, tools=_delegate_tools(), session_id=sid, agent_id="main", enable_atg=False):

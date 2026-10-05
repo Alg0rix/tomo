@@ -1,6 +1,6 @@
 """Final integrator: multi-chat/channel/swarm/quota/revocation local concurrency acceptance.
 
-Real policy/SQLite/ledger/supervision/storage seams; no mocked auth, store,
+Real policy/SQLite/supervision/storage seams; no mocked auth, store,
 runtime, or quota checks. Each test drives the production admission path it
 names through the public Store/AccessService interfaces and would fail if
 that path regressed to an independent counter, a skipped teardown barrier,
@@ -12,8 +12,6 @@ bounded-volume provisioning, sustained stress, independent security review.
 """
 from __future__ import annotations
 
-import asyncio
-import threading
 
 import pytest
 
@@ -40,68 +38,6 @@ def resolve(uid, sid):
     return store.access.resolve_context(uid, sid)
 
 
-def test_parallel_chats_share_one_user_quota_then_release(world):
-    """Two chats of one user share a single aggregate slot; release re-admits."""
-    from app.runtime import ledger
-    from app.runtime.supervision import admitted_turn
-
-    alice, _, _ = world
-    store.access.set_quota("usr_admin", alice, {"max_concurrent_jobs": 1})
-    chats = [store.create_home_session(alice)["session_id"] for _ in range(2)]
-    first, second = resolve(alice, chats[0]), resolve(alice, chats[1])
-    entered, release = threading.Event(), threading.Event()
-
-    async def hold():
-        async with admitted_turn(first):
-            entered.set()
-            await asyncio.to_thread(release.wait, 10)
-
-    async def attempt():
-        async with admitted_turn(second):
-            return ledger.snapshot(alice)["total"]
-
-    worker = threading.Thread(target=lambda: asyncio.run(hold()), daemon=True)
-    worker.start()
-    assert entered.wait(10)
-    try:
-        with pytest.raises((AccessDenied, AccessUnavailable)):
-            asyncio.run(attempt())
-    finally:
-        release.set()
-        worker.join(10)
-    assert asyncio.run(attempt()) == 1
-
-
-def test_cross_user_quota_isolation(world):
-    """One user at their aggregate limit never blocks another user's chats."""
-    from app.runtime.supervision import admitted_turn
-
-    alice, bob, _ = world
-    store.access.set_quota("usr_admin", alice, {"max_concurrent_jobs": 1})
-    store.access.set_quota("usr_admin", bob, {"max_concurrent_jobs": 1})
-    a_sid = store.create_home_session(alice)["session_id"]
-    b_sid = store.create_home_session(bob)["session_id"]
-    entered, release = threading.Event(), threading.Event()
-
-    async def hold_alice():
-        async with admitted_turn(resolve(alice, a_sid)):
-            entered.set()
-            await asyncio.to_thread(release.wait, 10)
-
-    async def attempt_bob():
-        async with admitted_turn(resolve(bob, b_sid)):
-            return True
-
-    worker = threading.Thread(target=lambda: asyncio.run(hold_alice()), daemon=True)
-    worker.start()
-    assert entered.wait(10)
-    try:
-        assert asyncio.run(attempt_bob()) is True
-    finally:
-        release.set()
-        worker.join(10)
-
-
 def test_quota_change_stops_execution_and_stales_old_ceilings(world):
     """A quota change runs the composite teardown barrier and invalidates
     already-resolved ceilings; freshly resolved contexts keep working."""
@@ -110,7 +46,7 @@ def test_quota_change_stops_execution_and_stales_old_ceilings(world):
     stopped = []
     store.access.register_execution_stopper(lambda s: stopped.append(s))
     old = resolve(alice, sid)
-    store.access.set_quota("usr_admin", alice, {"max_concurrent_jobs": 2})
+    store.access.set_quota("usr_admin", alice, {"cpu": 1})
     assert sid in stopped
     with pytest.raises(AccessDenied):
         store.access.revalidate(old)

@@ -299,7 +299,7 @@ async def test_member_unrestricted_terminal_requires_grant_and_keeps_role(accoun
 
 
 @pytest.mark.asyncio
-async def test_revocation_cancels_and_drains_real_runtime_task_and_aggregate_turn_limit(accounts):
+async def test_revocation_cancels_and_drains_real_runtime_task_without_turn_limit(accounts):
     from app.runtime.supervision import stop_session
     entered = asyncio.Event()
     class WaitingProvider:
@@ -307,15 +307,16 @@ async def test_revocation_cancels_and_drains_real_runtime_task_and_aggregate_tur
             entered.set()
             await asyncio.Event().wait()
     store.access.register_execution_stopper(stop_session)
-    store.access.set_quota("usr_admin", accounts[0], {"max_concurrent_jobs": 1})
     async def drain(sid):
         return [e async for e in run_turn("wait", session_id=sid, llm=WaitingProvider(), enable_atg=False)]
     first = asyncio.create_task(drain(accounts[2][0]))
     await asyncio.wait_for(entered.wait(), 5)
     another = store.create_home_session(accounts[0])["session_id"]
-    rejected = await drain(another)
-    assert rejected[0]['kind'] == 'error'
-    assert 'concurrency' in rejected[0]['message']
+    parallel = asyncio.create_task(drain(another))
+    await asyncio.sleep(0.2)
+    assert not parallel.done(), "a second chat of the same account must not be refused"
+    parallel.cancel()
+    await asyncio.gather(parallel, return_exceptions=True)
     await asyncio.to_thread(store.access.revoke, "usr_admin", accounts[0], "model", accounts[3])
     assert first.done()
     assert first.cancelled()

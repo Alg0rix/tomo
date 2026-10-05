@@ -307,7 +307,7 @@ def test_account_downgrade_and_quota_barriers(db):
     assert db.get_user(uid)["role"] == "member"
     with pytest.raises(AccessDenied):
         db.access.set_quota(uid, uid, {"cpu": 8})
-    quota = db.access.set_quota("usr_admin", uid, {"cpu": 1, "memory_mb": 512, "max_concurrent_jobs": 1})
+    quota = db.access.set_quota("usr_admin", uid, {"cpu": 1, "memory_mb": 512})
     assert quota == db.access.get_quota(uid)
     assert not quota.gpu_allowed
     with pytest.raises(ValueError):

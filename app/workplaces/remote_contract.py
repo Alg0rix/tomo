@@ -8,7 +8,7 @@ validates before acting:
 * the chat-enabled resource set with permissions (execution mounts plus
   transfer-only endpoints);
 * the session access generation (bumped on every grant/access change);
-* a bounded quota slice (duration / concurrency).
+* a bounded quota slice (duration).
 
 Connectors that cannot enforce this contract (older than
 :data:`MIN_EXEC_VERSION` or missing :data:`EXEC_CONTEXT_CAP`) stay
@@ -129,7 +129,6 @@ def build_envelope(context: ExecutionContext, dest_workplace_id: str) -> dict[st
         "resources": resources,
         "quota": {
             "duration_seconds": context.quota.duration_seconds,
-            "max_concurrent_jobs": context.quota.max_concurrent_jobs,
         },
     }
 

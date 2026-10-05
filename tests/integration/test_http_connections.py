@@ -805,10 +805,6 @@ def tunnel(environment, tmp_path):
             store.access.assign(uid, uid, "unrestricted", wp["id"])
             store.access.set_chat_access(uid, sid, wp["id"], execution_mode="unrestricted",
                                          unrestricted_acknowledged=True)
-            # The lane-saturation test drives 8 concurrent broker consumers;
-            # provision aggregate headroom explicitly (quota enforcement
-            # itself is covered by dedicated quota tests, not here).
-            store.access.set_quota(uid, uid, {"max_concurrent_jobs": 10})
             yield root, home, log, wp["id"]
         finally:
             proc.terminate()

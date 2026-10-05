@@ -1,4 +1,4 @@
-"""Stage 2: aggregate quotas, storage fairness, request limits.
+"""Stage 2: resource quotas, storage fairness, request limits.
 
 Real policy/SQLite/HTTP seams; no mocked authorization. Each test drives the
 production admission path it names and would fail if that path regressed to an
@@ -32,61 +32,30 @@ def resolve(alice, sid):
     return store.access.resolve_context(alice, sid)
 
 
-def test_aggregate_ledger_denies_second_turn_and_releases(quota_env):
-    """Two parallel turns share one aggregate slot; release re-admits."""
-    from app.runtime import ledger
+@pytest.mark.parametrize('admin', [False, True], ids=['member', 'admin'])
+def test_parallel_turns_are_not_capped_per_user(quota_env, admin):
+    """Many chats of one account run at once; no per-user concurrency cap."""
     from app.runtime.supervision import admitted_turn
 
-    alice, sessions = quota_env
-    store.access.set_quota("usr_admin", alice, {"max_concurrent_jobs": 1})
-    first, second = resolve(alice, sessions[0]), resolve(alice, sessions[1])
-    entered, release = threading.Event(), threading.Event()
-
-    async def hold():
-        async with admitted_turn(first):
-            entered.set()
-            await asyncio.to_thread(release.wait, 10)
-
-    async def attempt(ctx):
-        async with admitted_turn(ctx):
-            return ledger.snapshot(alice)["total"]
-
-    def run_hold():
-        asyncio.run(hold())
-
-    worker = threading.Thread(target=run_hold, daemon=True)
-    worker.start()
-    assert entered.wait(10)
-    try:
-        with pytest.raises(AccessUnavailable):
-            asyncio.run(asyncio.wait_for(attempt(second), 10))
-        usage = ledger.snapshot(alice)
-        assert usage["turns"] == 1 and usage["total"] == 1
-    finally:
-        release.set()
-        worker.join(10)
-    assert asyncio.run(asyncio.wait_for(attempt(second), 10)) == 1
-
-
-def test_nested_check_shares_turn_slot_but_durable_work_does_not(quota_env):
-    """Synchronous nested work shares the turn slot; new turns do not."""
-    from app.runtime import ledger
-    from app.runtime.supervision import admitted_turn
-
-    alice, sessions = quota_env
-    store.access.set_quota("usr_admin", alice, {"max_concurrent_jobs": 1})
-    first = resolve(alice, sessions[0])
+    alice, _ = quota_env
+    uid = 'usr_admin' if admin else alice
+    contexts = [resolve(uid, store.create_home_session(uid)['session_id']) for _ in range(5)]
 
     async def main():
-        async with admitted_turn(first):
-            # Nested exec inside the admitted turn shares its slot.
-            ledger.check(alice, first.quota, within_session=sessions[0])
-            # A durable admission for another session still denies.
-            with pytest.raises(AccessUnavailable):
-                ledger.check(alice, first.quota)
-            return True
+        entered, release = [asyncio.Event() for _ in contexts], asyncio.Event()
 
-    assert asyncio.run(main())
+        async def hold(ctx, flag):
+            async with admitted_turn(ctx):
+                flag.set()
+                await release.wait()
+
+        tasks = [asyncio.create_task(hold(c, e)) for c, e in zip(contexts, entered)]
+        await asyncio.gather(*(e.wait() for e in entered))
+        release.set()
+        await asyncio.gather(*tasks)
+        return len(tasks)
+
+    assert asyncio.run(asyncio.wait_for(main(), 10)) == 5
 
 
 @pytest.mark.parametrize('admin', [False, True], ids=['member', 'admin'])
@@ -96,7 +65,7 @@ def test_turn_outlives_process_duration_budget_and_releases_admission(quota_env,
 
     alice, sessions = quota_env
     uid = 'usr_admin' if admin else alice
-    store.access.set_quota('usr_admin', uid, {'duration_seconds': 1, 'max_concurrent_jobs': 1})
+    store.access.set_quota('usr_admin', uid, {'duration_seconds': 1})
     sid = store.create_home_session(uid)['session_id'] if admin else sessions[0]
     context = resolve(uid, sid)
 
@@ -105,7 +74,7 @@ def test_turn_outlives_process_duration_budget_and_releases_admission(quota_env,
             async with admitted_turn(context):
                 await asyncio.sleep(1.2)
                 result = 'completed beyond the per-process deadline'
-        # Completion must release the same quota slot, not disable admission.
+        # Completion must release the registration, not disable admission.
         async with admitted_turn(context):
             return result
 
@@ -118,7 +87,6 @@ def test_unlimited_turn_still_honors_stop_and_releases_admission(quota_env, admi
 
     alice, sessions = quota_env
     uid = 'usr_admin' if admin else alice
-    store.access.set_quota('usr_admin', uid, {'max_concurrent_jobs': 1})
     sid = store.create_home_session(uid)['session_id'] if admin else sessions[0]
     context = resolve(uid, sid)
 

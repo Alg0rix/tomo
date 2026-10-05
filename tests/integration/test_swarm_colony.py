@@ -49,8 +49,6 @@ async def test_worker_asks_main_and_receives_answer_before_resuming(tmp_path, mo
     store.rebind(tmp_path / "question.db")
     from tests.fakes.access import owned_host_session
     sid = owned_host_session()
-    # Swarm orchestration + worker + coordinator review hold three slots.
-    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": 4})
     reviews = []
 
     class Worker(ScriptedLLM):

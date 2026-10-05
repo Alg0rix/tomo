@@ -49,7 +49,6 @@ def migrate_access(conn: sqlite3.Connection) -> None:
             memory_mb INTEGER NOT NULL DEFAULT 2048 CHECK(memory_mb > 0),
             disk_mb INTEGER NOT NULL DEFAULT 4096 CHECK(disk_mb > 0),
             duration_seconds INTEGER NOT NULL DEFAULT 300 CHECK(duration_seconds > 0),
-            max_concurrent_jobs INTEGER NOT NULL DEFAULT 2 CHECK(max_concurrent_jobs > 0),
             gpu_allowed INTEGER NOT NULL DEFAULT 0 CHECK(gpu_allowed IN (0,1))
         );
         -- No foreign key: deleting a chat/account must not erase evidence

@@ -30,7 +30,6 @@ class ExecutionQuota:
     memory_mb: int = 2048
     disk_mb: int = 4096
     duration_seconds: int = 300
-    max_concurrent_jobs: int = 2
     gpu_allowed: bool = False
 
 
@@ -85,7 +84,8 @@ class ExecutionContext:
     def from_dict(cls, value: dict) -> ExecutionContext:
         data = dict(value)
         data["resources"] = tuple(ResourceAccess(**r) for r in data.get("resources", ()))
-        data["quota"] = ExecutionQuota(**data.get("quota", {}))
+        fields = ExecutionQuota.__dataclass_fields__
+        data["quota"] = ExecutionQuota(**{k: v for k, v in data.get("quota", {}).items() if k in fields})
         data["tool_ids"] = frozenset(data.get("tool_ids", ()))
         return cls(**data)
 

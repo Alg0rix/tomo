@@ -11,7 +11,6 @@ import subprocess
 import threading
 import time
 import uuid
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -224,8 +223,8 @@ print('full toolchain and isolated browser verified')
 def test_real_kernel_cpu_ram_disk_limits_and_detached_descendant_cleanup(real):
     broker, (db, alice, bob, sid, bob_sid) = real
     context = db.access.resolve_context(alice, sid)
-    per_chat_memory = context.quota.memory_mb // context.quota.max_concurrent_jobs
-    per_chat_cpu = context.quota.cpu / context.quota.max_concurrent_jobs
+    per_chat_memory = context.quota.memory_mb
+    per_chat_cpu = context.quota.cpu
     script = f"""import errno, os
 from pathlib import Path
 assert int(Path('/sys/fs/cgroup/memory.max').read_text()) == {per_chat_memory} * 1024 * 1024
@@ -338,9 +337,8 @@ def test_real_grant_revocation_removes_running_mounts_and_denies_stale_work(real
         worker.join(10)
 
 
-def test_real_revocation_duration_and_aggregate_concurrency(real):
+def test_real_revocation_duration_and_parallel_chats(real):
     broker, (db, alice, bob, sid, bob_sid) = real
-    db.access.set_quota("usr_admin", alice, {**asdict(db.access.get_quota(alice)), "max_concurrent_jobs": 1})
     context = db.access.resolve_context(alice, sid)
     other_sid = db.create_home_session(alice)["session_id"]
     other = db.access.resolve_context(alice, other_sid)
@@ -357,8 +355,8 @@ def test_real_revocation_duration_and_aggregate_concurrency(real):
     while not marker.exists() and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert marker.exists(), results
-    with pytest.raises(AccessUnavailable, match="concurrency"):
-        broker.execute(other, ["true"])
+    # Another chat of the same account is not blocked by the running one.
+    assert broker.execute(other, ["true"]).returncode == 0
     # Policy mutation marks pending, stops and removes live mounts synchronously.
     db.access.set_chat_access(alice, sid, context.active_workplace_id, execution_mode="restricted", additional_workplace_ids=[])
     # Same access is a no-op: force a resource change to exercise stopper.
@@ -375,21 +373,18 @@ def test_real_revocation_duration_and_aggregate_concurrency(real):
     assert broker.execute(fresh, ["true"]).returncode == 0
 
 
-def test_real_background_admission_reserves_quota_before_registering_handle(real, monkeypatch):
+def test_real_background_admission_holds_chat_before_registering_handle(real, monkeypatch):
     from app.runtime.isolation import jobs
 
     broker, (db, alice, bob, sid, bob_sid) = real
     monkeypatch.setattr(jobs, "backend", broker)
-    db.access.set_quota("usr_admin", alice, {**asdict(db.access.get_quota(alice)), "max_concurrent_jobs": 1})
     context = db.access.resolve_context(alice, sid)
     other = db.access.resolve_context(alice, db.create_home_session(alice)["session_id"])
     # Hold the REAL policy fence so the worker cannot run yet. A registered job
-    # must already occupy an enforced admission slot, not merely a Python thread.
+    # must already hold its chat environment, not merely a Python thread.
     with db.access.execution_guard(context):
         handle = jobs.start(context, "sleep 60", context.resources[0].mount_path)["id"]
         try:
-            with pytest.raises(AccessUnavailable, match="concurrency"):
-                broker.execute(other, ["true"])
             with pytest.raises(AccessUnavailable, match="managed work"):
                 jobs.start(context, "true", context.resources[0].mount_path)
         finally:

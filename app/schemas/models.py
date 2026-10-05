@@ -123,7 +123,6 @@ class ExecutionQuotaIn(BaseModel):
     memory_mb: int = Field(default=2048, gt=0)
     disk_mb: int = Field(default=4096, gt=0)
     duration_seconds: int = Field(default=300, gt=0)
-    max_concurrent_jobs: int = Field(default=2, gt=0, le=1024)
     gpu_allowed: bool = False
 
 

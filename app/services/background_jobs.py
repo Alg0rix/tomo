@@ -201,22 +201,7 @@ class BackgroundJobManager:
         context = authorize_tool('bash', {'workplace': workplace_hint})
         with store.access.execution_guard(context):
             with self._lock:
-                # Shared aggregate ledger (durable: the row outlives any
-                # turn). Container-backed rows are admitted by the container
-                # reservation instead; see app/runtime/isolation/jobs.py.
-                from app.runtime import ledger
-                try:
-                    ledger.check(context.user_id, context.quota)
-                except PermissionError as exc:
-                    raise PermissionError('User aggregate background concurrency limit reached') from exc
-                active = [j for j in store.list_background_jobs() if j['user_id'] == context.user_id and j['status'] in ACTIVE]
-                if len(active) >= context.quota.max_concurrent_jobs:
-                    raise PermissionError('User aggregate background concurrency limit reached')
-                # The nested host/container spawn below is part of THIS
-                # admitted unit (the row is already registered), so it
-                # shares the slot instead of consuming a second one.
-                with ledger.spawning_scope(context.user_id, 'background'):
-                    return self._start(command, workplace_hint)
+                return self._start(command, workplace_hint)
 
     def _start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
         from app.runtime.tools.progress import current_call_id

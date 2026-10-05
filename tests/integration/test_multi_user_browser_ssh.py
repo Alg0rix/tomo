@@ -331,7 +331,7 @@ def test_restricted_ssh_admit_exec_ro_escape_generation(world, tmp_path):
                       "resources": [{"workplace_id": wp["id"], "permission": "read_write",
                                       "destination_id": wp["id"], "kind": "ssh",
                                       "transfer_only": False}],
-                      "quota": {"duration_seconds": 10, "max_concurrent_jobs": 2}}
+                      "quota": {"duration_seconds": 10}}
         stale = transport.call("exec", {"exec_context": stale_env, "script": "echo stale"},
                                timeout=10)
         assert not stale["ok"], stale

@@ -212,7 +212,7 @@ The current full image is a coordinator application image. Its toolchain can pro
 - Prevent escapes through symlinks, mount aliases, path traversal, and host process access.
 - Enforce read-only access at the backend/filesystem level, not just in file tools; it also applies to bash/Python/browser execution.
 - Restrict network access and Tomo control endpoints according to user identity; terminals must not provide access to privileged APIs.
-- Apply CPU, RAM, disk, duration, and concurrency limits. GPU access is optional and explicitly granted.
+- Apply CPU, RAM, disk, and duration limits. There is no per-user concurrency cap. GPU access is optional and explicitly granted.
 - Tools or MCP services running outside the sandbox still require equivalent resource authorization.
 - If the isolation backend is unavailable, member terminal execution fails closed. It must not fall back to host bash.
 

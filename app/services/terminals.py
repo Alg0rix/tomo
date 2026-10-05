@@ -1,8 +1,8 @@
 """Chat-owned interactive terminals: restricted container shells and host shells.
 
 Restricted terminals run ``/bin/sh`` inside the chat's HELD container
-environment (same authorized mounts, owner context, shared quota ledger,
-duration caps, private home, kernel-enforced read-only mounts). Unrestricted
+environment (same authorized mounts, owner context,
+resource and duration caps, private home, kernel-enforced read-only mounts). Unrestricted
 terminals remain host PTYs and require a matching Admin grant plus explicit
 chat activation; the platform role is unchanged. No host PTY fallback exists
 for restricted execution. Browser connections only attach to owned terminals.
@@ -278,7 +278,7 @@ class ContainerTerminal(LocalTerminal):
     """Restricted interactive shell inside the chat's held container.
 
     The same authorized mounts (kernel-enforced read-only/read-write), owner
-    context, shared quota ledger, duration caps and private container home
+    context, resource and duration caps and private container home
     as one-shot actions. The shell's tty is allocated inside the container
     (``script``); the server PTY stays raw so bytes pass through. There is
     no host PTY fallback: without the container backend this refuses.
@@ -312,8 +312,7 @@ class ContainerTerminal(LocalTerminal):
         from app.runtime.isolation.backend import backend as container_backend
         # The docker CLI client is coordinator plumbing, not execution: the
         # shell runs contained (cgroup CPU/RAM, read-only image, authorized
-        # bind mounts, no network). Admission was charged by the manager's
-        # durable ledger check, so this spawn must not take a second slot.
+        # bind mounts, no network).
         argv = [container_backend.runtime, "exec", "-i",
                 "--workdir", self.cwd, self.environment.name,
                 "script", "-qec", "/bin/sh -i", "/dev/null"]
@@ -398,7 +397,6 @@ class TerminalManager:
         if (
             sum(t.session_id == context.session_id for t in self.terminals.values()) >= MAX_PER_SESSION
             or len(self.terminals) >= MAX_TOTAL
-            or sum(t.execution.user_id == context.user_id for t in self.terminals.values()) >= context.quota.max_concurrent_jobs
         ):
             raise ValueError(
                 "Terminal limit reached. Close an existing terminal first."
@@ -468,11 +466,6 @@ class TerminalManager:
         if os.name != "posix":
             raise NotImplementedError("Local terminals require a POSIX host")
         self._caps(context)
-        from app.runtime import ledger
-        # Shared aggregate ledger (durable: terminals outlive turns, so no
-        # within_session sharing). After the static caps so their 409
-        # contract keeps its meaning under a roomy aggregate quota.
-        ledger.check(context.user_id, context.quota)
         cwd.mkdir(parents=True, exist_ok=True)
         terminal = LocalTerminal(session_id, cwd, cols, rows, execution=context)
         self.terminals[terminal.id] = terminal

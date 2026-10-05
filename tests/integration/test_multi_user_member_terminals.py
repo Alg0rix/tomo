@@ -288,22 +288,13 @@ def test_container_terminals_do_not_sustain_idle_life(world, monkeypatch):
         assert held is None or held.held == 0
 
 
-def test_durable_terminal_admission_counts_against_quota(world):
-    from dataclasses import asdict
-
+def test_terminals_are_not_capped_by_user_quota(world):
     alice, _, sid, _ = world
-    store.access.set_quota("usr_admin", alice["id"],
-                           {**asdict(store.access.get_quota(alice["id"])),
-                            "max_concurrent_jobs": 2})
     base = f"/api/sessions/{sid}/terminals"
     with member_client() as client:
         login(client, alice["username"])
-        first = client.post(base, json={})
-        second = client.post(base, json={})
-        assert (first.status_code, second.status_code) == (201, 201)
-        # Two durable terminals fill the aggregate quota: a third is denied
-        # rather than sharing either slot.
-        assert client.post(base, json={}).status_code == 503
+        statuses = [client.post(base, json={}).status_code for _ in range(3)]
+        assert statuses == [201, 201, 201]
         for row in client.get(base).json()["terminals"]:
             assert client.delete(base + "/" + row["id"]).status_code == 200
 

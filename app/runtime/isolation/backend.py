@@ -220,23 +220,6 @@ class ContainerBackend:
 
     def _ensure(self, context: ExecutionContext, *, job_id: str | None = None, durable: bool = False) -> Environment:
         self._destination(context)
-        # Shared aggregate ledger (see app/runtime/ledger.py): container
-        # environments draw from the same per-user total as turns, host
-        # processes, background work and terminals. Checked under the
-        # backend lock so check-and-reserve is atomic for this backend.
-        from app.runtime import ledger
-        if job_id and any(e.job_id == job_id for e in self._environments.values()
-                           if e.context.user_id == context.user_id):
-            # Durable reservation made by reserve_job(): already admitted.
-            pass
-        elif job_id or durable:
-            # Durable work (queued jobs, held interactive terminals) outlives
-            # any single turn and always takes its own aggregate slot; it
-            # must never share a live turn via within_session.
-            ledger.check(context.user_id, context.quota)
-        else:
-            # Synchronous exec inside the caller's admitted turn shares it.
-            ledger.check(context.user_id, context.quota, within_session=context.session_id)
         self._initialize()
         mounts, capacities, fingerprint = self._mounts(context)
         signature = f"{context.access_generation}:{fingerprint}:{context.quota}"
@@ -250,19 +233,8 @@ class ContainerBackend:
             return previous
         others = [e for e in self._environments.values() if e.context.user_id == context.user_id]
         quota = context.quota
-        if len(others) >= quota.max_concurrent_jobs:
-            # Idle environments do not retain admission slots indefinitely.
-            idle = next((e for e in others if not e.busy), None)
-            if idle:
-                self._remove(idle)
-                others.remove(idle)
-            else:
-                raise AccessUnavailable("User aggregate concurrency limit reached")
-        slots = quota.max_concurrent_jobs
-        if quota.memory_mb < slots:
-            raise AccessUnavailable("Memory quota is too small for the configured aggregate concurrency")
-        scratch = min(256, max(1, quota.disk_mb // (slots * 4)))
-        union = dict(capacities)
+        scratch = min(256, max(1, quota.disk_mb // 8))
+        base = dict(capacities)
         # Include inactive persistent writable managed resources too. Otherwise
         # sequential chats on disjoint disks could each fill a separate quota.
         for visible in self.access.list_visible_workplaces(context.user_id):
@@ -271,12 +243,21 @@ class ContainerBackend:
             resource = self.access.store.get_workplace(visible["id"])
             path = Path(resource["root_path"])
             fs = os.statvfs(path)
-            union[path.stat().st_dev] = math.ceil(fs.f_blocks * fs.f_frsize / (1024 * 1024))
-        for other in others:
-            union.update(other.disk_filesystems)
-        # Three tmpfs regions each with a hard limit; all live environments
-        # reserve their entire capacity (including idle ones).
-        if sum(union.values()) + (len(others) + 1) * scratch * 3 > quota.disk_mb:
+            base[path.stat().st_dev] = math.ceil(fs.f_blocks * fs.f_frsize / (1024 * 1024))
+
+        def reserved() -> int:
+            union = dict(base)
+            for other in others:
+                union.update(other.disk_filesystems)
+            # Three tmpfs regions each with a hard limit; all live environments
+            # reserve their entire capacity (including idle ones).
+            return sum(union.values()) + (len(others) + 1) * scratch * 3
+
+        # Idle environments do not hold their disk reservation indefinitely.
+        while reserved() > quota.disk_mb and (idle := next((e for e in others if not e.busy), None)):
+            self._remove(idle)
+            others.remove(idle)
+        if reserved() > quota.disk_mb:
             raise AccessUnavailable("Selected local storage lacks a disk capacity boundary within the user's aggregate quota")
         uid, gid = os.getuid(), os.getgid()
         name = f"tomo-chat-{self.namespace}-{hashlib.sha256(context.session_id.encode()).hexdigest()[:24]}"
@@ -284,8 +265,8 @@ class ContainerBackend:
                 "--label", f"org.tomo.sandbox.user={hashlib.sha256(context.user_id.encode()).hexdigest()}",
                 "--network", "none", "--ipc", "private", "--read-only", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
-                "--cpus", str(quota.cpu / slots), "--memory", f"{max(1, quota.memory_mb // slots)}m",
-                "--memory-swap", f"{max(1, quota.memory_mb // slots)}m", "--pids-limit", "512",
+                "--cpus", str(quota.cpu), "--memory", f"{quota.memory_mb}m",
+                "--memory-swap", f"{quota.memory_mb}m", "--pids-limit", "512",
                 "--ulimit", "nofile=1024:1024", "--ulimit", "core=0:0", "--log-driver", "none",
                 "--env", "HOME=/home/chat", "--env", "XDG_CACHE_HOME=/home/chat/.cache",
                 "--env", "TMPDIR=/tmp", "--env", "PYTHONUNBUFFERED=1",

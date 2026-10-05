@@ -4,7 +4,7 @@ Admin MCP calls use a persistent host subprocess/HTTP session (see
 ``manager.McpConnectionManager``). Members never share that host authority:
 every Member stdio tool call runs the server command **inside the caller's
 own per-chat container** via :meth:`ContainerBackend.execute`, which already
-provides owner-scoped mounts (kernel RO), quota-ledger admission,
+provides owner-scoped mounts (kernel RO), resource limits,
 duration/process-tree supervision, generation-gated revocation and confirmed
 teardown. There is deliberately no persistent Member session to keep alive.
 
