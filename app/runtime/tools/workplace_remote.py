@@ -88,15 +88,7 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
                 raise AccessUnavailable("Execution destination is offline")
             _require_remote_capability(wp, context.execution_mode)
         return wp
-    if not context.legacy_admin:
-        raise AccessDenied("An active working location is required")
-    # Only the generation-zero bootstrap migration may use the local sentinel.
-    # Unknown explicit hints still reject, never fall through locally.
-    if hint or override:
-        raise AccessDenied("Requested working location is unavailable")
-    # The legacy exception authorizes ONLY its migrated local host sentinel;
-    # it must not reuse an agent's independent remote bindings as authority.
-    return None
+    raise AccessDenied("An active working location is required")
 
 
 def agent_remote_kind(agent_id: str | None = None) -> str | None:

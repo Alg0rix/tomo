@@ -70,10 +70,6 @@ class ExecutionContext:
     access_generation: int = 0
     quota: ExecutionQuota = field(default_factory=ExecutionQuota)
     tool_ids: frozenset[str] = frozenset()
-    # Only explicit trusted Admin handling may bind legacy non-login Telegram.
-    trusted_channel: bool = False
-    session_owner_id: str = ""
-    legacy_admin: bool = False
 
     @property
     def workplace_id(self) -> str:

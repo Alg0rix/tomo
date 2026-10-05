@@ -83,8 +83,6 @@ def _retained_context(terminal, context: ExecutionContext) -> ExecutionContext:
     retained = getattr(terminal, "execution_context", None) or getattr(terminal, "execution", None)
     if isinstance(retained, dict):
         retained = ExecutionContext.from_dict(retained)
-    if retained is None and context.legacy_admin:
-        return store.access.revalidate(context)
     if not isinstance(retained, ExecutionContext) or retained.user_id != context.user_id or retained.session_id != context.session_id:
         raise AccessDenied("Terminal execution identity unavailable")
     return store.access.revalidate(retained)

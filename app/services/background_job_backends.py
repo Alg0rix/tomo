@@ -62,13 +62,7 @@ def resolve_backend(workplace_hint: str | None = None) -> tuple[str, str, str]:
             raise AccessUnavailable("Remote background destination has no verified owned, duration-bounded supervised boundary")
         return active.kind, active.workplace_id, active.root_path
 
-    # The only resource-less exception is the foundation's migrated bootstrap
-    # LOCAL sentinel. Never reinterpret an agent/hint against a global catalog.
-    if not context.legacy_admin or context.destination_id != "__legacy_host__":
-        raise AccessDenied("An explicit background execution destination is required")
-    from app.runtime.tools.sandbox import resolve_work_root
-
-    return "local", "", str(resolve_work_root())
+    raise AccessDenied("An explicit background execution destination is required")
 
 
 def _rpc(backend: str, workplace_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:

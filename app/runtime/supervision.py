@@ -83,8 +83,11 @@ async def admitted_turn(context):
     admission = asyncio.create_task(asyncio.to_thread(admit))
     try:
         await asyncio.shield(admission)
-        async with asyncio.timeout(context.quota.duration_seconds):
-            yield
+        # A turn spans multiple provider/tool calls and may legitimately take
+        # longer than an individual process budget. Do not wall-clock cut it
+        # for either Admin or Member. Stop/revocation still cancel this task;
+        # provider/tool deadlines and backend resource limits remain separate.
+        yield
     finally:
         def release(future):
             # Do not await a pending policy fence here: a mutation may itself

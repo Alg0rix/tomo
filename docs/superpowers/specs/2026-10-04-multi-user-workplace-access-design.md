@@ -212,7 +212,7 @@ Do not use the coordinator's runtime data as the sandbox environment. Server sta
 - Apply the boundary to bash, Python, browsers, file tools, and external tool services alike.
 - Do not inherit server secrets/environment. Supply only explicitly authorized credentials.
 - Internet access may be available for tools, but unauthorized internal/control endpoints must be restricted. Network reachability must not turn terminals into a privileged API path.
-- Apply per-user aggregate CPU, RAM, disk, duration, and job/concurrency limits. Admins configure values; roles do not encode quota numbers. GPU use requires explicit assignment.
+- Apply per-user aggregate CPU, RAM, disk, and job/concurrency limits. Duration budgets apply to individual managed processes/tools, not the entire conversational turn: neither Admin nor Member turns have a total wall-clock cutoff. Existing provider/tool deadlines, iteration limits, explicit Stop and revocation remain. Admins configure resource values; roles do not encode quota numbers. GPU use requires explicit assignment.
 - If the backend cannot enforce required isolation, reject restricted execution; never downgrade to host bash.
 
 ### Remote destinations

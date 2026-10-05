@@ -37,6 +37,8 @@ class PausedLLM(ScriptedLLM):
 @pytest.fixture
 def setup(tmp_path):
     store.rebind(tmp_path / "inputs.db")
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([42, 43, -100])
     store.update_settings(
         {
             "telegram_allowed_chat_ids": [42, 43, -100],

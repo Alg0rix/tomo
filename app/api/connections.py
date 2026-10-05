@@ -44,14 +44,7 @@ def broker_scope(request: Request) -> dict:
     try:
         user = store.access.require_user(scope.get("user_id") or "")
         sid = scope.get("session_id") or ""
-        if store.get_owned_session(sid, user["id"]):
-            context = store.access.resolve_context(user["id"], sid)
-        elif user["role"] == "admin":
-            # Only the foundation's explicit legacy Telegram Admin exception;
-            # linked users' private sessions still fail this resolver.
-            context = store.access.resolve_trusted_channel_context(user["id"], sid)
-        else:
-            raise AccessDenied("Session is unavailable")
+        context = store.access.resolve_context(user["id"], sid)
         store.access.revalidate(context)
     except AccessDenied:
         raise HTTPException(403, "Broker execution identity unavailable") from None

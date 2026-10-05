@@ -599,16 +599,7 @@ async def run_channel_turn(
     from app.channels.telegram_context import bind_turn, reset_turn
 
     from app.runtime.access import bind_execution, reset_execution
-    if session["user_id"].startswith("tg_"):
-        # Explicit operator-designated Admin principal for allowlisted legacy
-        # chats only; linked accounts always execute as their session owner.
-        chat_id = session.get("telegram_chat_id")
-        if not chat_id or not chat_is_allowed(chat_id):
-            raise PermissionError("Legacy Telegram execution is not authorized")
-        admin_id = store.get_settings().get("telegram_execution_admin_id") or "usr_admin"
-        execution = store.access.resolve_trusted_channel_context(admin_id, session_id)
-    else:
-        execution = store.access.resolve_context(session["user_id"], session_id)
+    execution = store.access.resolve_context(session["user_id"], session_id)
     access_token = bind_execution(execution)
     token = bind_turn(ui)
     try:

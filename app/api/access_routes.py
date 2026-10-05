@@ -124,13 +124,10 @@ async def revoke_project_share(workplace_id: str, user_id: str, request: Request
 @router.get("/sessions/{session_id}/access")
 async def chat_access(session_id: str, request: Request, _: AuthDep):
     session = require_owned_session(request, session_id)
-    legacy = (authenticated_user(request)["role"] == "admin" and not session.get("workplace_id")
-              and session.get("access_generation") == 0)
     return {"active_workplace_id": session.get("workplace_id"),
             "additional_workplace_ids": session.get("additional_workplace_ids", []),
-            "execution_mode": "unrestricted" if legacy else session.get("execution_mode", "restricted"),
-            "legacy_unrestricted": legacy,
-            "destination_id": "__legacy_host__" if legacy else session.get("workplace_id"),
+            "execution_mode": session.get("execution_mode", "restricted"),
+            "destination_id": session.get("workplace_id"),
             "access_pending": session.get("access_pending", False),
             "unrestricted_workplace_ids": [w["id"] for w in store.access.list_visible_workplaces(session_user_id(request))
                                            if store.access.can_use(session_user_id(request), "unrestricted", w["id"])],

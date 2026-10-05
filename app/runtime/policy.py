@@ -329,15 +329,12 @@ def require_owned_service(session_id: str, *, user_id: str | None = None) -> str
     uid = user_id or (context.user_id if context else None)
     if not uid:
         raise AccessDenied("Caller identity is required")
-    account = store.access.require_user(uid)
+    store.access.require_user(uid)
     if context and (context.user_id != uid or context.session_id != session_id):
         raise AccessDenied("Session is unavailable")
     session = store.get_session(session_id)
-    expected = (context.session_owner_id if context and context.trusted_channel else uid)
-    if not session or session['user_id'] != expected:
+    if not session or session['user_id'] != uid:
         raise AccessDenied("Session is unavailable")
-    if context and context.trusted_channel and account['role'] != 'admin':
-        raise AccessDenied("Trusted channel principal is unavailable")
     return uid
 
 
