@@ -9,7 +9,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 import pytest
-from app.core import home
 from app.runtime.tools import bash, progress, sandbox
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
 from app.services import store
@@ -17,14 +16,12 @@ from app.workplaces.hub import hub
 import json
 import app.core.config as config
 from app.runtime.artifacts.fs import (
-    bind_session,
     category_for,
     delete_artifact_file,
     list_artifact_files,
-    reset_session,
     write_artifact_text,
 )
-from app.runtime.tools.sandbox import bind_agent, reset_agent
+from tests.fakes.access import owned_admin_scope, restricted_member_with_egress
 from unittest.mock import MagicMock, patch
 import httpx2
 from app.runtime.tools import web_search
@@ -54,12 +51,12 @@ def test_bash_schema_loaded() -> None:
 
 
 def test_bash_echo_in_work_dir() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
-    sandbox.bind_agent("ops")
-    result = execute("bash", {"command": "pwd && echo hello-tomo"})
+    # Explicit owned Admin unrestricted context; the shell cwd is the session
+    # workplace root, not the legacy agent TOMO_WORK dir.
+    with owned_admin_scope() as (_ctx, root):
+        result = execute("bash", {"command": "pwd && echo hello-tomo"})
     assert "hello-tomo" in result
-    assert str(work.resolve()) in result
+    assert str(root.resolve()) in result
 
 
 def test_bash_missing_command_is_error() -> None:
@@ -67,22 +64,22 @@ def test_bash_missing_command_is_error() -> None:
 
 
 def test_bash_timeout_is_error_string() -> None:
-    sandbox.bind_agent("ops")
-    result = bash.run({"command": "sleep 5", "timeout": 0.2})
+    with owned_admin_scope():
+        result = bash.run({"command": "sleep 5", "timeout": 0.2})
     assert result.startswith("Error")
     assert "timed out" in result.lower()
 
 
 def test_bash_streams_output_before_exit() -> None:
-    sandbox.bind_agent("ops")
-    seen: list[tuple[float, str]] = []
-    token = progress.bind(lambda chunk: seen.append((time.monotonic(), chunk)))
-    try:
-        started = time.monotonic()
-        result = bash.run({"command": "echo first; sleep 0.6; echo second >&2"})
-        finished = time.monotonic()
-    finally:
-        progress.reset(token)
+    with owned_admin_scope():
+        seen: list[tuple[float, str]] = []
+        token = progress.bind(lambda chunk: seen.append((time.monotonic(), chunk)))
+        try:
+            started = time.monotonic()
+            result = bash.run({"command": "echo first; sleep 0.6; echo second >&2"})
+            finished = time.monotonic()
+        finally:
+            progress.reset(token)
     assert result == "first\nstderr:\nsecond"
     assert "".join(c for _, c in seen) == "first\nsecond\n"
     first_at = next(ts for ts, c in seen if "first" in c)
@@ -90,8 +87,8 @@ def test_bash_streams_output_before_exit() -> None:
 
 
 def test_bash_nonzero_exit_includes_code() -> None:
-    sandbox.bind_agent("ops")
-    result = execute("bash", {"command": "exit 7"})
+    with owned_admin_scope():
+        result = execute("bash", {"command": "exit 7"})
     assert "7" in result
 
 
@@ -117,9 +114,8 @@ def _rebind(tmp_path: Path, monkeypatch) -> None:
 
 def test_save_artifact_content_writes_file(tmp_path: Path, monkeypatch) -> None:
     _rebind(tmp_path, monkeypatch)
-    token = bind_agent("main")
-    sid = bind_session("sess_demo")
-    try:
+    # Artifacts are scoped to the execution session, not a bound agent dir.
+    with owned_admin_scope(["main"]) as (ctx, _root):
         out = execute(
             "save_artifact",
             {"filename": "report.md", "content": "# Hello\n"},
@@ -127,15 +123,12 @@ def test_save_artifact_content_writes_file(tmp_path: Path, monkeypatch) -> None:
         assert not out.startswith("Error"), out
         data = json.loads(out)
         assert data["filename"] == "report.md"
-        assert data["session_id"] == "sess_demo"
+        assert data["session_id"] == ctx.session_id
         path = Path(data["filepath"])
         assert path.is_file()
-        assert "sessions/sess_demo/artifacts" in str(path).replace("\\", "/")
-        listed = list_artifact_files("sess_demo")
+        assert f"sessions/{ctx.session_id}/artifacts" in str(path).replace("\\", "/")
+        listed = list_artifact_files(ctx.session_id)
         assert listed["total"] == 1
-    finally:
-        reset_session(sid)
-        reset_agent(token)
 
 
 def test_artifacts_isolated_per_session(tmp_path: Path, monkeypatch) -> None:
@@ -149,12 +142,8 @@ def test_artifacts_isolated_per_session(tmp_path: Path, monkeypatch) -> None:
 
 def test_save_artifact_source_path_moves_local_file(tmp_path: Path, monkeypatch) -> None:
     _rebind(tmp_path, monkeypatch)
-    token = bind_agent("main")
-    sid = bind_session("sess_move")
-    try:
-        work = home.agent_work_dir("main")
-        work.mkdir(parents=True, exist_ok=True)
-        src = work / "out.csv"
+    with owned_admin_scope(["main"]) as (_ctx, root):
+        src = root / "out.csv"
         src.write_text("a,b\n1,2\n", encoding="utf-8")
         out = execute(
             "save_artifact",
@@ -165,49 +154,51 @@ def test_save_artifact_source_path_moves_local_file(tmp_path: Path, monkeypatch)
         dest = Path(data["filepath"])
         assert dest.is_file()
         assert not src.exists()
-    finally:
-        reset_session(sid)
-        reset_agent(token)
 
 
 def test_list_and_fetch_artifact(tmp_path: Path, monkeypatch) -> None:
     _rebind(tmp_path, monkeypatch)
-    token = bind_agent("coder")
-    sid = bind_session("sess_fetch")
-    try:
-        write_artifact_text("sess_fetch", "notes.txt", "keep me")
-        listed = execute("list_artifacts", {"filter": "notes"})
-        data = json.loads(listed)
-        assert data["total"] >= 1
-        fetched = execute("fetch_artifact", {"filename": "notes.txt"})
-        info = json.loads(fetched)
-        assert info["filename"] == "notes.txt"
-        assert info["session_id"] == "sess_fetch"
-    finally:
-        reset_session(sid)
-        reset_agent(token)
+    from app.runtime.artifacts.fs import bind_session, reset_session
+    with owned_admin_scope(["main"]) as (ctx, _root):
+        # Production run_turn binds the artifact session explicitly.
+        arts_token = bind_session(ctx.session_id)
+        try:
+            out = execute(
+                "save_artifact",
+                {"filename": "notes.txt", "content": "keep me"},
+            )
+            assert not out.startswith("Error"), out
+            listed = execute("list_artifacts", {"filter": "notes"})
+            data = json.loads(listed)
+            assert data["total"] >= 1
+            fetched = execute("fetch_artifact", {"filename": "notes.txt"})
+            info = json.loads(fetched)
+            assert info["filename"] == "notes.txt"
+            assert info["session_id"] == ctx.session_id
+        finally:
+            reset_session(arts_token)
 
 
 def test_save_requires_session(tmp_path: Path, monkeypatch) -> None:
+    # The legacy no-session premise moved into execution authorization:
+    # without a bound execution identity the tool denies, and with one the
+    # artifact is always scoped to the current chat session, never the agent.
     _rebind(tmp_path, monkeypatch)
-    token = bind_agent("main")
-    try:
-        out = execute(
-            "save_artifact",
-            {"filename": "x.md", "content": "no session"},
-        )
-        assert out.startswith("Error")
-        assert "session" in out.lower()
-    finally:
-        reset_agent(token)
+    denied = execute("save_artifact", {"filename": "x.md", "content": "no session"})
+    assert denied.startswith("Error")
+    with owned_admin_scope(["main"]) as (ctx, _root):
+        out = execute("save_artifact", {"filename": "x.md", "content": "scoped"})
+        assert not out.startswith("Error"), out
+        assert json.loads(out)["session_id"] == ctx.session_id
 
 
 def test_legacy_catalog_save_artifact(tmp_path: Path, monkeypatch) -> None:
     _rebind(tmp_path, monkeypatch)
-    out = execute(
-        "save_artifact",
-        {"title": "Report", "path": "/tmp/out.md", "kind": "report"},
-    )
+    with owned_admin_scope():
+        out = execute(
+            "save_artifact",
+            {"title": "Report", "path": "/tmp/out.md", "kind": "report"},
+        )
     assert out.startswith("Saved artifact")
     arts = store.search_artifacts("Report")
     assert arts and arts[0]["path"] == "/tmp/out.md"
@@ -257,6 +248,9 @@ def _client_with_responses(*responses: MagicMock) -> MagicMock:
 
 
 def test_web_search_formats_html_results() -> None:
+    # Explicit restricted Member + scoped egress (real settings path): the
+    # mocked HTTP transport below stands in for the public endpoint only;
+    # identity, ceiling and egress policy are all real.
     html = """
     <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fpython.org">Python</a>
     <a class="result__snippet">A programming language.</a>
@@ -268,8 +262,9 @@ def test_web_search_formats_html_results() -> None:
     mock_resp.text = html
     mock_client = _client_with_responses(mock_resp)
 
-    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
-        result = execute("web_search", {"query": "python"})
+    with restricted_member_with_egress():
+        with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
+            result = execute("web_search", {"query": "python"})
     assert "1. Python" in result
     assert "A programming language." in result
     assert "https://python.org" in result
@@ -307,8 +302,9 @@ def test_web_search_no_results() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
-        result = execute("web_search", {"query": "zzzz"})
+    with restricted_member_with_egress():
+        with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
+            result = execute("web_search", {"query": "zzzz"})
     assert result.startswith("No results")
 
 
@@ -327,13 +323,14 @@ def test_web_search_empty_ia_body_falls_through() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
-        result = execute(
-            "web_search",
-            {
-                "query": "Bank BCA developer API mutasi rekening statement transaction API"
-            },
-        )
+    with restricted_member_with_egress():
+        with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
+            result = execute(
+                "web_search",
+                {
+                    "query": "Bank BCA developer API mutasi rekening statement transaction API"
+                },
+            )
     assert result.startswith("No results")
     assert "Expecting value" not in result
 
@@ -355,8 +352,9 @@ def test_web_search_falls_back_to_instant_answer() -> None:
 
     mock_client = _client_with_responses(html_resp, ia_resp)
 
-    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
-        result = execute("web_search", {"query": "python"})
+    with restricted_member_with_egress():
+        with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
+            result = execute("web_search", {"query": "python"})
     assert "1. Python" in result
     assert "A programming language." in result
 
@@ -377,10 +375,11 @@ def test_web_search_overall_timeout_unsticks_hung_request(monkeypatch) -> None:
 
     mock_client.get.side_effect = hang
 
-    with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
-        t0 = time.monotonic()
-        result = execute("web_search", {"query": "python"})
-        elapsed = time.monotonic() - t0
+    with restricted_member_with_egress():
+        with patch("app.runtime.tools.web_search.httpx2.Client", return_value=mock_client):
+            t0 = time.monotonic()
+            result = execute("web_search", {"query": "python"})
+            elapsed = time.monotonic() - t0
     assert result.startswith("Error")
     assert "timed out" in result.lower()
     assert elapsed < 1.5

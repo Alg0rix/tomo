@@ -3,14 +3,15 @@
   <div class="modal-card modal-wide">
     <div class="modal-head"><h3>New chat</h3></div>
     <div class="modal-body">
-      <p class="modal-lead">Starts as a normal chat. Select agents you want available for direct @mentions. Ask for a team in chat or turn on Team for one message. <strong>Folder</strong> defaults to each agent’s work dir under <code>~/tomo/&lt;agent&gt;</code>.</p>
+      <p class="modal-lead">Starts as a normal chat. Select agents you want available for direct @mentions. Ask for a team in chat or turn on Team for one message. <strong>Personal space</strong> keeps your files private and persistent. Additional resources can be enabled after the chat is created.</p>
       <label class="field" style="margin-bottom:12px;display:block">
         <span class="faint" style="display:block;margin-bottom:4px">Workplace / folder</span>
         <div class="folder-pick-row">
           <select id="newChatWorkplace" class="input">
-            <option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>
+            <option value="">Personal space</option>
           </select>
-          <button type="button" class="btn ghost sm" id="newChatBrowseFolder" title="Browse server folders (like VS Code Open Folder)">Browse…</button>
+          <button type="button" class="btn ghost sm" id="newChatCreateProject">+ Project</button>
+          {% if current_role == 'admin' %}<button type="button" class="btn ghost sm" id="newChatBrowseFolder" title="Register server folder">Browse…</button>{% endif %}
         </div>
       </label>
       <div class="agent-pick-list" id="newChatAgents">

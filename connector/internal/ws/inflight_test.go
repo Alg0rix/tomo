@@ -18,6 +18,7 @@ import (
 func TestDisconnectWhileCommandRunsReplaysOnce(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", root)
+	admitTestSession(t)
 	store := testStore(t)
 	dispatcher := newRPCDispatcher(store)
 	defer dispatcher.close()
@@ -40,13 +41,13 @@ func TestDisconnectWhileCommandRunsReplaysOnce(t *testing.T) {
 		return c
 	}
 	old := dial()
-	msg := request("in-flight", "exec_bash", map[string]any{"script": "echo started > started; sleep 0.3; printf x >> out"})
+	msg := request("in-flight", "exec_bash", withExecContext(map[string]any{"script": "echo started > started; sleep 0.3; printf x >> out"}))
 	if err := old.WriteJSON(msg); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := os.Stat(filepath.Join(root, "started")); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "wp_ws", "started")); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -73,7 +74,7 @@ func TestDisconnectWhileCommandRunsReplaysOnce(t *testing.T) {
 	if !out.OK {
 		t.Fatal(out.Error)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "out"))
+	raw, err := os.ReadFile(filepath.Join(root, "wp_ws", "out"))
 	if err != nil || string(raw) != "x" {
 		t.Fatalf("in-flight command repeated: %q %v", raw, err)
 	}

@@ -27,8 +27,9 @@ def _row_to_user(row: sqlite3.Row, *, include_hash: bool = False) -> dict[str, A
         "id": row["id"],
         "username": row["username"],
         "display_name": row["display_name"] or "",
-        "role": row["role"] or "admin",
+        "role": row["role"] if row["role"] in ("admin", "member") else "member",
         "enabled": bool(row["enabled"]),
+        "access_pending": bool(row["access_pending"]) if "access_pending" in row.keys() else False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -114,7 +115,9 @@ def create_user(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any
     if _get_row_by_username(conn, username):
         raise ValueError(f"Username already taken: {username}")
     display_name = str(data.get("display_name") or username).strip() or username
-    role = str(data.get("role") or "admin").strip() or "admin"
+    role = str(data.get("role") or "member").strip()
+    if role not in ("admin", "member"):
+        raise ValueError("Role must be admin or member")
     enabled = 1 if data.get("enabled", True) else 0
     uid = _new_id(conn)
     now = _now()
@@ -156,12 +159,19 @@ def update_user(
             raise ValueError(f"Password must be at least {MIN_PASSWORD_LEN} characters")
         pw_hash = hash_password(password)
 
+    role = str(data.get("role", row["role"]))
+    if role not in ("admin", "member"):
+        raise ValueError("Role must be admin or member")
     now = _now()
-    conn.execute(
-        "UPDATE users SET display_name=?, enabled=?, password_hash=?, updated_at=? WHERE id=?",
-        (display_name, 1 if enabled else 0, pw_hash, now, user_id),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "UPDATE users SET display_name=?, role=?, enabled=?, password_hash=?, updated_at=? WHERE id=?",
+            (display_name, role, 1 if enabled else 0, pw_hash, now, user_id),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise ValueError(str(exc)) from exc
     return get_user(conn, user_id)
 
 
@@ -171,8 +181,12 @@ def delete_user(conn: sqlite3.Connection, user_id: str) -> bool:
         return False
     if bool(row["enabled"]) and count_enabled(conn) <= 1:
         raise ValueError("Cannot delete the last enabled account")
-    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-    conn.commit()
+    try:
+        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise ValueError(str(exc)) from exc
     return True
 
 

@@ -15,6 +15,22 @@ from app.services.chat import run_session_turn
 from app.services.store import store
 
 
+
+def owned_swarm_session(tmp_path, db_name, quota_jobs=8):
+    """Owned Admin session with explicit aggregate quota for swarm workloads.
+
+    A minimal reviewed swarm holds three concurrent slots (orchestration +
+    worker + coordinator review); parallel workers need more. The default
+    quota (2) cannot sustain that, so tests provision it explicitly instead
+    of bypassing admission. Quotas are test-only values, never production.
+    """
+    from tests.fakes.access import owned_host_session
+    store.rebind(tmp_path / db_name)
+    sid = owned_host_session()
+    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": quota_jobs})
+    return sid
+
+
 @pytest.mark.parametrize("execution_mode", [None, "swarm"])
 @pytest.mark.parametrize("bad_arguments, expected_error", [
     ({}, "plan workers in this main chat"),
@@ -24,8 +40,7 @@ from app.services.store import store
 async def test_plan_repair_workers_and_synthesis_use_one_main_chat_loop(tmp_path, monkeypatch, execution_mode, bad_arguments, expected_error):
     from tests.fakes.llm import ScriptedLLM, text_reply
 
-    store.rebind(tmp_path / "main_chat_plan.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_swarm_session(tmp_path, "main_chat_plan.db")
     request = "Test swarm lagi"
     plan = {"tasks": [{"key": "check", "agent_id": "research", "brief": "Report a test finding", "tools": []}]}
     root_rounds = []
@@ -71,8 +86,7 @@ async def test_plan_repair_workers_and_synthesis_use_one_main_chat_loop(tmp_path
 async def test_single_agent_chat_can_delegate_repeatedly_without_mentions(tmp_path, monkeypatch) -> None:
     from tests.fakes.llm import ScriptedLLM, text_reply
 
-    store.rebind(tmp_path / "single_chat_delegate.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_swarm_session(tmp_path, "single_chat_delegate.db")
     store.update_agent("research", {"enabled": False})
 
     class MainLLM(ScriptedLLM):
@@ -115,8 +129,7 @@ async def test_single_agent_chat_can_delegate_repeatedly_without_mentions(tmp_pa
 
 
 async def test_dynamic_workers_run_concurrently_then_synthesize(tmp_path, monkeypatch) -> None:
-    store.rebind(tmp_path / "dynamic_swarm.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "dynamic_swarm.db")
     plan = {
         "agents": [
             {"name": "Reviewer A", "purpose": "Find correctness issues", "base_agent_id": "main"},
@@ -163,8 +176,7 @@ async def test_clarify_answer_can_dispatch_without_another_chat_message(tmp_path
     from app.runtime.permissions import hitl
     from tests.fakes.llm import ScriptedLLM, text_reply
 
-    store.rebind(tmp_path / "clarify_dispatch.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_swarm_session(tmp_path, "clarify_dispatch.db")
     request = "Review the supplied evidence"
 
     class MainLLM(ScriptedLLM):
@@ -207,20 +219,20 @@ async def test_clarify_answer_can_dispatch_without_another_chat_message(tmp_path
 
 
 def test_invalid_plan_does_not_create_session_worker(tmp_path) -> None:
-    store.rebind(tmp_path / "bad_plan.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "bad_plan.db")
     run_id = store.with_db(lambda conn: swarm_store.create_run(conn, session_id, "Review"))
     plan = {"agents": [{"name": "Temp", "purpose": "Review", "base_agent_id": "main"}],
             "tasks": [{"key": "a", "agent_id": "Temp", "brief": "Review",
                        "depends_on": ["missing"]}]}
-    assert swarm._accept_plan(plan, session_id=session_id, run_id=run_id,
-                              coordinator_id="main", tasks={}) == []
+    from app.runtime.access import execution_scope
+    with execution_scope(store.access.resolve_context("usr_admin", session_id)):
+        assert swarm._accept_plan(plan, session_id=session_id, run_id=run_id,
+                                  coordinator_id="main", tasks={}) == []
     assert store.with_db(lambda conn: swarm_store.list_agents(conn, session_id)) == []
 
 
 async def test_dependent_worker_waits_for_result(tmp_path, monkeypatch) -> None:
-    store.rebind(tmp_path / "dependencies.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "dependencies.db")
     plan = {"agents": [], "tasks": [
         {"key": "first", "agent_id": "ops", "brief": "Find the cause"},
         {"key": "second", "agent_id": "research", "brief": "Verify the cause",
@@ -249,8 +261,7 @@ async def test_dependent_worker_waits_for_result(tmp_path, monkeypatch) -> None:
 
 
 async def test_failed_worker_blocks_dependencies_and_returns_evidence(tmp_path, monkeypatch):
-    store.rebind(tmp_path / "worker_failure.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_swarm_session(tmp_path, "worker_failure.db")
     plan = {"tasks": [
         {"key": "first", "agent_id": "ops", "brief": "Inspect", "tools": []},
         {"key": "second", "agent_id": "research", "brief": "Verify", "depends_on": ["first"], "tools": []},
@@ -271,8 +282,7 @@ async def test_failed_worker_blocks_dependencies_and_returns_evidence(tmp_path, 
 
 
 async def test_disconnect_cancels_swarm_workers(tmp_path, monkeypatch):
-    store.rebind(tmp_path / "worker_cancel.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_swarm_session(tmp_path, "worker_cancel.db")
     cancelled = asyncio.Event()
 
     async def waiting_worker(*args, **kwargs):
@@ -297,8 +307,7 @@ async def test_disconnect_cancels_swarm_workers(tmp_path, monkeypatch):
 
 
 async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypatch) -> None:
-    store.rebind(tmp_path / "selected_tools.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "selected_tools.db")
     plan = {"agents": [], "tasks": [
         {"key": "prod_a", "agent_id": "ops", "brief": "Inspect prod A",
          "tools": ["bash", "portal", "swarm_board"]},
@@ -331,8 +340,7 @@ async def test_coordinator_selects_bash_and_portal_for_worker(tmp_path, monkeypa
 
 async def test_board_posts_stream_live_with_run_phases(tmp_path, monkeypatch) -> None:
     """The work panel renders findings while workers run, then marks synthesis."""
-    store.rebind(tmp_path / "board_live.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "board_live.db")
     plan = {"agents": [{"name": "Scout", "purpose": "Finds prices", "base_agent_id": "main"}],
             "tasks": [{"key": "price", "agent_id": "Scout", "brief": "Find GPU prices"}]}
 
@@ -364,16 +372,17 @@ async def test_board_posts_stream_live_with_run_phases(tmp_path, monkeypatch) ->
 
 
 def test_coordinator_cannot_assign_disabled_tool(tmp_path) -> None:
-    store.rebind(tmp_path / "disabled_tool.db")
-    session_id = store.create_swarm_session(["main"], user_id="web")
+    session_id = owned_swarm_session(tmp_path, "disabled_tool.db")
     store.set_agent_tools("ops", {"bash": False})
     run_id = store.with_db(lambda conn: swarm_store.create_run(conn, session_id, "Review"))
     plan = {"agents": [], "tasks": [
         {"key": "prod_a", "agent_id": "ops", "brief": "Inspect prod A",
          "tools": ["bash"]},
     ]}
-    assert swarm._accept_plan(plan, session_id=session_id, run_id=run_id,
-                              coordinator_id="main", tasks={}) == []
+    from app.runtime.access import execution_scope
+    with execution_scope(store.access.resolve_context("usr_admin", session_id)):
+        assert swarm._accept_plan(plan, session_id=session_id, run_id=run_id,
+                                  coordinator_id="main", tasks={}) == []
 
 
 def test_existing_task_table_gains_tool_selection_column(tmp_path) -> None:

@@ -9,6 +9,8 @@ import pytest
 
 from app.core import config
 from app.runtime.portal import paths, transfers
+from contextlib import contextmanager
+
 from app.runtime.portal.io import Location, copy_sync, parse_location
 from app.runtime.tools import portal as portal_tool
 from app.runtime.tools import sandbox
@@ -17,15 +19,35 @@ from app.services import store
 
 
 def _rebind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from tests.fakes.access import ensure_stoppers
     work = tmp_path / "work"
     work.mkdir()
     monkeypatch.setenv("TOMO_WORK", str(work))
     monkeypatch.setattr(config, "TOMO_WORK", work)
     store.rebind(tmp_path / "portal.db")
+    ensure_stoppers()
     reset_registry()
     sandbox.reset_agent()
     transfers.reset()
     return work
+
+
+@contextmanager
+def _bound(wid: str):
+    """Bind an explicit owned Admin context with this workplace activated.
+
+    Transfers are authorized, owner-attributed work: anonymous execution
+    stays denied. Unrestricted Admin scope matches the pre-existing test
+    workplaces (external tmp roots); grants are real policy calls.
+    """
+    from app.runtime.access import execution_scope
+    store.access.assign("usr_admin", "usr_admin", "workplace", wid, permission="read_write")
+    store.access.assign("usr_admin", "usr_admin", "unrestricted", wid)
+    sid = store.create_swarm_session(["main"], user_id="usr_admin")
+    store.access.set_chat_access("usr_admin", sid, wid, execution_mode="unrestricted",
+                                 unrestricted_acknowledged=True)
+    with execution_scope(store.access.resolve_context("usr_admin", sid)):
+        yield
 
 
 def test_parse_portal_path() -> None:
@@ -63,13 +85,14 @@ def test_copy_local_to_portal_sync(
     )
     assert wp["id"] == "wp_dev"
 
-    out = portal_tool.run(
-        {
-            "action": "copy",
-            "src": "wp_dev:artifact.bin",
-            "dst": "/_portal/edge/artifact.bin",
-        }
-    )
+    with _bound("wp_dev"):
+        out = portal_tool.run(
+            {
+                "action": "copy",
+                "src": "wp_dev:artifact.bin",
+                "dst": "/_portal/edge/artifact.bin",
+            }
+        )
     assert out.startswith("Copied")
     dest = work / "_portal" / "edge" / "artifact.bin"
     assert dest.read_bytes() == payload
@@ -89,13 +112,14 @@ def test_copy_portal_to_local(
         {"id": "wp_node", "name": "Node", "kind": "local", "root_path": str(root)}
     )
 
-    out = portal_tool.run(
-        {
-            "action": "copy",
-            "src": "/_portal/cfg/app.toml",
-            "dst": "wp_node:etc/app.toml",
-        }
-    )
+    with _bound("wp_node"):
+        out = portal_tool.run(
+            {
+                "action": "copy",
+                "src": "/_portal/cfg/app.toml",
+                "dst": "wp_node:etc/app.toml",
+            }
+        )
     assert "Copied" in out
     assert (root / "etc" / "app.toml").read_text(encoding="utf-8") == "mode = 'edge'\n"
 
@@ -114,23 +138,24 @@ def test_async_transfer_and_status(
         {"id": "wp_big", "name": "Big", "kind": "local", "root_path": str(root)}
     )
 
-    out = portal_tool.run(
-        {
-            "action": "copy",
-            "src": "wp_big:big.bin",
-            "dst": "/_portal/cache/big.bin",
-        }
-    )
-    assert "Started transfer" in out
-    job_id = out.split()[2].rstrip(":")
-    deadline = time.time() + 5
-    status = ""
-    while time.time() < deadline:
-        status = portal_tool.run({"action": "status", "id": job_id})
-        if "status: done" in status:
-            break
-        time.sleep(0.05)
-    assert "status: done" in status
+    with _bound("wp_big"):
+        out = portal_tool.run(
+            {
+                "action": "copy",
+                "src": "wp_big:big.bin",
+                "dst": "/_portal/cache/big.bin",
+            }
+        )
+        assert "Started transfer" in out
+        job_id = out.split()[2].rstrip(":")
+        deadline = time.time() + 5
+        status = ""
+        while time.time() < deadline:
+            status = portal_tool.run({"action": "status", "id": job_id})
+            if "status: done" in status:
+                break
+            time.sleep(0.05)
+        assert "status: done" in status
     assert (work / "_portal" / "cache" / "big.bin").read_bytes() == blob
 
 
@@ -143,17 +168,22 @@ def test_parse_location_by_name(
     store.create_workplace(
         {"id": "wp_x", "name": "EdgeNode", "kind": "local", "root_path": str(root)}
     )
-    loc = parse_location("EdgeNode:rel/path.txt")
+    with _bound("wp_x"):
+        loc = parse_location("EdgeNode:rel/path.txt")
     assert loc.kind == "local"
     assert loc.workplace_id == "wp_x"
     assert loc.path == "rel/path.txt"
 
 
-def test_portal_registry_schema() -> None:
+def test_portal_registry_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _rebind(tmp_path, monkeypatch)
     tools = get_openai_tools()
     portal = next(t for t in tools if t["function"]["name"] == "portal")
     assert "action" in portal["function"]["parameters"]["properties"]
-    assert execute("portal", {"action": "list"}).startswith("Portals:")
+    store.create_workplace({"id": "wp_reg", "name": "Reg", "kind": "local",
+                            "root_path": str(tmp_path)})
+    with _bound("wp_reg"):
+        assert execute("portal", {"action": "list"}).startswith("Portals:")
 
 
 def test_copy_sync_direct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,6 +193,9 @@ def test_copy_sync_direct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     src_path.write_bytes(b"abc123")
     dst = Location(kind="portal", path="/_portal/b/out.bin")
     src = Location(kind="portal", path="/_portal/a/in.bin")
-    n = copy_sync(src, dst)
+    store.create_workplace({"id": "wp_sync", "name": "Sync", "kind": "local",
+                            "root_path": str(tmp_path)})
+    with _bound("wp_sync"):
+        n = copy_sync(src, dst)
     assert n == 6
     assert (work / "_portal" / "b" / "out.bin").read_bytes() == b"abc123"

@@ -17,6 +17,8 @@ def run(arguments: dict[str, Any]) -> str:
         return "Error: use entity=type/slug; memory stores only vault pages"
     action = str(arguments.get("action") or "list").strip().lower()
     key = str(arguments.get("entity") or "").strip()
+    from app.runtime.policy import authorize_tool
+    authorize_tool("memory", arguments)
     uid = current_user_id()
     try:
         if action == "search":

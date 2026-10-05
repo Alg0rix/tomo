@@ -107,29 +107,19 @@
     var sel = $('homeWorkplace');
     if (!sel) return;
     var keep = selectedId != null ? selectedId : (sel.value || '');
-    var sorted = (list || []).slice().sort(function (a, b) {
-      var ka = a.kind === 'local' ? 0 : 1, kb = b.kind === 'local' ? 0 : 1;
-      if (ka !== kb) return ka - kb;
-      return String(a.name || a.id).localeCompare(String(b.name || b.id));
-    });
-    var opts = ['<option value="">Tomo work dir</option>'];
-    sorted.forEach(function (w) {
-      var path = w.kind === 'local' ? (w.root_path || '')
-        : w.kind === 'ssh' ? ((w.ssh_user || '') + '@' + (w.ssh_host || '')).replace(/^@/, '')
-        : (w.connector_hostname || w.host_detail || '') + (w.online ? ' · online' : ' · offline');
-      opts.push('<option value="' + esc(w.id) + '" title="' + esc(path || w.name || w.id) + '">' +
-        esc(w.name || w.id) + ' · ' + esc(w.kind || '?') + '</option>');
-    });
-    sel.innerHTML = opts.join('');
-    sel.value = keep && sorted.some(function (w) { return w.id === keep; }) ? keep : '';
+    Tomo.access.fill(sel, list || [], keep);
   }
   async function loadWorkplaces(selectedId) {
     try {
-      var d = await Tomo.api('/api/workplaces');
+      var d = await Tomo.api('/api/access/resources');
       fillWorkplaces((d && d.workplaces) || [], selectedId);
     } catch (e) {}
   }
-  $('homeBrowseFolder').addEventListener('click', function () {
+  $('homeCreateProject').addEventListener('click', async function () {
+    try { var project = await Tomo.access.createProject(); if (project) await loadWorkplaces(project.id); }
+    catch (e) { Tomo.toast(e.message || 'Project creation failed', 'err'); }
+  });
+  if ($('homeBrowseFolder')) $('homeBrowseFolder').addEventListener('click', function () {
     if (!Tomo.pickLocalFolder) { Tomo.toast('Folder picker not loaded', 'err'); return; }
     Tomo.pickLocalFolder({ title: 'Open folder for new chat' }).then(async function (res) {
       await loadWorkplaces(res.workplace_id);
@@ -366,11 +356,14 @@
   function renderHouse(list) {
     var box = $('homeHouse');
     if (!list || !list.length) {
-      box.innerHTML = '<div class="home-empty">No residents yet. <a href="/agents">Add an agent ↗</a></div>';
+      box.innerHTML = document.body.dataset.role === 'admin'
+        ? '<div class="home-empty">No residents yet. <a href="/agents">Add an agent ↗</a></div>'
+        : '<div class="home-empty">No authorized agents available.</div>';
       return;
     }
     box.innerHTML = list.map(function (a) {
-      return '<a class="home-res ' + esc(a.state) + '" href="/agents/' + encodeURIComponent(a.id) + '">' + avatar(a.id, a.name) +
+      var href = document.body.dataset.role === 'admin' ? '/agents/' + encodeURIComponent(a.id) : '/sessions?agent=' + encodeURIComponent(a.id);
+      return '<a class="home-res ' + esc(a.state) + '" href="' + href + '">' + avatar(a.id, a.name) +
         '<div><div class="n">' + esc(a.name) + '</div><div class="m">' + esc(a.activity || a.state) + '</div></div></a>';
     }).join('');
   }

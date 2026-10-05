@@ -9,6 +9,7 @@ import pytest
 
 from app.runtime.tools import web_fetch
 from app.runtime.tools.registry import execute, reset_registry
+from tests.fakes.access import restricted_member_with_egress
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +33,7 @@ def test_web_fetch_returns_text(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
+    with restricted_member_with_egress(), patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/page"})
     assert result == "hello from web"
 
@@ -54,7 +55,7 @@ def test_web_fetch_html_to_markdown(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
+    with restricted_member_with_egress(), patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/page"})
     assert "# Hello" in result
     assert "**bold**" in result
@@ -84,7 +85,7 @@ def test_web_fetch_large_html_keeps_main_content_before_truncation(monkeypatch) 
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
+    with restricted_member_with_egress(), patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute(
             "web_fetch", {"url": "https://mermaid.js.org/config/usage.html"}
         )
@@ -117,7 +118,7 @@ def test_web_fetch_large_script_heavy_html_is_bounded(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = mock_resp
 
-    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
+    with restricted_member_with_egress(), patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute(
             "web_fetch",
             {"url": "https://deepwiki.com/mermaid-js/mermaid/2.5-security-model"},
@@ -129,7 +130,9 @@ def test_web_fetch_large_script_heavy_html_is_bounded(monkeypatch) -> None:
 
 
 def test_web_fetch_blocks_loopback() -> None:
-    result = execute("web_fetch", {"url": "http://127.0.0.1/"})
+    # Scoped egress is on, but loopback stays blocked by the SSRF guard.
+    with restricted_member_with_egress():
+        result = execute("web_fetch", {"url": "http://127.0.0.1/"})
     assert result.startswith("Error")
     assert "blocked" in result.lower() or "private" in result.lower() or "loopback" in result.lower()
 
@@ -156,7 +159,7 @@ def test_web_fetch_blocks_redirect_to_loopback(monkeypatch) -> None:
     mock_client.__exit__.return_value = False
     mock_client.get.return_value = redirect
 
-    with patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
+    with restricted_member_with_egress(), patch("app.runtime.tools.web_fetch.httpx2.Client", return_value=mock_client):
         result = execute("web_fetch", {"url": "https://example.com/go"})
     assert result.startswith("Error")
     assert "blocked" in result.lower() or "private" in result.lower() or "loopback" in result.lower()
@@ -199,7 +202,7 @@ def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> N
     full_text = "".join(f"line{i:06d}\n" for i in range(20_000))  # ~ 220k chars
     assert len(full_text) > web_fetch._MAX_CHARS
 
-    with patch(
+    with restricted_member_with_egress(), patch(
         "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for(full_text),
     ):
@@ -218,7 +221,7 @@ def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> N
     offset = next_offset
     pages_walked = 1
     while True:
-        with patch(
+        with restricted_member_with_egress(), patch(
             "app.runtime.tools.web_fetch.httpx2.Client",
             return_value=_mock_client_for(full_text),
         ):
@@ -242,7 +245,7 @@ def test_web_fetch_long_text_pages_instead_of_dropping_content(monkeypatch) -> N
 def test_web_fetch_respects_explicit_limit(monkeypatch) -> None:
     monkeypatch.setattr(web_fetch, "_is_blocked_host", lambda host: None)
     text = "abcdefghij" * 10  # 100 chars
-    with patch(
+    with restricted_member_with_egress(), patch(
         "app.runtime.tools.web_fetch.httpx2.Client",
         return_value=_mock_client_for(text),
     ):
@@ -289,9 +292,10 @@ def test_web_fetch_dns_timeout_unsticks_hung_lookup(monkeypatch) -> None:
         return []
 
     monkeypatch.setattr(web_fetch.socket, "getaddrinfo", hang)
-    t0 = time.monotonic()
-    result = execute("web_fetch", {"url": "https://example.com/page"})
-    elapsed = time.monotonic() - t0
+    with restricted_member_with_egress():
+        t0 = time.monotonic()
+        result = execute("web_fetch", {"url": "https://example.com/page"})
+        elapsed = time.monotonic() - t0
     assert result.startswith("Error")
     assert "timed out" in result.lower()
     assert elapsed < 1.0

@@ -33,9 +33,10 @@ func TestExecBashStreamSendsProgressBeforeResponse(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := conn.WriteJSON(request("live", "exec_bash", map[string]any{
+	admitTestSession(t)
+	if err := conn.WriteJSON(request("live", "exec_bash", withExecContext(map[string]any{
 		"script": "echo one; sleep 0.4; echo two", "stream": true,
-	})); err != nil {
+	}))); err != nil {
 		t.Fatal(err)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))

@@ -28,6 +28,10 @@ def remote(tmp_path, monkeypatch):
         fail=False,
         on_download=None,
     )
+    from app.services import store as _store
+
+    # Deterministic identity store for private-route authentication.
+    _store.rebind(tmp_path / "updates-identity.db")
     manager = PluginManager(tmp_path / "home")
     from app.plugins import manager as module
 
@@ -109,7 +113,7 @@ def test_same_version_commit_update_is_live_and_preserves_data(remote):
 
     @app.middleware("http")
     async def auth(request, call_next):
-        request.state.auth_user_id = "alice"
+        request.state.auth_user_id = "usr_admin"
         return await call_next(request)
 
     app.mount("/plugins", manager)
@@ -317,16 +321,22 @@ def test_api_and_agent_update_controls_require_admin(remote, monkeypatch):
 
     @app.middleware("http")
     async def auth(request, call_next):
-        request.state.auth_user_id = "alice"
+        request.state.auth_user_id = "usr_admin"
         return await call_next(request)
 
     app.include_router(router)
     client = TestClient(app)
-    role = {"role": "user", "enabled": True}
+    role = {"id": "alice", "role": "member", "enabled": True}
     monkeypatch.setattr(store, "get_user", lambda uid: role)
     assert client.post("/api/plugins/check-updates", json={}).status_code == 403
     assert client.post("/api/plugins/demo/update").status_code == 403
-    assert run({"action": "outdated"}).startswith("Error:")
+    from app.runtime.tools.user_ctx import bind_user, reset_user
+    member = store.create_user({"username": "updatemember", "password": "password1", "role": "member"})
+    token = bind_user(member["id"])
+    try:
+        assert run({"action": "outdated"}).startswith("Error:")
+    finally:
+        reset_user(token)
     role["role"] = "admin"
     assert (
         client.post(
@@ -343,8 +353,10 @@ def test_api_and_agent_update_controls_require_admin(remote, monkeypatch):
         ]
         == "available"
     )
-    assert json.loads(run({"action": "outdated"}))[0]["status"] == "available"
-    assert json.loads(run({"action": "update", "id": "demo"}))["updated"]
+    from tests.fakes.access import owned_admin_scope
+    with owned_admin_scope():
+        assert json.loads(run({"action": "outdated"}))[0]["status"] == "available"
+        assert json.loads(run({"action": "update", "id": "demo"}))["updated"]
     assert client.post("/api/plugins/demo/update").json()["updated"] is False
     assert manager.list()[0]["commit"] == "b" * 40
 

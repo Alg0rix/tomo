@@ -1,5 +1,6 @@
 {# Rooms 間 and Under the roof groups; inline on most pages, behind More on /sessions. #}
 {% set menu = page == 'sessions' %}
+{% if current_role == 'admin' %}
 <div class="app-rail-section-label app-rail-sec">
   <span>Rooms · <span class="app-rail-kanji" lang="ja">間</span></span>
   <a href="/extensions" title="Add a room" aria-label="Add a room"{% if menu %} role="menuitem"{% endif %}>+</a>
@@ -30,12 +31,14 @@
   </span>
   <span class="app-rail-label">Workplaces</span>
 </a>
+{% endif %}
 <a class="app-rail-item {{ 'active' if page == 'scheduler' }}" href="/scheduler" title="Routines"{% if menu %} role="menuitem"{% endif %}>
   <span class="app-rail-ico" aria-hidden="true">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5L15 15"/></svg>
   </span>
   <span class="app-rail-label">Routines</span>
 </a>
+{% if current_role == 'admin' %}
 <a class="app-rail-item {{ 'active' if page == 'plugins' }}" href="/extensions" title="Plugins"{% if menu %} role="menuitem"{% endif %}>
   <span class="app-rail-ico" aria-hidden="true">
     {% with icon='puzzle' %}{% include 'partials/plugin_icon.html' %}{% endwith %}
@@ -49,4 +52,5 @@
   </span>
   <span class="app-rail-label">Evaluate</span>
 </a>
+{% endif %}
 {% endif %}

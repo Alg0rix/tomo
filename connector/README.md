@@ -51,8 +51,54 @@ tomo-connector logout
 
 Optional: `TOMO_CONNECTOR_PAIR_AND_RUN=1` makes `pair` also start `run`.
 
-State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).  
+State: `~/.tomo-connector/` (or `$TOMO_CONNECTOR_HOME`).
 Jail: `$TOMO_CONNECTOR_ROOT` or `$TOMO_CONNECTOR_HOME/work`.
+
+## Supervised execution contracts (≥ 0.4.0)
+
+Every execution RPC must carry `params.exec_context`: an immutable envelope
+minted by the coordinator (owner user, owning session/agent, execution mode,
+destination id, access generation, enabled resources with permissions, quota
+slice). The destination validates it **before acting**:
+
+* `exec_admit` registers `(owner, session)` at a generation and attests
+  `contract: 2` (+ `sandbox`/`sandbox_img`); all other execution RPCs
+  require a live registration at the same generation (revocation bumps the
+  generation, which fails closed here);
+* file/exec paths resolve under destination-owned `<root>/<workplace_id>/`
+  scopes — coordinator-side paths are never trusted; read-only scopes
+  reject writes; absolute host paths and symlink escapes reject;
+* background jobs are tagged by owner/session with a destination-enforced
+  deadline (`timeout` capped by the admitted quota); only the same
+  owner/session may observe/kill them; `exec_teardown` kills the scope's
+  jobs and acknowledges (`torn_down: true`);
+* connectors older than 0.4.0 or without `exec-context-v1` stay
+  fail-closed at the coordinator: no local fallback, no privileged default.
+
+Restricted execution additionally requires the destination to attest an
+equivalent per-chat container boundary (`remote-sandbox-v1` + image). This
+connector advertises it **only** when the operator provisioned it:
+
+```bash
+# Bake the image digest into the sandbox image build:
+echo -n "<image-digest>" > /etc/tomo-sandbox   # inside the image
+# And run the connector with the same pinned digest:
+TOMO_CONNECTOR_SANDBOX_IMAGE=<image-digest> tomo-connector run
+```
+
+`TOMO_CONNECTOR_SANDBOX_MARKER` overrides the marker path (default
+`/etc/tomo-sandbox`). A bare host connector never advertises the
+capability, so restricted execution refuses instead of running unconfined.
+Unrestricted destinations (matching Admin grant + explicit chat
+acknowledgement) run under the destination OS account with supervision —
+the sandbox claim is operator-attested provisioning, not a sandbox
+proof; verify destination images out-of-band. See
+`deployment/sandbox/README.md` for the full-toolchain image and topology.
+
+SSH workplaces reach a general-purpose host account and cannot verify a
+restricted boundary: they are unrestricted-only (same grant +
+acknowledgement model, quota-capped timeouts), with no background-job
+supervision — use a tunnel destination for supervised async work.
 
 ## Private-input broker in tunnel chats
 

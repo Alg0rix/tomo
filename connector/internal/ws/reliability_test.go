@@ -31,8 +31,9 @@ func request(id, method string, params map[string]any) envelope {
 func TestConcurrentReplayAndRestart(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", root)
+	admitTestSession(t)
 	store := testStore(t)
-	msg := request("append-once", "write_file", map[string]any{"path": "out", "content": "x", "mode": "append"})
+	msg := request("append-once", "write_file", withExecContext(map[string]any{"path": "out", "content": "x", "mode": "append"}))
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
@@ -53,7 +54,7 @@ func TestConcurrentReplayAndRestart(t *testing.T) {
 	if out := restarted.execute(msg); !out.OK {
 		t.Fatal(out.Error)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "out"))
+	raw, err := os.ReadFile(filepath.Join(root, "wp_ws", "out"))
 	if err != nil || string(raw) != "x" {
 		t.Fatalf("mutation repeated: %q %v", raw, err)
 	}
@@ -66,8 +67,9 @@ func TestConcurrentReplayAndRestart(t *testing.T) {
 func TestUncertainReplayNeverExecutes(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", root)
+	admitTestSession(t)
 	store := testStore(t)
-	msg := request("interrupted", "write_file", map[string]any{"path": "out", "content": "x"})
+	msg := request("interrupted", "write_file", withExecContext(map[string]any{"path": "out", "content": "x"}))
 	raw, _ := json.Marshal(struct {
 		Method string
 		Params map[string]any
@@ -183,7 +185,8 @@ func TestHeartbeatAndReconnectReplay(t *testing.T) {
 	// Reconnect and replay a previously completed mutation.
 	root := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", root)
-	msg := request("reconnect", "write_file", map[string]any{"path": "out", "content": "x", "mode": "append"})
+	admitTestSession(t)
+	msg := request("reconnect", "write_file", withExecContext(map[string]any{"path": "out", "content": "x", "mode": "append"}))
 	if out := store.execute(msg); !out.OK {
 		t.Fatal(out)
 	}
@@ -208,7 +211,7 @@ func TestHeartbeatAndReconnectReplay(t *testing.T) {
 			_ = conn.WriteJSON(envelope{V: 1, Type: "pong"})
 		}
 	}
-	raw, _ := os.ReadFile(filepath.Join(root, "out"))
+	raw, _ := os.ReadFile(filepath.Join(root, "wp_ws", "out"))
 	if string(raw) != "x" {
 		t.Fatalf("replayed side effect: %q", raw)
 	}
@@ -303,9 +306,10 @@ func TestWriteDeadlineClosesBlockedSocket(t *testing.T) {
 func TestCacheByteBudgetAndResponseLimit(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", root)
+	admitTestSession(t)
 	store := testStore(t)
 	store.bytes = maxCacheBytes
-	if out := store.execute(request("over-budget", "write_file", map[string]any{"path": "should-not-exist", "content": "x"})); out.OK || !strings.Contains(out.Error, "busy") {
+	if out := store.execute(request("over-budget", "write_file", withExecContext(map[string]any{"path": "should-not-exist", "content": "x"}))); out.OK || !strings.Contains(out.Error, "busy") {
 		t.Fatal(out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "should-not-exist")); !os.IsNotExist(err) {
@@ -313,16 +317,19 @@ func TestCacheByteBudgetAndResponseLimit(t *testing.T) {
 	}
 	store.bytes = 0
 	raw := []byte(strings.Repeat("x", maxResponseBytes+1))
-	if err := os.WriteFile(filepath.Join(root, "large"), raw, 0600); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "wp_ws"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	msg := request("oversized-result", "read_file", map[string]any{"path": "large"})
+	if err := os.WriteFile(filepath.Join(root, "wp_ws", "large"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	msg := request("oversized-result", "read_file", withExecContext(map[string]any{"path": "large"}))
 	out := store.execute(msg)
 	if out.OK || !strings.Contains(out.Error, "storage limit") {
 		t.Fatal("oversized result was retained")
 	}
 	// The saved error replays even if the file's contents subsequently change.
-	if err := os.WriteFile(filepath.Join(root, "large"), []byte("small"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "wp_ws", "large"), []byte("small"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if replay := store.execute(msg); replay.OK || replay.Error != out.Error {

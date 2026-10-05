@@ -28,26 +28,21 @@ func secretDeadline(params map[string]any) error {
 	return nil
 }
 
-func secretPath(params map[string]any) (string, error) {
-	root, err := filepath.Abs(WorkRoot())
-	if err == nil {
-		root, err = filepath.EvalSymlinks(root)
+func secretPath(params map[string]any, adm *Admission, write bool) (string, error) {
+	if adm == nil {
+		return "", fmt.Errorf("execution admission is required")
 	}
+	// Credential-merged files land in the admitted destination scope, never
+	// at coordinator-side paths.
+	target, err := adm.AuthorizePath(paramString(params, "path"), write)
 	if err != nil {
-		return "", fmt.Errorf("private target unavailable")
-	}
-	target, err := resolvePath(paramString(params, "path"), root)
-	if err != nil || target == root {
-		return "", fmt.Errorf("invalid private target")
+		return "", fmt.Errorf("invalid private target: %w", err)
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
 	if err != nil {
 		return "", fmt.Errorf("private target parent unavailable")
 	}
 	target = filepath.Join(parent, filepath.Base(target))
-	if _, err = resolvePath(target, root); err != nil {
-		return "", fmt.Errorf("invalid private target")
-	}
 	if info, err := os.Lstat(target); err == nil {
 		if !info.Mode().IsRegular() {
 			return "", fmt.Errorf("private target must be a regular file")
@@ -75,13 +70,16 @@ func privateFileBytes(path string) ([]byte, string, error) {
 	return data, hex.EncodeToString(hash[:]), nil
 }
 
-func secretFileRead(params map[string]any) (any, error) {
+func secretFileRead(params map[string]any, adm *Admission) (any, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
 	if err := secretDeadline(params); err != nil {
 		return nil, err
 	}
 	secretFileLock.Lock()
 	defer secretFileLock.Unlock()
-	path, err := secretPath(params)
+	path, err := secretPath(params, adm, false)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +90,10 @@ func secretFileRead(params map[string]any) (any, error) {
 	return map[string]any{"path": path, "content_b64": base64.StdEncoding.EncodeToString(data), "digest": digest}, nil
 }
 
-func secretFileWrite(params map[string]any) (any, error) {
+func secretFileWrite(params map[string]any, adm *Admission) (any, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
 	if err := secretDeadline(params); err != nil {
 		return nil, err
 	}
@@ -102,7 +103,7 @@ func secretFileWrite(params map[string]any) (any, error) {
 	}
 	secretFileLock.Lock()
 	defer secretFileLock.Unlock()
-	path, err := secretPath(params)
+	path, err := secretPath(params, adm, true)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,10 @@ func secretFileWrite(params map[string]any) (any, error) {
 	return map[string]any{"path": path, "ok": true}, nil
 }
 
-func secretHTTP(params map[string]any) (any, error) {
+func secretHTTP(params map[string]any, adm *Admission) (any, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
 	if err := secretDeadline(params); err != nil {
 		return nil, err
 	}

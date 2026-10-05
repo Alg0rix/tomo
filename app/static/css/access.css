@@ -1,0 +1,26 @@
+/* Access controls inherit the application's type, spacing and surface tokens. */
+.chat-access-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 16px; border-bottom:1px solid var(--border); }
+.chat-access-bar .btn { max-width:100%; white-space:normal; text-align:left; }
+.access-dialog { margin:auto; width:min(640px,calc(100vw - 32px)); max-height:85dvh; overflow:auto; color:var(--text); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r); padding:24px; }
+.access-dialog::backdrop { background:rgba(0,0,0,.6); }
+.access-dialog h2 { margin:0 0 12px; }
+.access-dialog label.field, .access-page label.field { display:block; margin:12px 0; }
+.access-dialog .input, .access-page .input { width:100%; }
+.access-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px; }
+.access-note { color:var(--text-dim); font-size:13px; line-height:1.6; }
+.access-warning { border-left:3px solid var(--danger); background:var(--danger-soft); padding:12px; line-height:1.6; }
+.access-status { color:var(--danger); min-height:1.5em; margin:8px 0; overflow-wrap:anywhere; }
+.access-resource { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); }
+.access-resource small { display:block; color:var(--text-dim); margin-top:3px; }
+.access-resource input { accent-color:var(--accent); }
+.access-page { max-width:900px; }
+.access-section { margin:24px 0; padding-bottom:24px; border-bottom:1px solid var(--border); }
+.access-section h2 { font-size:18px; }
+.access-section form { max-width:560px; }
+.access-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0; }
+.access-row .input { flex:1; width:auto; min-width:160px; }
+.access-project { padding:16px 0; border-top:1px solid var(--border); }
+.access-project summary { cursor:pointer; font-weight:500; }
+.access-key { overflow-wrap:anywhere; white-space:pre-wrap; padding:12px; background:var(--surface-2); border-radius:var(--r-sm); }
+.access-dialog button:focus-visible, .access-dialog input:focus-visible, .access-page summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media (max-width:600px) { .access-dialog { padding:16px; } .chat-access-bar { padding:8px; } }

@@ -73,6 +73,13 @@
       </select></div>
     </div>
     <div class="machine-field">
+      <div class="machine-field-copy"><div class="machine-field-name">Outbound network for agent tools</div><p class="machine-field-hint">Off denies web search, web fetch, browser URL rendering and URL image downloads. Scoped allows public sites only — private/server addresses stay blocked on every request, redirect hop, subresource and websocket. Browser pages render offline after a scoped fetch; live subresources/websockets are never retrieved. Shared host egress; usage is audited per user.</p></div>
+      <div class="machine-field-control"><select class="input" id="setNetworkEgress" aria-label="Outbound network mode">
+        <option value="off" {% if (settings.network_egress or 'off') == 'off' %}selected{% endif %}>Off (default)</option>
+        <option value="scoped" {% if settings.network_egress == 'scoped' %}selected{% endif %}>Scoped public access</option>
+      </select></div>
+    </div>
+    <div class="machine-field">
       <div class="machine-field-copy"><div class="machine-field-name">Auto-compact</div><p class="machine-field-hint">When the projected context crosses this share of the model window, older messages fold into an LLM summary before the next turn. /compact works either way.</p></div>
       <div class="machine-field-control" style="display:flex; gap:8px; align-items:center">
         {{ toggle(id='setAutoCompact', checked=settings.auto_compact_enabled) }}

@@ -26,7 +26,7 @@ import time
 def _inject_mock_llm(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: MockLLMClient(),
+        lambda agent_id=None, **kwargs: MockLLMClient(),
     )
 
 
@@ -175,11 +175,10 @@ def test_session_chat_stream_post(tmp_path) -> None:
 
 
 def test_session_chat_stream_post_requires_message(tmp_path) -> None:
-    store.rebind(tmp_path / "sess_post_empty.db")
-    app.dependency_overrides[require_auth] = lambda: None
-    client = TestClient(app)
+    client, token = _auth_client(tmp_path, 'sess_post_empty.db')
+    client.headers['Authorization'] = f'Bearer {token}'
     try:
-        sid = store.create_swarm_session(["main"], user_id="web")
+        sid = store.create_swarm_session(["main"], user_id="usr_admin")
         res = client.post(
             f"/api/sessions/{sid}/chat/stream",
             json={"message": "  "},
@@ -290,11 +289,11 @@ def _fake_factory(session: FakeSession):
 
 @pytest.fixture()
 def client(tmp_path):
-    store.rebind(tmp_path / "mcp-api.db")
-    app.dependency_overrides[require_auth] = lambda: None
+    client, token = _auth_client(tmp_path, 'mcp-api.db')
+    client.headers['Authorization'] = f'Bearer {token}'
     mcp_manager.session_factory = _fake_factory(FakeSession())
-    yield TestClient(app)
-    app.dependency_overrides.pop(require_auth, None)
+    yield client
+    client.close()
     mcp_manager.session_factory = None
     mcp_manager._live.clear()
     mcp_manager._connect_locks.clear()
@@ -576,7 +575,8 @@ def test_private_process_api_and_control_isolation(tmp_path, monkeypatch):
             assert method(url).status_code == 404
         calls = []
 
-        def stop(session_id, job_id):
+        def stop(session_id, job_id, *, user_id):
+            assert user_id == alice['id']
             calls.append((session_id, job_id))
             return store.update_background_job(job_id, {"status": "stopping"})
 

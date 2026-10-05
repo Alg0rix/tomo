@@ -41,8 +41,6 @@ func terminateProcess(cmd *exec.Cmd) error {
 	return err
 }
 
-func backgroundJobContract() int { return 1 }
-
 // A command owns all live members of its group, even after the shell exits.
 func cleanupBackgroundGroup(cmd *exec.Cmd) error {
 	if err := terminateProcess(cmd); err != nil && !errors.Is(err, os.ErrProcessDone) {

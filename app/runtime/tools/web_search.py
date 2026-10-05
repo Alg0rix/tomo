@@ -181,6 +181,8 @@ def run(arguments: dict[str, Any]) -> str:
     """Search the web for ``query``; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: web_search expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("web_search", arguments)
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip():
         return "Error: 'query' argument must be a non-empty string"

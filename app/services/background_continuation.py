@@ -109,13 +109,15 @@ async def _drain(sid: str) -> None:
             session = store.get_session(sid)
             coordinator = store.get_agent(session.get("coordinator_id", "")) if session else None
             if (not session or not coordinator or not coordinator.get("enabled")
-                    or any(j["user_id"] != session["user_id"] for j in pending)):
+                    or any(j["user_id"] != session["user_id"] and not (j.get("execution_context") or {}).get("trusted_channel") for j in pending)):
                 _block(pending, "Originating session/owner/coordinator is unavailable")
                 return
-            account = store.get_user(session["user_id"])
-            if ((account and not account.get("enabled", True))
-                    or (not account and session['user_id'].startswith('usr_'))):
-                _block(pending, "Originating account is unavailable or disabled")
+            from app.runtime.policy import durable_context
+            try:
+                for job in pending:
+                    durable_context(job)
+            except PermissionError:
+                _block(pending, "Originating execution identity or current access is unavailable")
                 return
             target = pending[0].get("delivery")
             batch = [j for j in pending if j.get("delivery") == target]

@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import EVAL_UI_ENABLED
-from app.core.deps import AuthDep, require_owned_session, session_user_id, templates
+from app.core.deps import AuthDep, authenticated_user, require_owned_session, session_user_id, templates
+from app.api.access_policy import visible_agents
 from app.services import store
 from app.plugins.manager import get_manager
 from app.web.context import page_ctx
@@ -22,9 +23,14 @@ def _eval_disabled_redirect() -> RedirectResponse | None:
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, _: AuthDep):
-    if not store.is_setup_complete():
+    if not store.is_setup_complete() and authenticated_user(request)["role"] == "admin":
         return RedirectResponse("/setup", status_code=303)
     return templates.TemplateResponse(request, "index.html", page_ctx(request, "home"))
+
+
+@router.get("/account", response_class=HTMLResponse)
+async def account_page(request: Request, _: AuthDep):
+    return templates.TemplateResponse(request, "account.html", page_ctx(request, "account"))
 
 
 @router.get("/agents", response_class=HTMLResponse)
@@ -58,7 +64,7 @@ async def agent_detail_page(request: Request, agent_id: str, _: AuthDep):
 @router.get("/sessions", response_class=HTMLResponse)
 async def sessions_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "sessions.html", page_ctx(
-        request, "sessions", agents_list=store.list_agents(),
+        request, "sessions", agents_list=visible_agents(request),
     ))
 
 
@@ -207,7 +213,8 @@ async def shared_artifact_view_page(request: Request, token: str):
 @router.get("/workplaces", response_class=HTMLResponse)
 async def workplaces_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "workplaces.html", page_ctx(
-        request, "workplaces", workplaces=store.list_workplaces(),
+        request, "workplaces", workplaces=(store.list_workplaces() if authenticated_user(request)["role"] == "admin"
+                                              else store.access.list_visible_workplaces(session_user_id(request))),
     ))
 
 
@@ -257,7 +264,9 @@ async def skill_detail_page(request: Request, skill_id: str, _: AuthDep):
 @router.get("/scheduler", response_class=HTMLResponse)
 async def scheduler_page(request: Request, _: AuthDep):
     return templates.TemplateResponse(request, "scheduler.html", page_ctx(
-        request, "scheduler", schedules=store.list_schedules(), agents=store.list_agents(),
+        request, "scheduler", schedules=[{k: v for k, v in s.items() if k != "execution_context"}
+                                        for s in store.access.list_visible_schedules(session_user_id(request))],
+        agents=visible_agents(request),
     ))
 
 
@@ -339,6 +348,9 @@ async def history_detail_page(request: Request, run_id: str, _: AuthDep):
 
 @router.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
+    from app.core.deps import require_admin
+
+    require_admin(request)
     if request.session.get("auth") and store.is_setup_complete():
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(request, "setup.html", page_ctx(request, "setup"))
@@ -347,7 +359,12 @@ async def setup_page(request: Request):
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if request.session.get("auth"):
-        return RedirectResponse("/", status_code=303)
+        try:
+            authenticated_user(request)
+        except HTTPException:
+            request.session.clear()
+        else:
+            return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(request, "login.html", page_ctx(request, "login", error=None))
 
 

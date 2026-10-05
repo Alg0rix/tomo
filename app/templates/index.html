@@ -25,9 +25,10 @@
       <span class="home-chip" id="homeCoord" title="Coordinator"><span class="home-av" id="homeCoordAv">T</span><span id="homeCoordName">Tomo</span></span>
       <label class="home-chip home-wp" title="Working folder">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-        <select id="homeWorkplace" aria-label="Working folder"><option value="">Tomo work dir</option></select>
+        <select id="homeWorkplace" aria-label="Working folder"><option value="">Personal space</option></select>
       </label>
-      <button type="button" class="home-chip" id="homeBrowseFolder">Browse…</button>
+      <button type="button" class="home-chip" id="homeCreateProject">+ Project</button>
+      {% if current_role == 'admin' %}<button type="button" class="home-chip" id="homeBrowseFolder">Browse…</button>{% endif %}
       <div class="home-seg" role="radiogroup" aria-label="Mode">
         <button type="button" role="radio" aria-checked="true" data-mode="solo" class="on">Solo</button>
         <button type="button" role="radio" aria-checked="false" data-mode="swarm">Swarm</button>
@@ -66,6 +67,7 @@
     </div>
   </div>
 
+  <div{% if current_role != 'admin' %} hidden{% endif %}>
   <section class="home-sec" aria-labelledby="roomsTitle">
     <div class="home-sec-h"><span class="k" aria-hidden="true">間</span><h2 id="roomsTitle">Rooms</h2><span class="sub">plugins and the places Tomo keeps</span><div class="act"><button type="button" class="btn ghost sm" id="homeArrange" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Arrange</button><a href="/extensions">Browse plugins ↗</a></div></div>
     <div class="home-edit-bar" id="homeEditBar" hidden>
@@ -82,8 +84,9 @@
     </dialog>
   </section>
 
+  </div>
   <section class="home-sec" aria-labelledby="houseTitle">
-    <div class="home-sec-h"><span class="k" aria-hidden="true">族</span><h2 id="houseTitle">Household</h2><span class="sub">who lives here</span><div class="act"><a href="/agents">Agents ↗</a></div></div>
+    <div class="home-sec-h"><span class="k" aria-hidden="true">族</span><h2 id="houseTitle">Household</h2><span class="sub">who lives here</span>{% if current_role == 'admin' %}<div class="act"><a href="/agents">Agents ↗</a></div>{% endif %}</div>
     <div class="home-house" id="homeHouse"><div class="home-skel"></div></div>
   </section>
 </div>

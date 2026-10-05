@@ -40,9 +40,8 @@ def _default_agent_id(explicit: Any) -> str | None:
     if isinstance(explicit, str) and explicit.strip():
         return explicit.strip()
     try:
-        from app.runtime.tools.sandbox import current_agent_id
-
-        aid = current_agent_id()
+        from app.runtime.access import current_execution
+        aid = current_execution().agent_id
         if aid:
             return aid
     except ImportError:
@@ -52,7 +51,13 @@ def _default_agent_id(explicit: Any) -> str | None:
 
 def _resolve(store: Any, ref: str) -> dict[str, Any] | str:
     try:
-        sch = store.resolve_schedule(ref)
+        from app.runtime.access import current_execution
+        context = store.access.revalidate(current_execution())
+        visible = store.access.list_visible_schedules(context.user_id)
+        matches = [s for s in visible if s['id'] == ref or s.get('name') == ref]
+        if len(matches) != 1:
+            return _err("Schedule is unavailable; use action='list' for your jobs.")
+        sch = store.access.require_schedule(context.user_id, matches[0]['id'])
     except ValueError as exc:
         return _err(str(exc))
     if not sch:
@@ -72,6 +77,8 @@ def run(arguments: dict[str, Any]) -> str:
         return _err("action is required")
 
     from app.services import store
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("schedule", arguments)
     from app.channels.delivery import DeliveryBlocked, capture_current_target
 
     if any(key in arguments for key in ("delivery_target", "chat_id", "thread_id", "channel", "bot")):
@@ -108,7 +115,7 @@ def run(arguments: dict[str, Any]) -> str:
             except (TypeError, ValueError):
                 return _err("repeat must be an integer")
         try:
-            sch = store.create_schedule(data)
+            sch = store.access.create_schedule_for_context(execution, data)
         except ValueError as exc:
             return _err(str(exc))
         return _ok(
@@ -119,7 +126,7 @@ def run(arguments: dict[str, Any]) -> str:
 
     if action == "list":
         include = bool(arguments.get("include_disabled", False))
-        jobs = store.list_schedules(include_disabled=True)
+        jobs = store.access.list_visible_schedules(execution.user_id)
         if calling_target is not None:
             jobs = [j for j in jobs if j.get("delivery_target") == calling_target]
         if not include:
@@ -171,7 +178,8 @@ def run(arguments: dict[str, Any]) -> str:
         if arguments.get("schedule") is not None:
             updates["schedule"] = str(arguments["schedule"]).strip()
         if arguments.get("agent_id") is not None:
-            updates["agent_id"] = str(arguments["agent_id"]).strip()
+            if str(arguments["agent_id"]).strip() != sch["agent_id"]:
+                return _err("Create a new schedule to change its immutable execution agent/ceiling.")
         if arguments.get("repeat") is not None:
             try:
                 updates["repeat_times"] = int(arguments["repeat"])
@@ -202,7 +210,9 @@ def run(arguments: dict[str, Any]) -> str:
                 import concurrent.futures
 
                 pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                future = pool.submit(asyncio.run, run_schedule_now(sid))
+                from contextvars import copy_context
+                future = pool.submit(copy_context().run, asyncio.run,
+                                     run_schedule_now(sid, user_id=execution.user_id))
                 try:
                     result = future.result(timeout=600)
                 except concurrent.futures.TimeoutError:
@@ -211,7 +221,7 @@ def run(arguments: dict[str, Any]) -> str:
                 finally:
                     pool.shutdown(wait=False)
             else:
-                result = asyncio.run(run_schedule_now(sid))
+                result = asyncio.run(run_schedule_now(sid, user_id=execution.user_id))
         except ValueError as exc:
             return _err(str(exc))
         except Exception as exc:  # noqa: BLE001

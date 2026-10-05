@@ -17,7 +17,7 @@ def _inject_scripted_llm(monkeypatch) -> None:
     client = ScriptedLLM([text_reply("Scheduled reply.")] * 10)
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: client,
+        lambda agent_id=None, **kwargs: client,
     )
 
 
@@ -26,8 +26,12 @@ def _rebind(tmp_path: Path) -> None:
 
 
 async def test_fire_schedule_runs_turn_and_logs(tmp_path: Path) -> None:
+    from tests.fakes.access import owned_host_session
     _rebind(tmp_path)
-    sch = store.create_schedule(
+    sid = owned_host_session()
+    context = store.access.resolve_context("usr_admin", sid)
+    sch = store.access.create_schedule_for_context(
+        context,
         {
             "id": "sch_fire",
             "name": "Fire test",
@@ -36,7 +40,7 @@ async def test_fire_schedule_runs_turn_and_logs(tmp_path: Path) -> None:
             "message": "hello from schedule",
             "enabled": True,
             "next_run": time.time() - 1,
-        }
+        },
     )
     result = await fire_schedule(sch)
     assert result["status"] == "ok"

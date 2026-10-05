@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/tomo-project/tomo/connector/internal/clog"
+	"github.com/tomo-project/tomo/connector/internal/executor"
 	"github.com/tomo-project/tomo/connector/internal/state"
 	"github.com/tomo-project/tomo/connector/internal/version"
 )
@@ -68,6 +69,8 @@ func Run() error {
 		return fmt.Errorf("open RPC journal: %w", err)
 	}
 	defer store.close()
+	// Destination-owned contracts bind to this connector's workplace id.
+	executor.SetPairedWorkplaceID(st.WorkplaceID)
 	dispatcher := newRPCDispatcher(store)
 	defer dispatcher.close()
 	broker, brokerURL, err := startBroker(st.ServerURL)
@@ -205,9 +208,12 @@ func connectBearer(st *state.State, dispatcher *rpcDispatcher) (time.Duration, e
 	header.Set("X-Device-Name", hostname())
 	header.Set("X-Platform", runtime.GOOS)
 	header.Set("X-Tomo-Connector-Version", version.Version)
-	caps := "idempotent-replay,exec-stream"
+	caps := "idempotent-replay,exec-stream,exec-context-v1"
 	if dispatcher.brokerURL != "" {
 		caps += ",secret-broker"
+	}
+	if executor.SandboxCapable() {
+		caps += ",remote-sandbox-v1"
 	}
 	header.Set("X-Tomo-Caps", caps)
 	if lip != "" {
@@ -298,6 +304,7 @@ func serveLoop(conn *websocket.Conn, st *state.State, dispatcher *rpcDispatcher,
 			}
 			if msg.WorkplaceID != "" {
 				st.WorkplaceID = msg.WorkplaceID
+				executor.SetPairedWorkplaceID(msg.WorkplaceID)
 				if err := state.Save(st); err != nil {
 					clog.Error("ws.hello_ok.save_fail", err)
 				}

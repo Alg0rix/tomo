@@ -46,6 +46,13 @@ connector/tomo-connector
 # Landing page (separate repo, not shipped with the app)
 landing/
 
-# coverage artifacts
+# Local agent workflows and generated multi-user verification artifacts
+/.bb/
+/docs/evidence/multi-user-access/
+
+# Test / lint / coverage artifacts
+.pytest_cache/
+.ruff_cache/
 .coverage
 coverage.xml
+htmlcov/

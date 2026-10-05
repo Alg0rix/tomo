@@ -30,6 +30,21 @@ def run(arguments: dict[str, Any]) -> str:
     """Replace ``old_string`` with ``new_string`` in ``path``; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: str_replace expects a dict of arguments"
+    from app.runtime.tools.sandbox import dispatch_execution
+
+    dispatched = dispatch_execution("str_replace", arguments)
+    if dispatched is not None:
+        return dispatched
+    from app.runtime.tools.sandbox import file_execution_guard
+
+    try:
+        with file_execution_guard():
+            return _run(arguments)
+    except PermissionError as exc:
+        return f"Error: {exc}"
+
+
+def _run(arguments: dict[str, Any]) -> str:
     path_arg = arguments.get("path")
     if not isinstance(path_arg, str):
         return "Error: 'path' argument must be a string"
@@ -65,22 +80,19 @@ def run(arguments: dict[str, Any]) -> str:
     if not target.is_file():
         return f"Error: not a file: {path_arg}"
 
+    from app.runtime.isolation.file_edit import locked_edit
+
     try:
-        text = target.read_text(encoding="utf-8")
+        with locked_edit(target) as edit:
+            applied = apply_str_replace(edit.text, old, new, count=count)
+            if isinstance(applied, str):
+                return applied
+            updated, n = applied
+            edit.write(updated)
     except OSError as exc:
-        return f"Error: could not read file: {exc}"
+        return f"Error: could not edit file: {exc}"
     except UnicodeDecodeError:
         return "Error: file is not valid UTF-8"
-
-    applied = apply_str_replace(text, old, new, count=count)
-    if isinstance(applied, str):
-        return applied
-
-    updated, n = applied
-    try:
-        target.write_text(updated, encoding="utf-8")
-    except OSError as exc:
-        return f"Error: could not write file: {exc}"
 
     return f"Replaced {n} occurrence(s) in {path_arg}"
 

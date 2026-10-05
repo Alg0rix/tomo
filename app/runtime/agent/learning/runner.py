@@ -62,18 +62,21 @@ def _gather_digest_context(
     semantic = "(use memory for durable searchable facts — not chat dumps)"
     shared = "(none yet)"
     capacity = "(capacity unknown)"
+    from app.services import store
+    from app.runtime.access import current_execution, AccessDenied
+    execution = current_execution(required=False)
     uid = (user_id or "").strip() or None
-    if uid is None and session_id:
-        try:
-            from app.services import store
-
-            sess = store.get_session(session_id)
-            if sess:
-                uid = (sess.get("user_id") or "web").strip() or "web"
-        except Exception:
-            uid = "web"
+    if execution:
+        current = store.access.revalidate(execution)
+        if (uid and uid != current.user_id) or (session_id and session_id != current.session_id):
+            raise AccessDenied("Learning identity is outside the execution ceiling")
+        uid = current.user_id
+    elif uid is None and session_id:
+        sess = store.get_session(session_id)
+        uid = (sess or {}).get("user_id")
     if not uid:
-        uid = "web"
+        raise AccessDenied("Learning owner identity is required")
+    store.access.require_user(uid)
     user_entries: list[str] = []
     agent_entries: list[str] = []
     try:
@@ -365,6 +368,8 @@ async def _run_review_llm(
                     "LLM request failed: stream ended without a completion"
                 )
             return assembled
+        from app.runtime.policy import authorize_model_client
+        authorize_model_client(client)
         return await client.complete(msgs, tools)
 
     async def _complete(
@@ -499,6 +504,13 @@ async def run_learning_review(
     plan: ReviewPlan | None = None,
 ) -> dict[str, Any] | None:
     """Run a learning review when eligible. Returns summary dict or None if skipped."""
+    from app.runtime.access import current_execution
+    from app.services import store
+    execution = store.access.revalidate(current_execution())
+    # Adaptive profile/skill review currently writes shared coordinator state.
+    # Personal vault memory remains usable; no Member may mutate that profile.
+    if execution.role != "admin":
+        return None
     skills_touched = list(skills_touched or [])
 
     if plan is None:
@@ -532,16 +544,7 @@ async def run_learning_review(
             _logger.warning("skill maintenance failed: %s", exc)
 
     review_client, routed = _resolve_review_client(client)
-    review_user_id = "web"
-    if metrics.session_id:
-        try:
-            from app.services import store as _st
-
-            _sess = _st.get_session(metrics.session_id)
-            if _sess:
-                review_user_id = (_sess.get("user_id") or "web").strip() or "web"
-        except Exception:
-            review_user_id = "web"
+    review_user_id = execution.user_id
     (
         catalog,
         user_snip,
@@ -682,6 +685,10 @@ async def run_learning_review(
 
 def schedule_learning_review(**kwargs: Any) -> None:
     """Fire-and-forget review on the running event loop (never blocks the turn)."""
+    from app.runtime.access import current_execution
+    execution = current_execution(required=False)
+    if execution is None or execution.role != "admin":
+        return
     metrics = kwargs.get("metrics")
     if isinstance(metrics, TurnMetrics):
         hydrate_from_session(metrics.session_id, metrics.agent_id)
@@ -704,7 +711,9 @@ def schedule_learning_review(**kwargs: Any) -> None:
 
     async def _task() -> None:
         try:
-            await run_learning_review(plan=plan, **kwargs)
+            from app.runtime.supervision import admitted_turn
+            async with admitted_turn(execution):
+                await run_learning_review(plan=plan, **kwargs)
         except Exception as exc:
             _logger.warning("learning background task failed: %s", exc)
             if isinstance(metrics, TurnMetrics):

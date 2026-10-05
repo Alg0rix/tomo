@@ -35,6 +35,21 @@ def run(arguments: dict[str, Any]) -> str:
     """Search content or find files by name; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: search_files expects a dict of arguments"
+    from app.runtime.tools.sandbox import dispatch_execution
+
+    dispatched = dispatch_execution("search_files", arguments)
+    if dispatched is not None:
+        return dispatched
+    from app.runtime.tools.sandbox import file_execution_guard
+
+    try:
+        with file_execution_guard():
+            return _run_search(arguments)
+    except PermissionError as exc:
+        return f"Error: {exc}"
+
+
+def _run_search(arguments: dict[str, Any]) -> str:
     pattern = arguments.get("pattern")
     if not isinstance(pattern, str) or not pattern:
         return "Error: 'pattern' argument must be a non-empty string"

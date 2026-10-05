@@ -118,10 +118,12 @@ def test_record_turn_preserves_goal_with_multiline_outcome(tmp_path, monkeypatch
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'timeline.db')
     store.update_settings({'memory_vault_enabled': True})
-    sid = store.create_swarm_session(['main'], user_id='web')
+    from tests.fakes.access import owned_host_session
+    sid = owned_host_session()
+    uid = store.get_session(sid)['user_id']
     monkeypatch.setattr('app.runtime.memory.vault.extract.schedule_extraction', lambda *args: None)
     write.record_turn(sid, 'main', goal, 'answer\n\n- one\n- two\n- three\n- four\n- five')
-    raw = paths.timeline_path('web', date.today().isoformat()).read_text()
+    raw = paths.timeline_path(uid, date.today().isoformat()).read_text()
     bullets = [line for line in raw.splitlines() if line.startswith('- ')]
     expected = ['- Goal: question with details'] if goal else []
     assert bullets == [*expected, '- Outcome: answer - one - two - three - four - five']
@@ -239,10 +241,15 @@ async def test_extraction_limits_and_forgotten_fact_stays_forgotten(tmp_path, db
 
 
 @pytest.mark.asyncio
-async def test_background_extraction_is_serial_and_next_turn_waits(monkeypatch):
+async def test_background_extraction_is_serial_and_next_turn_waits(tmp_path, monkeypatch):
     import asyncio
     from app.runtime.memory.vault import extract
+    from app.services import store
+    from tests.fakes.access import owned_host_session
 
+    store.rebind(tmp_path / 'extract-serial.db')
+    sid = owned_host_session()
+    uid = store.get_session(sid)['user_id']
     calls = []
     gate = asyncio.Event()
 
@@ -253,15 +260,17 @@ async def test_background_extraction_is_serial_and_next_turn_waits(monkeypatch):
 
     monkeypatch.setattr(extract, 'extract_turn', fake_extract)
     monkeypatch.setattr(extract, 'extraction_client', lambda session_id=None: object())
-    extract.schedule_extraction('alice', 's1', 'first', '')
-    extract.schedule_extraction('alice', 's1', 'second', '')
-    waiter = asyncio.create_task(extract.wait_for_extraction('alice'))
+    from app.runtime.access import execution_scope
+    with execution_scope(store.access.resolve_context(uid, sid)):
+        extract.schedule_extraction(uid, sid, 'first', '')
+        extract.schedule_extraction(uid, sid, 'second', '')
+    waiter = asyncio.create_task(extract.wait_for_extraction(uid))
     await asyncio.sleep(0)
     assert not waiter.done()
     gate.set()
     await waiter
     assert calls == ['first', 'second']
-    assert 'alice' not in extract._pending
+    assert uid not in extract._pending
 
 
 def test_move_does_not_drop_fact_that_only_looks_similar(tmp_path, db):

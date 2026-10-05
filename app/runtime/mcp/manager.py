@@ -40,6 +40,15 @@ def _bounded_error(exc: BaseException, *, limit: int = _ERROR_LIMIT) -> str:
     return f"{type(exc).__name__}: {exc}"[:limit]
 
 
+async def _to_thread_sandboxed_stdio(context, server, item, arguments) -> str:
+    """Run the blocking container sandbox off the event loop."""
+    import asyncio as _asyncio
+
+    from app.runtime.mcp.member_sandbox import sandboxed_stdio_call
+
+    return await _asyncio.to_thread(sandboxed_stdio_call, context, server, item, arguments)
+
+
 def _dump(obj: Any) -> dict[str, Any]:
     if obj is None:
         return {}
@@ -133,12 +142,10 @@ class McpConnectionManager:
         )
 
     async def _close_live(self, server_id: str) -> None:
-        live = self._live.pop(server_id, None)
+        live = self._live.get(server_id)
         if live is not None:
-            try:
-                await live.stack.aclose()
-            except Exception:
-                pass
+            await live.stack.aclose()
+            self._live.pop(server_id, None)
 
     async def connect_and_discover(self, server_id: str) -> dict[str, Any]:
         """(Re)connect ``server_id``, discover its capabilities, and persist them.
@@ -147,6 +154,9 @@ class McpConnectionManager:
         capability family listed successfully, so a partial failure never
         clobbers a previously-good snapshot the UI can still show for repair.
         """
+        from app.runtime.access import current_execution
+        if current_execution(required=False):
+            self._require_external_admin()
         async with self._connect_lock(server_id):
             server = store.get_mcp_server(server_id, include_secrets=True)
             if server is None:
@@ -189,7 +199,17 @@ class McpConnectionManager:
 
         A cheap no-op for servers already connected — this runs before every
         agent turn, so it must not re-run discovery when nothing changed.
+
+        Members never spawn host sessions here: their calls execute per-call
+        in their own per-chat container from the cached catalog, so this
+        returns the cached-enabled subset without starting any transport.
         """
+        from app.runtime.access import current_execution
+        context = current_execution(required=False)
+        if context is not None and context.role != "admin":
+            return self.cached_enabled_ids(server_ids)
+        if current_execution(required=False):
+            self._require_external_admin()
         connected: set[str] = set()
         for sid in server_ids:
             server = store.get_mcp_server(sid)
@@ -202,6 +222,32 @@ class McpConnectionManager:
             if result and result.get("status") == "connected":
                 connected.add(sid)
         return connected
+
+    @staticmethod
+    def cached_enabled_ids(server_ids: set[str]) -> set[str]:
+        """Cached-enabled servers (no transport): the Member call boundary."""
+        live: set[str] = set()
+        for sid in server_ids:
+            server = store.get_mcp_server(sid)
+            if server is None or not server["enabled"]:
+                continue
+            items = store.list_mcp_items(sid, kind="tool")
+            if any(i.get("enabled") for i in items):
+                live.add(sid)
+        return live
+
+    def cached_ids_for_agent(self, agent_id: str) -> set[str]:
+        """Servers backing at least one tool enabled for ``agent_id``.
+
+        Cached catalog only — no transport is started. Used to offer
+        Member schemas for exactly the callable backend (per-call
+        sandbox), never offered-then-denied.
+        """
+        try:
+            wanted = store.list_mcp_server_ids_for_agent(agent_id)
+        except Exception:
+            return set()
+        return self.cached_enabled_ids(set(wanted))
 
     async def _dispatch(self, server_id: str, fn: Callable[[Any], Awaitable[Any]]) -> Any:
         """Run ``fn(session)`` for ``server_id``, retrying a dead session once."""
@@ -228,9 +274,29 @@ class McpConnectionManager:
                 raise
             return await fn(live.session)
 
+    @staticmethod
+    def _require_external_admin():
+        from app.runtime.access import current_execution, AccessUnavailable
+        if current_execution(required=False) is None:
+            # HTTP management path (no bound turn): the route's own Admin
+            # gate applies (Members get HTTP 403 via the API perimeter).
+            # Bound turns always enforce below.
+            return
+        current = store.access.require_admin_action(current_execution())
+        if current.execution_mode != "unrestricted":
+            raise AccessUnavailable("MCP service has no restricted resource boundary")
+
     # -- capability calls ----------------------------------------------------
 
     async def call_tool(self, runtime_id: str, arguments: dict[str, Any]) -> str:
+        from app.runtime.access import current_execution
+        from app.runtime.policy import authorize_tool
+        from app.runtime.access import AccessDenied
+        try:
+            authorize_tool(runtime_id, arguments)
+        except AccessDenied as exc:
+            return f"Error: {exc}"
+        context = current_execution(required=False)
         parsed = split_runtime_tool_id(runtime_id)
         if parsed is None:
             return f"Error: not an MCP tool id: {runtime_id}"
@@ -238,6 +304,33 @@ class McpConnectionManager:
         item = store.get_mcp_item_by_runtime_id(runtime_id)
         if item is None or item["kind"] != "tool":
             return f"Error: unknown MCP tool: {runtime_id}"
+        if context is not None and context.role != "admin":
+            # Members never share the host session: per-chat container for
+            # stdio, sanitized one-shot session for HTTP. Secrets are not
+            # loaded into this path at all (see include_secrets=False).
+            server = store.get_mcp_server(server_id)
+            if server is None or not server["enabled"]:
+                return f"Error: MCP server disabled or missing: {server_id}"
+            if not item["enabled"]:
+                return f"Error: MCP tool disabled: {runtime_id}"
+            try:
+                if server.get("transport") == "streamable_http":
+                    from app.runtime.mcp.member_sandbox import member_http_call
+
+                    return await member_http_call(
+                        context, server, item, arguments or {},
+                        session_factory=self.session_factory,
+                    )
+                return await _to_thread_sandboxed_stdio(
+                    context, server, item, arguments or {}
+                )
+            except Exception as exc:
+                from app.runtime.access import AccessDenied as _Denied
+                from app.runtime.access import AccessUnavailable as _Unavailable
+
+                if isinstance(exc, (_Denied, _Unavailable)):
+                    return f"Error: {exc}"
+                return "Error: Member tool execution failed"
         server = store.get_mcp_server(server_id)
         if server is None or not server["enabled"]:
             return f"Error: MCP server disabled or missing: {server_id}"
@@ -252,6 +345,7 @@ class McpConnectionManager:
         return render_tool_result(result)
 
     async def read_resource(self, server_id: str, uri: str) -> dict[str, Any]:
+        self._require_external_admin()
         server = store.get_mcp_server(server_id)
         if server is None or not server["enabled"]:
             raise ValueError(f"MCP server disabled or missing: {server_id}")
@@ -261,6 +355,7 @@ class McpConnectionManager:
     async def get_prompt(
         self, server_id: str, name: str, arguments: dict[str, str] | None = None
     ) -> dict[str, Any]:
+        self._require_external_admin()
         server = store.get_mcp_server(server_id)
         if server is None or not server["enabled"]:
             raise ValueError(f"MCP server disabled or missing: {server_id}")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.models.mixins import episodic as ep
 from app.runtime.memory.episodes import build_from_review
-from app.runtime.tools import record_episode, recall_episodes, user_ctx
+from app.runtime.tools import record_episode, recall_episodes
 from app.services import store
 
 
@@ -161,8 +161,10 @@ def test_build_from_review_selective(tmp_path) -> None:
 
 def test_record_and_recall_tools(tmp_path) -> None:
     _rebind(tmp_path)
-    tok = user_ctx.bind_user("usr_alice")
-    try:
+    from tests.fakes.access import owned_admin_scope
+
+    # Explicit owned Admin execution; episode ownership follows the bound identity.
+    with owned_admin_scope():
         msg = record_episode.run(
             {
                 "title": "SSH flake",
@@ -177,5 +179,3 @@ def test_record_and_recall_tools(tmp_path) -> None:
         assert msg.startswith("Recorded episode")
         out = recall_episodes.run({"query": "connection reset", "limit": 5})
         assert "SSH" in out or "bastion" in out or "keepalive" in out
-    finally:
-        user_ctx.reset_user(tok)

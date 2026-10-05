@@ -52,7 +52,7 @@ def _owner(request: Request, session_id: str) -> str:
 
 
 def _job(session_id: str, job_id: str, uid: str) -> dict:
-    job = manager.get_job(session_id, job_id)
+    job = manager.get_job(session_id, job_id, user_id=uid)
     if not job or job.get("session_id") != session_id or job.get("user_id") != uid:
         raise HTTPException(404, "Process not found")
     return job
@@ -69,7 +69,7 @@ async def list_processes(session_id: str, request: Request, _: AuthDep):
     uid = _owner(request, session_id)
     jobs = [
         _public(job)
-        for job in manager.list_jobs(session_id)
+        for job in manager.list_jobs(session_id, user_id=uid)
         if job.get("user_id") == uid and job.get("session_id") == session_id
     ]
     return {"jobs": jobs}
@@ -89,10 +89,11 @@ async def process_logs(
     tail: int = Query(default=65536, ge=1, le=1048576),
     cursor: int | None = Query(default=None, ge=0),
 ):
-    _job(session_id, job_id, _owner(request, session_id))
+    uid = _owner(request, session_id)
+    _job(session_id, job_id, uid)
     try:
         logs = await asyncio.to_thread(
-            manager.logs, session_id, job_id, tail=tail, cursor=cursor
+            manager.logs, session_id, job_id, tail=tail, cursor=cursor, user_id=uid
         )
     except ValueError as exc:
         raise HTTPException(404, "Process not found") from exc
@@ -101,12 +102,13 @@ async def process_logs(
 
 async def _mutate(request: Request, session_id: str, job_id: str, close: bool):
     _check_origin(request)
-    job = _job(session_id, job_id, _owner(request, session_id))
+    uid = _owner(request, session_id)
+    job = _job(session_id, job_id, uid)
     if close and job["status"] != "unknown":
         raise HTTPException(409, "Only an unknown process can close monitoring")
     operation = manager.close_monitoring if close else manager.stop_job
     try:
-        result = await asyncio.to_thread(operation, session_id, job_id)
+        result = await asyncio.to_thread(operation, session_id, job_id, user_id=uid)
     except (KeyError, LookupError) as exc:
         raise HTTPException(404, "Process not found") from exc
     except ValueError as exc:

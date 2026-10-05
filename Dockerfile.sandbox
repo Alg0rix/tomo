@@ -1,0 +1,38 @@
+# Compose the exact full toolchain WITHOUT inheriting the coordinator image's
+# environment, startup, application source, home, /data or control surfaces.
+# Build Dockerfile.full first. Only use a trusted clean build, never a live
+# coordinator commit/export containing user data or credentials.
+ARG TOMO_FULL_IMAGE=tomo:local-full
+FROM ${TOMO_FULL_IMAGE} AS toolchain
+
+FROM scratch
+COPY --from=toolchain /usr /usr
+COPY --from=toolchain /bin /bin
+COPY --from=toolchain /sbin /sbin
+COPY --from=toolchain /lib /lib
+COPY --from=toolchain /lib64 /lib64
+# System configuration/certificates from the clean baseline, NOT /data/config.
+COPY --from=toolchain /etc /etc
+COPY --from=toolchain /app/.venv /app/.venv
+COPY --from=toolchain /home/tomo/.cloakbrowser /opt/cloakbrowser
+ENV PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin HOME=/home/chat \
+    LANG=C.UTF-8 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/tomo-tools \
+    CLOAKBROWSER_CACHE_DIR=/opt/cloakbrowser CLOAKBROWSER_AUTO_UPDATE=false
+LABEL org.tomo.sandbox.contract="1"
+# Only file-tool code and pure helpers; NO coordinator modules or config.
+COPY app/runtime/tools/__init__.py app/runtime/tools/file_util.py app/runtime/tools/text_edit.py \
+     app/runtime/tools/read_file.py app/runtime/tools/write_file.py \
+     app/runtime/tools/str_replace.py app/runtime/tools/patch.py \
+     app/runtime/tools/list_dir.py app/runtime/tools/search_files.py \
+     app/runtime/tools/delete_file.py /opt/tomo-tools/app/runtime/tools/
+COPY app/runtime/isolation/container_sandbox.py /opt/tomo-tools/app/runtime/tools/sandbox.py
+COPY app/runtime/isolation/container_rpc.py /opt/tomo-tools/app/runtime/tools/tunnel_rpc.py
+COPY app/runtime/isolation/worker.py app/runtime/isolation/file_edit.py /opt/tomo-tools/app/runtime/isolation/
+RUN mkdir -p /tmp /home/chat /workplaces /dev/shm \
+    && chmod 1777 /tmp /dev/shm \
+    && chmod -R a+rX /opt/cloakbrowser \
+    && find /opt/cloakbrowser -type f -name chrome -exec ln -s {} /usr/local/bin/cloak-chromium \;
+USER 1000:1000
+WORKDIR /home/chat
+ENTRYPOINT ["/bin/sleep"]
+CMD ["infinity"]

@@ -28,5 +28,4 @@ func terminateProcess(cmd *exec.Cmd) error {
 
 // Windows tree cleanup after a parent exits needs Job Objects. Refuse the
 // supervised contract until that ownership primitive is implemented.
-func backgroundJobContract() int                 { return 0 }
 func cleanupBackgroundGroup(cmd *exec.Cmd) error { return terminateProcess(cmd) }

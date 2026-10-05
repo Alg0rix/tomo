@@ -91,6 +91,10 @@
     if (pwd) body.ssh_password = pwd;
     var key = document.getElementById("wpSshKey").value;
     if (key && key.trim()) body.ssh_key = key;
+    var sbRoot = document.getElementById("wpSshSandboxRoot");
+    if (sbRoot) body.ssh_sandbox_root = sbRoot.value.trim();
+    var sbImg = document.getElementById("wpSshSandboxImage");
+    if (sbImg) body.ssh_sandbox_image = sbImg.value.trim();
     return body;
   }
 

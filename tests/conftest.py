@@ -22,6 +22,10 @@ _TEST_HOME = tempfile.mkdtemp(prefix="tomo-home-pytest-")
 _TEST_WORK = tempfile.mkdtemp(prefix="tomo-work-pytest-")
 os.environ["TOMO_HOME"] = _TEST_HOME
 os.environ["TOMO_WORK"] = _TEST_WORK
+# Each xdist worker is a separate coordinator on the same Docker daemon.
+# Give its real backend a private namespace before singleton imports, rather
+# than weakening the production single-supervisor lease or sharing containers.
+os.environ["TOMO_SANDBOX_NAMESPACE"] = Path(_TEST_HOME).name
 # Force, don't setdefault: xdist workers inherit the controller env, and a
 # leftover TOMO_DB_PATH would point at the controller's already-seeded DB.
 os.environ["TOMO_DB_PATH"] = os.path.join(_TEST_HOME, "state", "tomo.db")

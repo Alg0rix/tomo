@@ -18,8 +18,12 @@ def run(arguments: dict[str, Any]) -> str:
 
 async def run_async(arguments: dict[str, Any]) -> str:
     from app.channels.telegram import chat_is_allowed
+    from app.runtime.policy import authorize_tool
 
-    sid = current_session_id()
+    execution = authorize_tool("telegram_send_file", arguments)
+    sid = execution.session_id
+    if current_session_id() != sid:
+        return "Error: Telegram session is outside execution scope."
     ui = current_turn(sid) if sid else None
     if (
         ui is None
@@ -50,6 +54,7 @@ async def run_async(arguments: dict[str, Any]) -> str:
         # Access may have been revoked while reading a large artifact.
         if ui.finished or ui.stop_requested or not chat_is_allowed(ui.chat_id):
             return "Error: Telegram delivery was stopped or access was revoked."
+        authorize_tool("telegram_send_file", arguments)
         result = await ui.api.send_file(
             ui.chat_id,
             filename,

@@ -50,13 +50,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # installed into the app venv so `python`/`python3` resolve them.
 # render_fields.py needs LibreOffice's `uno` module — that lives in the OS
 # Python, run it with /usr/bin/python3.
+# Pin the verified browser wrapper instead of floating on rebuilds.
 RUN uv pip install --python /app/.venv/bin/python --no-cache \
       python-docx docxtpl python-pptx openpyxl \
       reportlab pypdf pdfplumber pymupdf \
       matplotlib pandas lxml weasyprint \
-      yt-dlp cloakbrowser
+      yt-dlp cloakbrowser==0.5.11
 
-ENV TOMO_IMAGE_VARIANT=full
+# Avoid background update threads during interpreter shutdown in image builds;
+# browser updates are applied explicitly by rebuilding the pinned toolchain.
+ENV TOMO_IMAGE_VARIANT=full CLOAKBROWSER_AUTO_UPDATE=false
 
 # Pre-download the stealth Chromium binary (~200MB) into the runtime user's
 # home so the first agent browser launch does not hit the network.

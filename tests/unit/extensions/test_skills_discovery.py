@@ -49,9 +49,12 @@ def test_install_from_path(tmp_path, monkeypatch) -> None:
 
 
 def test_use_skill_returns_body(tmp_path, monkeypatch) -> None:
+    from tests.fakes.access import owned_admin_scope
     monkeypatch.setenv("TOMO_SKILLS_EXTERNAL_DIRS", "")
     reset_registry()
     store.rebind(tmp_path / "use.db")
+    _skill_scope = owned_admin_scope()
+    _skill_scope.__enter__()
     _write_skill(
         home.library_skills_dir(config.TOMO_HOME),
         "brief",
@@ -59,11 +62,14 @@ def test_use_skill_returns_body(tmp_path, monkeypatch) -> None:
         body="Always cite sources.",
     )
     store.sync_skills()
-    result = execute("use_skill", {"skill_id": "brief"})
-    assert "Always cite sources." in result
-    assert "Brief" in result
-    listed = execute("list_skills", {})
-    assert "brief" in listed
+    try:
+        result = execute("use_skill", {"skill_id": "brief"})
+        assert "Always cite sources." in result
+        assert "Brief" in result
+        listed = execute("list_skills", {})
+        assert "brief" in listed
+    finally:
+        _skill_scope.__exit__(None, None, None)
     reset_registry()
 
 
@@ -79,9 +85,12 @@ def test_discover_external_agents_dir(tmp_path, monkeypatch) -> None:
 
 
 def test_use_skill_reads_support_file(tmp_path, monkeypatch) -> None:
+    from tests.fakes.access import owned_admin_scope
     monkeypatch.setenv("TOMO_SKILLS_EXTERNAL_DIRS", "")
     reset_registry()
     store.rebind(tmp_path / "use-file.db")
+    _skill_scope = owned_admin_scope()
+    _skill_scope.__enter__()
     d = _write_skill(
         home.library_skills_dir(config.TOMO_HOME),
         "with-refs",
@@ -92,11 +101,14 @@ def test_use_skill_reads_support_file(tmp_path, monkeypatch) -> None:
         "# Structure\n\nPick a rhythm.\n", encoding="utf-8"
     )
     store.sync_skills()
-    result = execute("use_skill", {"skill_id": "with-refs", "file": "references/structure.md"})
-    assert "Pick a rhythm." in result
-    assert "structure.md" in result
-    blocked = execute("use_skill", {"skill_id": "with-refs", "file": "../secrets.txt"})
-    assert blocked.startswith("Error:")
+    try:
+        result = execute("use_skill", {"skill_id": "with-refs", "file": "references/structure.md"})
+        assert "Pick a rhythm." in result
+        assert "structure.md" in result
+        blocked = execute("use_skill", {"skill_id": "with-refs", "file": "../secrets.txt"})
+        assert blocked.startswith("Error:")
+    finally:
+        _skill_scope.__exit__(None, None, None)
     reset_registry()
 
 

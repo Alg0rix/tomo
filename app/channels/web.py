@@ -92,8 +92,13 @@ def _session_agents(session: dict[str, Any]) -> tuple[list[str], list[dict[str, 
     else:
         ids = list(session_ids)
 
+    from app.runtime.policy import resolve_turn, authorized_agents
+    context = resolve_turn(sid, session.get("coordinator_id"))
+    visible = {a["id"] for a in authorized_agents(context)}
     agents: list[dict[str, Any]] = []
     for aid in ids:
+        if aid not in visible:
+            continue
         agent = store.get_agent(aid)
         if agent and agent.get("enabled", True):
             agents.append(agent)
@@ -415,6 +420,36 @@ async def stream_turn_sse(
     resume: bool = False,
     background_jobs: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
+    """Supervise the whole ingress, including compaction/title/auxiliary I/O."""
+    from contextlib import aclosing
+    from app.runtime.access import AccessDenied, execution_scope
+    from app.runtime.policy import resolve_turn, durable_context, intersect_context
+    from app.runtime.supervision import admitted_turn
+
+    try:
+        context = resolve_turn(session_id, coordinator_id)
+        for job in background_jobs or []:
+            context = intersect_context(context, durable_context(job))
+        with execution_scope(context):
+            async with admitted_turn(context):
+                async with aclosing(_stream_turn_sse_owned(
+                    session_id, coordinator_id, message, start_seq, attachment_ids,
+                    execution_mode=execution_mode, acquire_lock=acquire_lock,
+                    origin=origin, resume=resume, background_jobs=background_jobs,
+                )) as source:
+                    async for chunk in source:
+                        yield chunk
+    except (AccessDenied, TimeoutError) as exc:
+        yield fmt_sse({"event": "error", "seq": start_seq + 1,
+                       "data": {"message": str(exc) or "Execution duration limit reached"}})
+
+
+async def _stream_turn_sse_owned(
+    session_id: str, coordinator_id: str, message: str, start_seq: int,
+    attachment_ids: list[str] | None = None, *, execution_mode: str = "solo",
+    acquire_lock: bool = True, origin: str | None = None, resume: bool = False,
+    background_jobs: list[dict[str, Any]] | None = None,
+) -> AsyncIterator[str]:
     """Run one session turn and yield SSE chunks, persisting history.
 
     Supports coordinator turns, ``@mention`` force-handoff to session members,
@@ -430,6 +465,7 @@ async def stream_turn_sse(
     seq = start_seq
     busy_ids: set[str] = set()
     ctx_token = None
+    access_token = None
     wp_tokens = None
     primary_agent = coordinator_id
     turn_locked = False
@@ -464,6 +500,13 @@ async def stream_turn_sse(
         len(message or ""),
     )
     try:
+        from app.runtime.policy import resolve_turn, authorized_agents, durable_context, intersect_context
+        from app.runtime.access import bind_execution, reset_execution
+        execution = resolve_turn(session_id, coordinator_id)
+        for job in background_jobs or []:
+            inherited = durable_context(job)
+            execution = intersect_context(execution, inherited)
+        access_token = bind_execution(execution)
         from app.runtime.permissions.slash import handle_approval_slash
 
         slash_notice = None if resume or background_jobs else handle_approval_slash(message or "", session_id)
@@ -586,7 +629,7 @@ async def stream_turn_sse(
         # ability to delegate. Resolve enabled destinations on every turn so
         # existing single-agent chats can hand work to configured specialists.
         routable_ids, routable_agents = member_ids, member_agents
-        delegate_agents = [a for a in store.list_agents() if a.get("enabled")]
+        delegate_agents = authorized_agents(execution)
         ctx_token = delegate_tool.bind_context(
             agent_ids=[a["id"] for a in delegate_agents], agents=delegate_agents
         )
@@ -609,7 +652,8 @@ async def stream_turn_sse(
                 strip_workplace_hint,
             )
 
-            wps = store.list_workplaces()
+            enabled_ids = {r.workplace_id for r in execution.resources}
+            wps = [w for w in store.access.list_visible_workplaces(execution.user_id) if w["id"] in enabled_ids]
             body_for_wp = mention_rest if force_target else message
             stripped, wp_hint = strip_workplace_hint(body_for_wp, wps)
             session_wp = (session.get("workplace_id") or "").strip()
@@ -793,9 +837,10 @@ async def stream_turn_sse(
 
                 # Caption for the member (no @mention); expand slash skills +
                 # files only in this ephemeral LLM prompt — history UI stays clean.
-                member_prompt = prepend_attachment_info(
+                member_prompt = (prepend_attachment_info(
                     expand_slash_skill(mention_rest.strip() or message), attachment_ids
-                )
+                ) if execution.role == 'admin' and execution.execution_mode == 'unrestricted'
+                    else (mention_rest.strip() or message))
                 if resume:
                     from app.services.turn_recovery import RESUME_PROMPT
 
@@ -840,6 +885,8 @@ async def stream_turn_sse(
             async for chunk, seq in _maybe_upgrade_title(session_id, seq):
                 yield chunk
     finally:
+        if access_token is not None:
+            reset_execution(access_token)
         if ctx_token is not None:
             delegate_tool.reset_context(ctx_token)
         try:
@@ -854,8 +901,9 @@ async def stream_turn_sse(
         store.set_busy(coordinator_id, False, session_id=session_id)
         if turn_locked:
             store.end_session_turn(session_id)
-        if should_dispatch_turn_end:
+        if should_dispatch_turn_end and 'execution' in locals() and execution.role == 'admin' and execution.execution_mode == 'unrestricted':
             try:
+                store.access.revalidate(execution)
                 store.dispatch_turn_end(
                     session_id=session_id,
                     agent_id=primary_agent,

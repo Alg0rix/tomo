@@ -37,6 +37,17 @@ def get_llm(
     from app.services import store
     from app.models.mixins.llm_profiles import effective_reasoning_effort
 
+    from app.runtime.access import current_execution
+    execution = current_execution(required=False)
+    if execution:
+        execution = store.access.revalidate(execution)
+        if session_id and session_id != execution.session_id:
+            raise PermissionError("Model session is outside execution scope")
+        session_id = execution.session_id
+        agent_id = agent_id or execution.agent_id
+        store.access.resolve_context(execution.user_id, session_id, agent_id, parent=execution)
+        if profile_id:
+            store.access.require_use(execution.user_id, "model", profile_id)
     if profile_id:
         from app.models.mixins.llm_profiles import get_profile, _maybe_refresh_subscription
 
@@ -53,6 +64,8 @@ def get_llm(
         profile = store.resolve_llm_profile(agent_id)
     if not profile:
         raise LLMConfigError("Configure a model profile in System → Models")
+    if execution:
+        store.access.require_use(execution.user_id, "model", profile["id"])
     if profile.get("needs_reauth"):
         raise LLMConfigError(
             "ChatGPT sign-in expired — reconnect in System → Models"
@@ -120,14 +133,34 @@ def resolve_main_profile(agent_id: str | None = None, *, session_id: str | None 
     from app.runtime.artifacts.fs import current_session_id
     from app.services import store
 
+    from app.runtime.access import current_execution, AccessDenied
+    execution = current_execution(required=False)
     sid = session_id or current_session_id()
-    return store.resolve_session_llm_profile(sid, agent_id) if sid else store.resolve_llm_profile(agent_id)
+    if execution:
+        execution = store.access.revalidate(execution)
+        if sid and sid != execution.session_id:
+            raise AccessDenied("Model session is outside execution scope")
+        sid = execution.session_id
+        agent_id = agent_id or execution.agent_id
+        store.access.resolve_context(execution.user_id, sid, agent_id, parent=execution)
+    profile = store.resolve_session_llm_profile(sid, agent_id) if sid else store.resolve_llm_profile(agent_id)
+    if execution and profile:
+        store.access.require_use(execution.user_id, "model", profile["id"])
+    return profile
 
 
 def get_auxiliary_llm(task: str, *, agent_id: str | None = None, session_id: str | None = None) -> LLMClient:
     """An explicit task override, otherwise the main chat/global model."""
     from app.services import store
 
+    from app.runtime.access import current_execution, AccessDenied
+    execution = current_execution(required=False)
+    if execution:
+        execution = store.access.revalidate(execution)
+        if session_id and session_id != execution.session_id:
+            raise AccessDenied("Auxiliary model session is outside execution scope")
+        session_id = execution.session_id
+        agent_id = agent_id or execution.agent_id
     settings = store.get_settings()
     profile_id = str(settings.get(task + "_profile_id") or "").strip()
     model = str(settings.get(task + "_model_name") or "").strip() if profile_id else None

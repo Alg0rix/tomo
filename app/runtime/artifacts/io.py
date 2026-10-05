@@ -9,6 +9,22 @@ from app.core import config
 from app.runtime.portal import io as portal_io
 from app.runtime.portal.paths import is_portal_path
 from app.runtime.tools.sandbox import current_agent_id, jail_path, resolve_work_root
+from functools import wraps
+
+
+def _fenced_io(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        from app.runtime.access import current_execution
+        from app.runtime.tools.sandbox import file_execution_guard
+        context = current_execution()
+        if context.execution_mode == "unrestricted":
+            # Keep revocation serialized with actual OS-account filesystem I/O,
+            # not just the preceding tool authorization check.
+            with file_execution_guard():
+                return function(*args, **kwargs)
+        return function(*args, **kwargs)
+    return guarded
 
 
 def _attachments_root() -> Path:
@@ -70,9 +86,8 @@ def resolve_source_spec(source_path: str, agent_id: str | None = None) -> tuple[
         try:
             loc = portal_io.parse_location(text)
             return "portal", loc
-        except ValueError:
-            # Fall through — may be a Windows-ish or odd path under sandbox
-            pass
+        except ValueError as exc:
+            raise ValueError("Requested artifact source location is unavailable") from exc
 
     aid = agent_id or current_agent_id()
     root = resolve_work_root(aid)
@@ -82,8 +97,16 @@ def resolve_source_spec(source_path: str, agent_id: str | None = None) -> tuple[
     return "local", target
 
 
+@_fenced_io
 def read_source_bytes(source_path: str, agent_id: str | None = None) -> tuple[bytes, Path | None]:
     """Return ``(bytes, local_path_or_None)``. ``local_path`` set when on host FS."""
+    from app.runtime.access import current_execution
+    from app.runtime.policy import authorize_tool
+    context = current_execution(required=False)
+    if context:
+        context = authorize_tool("save_artifact", {"agent_id": agent_id})
+        if context.execution_mode == "restricted":
+            return _container_read(context, source_path), None
     kind, ref = resolve_source_spec(source_path, agent_id)
     if kind == "local":
         assert isinstance(ref, Path)
@@ -111,8 +134,18 @@ def read_source_bytes(source_path: str, agent_id: str | None = None) -> tuple[by
     return data, local
 
 
+@_fenced_io
 def delete_source(source_path: str, agent_id: str | None = None) -> str | None:
     """Best-effort delete after move. Returns warning string or None."""
+    from app.runtime.access import current_execution
+    from app.runtime.policy import authorize_tool
+    context = current_execution(required=False)
+    if context:
+        context = authorize_tool("save_artifact", {"agent_id": agent_id})
+        if context.execution_mode == "restricted":
+            # Export is a copy, especially for read-only shared inputs. Never
+            # infer destructive intent from the act of saving an artifact.
+            return None
     try:
         kind, ref = resolve_source_spec(source_path, agent_id)
     except ValueError as exc:
@@ -128,6 +161,7 @@ def delete_source(source_path: str, agent_id: str | None = None) -> str | None:
         return None
 
     assert isinstance(ref, portal_io.Location)
+    portal_io._authorize_location(ref, write=True)
     if ref.kind == "local" and ref.workplace is not None:
         try:
             from app.runtime.portal.io import _jail_local
@@ -160,10 +194,18 @@ def delete_source(source_path: str, agent_id: str | None = None) -> str | None:
     return None
 
 
+@_fenced_io
 def write_dest_bytes(
     dest_path: str, data: bytes, agent_id: str | None = None
 ) -> str:
     """Write bytes into sandbox/workplace. Returns destination path label."""
+    from app.runtime.access import current_execution
+    from app.runtime.policy import authorize_tool
+    context = current_execution(required=False)
+    if context:
+        context = authorize_tool("fetch_artifact", {"agent_id": agent_id})
+        if context.execution_mode == "restricted":
+            return _container_write(context, dest_path, data)
     text = (dest_path or "").strip()
     if not text:
         raise ValueError("dest_path is empty")
@@ -175,8 +217,8 @@ def write_dest_bytes(
             loc = portal_io.parse_location(text)
             _write_all_location(loc, data)
             return loc.label
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise ValueError("Requested artifact destination location is unavailable") from exc
 
     aid = agent_id or current_agent_id()
     # Prefer active remote workplace for relative dests
@@ -193,7 +235,7 @@ def write_dest_bytes(
             )
             _write_all_location(loc, data)
             return f"{wp['id']}:{text}"
-    except Exception:
+    except (ImportError, AttributeError):
         pass
 
     root = resolve_work_root(aid)
@@ -215,8 +257,65 @@ def agent_has_remote_workplace(agent_id: str | None) -> bool:
         if not wp:
             return False
         return (wp.get("kind") or "") in ("tunnel", "ssh")
-    except Exception:
+    except (ImportError, AttributeError):
         return False
+
+
+def _container_read(context, source_path: str) -> bytes:
+    import base64
+    import json
+    from app.runtime.isolation import backend
+    from app.runtime.access import AccessDenied
+
+    if not source_path or ":" in source_path or is_portal_path(source_path):
+        raise AccessDenied("Cross-destination artifact transfer is unavailable")
+    script = ("import sys,os,json,base64; p=sys.argv[1]; s=os.stat(p); "
+              "f=open(p,'rb'); f.seek(int(sys.argv[2])); b=f.read(48000); "
+              "print(json.dumps({'size':s.st_size,'mtime':s.st_mtime_ns,'data':base64.b64encode(b).decode()}))")
+    chunks, offset, version = [], 0, None
+    while True:
+        result = backend.execute(context, ['python', '-c', script, source_path, str(offset)], timeout=30)
+        if result.returncode:
+            raise AccessDenied("Artifact source is unavailable in the selected sandbox")
+        part = json.loads(result.stdout)
+        stamp = (part['size'], part['mtime'])
+        if stamp[0] > min(context.quota.disk_mb * 1024 * 1024, 128 * 1024 * 1024):
+            raise AccessDenied("Artifact exceeds the export size limit")
+        if version is not None and stamp != version:
+            raise AccessDenied("Artifact source changed during export")
+        version = stamp
+        chunk = base64.b64decode(part['data'], validate=True)
+        chunks.append(chunk)
+        offset += len(chunk)
+        if offset >= stamp[0]:
+            return b''.join(chunks)
+        if not chunk:
+            raise AccessDenied("Artifact source changed during export")
+
+
+def _container_write(context, dest_path: str, data: bytes) -> str:
+    import base64
+    import uuid
+    from app.runtime.isolation import backend
+    from app.runtime.access import AccessDenied
+
+    if not dest_path or ":" in dest_path or is_portal_path(dest_path):
+        raise AccessDenied("Cross-destination artifact transfer is unavailable")
+    temporary = dest_path + '.tomo-' + uuid.uuid4().hex
+    script = ("import sys,os,base64; p,tmp,mode,last=sys.argv[1:]; "
+              "os.makedirs(os.path.dirname(p) or '.',exist_ok=True); "
+              "f=open(tmp,mode); f.write(base64.b64decode(sys.stdin.read(),validate=True)); f.close(); "
+              "os.replace(tmp,p) if last=='1' else None")
+    offsets = range(0, len(data), 48000) if data else [0]
+    for offset in offsets:
+        piece = data[offset:offset + 48000]
+        result = backend.execute(context, ['python', '-c', script, dest_path, temporary,
+                                          'wb' if offset == 0 else 'ab',
+                                          '1' if offset + len(piece) >= len(data) else '0'],
+                                 stdin=base64.b64encode(piece).decode(), timeout=30)
+        if result.returncode:
+            raise AccessDenied("Artifact destination is unavailable or read-only in the selected sandbox")
+    return dest_path
 
 
 __all__ = [

@@ -13,6 +13,8 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: register_workplace expects a dict of arguments"
 
+    from app.runtime.policy import authorize_tool
+    authorize_tool("register_workplace", arguments)
     kind = str(arguments.get("kind") or "local").strip().lower()
     if kind not in ("local", "ssh", "tunnel"):
         return "Error: kind must be local, ssh, or tunnel"
@@ -24,9 +26,8 @@ def run(arguments: dict[str, Any]) -> str:
     assign = arguments.get("assign_to_agent")
     if assign is None:
         assign = True
-    bind = arguments.get("use_now")
-    if bind is None:
-        bind = True
+    # Registration is control-plane administration, not chat activation.
+    bind = False
 
     if kind == "local":
         if not path:
@@ -123,7 +124,8 @@ def run(arguments: dict[str, Any]) -> str:
         return (
             f"{verb} workplace {wp['id']!r} ({wp.get('kind')}) "
             f"name={wp.get('name')!r} "
-            f"path={wp.get('root_path') or wp.get('host') or '—'}"
+            f"path={wp.get('root_path') or wp.get('host') or '—'}. "
+            "Enable the resource through chat access settings before execution."
         )
     except Exception as exc:
         return f"Error: could not register workplace: {exc}"

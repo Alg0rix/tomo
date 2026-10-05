@@ -106,7 +106,7 @@ def setup(tmp_path):
 
 def inject(monkeypatch, responses):
     llm = ScriptedLLM(responses)
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
     return llm
 
 

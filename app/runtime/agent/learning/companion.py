@@ -53,13 +53,21 @@ def _days_together(first_seen_at: float | None, tz_minutes: int = 0) -> int:
 
 
 def session_user_id(conn: sqlite3.Connection, session_id: str | None) -> str:
+    from app.runtime.access import current_execution, AccessDenied
+    from app.services import store
     sid = (session_id or "").strip()
-    if not sid:
-        return "web"
-    sess = sessions_store.get_session(conn, sid)
-    if not sess:
-        return "web"
-    return (sess.get("user_id") or "web").strip() or "web"
+    current = current_execution(required=False)
+    if current:
+        current = store.access.revalidate(current)
+        if current.session_id != sid:
+            raise AccessDenied("Learning session is unavailable")
+        return current.user_id
+    sess = sessions_store.get_session(conn, sid) if sid else None
+    uid = (sess or {}).get("user_id")
+    if not uid:
+        raise AccessDenied("Learning owner identity is required")
+    store.access.require_user(uid)
+    return uid
 
 
 # -- aggregates -------------------------------------------------------------

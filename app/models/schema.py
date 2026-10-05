@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS workplaces (
     ssh_user               TEXT NOT NULL DEFAULT '',
     ssh_password           TEXT NOT NULL DEFAULT '',
     ssh_key                TEXT NOT NULL DEFAULT '',
+    ssh_sandbox_root       TEXT NOT NULL DEFAULT '',
+    ssh_sandbox_image      TEXT NOT NULL DEFAULT '',
     pairing_code           TEXT NOT NULL DEFAULT '',
     pairing_expires_at     REAL NOT NULL DEFAULT 0,
     connector_token        TEXT NOT NULL DEFAULT '',
@@ -235,7 +237,7 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     display_name  TEXT NOT NULL DEFAULT '',
-    role          TEXT NOT NULL DEFAULT 'admin',
+    role          TEXT NOT NULL DEFAULT 'member',
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    REAL NOT NULL DEFAULT 0,
     updated_at    REAL NOT NULL DEFAULT 0
@@ -328,6 +330,17 @@ CREATE TABLE IF NOT EXISTS agent_state (
     value      TEXT NOT NULL DEFAULT '',
     updated_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (agent_id, key)
+);
+
+-- Per-user skill activation overlay (Stage: member tools). A Member's
+-- activation never touches the shared ``agent_skills`` coordinator config;
+-- it only affects that user's own turns (see skills_prompt).
+CREATE TABLE IF NOT EXISTS user_skill_activations (
+    user_id    TEXT NOT NULL,
+    skill_id   TEXT NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 1,
+    updated_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, skill_id)
 );
 
 CREATE TABLE IF NOT EXISTS learning_events (
@@ -711,6 +724,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         "connector_hostname": "ALTER TABLE workplaces ADD COLUMN connector_hostname TEXT NOT NULL DEFAULT ''",
         "connector_platform": "ALTER TABLE workplaces ADD COLUMN connector_platform TEXT NOT NULL DEFAULT ''",
         "connector_remote_ip": "ALTER TABLE workplaces ADD COLUMN connector_remote_ip TEXT NOT NULL DEFAULT ''",
+        "ssh_sandbox_root": "ALTER TABLE workplaces ADD COLUMN ssh_sandbox_root TEXT NOT NULL DEFAULT ''",
+        "ssh_sandbox_image": "ALTER TABLE workplaces ADD COLUMN ssh_sandbox_image TEXT NOT NULL DEFAULT ''",
         "enabled": "ALTER TABLE workplaces ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
     }
     for col, ddl in _wp_alters.items():
@@ -1050,6 +1065,10 @@ def migrate(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_episodic_rel_to "
             "ON episodic_relations(to_episode_id, relation)"
         )
+
+    from app.models.access_schema import migrate_access
+
+    migrate_access(conn)
 
     from app.runtime.memory.fts import rebuild_messages_fts
 

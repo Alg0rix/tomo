@@ -10,6 +10,8 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: create_agent expects a dict of arguments"
 
+    from app.runtime.policy import authorize_tool
+    authorize_tool("create_agent", arguments)
     name = arguments.get("name")
     if not isinstance(name, str) or not name.strip():
         return "Error: 'name' is required (e.g. NetOps, Coder)"

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -22,6 +23,8 @@ from typing import Any, Callable, Iterable
 from app.core import config
 from app.core.observability import observe
 from app.runtime.tools import swarm_board as _swarm_board_backend
+
+logger = logging.getLogger(__name__)
 
 ToolRunner = Callable[[dict[str, Any]], str]
 
@@ -46,6 +49,7 @@ _BACKENDS: dict[str, str | ToolRunner] = {
     "vision_analyze": "app.runtime.tools.vision_analyze:run",
     "web_fetch": "app.runtime.tools.web_fetch:run",
     "web_search": "app.runtime.tools.web_search:run",
+    "browser": "app.runtime.tools.browser:run",
     "process": "app.runtime.tools.process:run",
     "todo": "app.runtime.tools.todo:run",
     "session_search": "app.runtime.tools.session_search:run",
@@ -147,9 +151,14 @@ class ToolRegistry:
         When ``enabled`` is provided, only those tool names are included.
         """
         allow = set(enabled) if enabled is not None else None
+        from app.runtime.access import current_execution
+        from app.runtime.policy import tool_available
+        context = current_execution(required=False)
         tools: list[dict[str, Any]] = []
         for name, data in sorted(self._live_definitions().items()):
             if allow is not None and name not in allow:
+                continue
+            if context is not None and not tool_available(context, name):
                 continue
             schema = data.get("schema")
             if isinstance(schema, dict) and schema.get("type") == "function":
@@ -158,6 +167,48 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         """Run a named tool with parsed arguments; always returns a string."""
+        from app.runtime.access import AccessDenied
+        from app.runtime.policy import authorize_tool, normalize_tool_arguments
+        try:
+            context = authorize_tool(name, arguments)
+            arguments = normalize_tool_arguments(context, name, arguments)
+        except AccessDenied as exc:
+            return f"Error: {exc}"
+        if name.startswith("plugin__") and context.role != "admin":
+            # Members never execute plugin code in the coordinator process.
+            try:
+                from app.runtime.plugins.member_sandbox import sandboxed_plugin_call
+
+                plugin_id = _member_plugin_id(name)
+                result = sandboxed_plugin_call(context, plugin_id, name, arguments)
+            except AccessDenied as exc:
+                result = f"Error: {exc}"
+            except Exception:
+                result = "Error: Member tool execution failed"
+            from app.services import store as _store
+            _store.access.audit(context.user_id, "tool." + name, session_id=context.session_id,
+                                agent_id=context.agent_id, destination_id=context.destination_id,
+                                outcome="failed" if result.startswith("Error:") else "ok")
+            return result
+        from app.services import store
+        try:
+            result = self._execute_raw(name, arguments)
+        except Exception:
+            result = "Error: tool service failed"
+        store.access.audit(context.user_id, "tool." + name, session_id=context.session_id,
+                           agent_id=context.agent_id, destination_id=context.destination_id,
+                           outcome="failed" if result.startswith("Error:") else "ok")
+        return result
+
+    def _execute_raw(self, name: str, arguments: dict[str, Any]) -> str:
+        if name == "bash" and isinstance(arguments, dict):
+            raw = arguments.get('background')
+            background = raw.strip().lower() in {'1', 'true', 'yes', 'on'} if isinstance(raw, str) else bool(raw)
+            if background:
+                from app.services.background_jobs import manager
+                job = manager.start(arguments.get('command'), arguments.get('workplace') or arguments.get('workplace_id'))
+                return (f"Started background job {job['id']}\nstatus: {job['status']}\n"
+                        f"backend: {job['backend']}\nworkplace: {job['workplace_id']}")
         if name.startswith("plugin__"):
             from app.plugins.manager import get_manager
             if not isinstance(arguments, dict):
@@ -176,7 +227,12 @@ class ToolRegistry:
                 runner = getattr(import_module(module), function)
             return runner(arguments)
         except Exception as exc:  # pragma: no cover - defensive
-            return f"Error: tool '{name}' failed: {exc}"
+            # Model-facing text stays generic: backend tracebacks may echo
+            # paths, arguments, or environment. The error class goes to the
+            # operator log only, never the raw message (credential-bearing
+            # exceptions must not reach logs or models verbatim).
+            logger.warning("Tool backend failed: tool=%s error=%s", name, type(exc).__name__)
+            return f"Error: tool '{name}' failed"
 
 
 # --- module-level convenience API (used by the agent loop) ---------------
@@ -215,20 +271,56 @@ def is_mcp_tool_name(name: str) -> bool:
     return is_mcp_runtime_id(name)
 
 
+def _audit_tool(name: str, outcome: str) -> None:
+    from app.runtime.access import current_execution
+    from app.services import store
+    context = current_execution(required=False)
+    if context:
+        import re
+        action = "tool." + name if isinstance(name, str) else "tool.invalid"
+        if not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,100}", action):
+            action = "tool.invalid"
+        store.access.audit(context.user_id, action, session_id=context.session_id,
+                           agent_id=context.agent_id, destination_id=context.destination_id,
+                           outcome=outcome)
+
+
+def _member_plugin_id(name: str) -> str:
+    """Split ``plugin__<id>__<tool>`` without ambiguity (ids may hold ``__``)."""
+    from app.plugins.manager import get_manager
+
+    with get_manager()._lock:
+        # Longest id first: ids may themselves contain "__".
+        for plugin_id in sorted(get_manager()._rows, key=len, reverse=True):
+            if name.startswith(f"plugin__{plugin_id}__") and len(name) > len(f"plugin__{plugin_id}__"):
+                return plugin_id
+    return name.split("__", 2)[1] if "__" in name else name
+
+
 @observe("tool")
 async def execute_async(name: str, arguments: dict[str, Any]) -> str:
     """MCP/channel I/O awaits its live transport; other built-ins use a worker thread."""
+    from app.runtime.access import AccessDenied
+    from app.runtime.policy import authorize_tool
+    try:
+        authorize_tool(name, arguments)
+    except AccessDenied as exc:
+        return f"Error: {exc}"
     denial = _swarm_board_backend.authorize(name, arguments)
     if denial:
         return denial
     if is_mcp_tool_name(name):
         from app.runtime.mcp import mcp_manager
 
-        return await mcp_manager.call_tool(name, arguments)
+        result = await mcp_manager.call_tool(name, arguments)
+        _audit_tool(name, "failed" if result.startswith("Error:") else "ok")
+        return result
     if name == "telegram_send_file":
         from app.runtime.tools.telegram_send_file import run_async
 
-        return await run_async(arguments)
+        result = await run_async(arguments)
+        _audit_tool(name, "failed" if result.startswith("Error:") else "ok")
+        return result
     return await asyncio.to_thread(execute, name, arguments)
 
 

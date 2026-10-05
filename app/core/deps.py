@@ -94,12 +94,6 @@ class _StaticVersion:
 templates.env.globals["static_ver"] = _StaticVersion()
 
 
-def _is_authenticated(request: Request) -> bool:
-    return bool(request.session.get("auth")) or bool(
-        getattr(request.state, "auth_user_id", None)
-    )
-
-
 def _extract_bearer_or_api_key(request: Request) -> str | None:
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
@@ -129,19 +123,25 @@ def _try_api_key_auth(request: Request) -> bool:
     return True
 
 
+def authenticated_user(request: Request) -> dict[str, Any]:
+    """Current enabled account, never a role copied from a signed cookie."""
+    require_auth(request)
+    from app.services import store
+
+    uid = getattr(request.state, "auth_user_id", None) or request.session.get("user_id")
+    user = store.get_user(str(uid or ""))
+    if not user or not user["enabled"]:
+        raise HTTPException(status_code=401, detail="Account is unavailable")
+    return user
+
+
 def session_user_id(request: Request) -> str:
-    """Logged-in account id (session or API key), or ``web`` when anonymous."""
-    api_uid = getattr(request.state, "auth_user_id", None)
-    if api_uid:
-        return str(api_uid)
-    return str(request.session.get("user_id") or "web")
+    """Authenticated account id only; anonymous/channel fallbacks are forbidden."""
+    return authenticated_user(request)["id"]
 
 
 def session_username(request: Request) -> str:
-    api_name = getattr(request.state, "auth_username", None)
-    if api_name:
-        return str(api_name)
-    return str(request.session.get("user") or "")
+    return authenticated_user(request)["username"]
 
 
 def can_manage_telegram(request: Request) -> bool:
@@ -161,7 +161,9 @@ def visible_sessions(request: Request) -> list[dict]:
     return [
         s
         for s in store.list_sessions()
-        if s["user_id"] == uid or s.get("channel") == "telegram"
+        if s["user_id"] == uid or (
+            s.get("channel") == "telegram" and s["user_id"].startswith("tg_")
+        )
     ]
 
 
@@ -176,7 +178,8 @@ def require_owned_session(request: Request, session_id: str) -> dict:
     session = store.get_owned_session(session_id, uid)
     if not session and can_manage_telegram(request):
         candidate = store.get_session(session_id)
-        if candidate and candidate.get("channel") == "telegram":
+        if (candidate and candidate.get("channel") == "telegram"
+                and candidate["user_id"].startswith("tg_")):
             session = candidate
     if not session:
         raise HTTPException(
@@ -186,10 +189,19 @@ def require_owned_session(request: Request, session_id: str) -> dict:
 
 
 def require_auth(request: Request) -> None:
-    """Dependency for routes that need a logged-in admin or API key."""
-    if _is_authenticated(request):
-        return
-    if _try_api_key_auth(request):
+    """Authenticate then re-read enabled state on EVERY request."""
+    from app.services import store
+
+    if not getattr(request.state, "auth_user_id", None):
+        key_authenticated = _try_api_key_auth(request)
+        if _extract_bearer_or_api_key(request) and not key_authenticated:
+            # Explicit failed credentials cannot inherit a privileged cookie.
+            raise HTTPException(status_code=401, detail="Invalid API key")
+    uid = getattr(request.state, "auth_user_id", None)
+    if not uid and request.session.get("auth"):
+        uid = request.session.get("user_id")
+    user = store.get_user(str(uid or "")) if uid else None
+    if user and user["enabled"] and user["role"] in ("admin", "member"):
         return
     if request.url.path.startswith("/api/") or request.url.path.startswith("/v1/"):
         # Invalid Bearer that looks like our key → 401 (don't fall through).
@@ -209,6 +221,14 @@ def require_auth(request: Request) -> None:
 
 
 AuthDep = Annotated[None, Depends(require_auth)]
+
+
+def require_admin(request: Request) -> None:
+    if authenticated_user(request)["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission is required")
+
+
+AdminDep = Annotated[None, Depends(require_admin)]
 
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:

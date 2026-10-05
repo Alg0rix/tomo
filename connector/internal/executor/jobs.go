@@ -17,6 +17,10 @@ import (
 type bgJob struct {
 	ID            string
 	Command       string
+	Owner         string
+	Session       string
+	Correlation   string
+	Deadline      time.Time
 	StartedAt     time.Time
 	Cmd           *exec.Cmd
 	Stdout        jobOutputBuffer
@@ -41,29 +45,34 @@ var (
 	jobs  = map[string]*bgJob{}
 )
 
-func processStart(params map[string]any) (any, error) {
+func processStart(params map[string]any, adm *Admission) (any, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
 	cmd := paramString(params, "command", "script")
 	cwd := paramString(params, "cwd")
-	return startBackgroundJobWithID(cmd, cwd, paramString(params, "id"))
+	timeout := adm.CapTimeout(timeoutSec(params["timeout"]))
+	correlation := strings.TrimSpace(paramString(params, "correlation_id", "id"))
+	return startAdmittedJob(adm, cmd, cwd, timeout, correlation)
 }
 
-func processStatus(params map[string]any) (any, error) {
+func processStatus(params map[string]any, adm *Admission) (any, error) {
 	id := paramString(params, "id")
 	if id == "__contract__" {
-		return map[string]any{"process_contract": backgroundJobContract()}, nil
+		return map[string]any{"remote_contract": RemoteExecContract}, nil
 	}
 	if id == "" {
 		return nil, fmt.Errorf("'id' is required")
 	}
-	return getBackgroundJob(id)
+	return getAdmittedJob(adm, id)
 }
 
-func processKill(params map[string]any) (any, error) {
+func processKill(params map[string]any, adm *Admission) (any, error) {
 	id := paramString(params, "id")
 	if id == "" {
 		return nil, fmt.Errorf("'id' is required")
 	}
-	return killBackgroundJob(id)
+	return killAdmittedJob(adm, id)
 }
 
 func startBackgroundJob(command, cwd string) (map[string]any, error) {
@@ -123,17 +132,86 @@ func startBackgroundJobWithID(command, cwd, id string) (map[string]any, error) {
 	cmd.Env = os.Environ()
 
 	job := &bgJob{ID: id, Command: command, StartedAt: time.Now(), Cmd: cmd}
+	if err := beginJobLocked(job); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"id":              id,
+		"status":          "running",
+		"command":         command,
+		"remote_contract": RemoteExecContract,
+	}, nil
+}
+
+func cleanupJobsLocked(now time.Time) {
+	for id, j := range jobs {
+		if j.Done.Load() && !j.CleanupFailed.Load() && now.Sub(j.finishedAt) >= jobTTL {
+			delete(jobs, id)
+		}
+	}
+}
+
+func jobSnapshot(j *bgJob) map[string]any {
+	status := "running"
+	if j.StopRequested.Load() && !j.MainExited.Load() {
+		status = "stopping"
+	}
+	var rc any
+	if j.Done.Load() {
+		status = "exited"
+		rc = int(j.ExitCode.Load())
+		if j.StopRequested.Load() && j.ExitCode.Load() < 0 {
+			status = "stopped"
+		}
+		if j.CleanupFailed.Load() {
+			status = "unknown"
+			rc = nil
+		}
+	}
+	return map[string]any{
+		"id":              j.ID,
+		"remote_contract": RemoteExecContract,
+		"correlation_id":  j.Correlation,
+		"truncated":       j.Stdout.Truncated() || j.Stderr.Truncated(),
+		"reason":          cleanupReason(j),
+		"status":          status,
+		"returncode":      rc,
+		"command":         j.Command,
+		"stdout":          j.Stdout.String(),
+		"stderr":          j.Stderr.String(),
+	}
+}
+
+func listJobs(adm *Admission) any {
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	cleanupJobsLocked(time.Now())
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		if adm != nil && (j.Owner != adm.Owner || j.Session != adm.Session) {
+			continue
+		}
+		out = append(out, jobSnapshot(j))
+	}
+	return out
+}
+
+// beginJobLocked spawns cmd with output pipes and the reaper goroutine.
+// Callers hold jobMu and have already created the job record fields.
+func beginJobLocked(job *bgJob) error {
+	cmd := job.Cmd
 	// Use our own pipes: exec.Cmd's implicit writer goroutines can otherwise
 	// wait forever for a descendant even though the command shell has exited.
 	outReader, outWriter, err := os.Pipe()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	errReader, errWriter, err := os.Pipe()
 	if err != nil {
 		outReader.Close()
 		outWriter.Close()
-		return nil, err
+		return err
 	}
 	cmd.Stdout = outWriter
 	cmd.Stderr = errWriter
@@ -142,11 +220,11 @@ func startBackgroundJobWithID(command, cwd, id string) (map[string]any, error) {
 		outWriter.Close()
 		errReader.Close()
 		errWriter.Close()
-		return nil, fmt.Errorf("could not start background command: %w", err)
+		return fmt.Errorf("could not start background command: %w", err)
 	}
 	outWriter.Close()
 	errWriter.Close()
-	jobs[id] = job
+	jobs[job.ID] = job
 	var readers sync.WaitGroup
 	readers.Add(2)
 	go func() { defer readers.Done(); _, _ = io.Copy(&job.Stdout, outReader) }()
@@ -184,62 +262,144 @@ func startBackgroundJobWithID(command, cwd, id string) (map[string]any, error) {
 		job.Done.Store(true)
 		jobMu.Unlock()
 	}()
-
-	return map[string]any{
-		"id":               id,
-		"status":           "running",
-		"command":          command,
-		"process_contract": backgroundJobContract(),
-	}, nil
+	return nil
 }
 
-func cleanupJobsLocked(now time.Time) {
-	for id, j := range jobs {
-		if j.Done.Load() && !j.CleanupFailed.Load() && now.Sub(j.finishedAt) >= jobTTL {
-			delete(jobs, id)
-		}
-	}
-}
+var correlationRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-func jobSnapshot(j *bgJob) map[string]any {
-	status := "running"
-	if j.StopRequested.Load() && !j.MainExited.Load() {
-		status = "stopping"
+// startAdmittedJob starts an owner/session-tagged background job with a
+// destination-enforced deadline. correlation_id makes coordinator retries
+// idempotent: the same (owner, session, correlation, command, cwd) returns
+// the existing job instead of starting a duplicate.
+func startAdmittedJob(adm *Admission, command, cwd string, timeoutSecs int, correlation string) (any, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, fmt.Errorf("'command' must be a non-empty string")
 	}
-	var rc any
-	if j.Done.Load() {
-		status = "exited"
-		rc = int(j.ExitCode.Load())
-		if j.StopRequested.Load() && j.ExitCode.Load() < 0 {
-			status = "stopped"
-		}
-		if j.CleanupFailed.Load() {
-			status = "unknown"
-			rc = nil
-		}
+	resolved, err := adm.AuthorizeCwd(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("cwd: %w", err)
 	}
-	return map[string]any{
-		"id":               j.ID,
-		"process_contract": backgroundJobContract(),
-		"truncated":        j.Stdout.Truncated() || j.Stderr.Truncated(),
-		"reason":           cleanupReason(j),
-		"status":           status,
-		"returncode":       rc,
-		"command":          j.Command,
-		"stdout":           j.Stdout.String(),
-		"stderr":           j.Stderr.String(),
+	if correlation != "" && !correlationRE.MatchString(correlation) {
+		return nil, fmt.Errorf("invalid correlation id")
 	}
-}
-
-func listJobs() any {
+	if timeoutSecs <= 0 {
+		timeoutSecs = defaultTimeout
+	}
 	jobMu.Lock()
 	defer jobMu.Unlock()
 	cleanupJobsLocked(time.Now())
-	out := make([]map[string]any, 0, len(jobs))
-	for _, j := range jobs {
-		out = append(out, jobSnapshot(j))
+	if correlation != "" {
+		for _, j := range jobs {
+			if j.Correlation == correlation && j.Owner == adm.Owner && j.Session == adm.Session {
+				if j.Command != command || j.Cmd.Dir != resolved {
+					return nil, fmt.Errorf("correlation id already belongs to a different command")
+				}
+				return jobSnapshot(j), nil
+			}
+		}
 	}
-	return out
+	running := 0
+	for _, j := range jobs {
+		if !j.Done.Load() || j.CleanupFailed.Load() {
+			running++
+		}
+	}
+	if len(jobs) >= maxJobs || running >= maxRunningJobs {
+		return nil, fmt.Errorf("busy: background job limit reached")
+	}
+	var randomID [16]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return nil, fmt.Errorf("generate job id: %w", err)
+	}
+	id := "job_" + hex.EncodeToString(randomID[:])
+	// Agent workplace tooling intentionally runs shell scripts from the coordinator.
+	// #nosec G204 -- command is the product surface (bash tool); cwd is jailed above.
+	cmd := exec.Command("bash", "-lc", command) //nolint:gosec
+	prepareProcess(cmd)
+	cmd.Dir = resolved
+	cmd.Env = os.Environ()
+	deadline := time.Now().Add(time.Duration(timeoutSecs) * time.Second)
+	job := &bgJob{
+		ID: id, Command: command, Owner: adm.Owner, Session: adm.Session,
+		Correlation: correlation, Deadline: deadline, StartedAt: time.Now(), Cmd: cmd,
+	}
+	if err := beginJobLocked(job); err != nil {
+		return nil, err
+	}
+	go enforceDeadline(job, timeoutSecs)
+	return jobSnapshot(job), nil
+}
+
+// enforceDeadline kills jobs that outlive their admitted duration bound.
+// The coordinator supervises the same deadline server-side; neither clock
+// is trusted alone.
+func enforceDeadline(job *bgJob, timeoutSecs int) {
+	timer := time.NewTimer(time.Duration(timeoutSecs)*time.Second + 5*time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		job.processMu.Lock()
+		running := !job.MainExited.Load() && !job.Done.Load() && job.Cmd != nil && job.Cmd.Process != nil
+		job.processMu.Unlock()
+		if running {
+			job.StopRequested.Store(true)
+			_ = terminateProcess(job.Cmd)
+		}
+	}
+}
+
+func ownedJob(adm *Admission, id string) (*bgJob, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	cleanupJobsLocked(time.Now())
+	j := jobs[id]
+	if j == nil {
+		return nil, fmt.Errorf("unknown job id %q", id)
+	}
+	if j.Owner != adm.Owner || j.Session != adm.Session {
+		return nil, fmt.Errorf("job belongs to another execution scope")
+	}
+	return j, nil
+}
+
+func getAdmittedJob(adm *Admission, id string) (any, error) {
+	j, err := ownedJob(adm, id)
+	if err != nil {
+		return nil, err
+	}
+	return jobSnapshot(j), nil
+}
+
+func killAdmittedJob(adm *Admission, id string) (any, error) {
+	j, err := ownedJob(adm, id)
+	if err != nil {
+		return nil, err
+	}
+	return killBackgroundJob(j.ID)
+}
+
+// killSessionJobs kills every job of an owner/session (confirmed teardown).
+// Returns the number of jobs that were running.
+func killSessionJobs(owner, session string) int {
+	jobMu.Lock()
+	targets := []*bgJob{}
+	for _, j := range jobs {
+		if j.Owner == owner && j.Session == session && (!j.Done.Load() || j.CleanupFailed.Load()) {
+			targets = append(targets, j)
+		}
+	}
+	jobMu.Unlock()
+	killed := 0
+	for _, j := range targets {
+		if _, err := killBackgroundJob(j.ID); err == nil {
+			killed++
+		}
+	}
+	return killed
 }
 
 func getBackgroundJob(id string) (map[string]any, error) {

@@ -129,19 +129,24 @@ def test_context_deduplicates_facts(vault, tmp_path):
 
 def test_memory_tool_uses_live_matches_and_labels_historical_facts(vault, tmp_path, monkeypatch):
     from app.core import config
-    from app.runtime.tools import memory, user_ctx
-    from app.services import store
+    from app.runtime.tools import memory
+
+    from app.services import store as store_module
+    from tests.fakes.access import owned_admin_scope
 
     conn, opts = vault
+    store_module.rebind(tmp_path / 'retrieval-tool.db')
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
-    monkeypatch.setattr(user_ctx, 'current_user_id', lambda: 'alice')
-    monkeypatch.setattr(store, 'with_db', lambda fn: fn(conn))
-    write.add_entity('alice', 'tool/server', 'Port 8000.', **opts)
-    write.add_entity('alice', 'tool/server', 'Port 9000.', supersedes='Port 8000.', **opts)
-    assert memory.run({'action': 'search', 'query': '8000'}) == 'Vault has no matching facts.'
-    assert '[superseded] Port 8000.' in memory.run(
-        {'action': 'search', 'query': '8000', 'include_superseded': True})
-    assert '8000' not in memory.run({'action': 'search', 'query': 'server'})
+    # Real bound Admin identity end to end: the tool authorizes, then reads
+    # the caller's own vault namespace from the real store.
+    with owned_admin_scope() as (ctx, _root):
+        uid = ctx.user_id
+        write.add_entity(uid, 'tool/server', 'Port 8000.', home_root=tmp_path)
+        write.add_entity(uid, 'tool/server', 'Port 9000.', supersedes='Port 8000.', home_root=tmp_path)
+        assert memory.run({'action': 'search', 'query': '8000'}) == 'Vault has no matching facts.'
+        assert '[superseded] Port 8000.' in memory.run(
+            {'action': 'search', 'query': '8000', 'include_superseded': True})
+        assert '8000' not in memory.run({'action': 'search', 'query': 'server'})
 
 
 def test_fts_query_punctuation_and_operators_are_safe(vault, tmp_path):

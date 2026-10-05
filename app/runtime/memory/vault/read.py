@@ -166,6 +166,8 @@ def search(conn: sqlite3.Connection, user_id: str, query: str, *, limit: int = 5
 
 
 def related(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limit: int = 4) -> list[dict]:
+    from app.runtime.policy import authorize_private_user
+    authorize_private_user(user_id)
     if not paths_in:
         return []
     placeholders = ','.join('?' for _ in paths_in)

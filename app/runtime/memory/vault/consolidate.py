@@ -46,6 +46,8 @@ async def consolidate_day(user_id: str, day: str, client, *, home_root: Path | N
     from .extract import entity_context
 
     snapshot = entity_context(user_id, home_root=home_root)
+    from app.runtime.policy import authorize_model_client
+    authorize_model_client(client)
     response = await asyncio.wait_for(client.complete([
         {'role': 'system', 'content': 'Extract durable facts from this day log. Return ONLY a JSON array of {"entity":"type/slug","fact":"concise declarative fact","supersedes":"exact existing fact text or empty","aliases":["names","abbreviations","search terms"]}. Entity types: person, project, tool, place, org, topic. Current facts may be newer than this historical log: never replace newer knowledge with past values. Return [] if nothing durable.'},
         {'role': 'user', 'content': json.dumps({'day': day, 'log': page.body[:18000], 'existing': snapshot}, ensure_ascii=False)[:30000]},
@@ -65,7 +67,10 @@ async def consolidate_day(user_id: str, day: str, client, *, home_root: Path | N
                              origin='consolidation', aliases=item['aliases'], supersedes=item['supersedes'],
                              home_root=home_root, conn=conn)
         page.meta['consolidated'] = 'true'
-        write.atomic_write(path, doc.serialize(page))
+        from app.runtime.storage import private_write
+        body = doc.serialize(page)
+        with private_write(len(body.encode()), home_root=home_root):
+            write.atomic_write(path, body)
         if conn is None:
             from app.services import store
             store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
@@ -102,12 +107,28 @@ async def run_nightly() -> None:
     for user in store.list_users():
         uid = user['id']
         try:
-            client = get_auxiliary_llm('memory_consolidation')
-            try:
-                await consolidate_user(uid, client)
-            finally:
-                if hasattr(client, 'aclose'):
-                    await client.aclose()
-            optimize_ltm(user_id=uid)
+            from app.runtime.access import execution_scope, AccessDenied
+            from app.runtime.supervision import admitted_turn
+            context = None
+            # No scheduler/global identity or unassigned default model. Choose
+            # an existing owned chat with executable CURRENT grants, or skip.
+            for session in store.list_sessions(user_id=uid):
+                try:
+                    context = store.access.resolve_context(uid, session['id'])
+                    break
+                except AccessDenied:
+                    continue
+            if context is None:
+                continue
+            with execution_scope(context):
+                async with admitted_turn(context):
+                    client = get_auxiliary_llm('memory_consolidation', session_id=context.session_id)
+                    try:
+                        await consolidate_user(uid, client)
+                    finally:
+                        if hasattr(client, 'aclose'):
+                            await client.aclose()
+                    store.access.revalidate(context)
+                    optimize_ltm(user_id=uid)
         except Exception:
             log.exception('nightly memory optimization failed for %s', uid)

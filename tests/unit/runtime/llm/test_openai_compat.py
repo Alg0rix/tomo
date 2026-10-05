@@ -137,8 +137,11 @@ async def test_compatible_provider_reasoning_delta_reaches_turn() -> None:
     ).encode()
     client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
         200, content=body, headers={"content-type": "text/event-stream"})))
+    from tests.fakes.access import owned_host_session
+    sid = owned_host_session()
     try:
-        events = [ev async for ev in run_turn("hi", llm=client, tools=[], enable_atg=False)]
+        events = [ev async for ev in run_turn("hi", llm=client, tools=[], enable_atg=False,
+                                             session_id=sid, agent_id="main")]
         assert [ev["content"] for ev in events if ev["kind"] == "thinking_delta"] == ["checking ", "facts"]
         assert [ev["content"] for ev in events if ev["kind"] == "thinking"] == ["checking facts"]
         assert next(ev for ev in events if ev["kind"] == "thinking")["replace_streamed"] is True
@@ -164,8 +167,11 @@ async def test_stale_stream_aborts_and_reports_retry(monkeypatch) -> None:
 
     monkeypatch.setattr(loop, "_stream_stale_seconds", lambda client: 0.04)
     client = _client(httpx2.MockTransport(handler))
+    from tests.fakes.access import owned_host_session
+    sid = owned_host_session()
     try:
-        events = [ev async for ev in loop.run_turn("hi", llm=client, tools=[], enable_atg=False)]
+        events = [ev async for ev in loop.run_turn("hi", llm=client, tools=[], enable_atg=False,
+                                                  session_id=sid, agent_id="main")]
         assert attempts == 2
         assert any(ev["kind"] == "status" and "reconnect" in ev["message"] for ev in events)
         assert events[-1]["kind"] == "error"

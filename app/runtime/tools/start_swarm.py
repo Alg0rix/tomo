@@ -22,6 +22,8 @@ def reset_context(token: Token) -> None:
 
 def run(arguments: dict[str, Any]) -> str:
     from app.runtime.agent.subagent import current_depth
+    from app.runtime.policy import authorize_tool
+    authorize_tool("start_swarm", arguments)
 
     user_request = _request.get()
     if user_request is None or current_depth() > 0:

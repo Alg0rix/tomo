@@ -55,7 +55,7 @@ def setup(tmp_path):
 
 def install(monkeypatch, responses):
     llm = PausedLLM([text_reply(s) for s in responses])
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
     return llm
 
 
@@ -304,7 +304,7 @@ async def test_agent_commentary_visible_but_private_reasoning_never_sent(
     response.content = "I am checking the requested information."
     response.reasoning = "PRIVATE REASONING MUST NOT BE SENT"
     llm = ScriptedLLM([response, text_reply("Finished")])
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
     try:
         await dispatcher.dispatch(message("check"))
         await until(lambda: not dispatcher.tasks)
@@ -324,7 +324,7 @@ async def test_interrupt_approval_wait_does_not_grant_old_permission(
     _, api, dispatcher = setup
     store.update_settings({"approvals_mode": "manual"})
     llm = ScriptedLLM([bash_call("rm -r approval-test"), text_reply("Replacement")])
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
     try:
         await dispatcher.dispatch(message("old"))
         await until(lambda: 42 in dispatcher.uis and dispatcher.uis[42].waiting)

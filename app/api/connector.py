@@ -374,6 +374,7 @@ async def _bind_session(
         replay_ok=replay_ok,
         stream_ok=client_supports_stream(caps),
         secret_broker="secret-broker" in caps.split(","),
+        caps=caps,
     )
     prev = hub.register(session)
     if prev is not None and prev.websocket is not websocket:

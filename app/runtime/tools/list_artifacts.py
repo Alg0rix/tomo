@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.runtime.artifacts.fs import current_session_id, list_artifact_files, safe_session_id
+from app.runtime.artifacts.fs import list_artifact_files, safe_session_id
 
 
 def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
-    session_id = safe_session_id(
-        str(arguments.get("session_id") or current_session_id() or "").strip()
-    )
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("list_artifacts", arguments)
+    session_id = safe_session_id(execution.session_id)
     if not session_id:
         return (
             "Error: session_id is required — artifacts are scoped to the current "

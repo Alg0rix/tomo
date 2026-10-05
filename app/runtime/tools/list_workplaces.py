@@ -74,12 +74,13 @@ def run(arguments: dict[str, Any] | None = None) -> str:
     aid = current_agent_id()
     from app.services import store
 
-    if not aid:
-        wps = list(store.list_workplaces())
-        agent: dict[str, Any] = {"is_super": True, "workplace_scope": "all"}
-    else:
-        agent = store.get_agent(aid) or {}
-        wps = _catalog_for_agent(agent)
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("list_workplaces", args)
+    wps = store.access.list_visible_workplaces(execution.user_id)
+    enabled = {r.workplace_id for r in execution.resources}
+    for wp in wps:
+        wp["status"] = "enabled in chat" if wp["id"] in enabled else "not enabled in chat"
+    agent = {"workplace_scope": "authorized user grants"}
 
     kind = str(args.get("kind") or "all").strip().lower()
     if kind and kind != "all":
@@ -117,8 +118,8 @@ def run(arguments: dict[str, Any] | None = None) -> str:
         lines.append("- " + _line(w))
     lines.append("")
     lines.append(
-        "Use bash/read_file/… with workplace=<id|name|hostname> to target a host. "
-        "Do not discover workplaces via filesystem search."
+        "Only enabled chat resources can be used. Ask the user to enable an existing grant; "
+        "tools and approvals cannot activate additional resources."
     )
     return "\n".join(lines)
 

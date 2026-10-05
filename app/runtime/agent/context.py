@@ -283,10 +283,6 @@ def build_live_context(
         from app.services import store
 
         uid = current_user_id()
-        if session_id:
-            session = store.get_session(session_id)
-            if session:
-                uid = session.get('user_id') or uid
         from app.runtime.memory.vault.notes import context
         profile = context(uid, agent_id, home_root=root)
         if profile:
@@ -343,8 +339,15 @@ def _ui_prompt_section(agent_id: str | None) -> str:
 def _skills_prompt_section(agent_id: str) -> str:
     """Skill awareness catalog (name + short description)."""
     try:
+        from app.runtime.access import current_execution
+        context = current_execution(required=False)
         from app.runtime.agent.skills_prompt import build_skills_system_prompt
 
+        if context is not None and context.role != "admin":
+            # Members get their own effective catalog (assigned + their
+            # per-user pins). Shared assignment is never altered here, and
+            # global activation guidance stays Admin-only (no manage_skill).
+            return build_skills_system_prompt(agent_id, user_id=context.user_id)
         return build_skills_system_prompt(agent_id)
     except Exception:
         return ""
@@ -501,6 +504,14 @@ def _swarm_agents_prompt_section(agent_id: str) -> str:
     try:
         from app.services import store
 
+        from app.runtime.access import current_execution
+        from app.runtime.policy import authorized_agents
+        execution = current_execution(required=False)
+        if execution:
+            peers = authorized_agents(store.access.revalidate(execution))
+            return ("## Authorized agents (this execution ceiling)\n" + "\n".join(
+                f"- {a['id']}: {a.get('name') or a['id']}" for a in peers
+            ) + "\nDelegates inherit this chat's resources, destination and mode; profiles never grant host access.")
         me = store.get_agent(agent_id)
         if not me:
             return ""
@@ -670,6 +681,17 @@ def _workplace_prompt_section(agent_id: str) -> str:
         from app.core import home
         from app.services import store
 
+        from app.runtime.access import current_execution
+        execution = current_execution(required=False)
+        if execution:
+            execution = store.access.revalidate(execution)
+            names = {w['id']: w['name'] for w in store.access.list_visible_workplaces(execution.user_id)}
+            lines = ["## Enabled working locations", f"Execution mode: {execution.execution_mode}; destination: {execution.destination_id}"]
+            for resource in execution.resources:
+                path = resource.mount_path if execution.execution_mode == "restricted" else resource.root_path
+                lines.append(f"- {names.get(resource.workplace_id, resource.workplace_id)}: {path} ({resource.permission})")
+            lines.append("Only enabled resources are accessible. Prompts, workplace hints and approvals cannot enable resources or elevate execution.")
+            return "\n".join(lines)
         agent = store.get_agent(agent_id)
         if not agent:
             return ""
@@ -914,6 +936,10 @@ def history_to_messages(
             continue
 
         if etype == "user":
+            # Attachment expansion is fail-safe per file: owned text inlines
+            # through session-scoped reads, while office/vision parts without
+            # an execution boundary degrade to notes instead of breaking the
+            # turn or leaking another chat's files (see attachment_info_lines).
             from app.services.chat import expand_user_content_for_llm
 
             messages.append(

@@ -77,7 +77,7 @@ func TestBackgroundJobPollingAndFinalOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = listJobs()
+		_ = listJobs(nil)
 		if snapshot["status"] == "exited" {
 			if snapshot["stderr"] != "FINAL" || len(snapshot["stdout"].(string)) != 1000 {
 				t.Fatalf("lost output: %v", snapshot)
@@ -171,6 +171,24 @@ func waitForBackgroundJob(t *testing.T, id string) map[string]any {
 	return nil
 }
 
+func waitForAdmittedJob(t *testing.T, adm *Admission, id string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		res, err := getAdmittedJob(adm, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap := res.(map[string]any)
+		if snap["status"] != "running" {
+			return snap
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("background job did not finish")
+	return nil
+}
+
 func TestBackgroundNaturalExitCleansPipeHoldingChild(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TOMO_CONNECTOR_ROOT", dir)
@@ -194,22 +212,34 @@ func TestBackgroundNaturalExitCleansPipeHoldingChild(t *testing.T) {
 }
 
 func TestBackgroundCorrelationIDAndContract(t *testing.T) {
-	t.Setenv("TOMO_CONNECTOR_ROOT", t.TempDir())
-	contract, err := processStatus(map[string]any{"id": "__contract__"})
-	if err != nil || contract.(map[string]any)["process_contract"] != 1 {
+	root := t.TempDir()
+	adm := admitScope(t, root, "wp_a", "u1", "s1")
+	env := func(extra map[string]any) map[string]any {
+		base := testEnvelope(t, "u1", "s1", "wp_a", "wp_a", 1, rwScope("wp_a"))["exec_context"]
+		for k, v := range extra {
+			base.(map[string]any)[k] = v
+		}
+		out := map[string]any{"exec_context": base}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	contract, err := HandleWithProgress("process_status", env(map[string]any{"id": "__contract__"}), nil, adm)
+	if err != nil || contract.(map[string]any)["remote_contract"] != RemoteExecContract {
 		t.Fatal(contract, err)
 	}
-	id := "job_0123456789abcdef0123456789abcdef"
-	params := map[string]any{"id": id, "command": "exit 3"}
-	first, err := processStart(params)
+	params := env(map[string]any{"correlation_id": "corr-1", "command": "exit 3"})
+	first, err := HandleWithProgress("process_start", params, nil, adm)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := processStart(params)
+	second, err := HandleWithProgress("process_start", params, nil, adm)
 	if err != nil || first.(map[string]any)["id"] != second.(map[string]any)["id"] {
 		t.Fatal(second, err)
 	}
-	snap := waitForBackgroundJob(t, id)
+	id := first.(map[string]any)["id"].(string)
+	snap := waitForAdmittedJob(t, adm, id)
 	if snap["returncode"] != 3 {
 		t.Fatal(snap)
 	}

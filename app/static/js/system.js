@@ -140,6 +140,7 @@
             learning_enabled: document.getElementById('setLearning').checked,
             memory_vault_enabled: document.getElementById('setMemoryVault').checked,
             image_input_mode: document.getElementById('setImageInputMode').value,
+            network_egress: document.getElementById('setNetworkEgress').value,
             auto_compact_enabled: document.getElementById('setAutoCompact').checked,
             auto_compact_threshold: (parseInt(document.getElementById('setAutoCompactThreshold').value, 10) || 90) / 100,
             memory_consolidation_enabled: document.getElementById('setMemoryConsolidation').checked,
@@ -529,11 +530,40 @@
     } catch (err) { Tomo.toast(err.message || 'Could not save fact', 'err'); }
   });
   var vaultUpload = document.getElementById('vaultUpload');
+  var vaultSession = document.getElementById('vaultSession');
+  async function loadVaultSessions() {
+    if (!vaultSession || vaultSession.dataset.loaded) return;
+    try {
+      var data = await Tomo.api('/api/sessions');
+      var sessions = (data && data.sessions) || [];
+      vaultSession.innerHTML = '';
+      if (!sessions.length) {
+        vaultSession.innerHTML = '<option value="">No owned chats — start one first</option>';
+        return;
+      }
+      sessions.forEach(function (s) {
+        var opt = document.createElement('option');
+        opt.value = s.id;
+        var label = s.title || s.topic || s.id;
+        opt.textContent = label + ' (' + String(s.id).slice(-6) + ')';
+        vaultSession.appendChild(opt);
+      });
+      vaultSession.dataset.loaded = '1';
+    } catch (err) {
+      vaultSession.innerHTML = '<option value="">Could not list chats</option>';
+    }
+  }
+  if (vaultSession) loadVaultSessions();
   if (vaultUpload) vaultUpload.addEventListener('change', async function () {
     if (!vaultUpload.files.length) return;
+    var entity = document.getElementById('vaultEntity').value.trim();
+    if (!entity) { Tomo.toast('Enter a page name first', 'err'); vaultUpload.value = ''; return; }
+    var sid = vaultSession ? vaultSession.value : '';
+    if (!sid) { Tomo.toast('Pick an owned chat to convert in', 'err'); vaultUpload.value = ''; return; }
     var form = new FormData();
     form.append('file', vaultUpload.files[0]);
-    form.append('entity', document.getElementById('vaultEntity').value.trim());
+    form.append('entity', entity);
+    form.append('session_id', sid);
     try {
       await Tomo.api('/api/memory/upload', {method: 'POST', body: form});
       Tomo.toast('Uploaded to vault', 'ok');

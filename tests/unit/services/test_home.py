@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.core.deps import require_auth
 from app.services import home, store
 
 
@@ -225,15 +223,16 @@ def test_normalize_card_rejects_non_dict():
         home.normalize_card(["not", "a", "card"])
 
 
-def test_layout_api_roundtrip_and_isolation(monkeypatch):
-    from app.api import rest
-    from app.main import app
+def test_layout_api_roundtrip_and_isolation(tmp_path):
+    # Two real Member logins: layout roundtrip for one, isolation from the other.
+    from tests.fakes.access import admin_client
 
-    user = {"id": "usr_alice"}
-    monkeypatch.setattr(rest, "session_user_id", lambda request: user["id"])
-    app.dependency_overrides[require_auth] = lambda: None
+    from app.services import store
+
+    store.rebind(tmp_path / "home-layout.db")
+    client, _alice = admin_client(role="member")
+    bob_client, _bob = admin_client(role="member")
     try:
-        client = TestClient(app)
         r = client.put("/api/home/layout", json={"order": ["core:memory", 7, "money:0"], "hidden": ["core:companion"]})
         assert r.status_code == 200
         assert r.json() == {"order": ["core:memory", "money:0"], "hidden": ["core:companion"]}
@@ -244,13 +243,13 @@ def test_layout_api_roundtrip_and_isolation(monkeypatch):
         assert client.get("/api/home?tz=0").json()["layout"] == {"order": [], "hidden": [], **layout}
         assert client.put("/api/home/layout", json={"sizes": {"money:spending": {"width": [], "height": 320}}}).status_code == 400
         assert client.put("/api/home/layout", json={"sizes": {"money:spending": {"width": "m", "height": 321}}}).status_code == 400
-        user["id"] = "usr_bob"
-        assert client.get("/api/home/live").status_code == 200
-        assert client.get("/api/home/badges").json() == {"needs": 0, "running": 0}
-        assert client.get("/api/home?tz=0").json()["layout"] == {"order": [], "hidden": []}
+        assert bob_client.get("/api/home/live").status_code == 200
+        assert bob_client.get("/api/home/badges").json() == {"needs": 0, "running": 0}
+        assert bob_client.get("/api/home?tz=0").json()["layout"] == {"order": [], "hidden": []}
         assert client.get("/api/home?tz=9999").status_code == 422
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
+        bob_client.close()
 
 
 def test_rail_renders_rooms_with_kanji_and_tint():

@@ -1,0 +1,34 @@
+{
+  "id": "browser",
+  "name": "Browser",
+  "description": "Render a document offline in the chat container, or fetch-then-render a public URL under scoped egress.",
+  "backend": "app.runtime.tools.browser",
+  "schema": {
+    "type": "function",
+    "function": {
+      "name": "browser",
+      "description": "Render a document and return its title plus readable text. Offline sources (html, data: URL, owned file) always work with no internet. Online http(s) URLs require scoped egress and pass SSRF checks on the initial URL and every redirect; the fetched page is rendered offline — subresources and websockets are never retrieved live.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "html": {
+            "type": "string",
+            "description": "Raw HTML to render offline (exactly one of html/url/file)."
+          },
+          "url": {
+            "type": "string",
+            "description": "data: URL (offline) or http(s) URL (scoped egress fetch, then offline render)."
+          },
+          "file": {
+            "type": "string",
+            "description": "Owned workplace HTML/text file to render offline."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Render/fetch bound in seconds (default 60, max 120)."
+          }
+        }
+      }
+    }
+  }
+}

@@ -31,17 +31,7 @@ def run(arguments: dict[str, Any]) -> str:
             "objective, outcome/outcome_summary, trajectory, or reflection"
         )
 
-    from app.runtime.tools.sandbox import current_agent_id
-    from app.runtime.tools.user_ctx import current_user_id
     from app.services import store
-
-    session_id = ""
-    try:
-        from app.runtime.artifacts.fs import current_session_id
-
-        session_id = (current_session_id() or "").strip()
-    except Exception:
-        session_id = ""
 
     workplace_id = ""
     try:
@@ -52,9 +42,11 @@ def run(arguments: dict[str, Any]) -> str:
         workplace_id = ""
 
     payload = dict(arguments)
-    payload.setdefault("user_id", current_user_id())
-    payload.setdefault("agent_id", current_agent_id() or "")
-    payload.setdefault("session_id", session_id)
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("record_episode", arguments)
+    payload["user_id"] = execution.user_id
+    payload["agent_id"] = execution.agent_id
+    payload["session_id"] = execution.session_id
     if workplace_id:
         payload.setdefault("workplace_id", workplace_id)
 

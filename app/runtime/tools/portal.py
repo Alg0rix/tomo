@@ -12,6 +12,8 @@ from app.runtime.tools.sandbox import current_agent_id
 def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("portal", arguments)
     action = str(arguments.get("action") or "copy").strip().lower()
 
     if action == "list":

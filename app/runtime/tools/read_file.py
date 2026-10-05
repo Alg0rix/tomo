@@ -103,6 +103,21 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: read_file expects a dict of arguments"
     arguments = _normalize_arguments(arguments)
+    from app.runtime.tools.sandbox import dispatch_execution
+
+    dispatched = dispatch_execution("read_file", arguments)
+    if dispatched is not None:
+        return dispatched
+    from app.runtime.tools.sandbox import file_execution_guard
+
+    try:
+        with file_execution_guard():
+            return _run(arguments)
+    except PermissionError as exc:
+        return f"Error: {exc}"
+
+
+def _run(arguments: dict[str, Any]) -> str:
     path_arg = arguments.get("path")
     if not isinstance(path_arg, str) or not path_arg.strip():
         return "Error: 'path' argument must be a non-empty string"

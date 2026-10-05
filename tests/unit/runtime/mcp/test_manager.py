@@ -19,6 +19,7 @@ from mcp import types as mcp_types
 
 from app.runtime.mcp.manager import McpConnectionManager
 from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 class FakeSession:
@@ -190,7 +191,10 @@ async def test_call_tool_dispatches_and_renders_text(manager) -> None:
     manager.session_factory = _factory_for({"s6": session}, [])
     await manager.connect_and_discover("s6")
 
-    out = await manager.call_tool("mcp__s6__echo", {"x": 1})
+    # Owned Admin execution: discovery persists the catalog first, then the
+    # bound ceiling carries the tool id (real enablement, real audit).
+    with owned_admin_scope():
+        out = await manager.call_tool("mcp__s6__echo", {"x": 1})
 
     assert out == "called echo"
     assert session.calls == [("echo", {"x": 1})]
@@ -211,7 +215,8 @@ async def test_call_tool_disabled_item_returns_error_string(manager) -> None:
     item = store.list_mcp_items("s7", kind="tool")[0]
     store.set_mcp_item_enabled(item["id"], False)
 
-    out = await manager.call_tool("mcp__s7__echo", {})
+    with owned_admin_scope():
+        out = await manager.call_tool("mcp__s7__echo", {})
 
     assert out.startswith("Error:")
     assert "disabled" in out.lower()
@@ -224,10 +229,12 @@ async def test_read_resource_and_get_prompt(manager) -> None:
     manager.session_factory = _factory_for({"s8": session}, [])
     await manager.connect_and_discover("s8")
 
-    resource = await manager.read_resource("s8", "file:///r.txt")
+    with owned_admin_scope():
+        resource = await manager.read_resource("s8", "file:///r.txt")
     assert resource["contents"][0]["text"] == "body"
 
-    prompt = await manager.get_prompt("s8", "p", {})
+    with owned_admin_scope():
+        prompt = await manager.get_prompt("s8", "p", {})
     assert prompt["messages"] == [{"role": "user", "text": "hi"}]
 
 
@@ -241,7 +248,8 @@ async def test_dead_session_reconnects_once_and_calls_factory_again(manager) -> 
     assert created == ["s9"]
 
     session.fail_next_call = True
-    out = await manager.call_tool("mcp__s9__echo", {})
+    with owned_admin_scope():
+        out = await manager.call_tool("mcp__s9__echo", {})
 
     assert out == "called echo"  # retried transparently
     assert created == ["s9", "s9"]  # factory invoked again to reconnect
@@ -293,14 +301,15 @@ async def test_stdio_transport_real_discovery_and_call(manager) -> None:
     assert kinds["resource"]["uri"] == "test://greeting"
     assert kinds["prompt"]["name"] == "review"
 
-    out = await manager.call_tool("mcp__fixture__echo", {"text": "hi"})
-    assert "echo: hi" in out
+    with owned_admin_scope():
+        out = await manager.call_tool("mcp__fixture__echo", {"text": "hi"})
+        assert "echo: hi" in out
 
-    resource = await manager.read_resource("fixture", "test://greeting")
-    assert resource["contents"][0]["text"] == "hello from fixture"
+        resource = await manager.read_resource("fixture", "test://greeting")
+        assert resource["contents"][0]["text"] == "hello from fixture"
 
-    prompt = await manager.get_prompt("fixture", "review", {"topic": "the PR"})
-    assert "the PR" in prompt["messages"][0]["text"]
+        prompt = await manager.get_prompt("fixture", "review", {"topic": "the PR"})
+        assert "the PR" in prompt["messages"][0]["text"]
 
     await manager.close_server("fixture")
 
@@ -366,6 +375,7 @@ async def test_streamable_http_transport_with_injected_asgi_client(manager) -> N
         assert result["status"] == "connected"
         assert seen_headers.get("authorization") == "Bearer test-token"
 
-        out = await manager.call_tool("mcp__http_fixture__echo", {"text": "over http"})
-        assert "echo: over http" in out
+        with owned_admin_scope():
+            out = await manager.call_tool("mcp__http_fixture__echo", {"text": "over http"})
+            assert "echo: over http" in out
         await manager.close_server("http_fixture")

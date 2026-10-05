@@ -11,6 +11,8 @@ def run(arguments: dict) -> str:
     user = store.get_user(current_user_id())
     if not user or not user.get("enabled") or user.get("role") != "admin":
         return "Error: plugin management requires an administrator"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("plugin_manager", arguments)
     manager = get_manager()
     action = arguments.get("action", "list")
     try:

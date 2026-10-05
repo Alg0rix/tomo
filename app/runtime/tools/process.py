@@ -6,13 +6,13 @@ from typing import Any
 
 
 def _context() -> tuple[str, dict[str, Any] | None]:
-    from app.runtime.artifacts.fs import current_session_id
-    from app.runtime.tools.user_ctx import current_user_id
+    from app.runtime.policy import authorize_tool
     from app.channels.delivery import capture_current_target
     from app.services.store import store
-    sid = current_session_id()
-    session = store.get_session(sid) if sid else None
-    if session is None or session['user_id'] != current_user_id():
+    execution = authorize_tool('process')
+    sid = execution.session_id
+    session = store.get_session(sid)
+    if session is None or session['user_id'] != (execution.session_owner_id or execution.user_id):
         raise ValueError('Process controls require the current authorized session')
     target = capture_current_target()
     if session.get('channel') == 'telegram' and target is None:

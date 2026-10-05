@@ -161,6 +161,8 @@ async def _bind_node_via_llm(
     for _ in range(_BIND_ATTEMPTS):
         prompt = user if last_error is None else (
             user + prompts.NODE_BIND_RETRY_SUFFIX.format(errors=last_error))
+        from app.runtime.policy import authorize_model_client
+        authorize_model_client(llm)
         resp = await llm.complete(
             [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             tools=None,

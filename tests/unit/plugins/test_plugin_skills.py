@@ -43,6 +43,8 @@ def plugin_skills():
 
 
 def test_skill_lifecycle_and_reference_loading(package):
+    from tests.fakes.access import owned_admin_scope
+
     manager, path, skill = package
     sid = "plugin__demo__guide"
     assert not plugin_skills()
@@ -51,7 +53,9 @@ def test_skill_lifecycle_and_reference_loading(package):
     assert manager.list()[0]["skills"][0]["id"] == sid
     assert read_skill_body(sid) == "Original instructions"
     assert read_skill_file(sid, "references/usage.md") == "Usage reference"
-    assert "Original instructions" in use_skill_run({"skill_id": sid})
+    # use_skill is Admin-only; exercise it under an explicit Admin identity.
+    with owned_admin_scope():
+        assert "Original instructions" in use_skill_run({"skill_id": sid})
     (skill / "SKILL.md").write_text("---\nname: guide\n---\nUpdated instructions")
     assert read_skill_body(sid) == "Original instructions"
     (path / "plugin.py").write_text('def setup(api):\n    raise ValueError("broken")\n')
@@ -63,7 +67,8 @@ def test_skill_lifecycle_and_reference_loading(package):
     assert read_skill_body(sid) == "Updated instructions"
     manager.change("demo", "disable")
     assert not plugin_skills()
-    assert "unavailable" in use_skill_run({"skill_id": sid})
+    with owned_admin_scope():
+        assert "unavailable" in use_skill_run({"skill_id": sid})
     manager.change("demo", "enable")
     manager.change("demo", "uninstall")
     assert read_skill_body(sid) is None

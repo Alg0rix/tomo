@@ -6,6 +6,7 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from urllib.parse import urlsplit
@@ -199,11 +200,15 @@ def run(args: argparse.Namespace) -> int:
                         )
                     )
                 elif action == "apply":
-                    from pathlib import Path
-
+                    # Send both forms: the local server resolves the
+                    # cwd-absolute path inside the shell workspace, while a
+                    # tunnel destination resolves the as-given path inside
+                    # its admitted scope (coordinator absolutes are
+                    # meaningless there).
                     definition = {
                         "bundle": args.name,
-                        "file": str(Path(args.file).absolute()),
+                        "file": args.file,
+                        "file_abs": str(Path(args.file).absolute()),
                         "format": args.format,
                     }
                     if args.mapping is not None:

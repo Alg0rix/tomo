@@ -44,6 +44,8 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
     for key, facts in sorted(snapshot.items(), key=lambda item: item[0] not in user_message.casefold()):
         if len(json.dumps({**visible, key: facts}, ensure_ascii=False)) <= 16000:
             visible[key] = facts
+    from app.runtime.policy import authorize_model_client
+    authorize_model_client(client)
     response = await asyncio.wait_for(client.complete([
         {'role': 'system', 'content': (
             'Extract 0–3 durable facts newly learned in this turn. Return ONLY a JSON array of '
@@ -63,6 +65,13 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
     facts = _facts(response.content or '[]')
     if len(facts) > 3:
         raise ValueError('extraction returned more than three facts')
+    from app.runtime.access import current_execution, AccessDenied
+    from app.services import store
+    context = current_execution(required=False)
+    if context:
+        current = store.access.revalidate(context)
+        if current.user_id != user_id or current.session_id != session_id:
+            raise AccessDenied("Memory extraction identity is unavailable")
     count = 0
     with write._lock(user_id):
         current = entity_context(user_id, home_root=home_root)
@@ -88,18 +97,25 @@ def schedule_extraction(user_id: str, session_id: str, user_message: str, final_
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
+    from app.runtime.access import current_execution, AccessDenied
+    from app.services import store
+    context = store.access.revalidate(current_execution())
+    if context.user_id != user_id or context.session_id != session_id:
+        raise AccessDenied("Memory extraction identity is unavailable")
     previous = _pending.get(user_id)
 
     async def run():
         try:
             if previous:
                 await asyncio.shield(previous)
-            client = extraction_client(session_id)
-            try:
-                await extract_turn(user_id, session_id, user_message, final_content, client)
-            finally:
-                if hasattr(client, 'aclose'):
-                    await client.aclose()
+            from app.runtime.supervision import admitted_turn
+            async with admitted_turn(context):
+                client = extraction_client(session_id)
+                try:
+                    await extract_turn(user_id, session_id, user_message, final_content, client)
+                finally:
+                    if hasattr(client, 'aclose'):
+                        await client.aclose()
         except Exception:
             log.exception('turn fact extraction failed for %s', user_id)
         finally:

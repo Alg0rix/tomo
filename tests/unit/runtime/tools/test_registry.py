@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from app.runtime.tools.registry import ToolRegistry, execute, get_openai_tools
+from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 # --- schema discovery (real app/tools/ dir) ------------------------------
@@ -31,8 +33,11 @@ def test_registry_loads_bash_schema() -> None:
 # --- dispatch (real bash backend) ---------------------------------
 
 
-def test_execute_bash_returns_string_result() -> None:
-    assert "4" in execute("bash", {"command": "echo 4"})
+def test_execute_bash_returns_string_result(tmp_path) -> None:
+    # Explicit owned Admin unrestricted context; anonymous execution stays denied.
+    store.rebind(tmp_path / "registry.db")
+    with owned_admin_scope():
+        assert "4" in execute("bash", {"command": "echo 4"})
 
 
 
@@ -104,6 +109,9 @@ def test_execute_tool_without_backend_is_error(tmp_path: Path) -> None:
         },
     )
     reg = ToolRegistry(tools_dir=tools_dir)
-    result = reg.execute("ghost", {})
+    # Unknown tools now deny at the authorization seam (fail-closed), before
+    # any backend lookup. The contract is still a safe error string, no raise.
+    store.rebind(tmp_path / "registry-ghost.db")
+    with owned_admin_scope():
+        result = reg.execute("ghost", {})
     assert result.startswith("Error")
-    assert "backend" in result

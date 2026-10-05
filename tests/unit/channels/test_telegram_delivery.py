@@ -85,7 +85,7 @@ def setup(tmp_path, monkeypatch):
 
 def install(monkeypatch, responses):
     llm = RecordingLLM(responses)
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: llm)
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
     return llm
 
 
@@ -177,7 +177,11 @@ async def test_telegram_context_delivers_photo_and_document_without_leaking_to_w
         finally:
             await client.aclose()
 
-        web_sid = store.get_or_create_session("main", "web")
+        # A real Member web chat must not see Telegram conversation context.
+        member = store.create_user({"username": "deliveryweb", "password": "password1", "role": "member"})
+        profile = store.create_llm_profile({"name": "Web model", "model": "test-model", "api_key": "k"})
+        store.access.assign("usr_admin", member["id"], "model", profile["id"])
+        web_sid = store.get_or_create_session("main", member["id"])
         await run_channel_turn(web_sid, "Web question")
         web_messages, web_tools = llm.calls[-1]
         web_prompt = "\n".join(

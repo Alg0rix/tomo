@@ -149,8 +149,11 @@
     tabs.replaceChildren();
     stage.replaceChildren();
     if (!state.terminals.size) {
+      var emptyBackend = view.backend === 'host' ? 'host' : 'container';
       stage.innerHTML = '<div class="workspace-empty"><span class="workspace-empty-symbol" aria-hidden="true">&gt;_</span>' +
-        '<h3>Your local shell, in this chat</h3><p>Run commands on the Tomo host. Terminals stay alive when you switch chats and close after 30 minutes idle.</p>' +
+        '<h3>' + (emptyBackend === 'host' ? 'Your granted host shell, in this chat' : 'Your container shell, in this chat') + '</h3><p>' + (emptyBackend === 'host'
+          ? 'Unrestricted execution at the granted destination. The OS account may reach beyond this chat; platform checks still apply.'
+          : 'Run commands with this chat\'s authorized folders and limits. Read-only inputs cannot be modified.') + '</p>' +
         '<button type="button" class="btn" data-terminal-create>Open terminal</button></div>';
       stage.querySelector('[data-terminal-create]').onclick = create;
     }
@@ -222,7 +225,7 @@
       return;
     }
     var current = view = { host: host, sid: sid, creating: false, loading: true };
-    host.innerHTML = '<div class="terminal-toolbar"><span class="terminal-local">Local host</span>' +
+    host.innerHTML = '<div class="terminal-toolbar"><span class="terminal-local" data-terminal-backend>Restricted container</span>' +
       '<button type="button" class="btn sm" data-terminal-create disabled>+ New terminal</button></div>' +
       '<div class="terminal-tabs" data-terminal-tabs aria-label="Terminal instances"></div>' +
       '<div class="terminal-location" data-terminal-cwd title="Terminal starting directory"></div>' +
@@ -250,6 +253,9 @@
       });
       if (!state.terminals.has(state.active)) state.active = state.terminals.keys().next().value || null;
       host.querySelector('[data-terminal-cwd]').textContent = data.cwd;
+      view.backend = data.backend;
+      var backendLabel = host.querySelector('[data-terminal-backend]');
+      if (backendLabel) backendLabel.textContent = data.backend === 'host' ? 'Granted host · unrestricted' : 'Restricted container';
       draw();
     } catch (error) {
       if (view === current) host.querySelector('[data-terminal-stage]').textContent = 'Could not load terminals: ' + error.message;

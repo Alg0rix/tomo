@@ -8,6 +8,8 @@ from typing import Any
 def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: recall_episodes expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("recall_episodes", arguments)
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip():
         return "Error: 'query' argument must be a non-empty string"

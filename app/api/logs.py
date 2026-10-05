@@ -65,7 +65,13 @@ async def log_stream(request: Request, _: LogAdmin, filters: Annotated[dict, Dep
             last_ping = time.monotonic()
             while not await request.is_disconnected():
                 # Recheck long-lived access (disabled accounts / role changes).
-                if not can_manage_telegram(request):
+                # A revoked account raises instead of returning False; either
+                # way the stream must end with 'forbidden', not a bare drop.
+                try:
+                    allowed = can_manage_telegram(request)
+                except HTTPException:
+                    allowed = False
+                if not allowed:
                     yield 'event: forbidden\ndata: {}\n\n'
                     return
                 batch = await reader_io(reader.poll)

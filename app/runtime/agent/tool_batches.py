@@ -18,6 +18,13 @@ _WRITERS = frozenset({"write_file", "patch", "str_replace", "delete_file"})
 
 
 def _canonical_path(raw: str) -> Path:
+    from app.runtime.access import current_execution
+    execution = current_execution(required=False)
+    if execution and execution.execution_mode == "restricted":
+        path = Path(raw)
+        if not path.is_absolute():
+            path = Path(next(r.mount_path for r in execution.resources if r.workplace_id == execution.active_workplace_id)) / path
+        return Path(os.path.normpath(path))  # Container paths, not server symlinks.
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = sandbox.resolve_work_root() / path
@@ -25,6 +32,12 @@ def _canonical_path(raw: str) -> Path:
 
 
 def _scope(call: ToolCall) -> tuple[list[Path], bool] | None:
+    from app.runtime.access import current_execution
+    execution = current_execution(required=False)
+    # One container action per chat; do not race overlapping symlink aliases or
+    # inspect container paths with the control host's filesystem APIs.
+    if execution and execution.execution_mode == 'restricted' and call.name in _READERS | _WRITERS:
+        return None
     args = call.arguments
     if not isinstance(args, dict):
         return None

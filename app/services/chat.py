@@ -282,9 +282,14 @@ async def start_session_turn(
     try:
         if background_job_ids:
             jobs = [store.get_background_job(jid) for jid in background_job_ids]
+            # Trusted legacy Telegram jobs execute as the designated Admin
+            # principal for another user's chat session; mirror the drain's
+            # trusted-channel exception so admitted work can actually start.
             if (store.background_jobs_paused(session_id)
                     or any(not j or j["session_id"] != session_id
-                           or j["user_id"] != session["user_id"] for j in jobs)
+                           or (j["user_id"] != session["user_id"]
+                               and not (j.get("execution_context") or {}).get("trusted_channel"))
+                           for j in jobs)
                     or not store.claim_background_jobs(background_job_ids)):
                 raise SessionTurnBusy(session_id)
             jobs_claimed = True
@@ -479,16 +484,17 @@ def _convert_office_attachment(att: dict[str, Any]) -> str | None:
     file) falls back to None so the caller can show the plain binary-file
     note instead of crashing the turn.
     """
-    path = Path(att.get("file_path") or "")
-    if not path.is_file():
-        return None
+    # Never invoke a document parser with coordinator OS authority, including
+    # Admin/unrestricted turns. Missing identity/backend is not a host fallback.
+    from app.runtime.isolation.attachments import convert_document
+    from app.runtime.access import AccessDenied
     try:
-        import anydoc
-
-        text = (anydoc.to_markdown(str(path)) or "").strip()
+        text = convert_document(att)
+    except AccessDenied:
+        raise
     except Exception as exc:
-        logger.info("anydoc conversion failed for %s: %s", path.name, exc)
-        return None
+        from app.runtime.access import AccessUnavailable
+        raise AccessUnavailable("Isolated document preprocessing unavailable") from exc
     if not text:
         return None
     if len(text) > _MAX_INLINE_CHARS:
@@ -512,22 +518,23 @@ def _looks_image_attachment(att: dict[str, Any]) -> bool:
 
 
 def _image_data_url(att: dict[str, Any]) -> str | None:
-    """Base64 data: URL for an image attachment, or None if unreadable."""
-    path = Path(att.get("file_path") or "")
-    if not path.is_file():
-        return None
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if not data:
-        return None
-    import base64
-    import mimetypes as _mimetypes
+    """Supervised image preprocessing: owned-chat bytes to a data URL.
 
-    mime = att.get("mime_type") or _mimetypes.guess_type(path.name)[0] or "image/png"
-    b64 = base64.b64encode(data).decode("ascii")
-    return f"data:{mime};base64,{b64}"
+    Reads only through :func:`read_owned_upload` (session ownership,
+    non-symlink directory fds, regular-file check, 20 MiB bound), then
+    downscales/crops via Pillow when present so provider ceilings hold.
+    Raises fail-closed (never a host fallback, never another chat's bytes).
+    """
+    from app.runtime.isolation.attachments import read_owned_upload
+    from app.runtime.llm.vision_image import encode_image_data_url, guess_image_mime
+
+    raw = read_owned_upload(att)
+    if not raw:
+        return None
+    data_url, _note = encode_image_data_url(
+        raw, guess_image_mime(att.get("file_path") or "", raw)
+    )
+    return data_url
 
 
 def _looks_text_attachment(att: dict[str, Any]) -> bool:
@@ -547,13 +554,8 @@ def _looks_text_attachment(att: dict[str, Any]) -> bool:
 
 def _read_attachment_text(att: dict[str, Any]) -> str | None:
     """Return UTF-8 text for inlining, or None if binary/unreadable."""
-    path = Path(att.get("file_path") or "")
-    if not path.is_file():
-        return None
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return None
+    from app.runtime.isolation.attachments import read_owned_upload
+    raw = read_owned_upload(att)
     if b"\x00" in raw[:4096]:
         return None
     try:
@@ -611,10 +613,20 @@ def attachment_info_lines(
     """
     if not attachment_ids:
         return ""
+    from app.runtime.access import AccessDenied, AccessUnavailable, current_execution
+    execution = current_execution(required=False)
+    if execution:
+        from app.services import store as _store
+        execution = _store.access.revalidate(execution)
     blocks: list[str] = []
     for aid in attachment_ids:
         att = store.get_attachment(aid)
         if not att:
+            continue
+        if execution and att.get("session_id") != execution.session_id:
+            # Never leak another chat's file names into this prompt, and
+            # never break the turn on a forged attachment id.
+            blocks.append("[Attached file is unavailable in this chat.]")
             continue
         size = int(att.get("size_bytes") or 0)
         name = att.get("original_name") or att.get("filename") or aid
@@ -631,7 +643,13 @@ def attachment_info_lines(
             continue
         if not _looks_text_attachment(att):
             if _looks_office_doc_attachment(att):
-                converted = _convert_office_attachment(att)
+                try:
+                    converted = _convert_office_attachment(att)
+                except AccessDenied:
+                    blocks.append("[Attached file is unavailable in this chat.]")
+                    continue
+                except AccessUnavailable:
+                    converted = None
                 if converted is not None:
                     blocks.append(f"{header}\n```markdown\n{converted}\n```")
                     continue
@@ -641,7 +659,13 @@ def attachment_info_lines(
                 "text or upload a text/HTML version.)"
             )
             continue
-        body = _read_attachment_text(att)
+        try:
+            body = _read_attachment_text(att)
+        except AccessDenied:
+            blocks.append("[Attached file is unavailable in this chat.]")
+            continue
+        except AccessUnavailable:
+            body = None
         if body is None:
             blocks.append(header + "\n(Could not read file contents.)")
             continue
@@ -794,12 +818,18 @@ def expand_user_content_for_llm(
     if not vision_capable or not ids:
         return text
 
+    from app.runtime.access import AccessDenied, AccessUnavailable
     image_urls: list[str] = []
     for aid in ids:
         att = store.get_attachment(aid)
         if not att or not _looks_image_attachment(att):
             continue
-        url = _image_data_url(att)
+        try:
+            url = _image_data_url(att)
+        except (AccessDenied, AccessUnavailable, OSError, ValueError):
+            # No scoped image/vision boundary yet: keep the text note and
+            # never break the turn on an unreadable image.
+            continue
         if url:
             image_urls.append(url)
     if not image_urls:

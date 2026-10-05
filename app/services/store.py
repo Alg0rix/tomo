@@ -59,6 +59,9 @@ class Store:
         self._busy = BusyState()
         self._path = path
         self._platform = self._seed_platform()
+        from app.services.access import AccessService
+
+        self.access = AccessService(self)
         self._open()
 
     # -- lifecycle -------------------------------------------------------
@@ -98,6 +101,9 @@ class Store:
                 pass
             self._path = path
             self._busy = BusyState()
+            from app.services.access import AccessService
+
+            self.access = AccessService(self)
             self._open()
 
     def _seed_platform(self) -> dict[str, list[dict[str, Any]]]:
@@ -178,9 +184,13 @@ class Store:
             coord = agents_store.get_coordinator(self._conn, self._busy.ids())
             if not coord:
                 raise ValueError("No enabled coordinator agent available")
+            if self.get_user(user_id):
+                self.access.require_use(user_id, "agent", coord["id"])
             session_id = sessions_store.create_swarm_session(
                 self._conn, [coord["id"]], user_id, coord["id"]
             )
+            if self.get_user(user_id):
+                self.access.initialize_chat(user_id, session_id)
             return {
                 "session_id": session_id,
                 "coordinator_id": coord["id"],
@@ -308,7 +318,16 @@ class Store:
         telegram_chat_id: str | None = None,
     ) -> str:
         with self._lock:
-            return sessions_store.create_swarm_session(
+            account = self.get_user(user_id)
+            if account:
+                self.access.require_user(user_id)
+                for aid in agent_ids:
+                    self.access.require_use(user_id, "agent", aid)
+                if coordinator_id:
+                    self.access.require_use(user_id, "agent", coordinator_id)
+                if workplace_id:
+                    self.access.workplace_permission(user_id, workplace_id)
+            sid = sessions_store.create_swarm_session(
                 self._conn,
                 agent_ids,
                 user_id,
@@ -316,10 +335,17 @@ class Store:
                 workplace_id=workplace_id,
                 telegram_chat_id=telegram_chat_id,
             )
+            if account:
+                self.access.initialize_chat(user_id, sid, workplace_id or "")
+            return sid
 
     def set_session_workplace(
         self, session_id: str, workplace_id: str | None
     ) -> dict[str, Any] | None:
+        session = self.get_session(session_id)
+        if session and self.get_user(session["user_id"]):
+            wid = workplace_id or self.access.ensure_personal_space(session["user_id"])["id"]
+            return self.access.set_chat_access(session["user_id"], session_id, wid)
         with self._lock:
             return sessions_store.set_session_workplace(
                 self._conn, session_id, workplace_id
@@ -327,6 +353,24 @@ class Store:
 
     def _session_llm_profile_locked(self, session: dict[str, Any], agent_id: str | None = None) -> dict[str, Any] | None:
         coordinator = session.get("coordinator_id") or session.get("agent_id")
+        account = self.get_user(session.get("user_id") or "")
+        if account and account["role"] == "member":
+            selected = session.get("model_profile_id") if (not agent_id or agent_id == coordinator) else ""
+            if not selected:
+                row = self._conn.execute("SELECT model_id FROM agents WHERE id=?", (agent_id or coordinator,)).fetchone()
+                selected = (row["model_id"] if row else "") or llm_profiles_store.get_default_model_id(self._conn)
+                if not selected:
+                    row = self._conn.execute("SELECT id FROM llm_profiles WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
+                    selected = row["id"] if row else ""
+            if not selected or not self.access.can_use(account["id"], "model", selected):
+                return None
+            profile = llm_profiles_store.get_profile(self._conn, selected)
+            if not profile or not profile["enabled"]:
+                return None
+            profile = llm_profiles_store._maybe_refresh_subscription(self._conn, profile)
+            if session.get("model_profile_id") == selected:
+                profile["model"] = session.get("model_name") or profile["model"]
+            return profile
         # A chat selection controls the speaker, not separately assigned swarm workers.
         if session.get("model_profile_id") and (not agent_id or agent_id == coordinator):
             profile = llm_profiles_store.get_profile(self._conn, session["model_profile_id"])
@@ -346,6 +390,14 @@ class Store:
             session = sessions_store.get_session(self._conn, session_id)
             if not session:
                 return None
+            account = self.get_user(session["user_id"])
+            if account and profile_id:
+                self.access.require_use(session["user_id"], "model", profile_id)
+            elif account and account["role"] == "member":
+                default = self._session_llm_profile_locked({**session, "model_profile_id": "", "model_name": ""})
+                if not default:
+                    raise ValueError("An assigned model is required")
+                self.access.require_use(session["user_id"], "model", default["id"])
             if profile_id:
                 profile = llm_profiles_store.get_public_profile(self._conn, profile_id)
                 if not profile or not profile["enabled"]:
@@ -373,9 +425,8 @@ class Store:
         stored = (session.get("reasoning_effort") or "").strip()
         effective = llm_profiles_store.effective_reasoning_effort(profile, stored)
         selected = stored if stored in efforts else ""
-        main = llm_profiles_store.resolve_profile(
-            self._conn, session.get("coordinator_id") or session.get("agent_id")
-        )
+        account = self.get_user(session.get("user_id") or "")
+        main = self._session_llm_profile_locked({**session, "model_profile_id": "", "model_name": ""})
         return {
             "session_id": session.get("id") or "",
             "profile_id": (profile or {}).get("id") or "",
@@ -386,6 +437,7 @@ class Store:
             "model_profiles": [
                 {"id": p["id"], "name": p["name"], "models": p["available_models"] or [p["model"]]}
                 for p in llm_profiles_store.list_profiles(self._conn) if p["enabled"]
+                and (not account or self.access.can_use(account["id"], "model", p["id"]))
             ],
             "reasoning_efforts": efforts,
             "default_reasoning_effort": efforts[-1] if efforts else None,
@@ -441,6 +493,10 @@ class Store:
 
     def update_session_agents(self, session_id: str, agent_ids: list[str]) -> dict[str, Any] | None:
         with self._lock:
+            session = sessions_store.get_session(self._conn, session_id)
+            if session and self.get_user(session["user_id"]):
+                for aid in agent_ids:
+                    self.access.require_use(session["user_id"], "agent", aid)
             return sessions_store.update_session_agents(self._conn, session_id, agent_ids)
 
     def set_session_title(self, session_id: str, title: str) -> dict[str, Any] | None:
@@ -449,7 +505,14 @@ class Store:
 
     def get_or_create_session(self, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str:
         with self._lock:
-            return sessions_store.get_or_create_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
+            account = self.get_user(user_id)
+            if account:
+                self.access.require_use(user_id, "agent", agent_id)
+            existing = sessions_store.find_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
+            sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id, telegram_chat_id=telegram_chat_id)
+            if account and not existing:
+                self.access.initialize_chat(user_id, sid)
+            return sid
 
     def find_session(self, agent_id: str, user_id: str, *, telegram_chat_id: str | None = None) -> str | None:
         with self._lock:
@@ -584,12 +647,12 @@ class Store:
 
     def append_history(self, agent_id: str, user_id: str, entry: dict[str, Any]) -> None:
         with self._lock:
-            sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id)
+            sid = self.get_or_create_session(agent_id, user_id)
             messages_store.append_session_history(self._conn, sid, entry)
 
     def get_history(self, agent_id: str, user_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            sid = sessions_store.get_or_create_session(self._conn, agent_id, user_id)
+            sid = self.get_or_create_session(agent_id, user_id)
             return messages_store.get_session_history(self._conn, sid)
 
     def clear_session(self, agent_id: str, user_id: str) -> None:
@@ -822,20 +885,21 @@ class Store:
             return workplaces_store.create_workplace(self._conn, data)
 
     def update_workplace(self, workplace_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        with self._lock:
-            return workplaces_store.update_workplace(self._conn, workplace_id, data)
+        wp = self.get_workplace(workplace_id)
+        if wp and wp["storage_kind"] in ("personal", "project") and set(data) - {"name"}:
+            raise ValueError("Managed storage location and ownership cannot be changed")
+        return self.access.change_workplace(workplace_id, lambda: self.with_db(
+            lambda c: workplaces_store.update_workplace(c, workplace_id, data)))
 
     def delete_workplace(self, workplace_id: str) -> bool:
-        with self._lock:
-            return workplaces_store.delete_workplace(self._conn, workplace_id)
+        return self.access.change_workplace(workplace_id, lambda: self.with_db(
+            lambda c: workplaces_store.delete_workplace(c, workplace_id)))
 
     def set_workplace_enabled(
         self, workplace_id: str, enabled: bool
     ) -> dict[str, Any] | None:
-        with self._lock:
-            return workplaces_store.set_enabled(
-                self._conn, workplace_id, enabled
-            )
+        return self.access.change_workplace(workplace_id, lambda: self.with_db(
+            lambda c: workplaces_store.set_enabled(c, workplace_id, enabled)))
 
     def connect_workplace(self, workplace_id: str) -> dict[str, Any] | None:
         """Run Connect/test; persist status. Returns result dict or ``None`` if missing."""
@@ -1227,13 +1291,48 @@ class Store:
         with self._lock:
             return users_store.create_user(self._conn, data)
 
-    def update_user(self, user_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        with self._lock:
-            return users_store.update_user(self._conn, user_id, data)
+    def update_user(self, user_id: str, data: dict[str, Any], *, actor_id: str | None = None) -> dict[str, Any] | None:
+        if actor_id:
+            self.access.require_admin(actor_id)
+        with self.access._mutation_lock:
+            user = self.get_user(user_id)
+            if not user:
+                return None
+            sensitive = (bool(user.get("access_pending"))
+                         or ("role" in data and data["role"] != user["role"])
+                         or ("enabled" in data and not data["enabled"]))
+            if "role" in data and data["role"] not in ("admin", "member"):
+                raise ValueError("Role must be admin or member")
+            removes_admin = (data.get("role", user["role"]) != "admin" or not data.get("enabled", user["enabled"]))
+            if removes_admin and user["role"] == "admin" and user["enabled"] and self.count_enabled_admins() <= 1:
+                raise ValueError("Cannot remove the last enabled Admin")
+            sessions = self.access.stop_user_execution(user_id) if sensitive else []
+            with self._lock:
+                out = users_store.update_user(self._conn, user_id, data)
+            if sensitive:
+                self.access.finish_user_change(user_id, sessions)
+                self.access.audit(actor_id or "system", "account.permissions", subject_user_id=user_id,
+                                  permission=out["role"] if out else "")
+            return out
 
-    def delete_user(self, user_id: str) -> bool:
-        with self._lock:
-            return users_store.delete_user(self._conn, user_id)
+    def delete_user(self, user_id: str, *, actor_id: str | None = None) -> bool:
+        if actor_id:
+            self.access.require_admin(actor_id)
+        with self.access._mutation_lock:
+            user = self.get_user(user_id)
+            if not user:
+                return False
+            if user["role"] == "admin" and user["enabled"] and self.count_enabled_admins() <= 1:
+                raise ValueError("Cannot remove the last enabled Admin")
+            sessions = self.access.stop_user_execution(user_id)
+            with self._lock:
+                out = users_store.delete_user(self._conn, user_id)
+            self.access.finish_user_change(user_id, sessions)
+            self.access.audit(actor_id or "system", "account.delete", subject_user_id=user_id)
+            return out
+
+    def count_enabled_admins(self) -> int:
+        return self.with_db(lambda c: c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND enabled=1").fetchone()[0])
 
     def count_enabled_users(self) -> int:
         with self._lock:
@@ -1451,6 +1550,79 @@ class Store:
             return None
         with self._lock:
             return skills_store.set_for_agent(self._conn, agent_id, skill_ids)
+
+    # -- per-user skill activation overlay (member tools) ------------------
+    # A user's activation never mutates the shared ``agent_skills`` rows;
+    # it only reorders/augments that user's own catalog view and turns.
+    MAX_USER_SKILL_ACTIVATIONS = 50
+
+    def get_user_skill_activations(self, user_id: str) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT skill_id FROM user_skill_activations WHERE user_id=? AND active=1 ORDER BY skill_id",
+                (user_id,),
+            ).fetchall()
+        return [r["skill_id"] for r in rows]
+
+    def set_user_skill_active(self, user_id: str, skill_id: str, active: bool) -> list[str]:
+        """Pin/unpin a skill for ``user_id``; returns the active id list."""
+        from app.extensions.skills import slugify_skill_id
+
+        sid = slugify_skill_id(skill_id)
+        if not sid:
+            raise ValueError("skill_id is required")
+        with self._lock:
+            known = {s["id"] for s in skills_store.list_skills(self._conn)}
+        if sid not in known:
+            from app.extensions.skills import find_discovered_skill
+
+            if find_discovered_skill(sid) is None:
+                raise ValueError(f"unknown skill: {skill_id!r}")
+        import time as _time
+
+        with self._lock:
+            if active:
+                count = self._conn.execute(
+                    "SELECT COUNT(*) FROM user_skill_activations WHERE user_id=? AND active=1",
+                    (user_id,),
+                ).fetchone()[0]
+                already = self._conn.execute(
+                    "SELECT active FROM user_skill_activations WHERE user_id=? AND skill_id=?",
+                    (user_id, sid),
+                ).fetchone()
+                if (not already or not already["active"]) and count >= self.MAX_USER_SKILL_ACTIVATIONS:
+                    raise ValueError("skill activation limit reached")
+                self._conn.execute(
+                    "INSERT INTO user_skill_activations(user_id, skill_id, active, updated_at) VALUES (?,?,1,?) "
+                    "ON CONFLICT(user_id, skill_id) DO UPDATE SET active=1, updated_at=excluded.updated_at",
+                    (user_id, sid, _time.time()),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO user_skill_activations(user_id, skill_id, active, updated_at) VALUES (?,?,0,?) "
+                    "ON CONFLICT(user_id, skill_id) DO UPDATE SET active=0, updated_at=excluded.updated_at",
+                    (user_id, sid, _time.time()),
+                )
+            self._conn.commit()
+        return self.get_user_skill_activations(user_id)
+
+    def get_effective_agent_skills(self, agent_id: str, user_id: str | None) -> list[dict[str, Any]]:
+        """Agent catalog with ``user_activated`` overlay for ``user_id``."""
+        rows = self.get_agent_skills(agent_id)
+        if not user_id:
+            return rows
+        active = set(self.get_user_skill_activations(user_id))
+        if not active:
+            return rows
+        by_id = {s["id"]: dict(s, user_activated=False) for s in rows}
+        for sid in sorted(active):
+            if sid in by_id:
+                by_id[sid]["user_activated"] = True
+            else:
+                skill = self.get_skill(sid)
+                if skill is not None and skill.get("enabled", True):
+                    by_id[sid] = dict(skill, assigned=False, user_activated=True)
+        return [by_id[k] for k in sorted(by_id)]
 
     def get_agent_channels(self, agent_id: str) -> list[dict[str, Any]]:
         from app.channels.telegram import telegram_status

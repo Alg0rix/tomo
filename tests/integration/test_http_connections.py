@@ -34,8 +34,14 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.delenv("TOMO_SECRET_KEY", raising=False)
     db = tmp_path / "connections.db"
     store.rebind(db)
-    user = store.create_user({"username": "alice", "password": "password1"})
-    sid = store.create_swarm_session(["main"], user_id=user["id"])
+    # Broker credential consumers require explicitly unrestricted local Admin
+    # execution (Member/restricted consumers reject by design). The secure-form
+    # and no-echo assertions below run in that owned Admin context.
+    from tests.fakes.access import ensure_stoppers
+    ensure_stoppers()
+    user = store.create_user({"username": "alice", "password": "password1", "role": "admin"})
+    from tests.fakes.access import owned_host_session
+    sid = owned_host_session(["main"], user_id=user["id"])
     requests = []
 
     class Upstream(BaseHTTPRequestHandler):
@@ -91,6 +97,11 @@ def environment(tmp_path, monkeypatch):
         ).status_code
         == 303
     )
+    # Direct CLI subprocess calls below go through require_host_execution:
+    # bind the test Admin's own unrestricted context for the test duration.
+    from tests.fakes.access import owned_admin_scope
+    _cli_scope = owned_admin_scope(user_id=user["id"])
+    _cli_scope.__enter__()
     try:
         yield (
             client,
@@ -101,6 +112,7 @@ def environment(tmp_path, monkeypatch):
             db,
         )
     finally:
+        _cli_scope.__exit__(None, None, None)
         secret_store.cancel_session(sid)
         client.close()
         server.should_exit = True
@@ -250,6 +262,12 @@ def test_broker_rejects_secret_echo_cross_session_and_origin_override(environmen
     assert len(upstream) == before + 1
 
     other_sid = store.create_swarm_session(["main"], user_id=uid)
+    # Same explicitly unrestricted treatment, so the cross-session lookup
+    # itself is exercised (connection isolation → 404), not the exec gate.
+    other_wid = store.get_session(other_sid)["workplace_id"]
+    store.access.assign("usr_admin", uid, "unrestricted", other_wid)
+    store.access.set_chat_access(uid, other_sid, other_wid, execution_mode="unrestricted",
+                                 unrestricted_acknowledged=True)
     other_token = secret_store.issue_capability(other_sid, uid)
     assert (
         client.post(
@@ -433,11 +451,13 @@ def test_dynamic_private_bundle_without_connection_or_protocol(environment):
             json={"connection": "workspace", "path": "/"},
         )
         assert denied.status_code == 400 and len(upstream) == before
+        # No single-bundle GET route exists: unknown paths fail closed at
+        # the perimeter instead of leaking bundle values.
         assert (
             client.get(
                 "/api/secret-broker/bundles/workspace", headers=headers
             ).status_code
-            == 405
+            == 401
         )
         assert client.get(f"/api/sessions/{sid}/chat").json()["entries"] == []
         # The schema cannot smuggle input values/defaults into public metadata.
@@ -692,6 +712,12 @@ def test_private_file_application_errors_are_private_and_leave_files_unchanged(
     )
     assert target.read_text() == original
     other_sid = store.create_swarm_session(["main"], user_id=uid)
+    # Same explicitly unrestricted treatment, so the cross-session bundle
+    # lookup itself is exercised (missing bundle -> 404), not the exec gate.
+    other_wid = store.get_session(other_sid)["workplace_id"]
+    store.access.assign("usr_admin", uid, "unrestricted", other_wid)
+    store.access.set_chat_access(uid, other_sid, other_wid, execution_mode="unrestricted",
+                                 unrestricted_acknowledged=True)
     other = secret_store.issue_capability(other_sid, uid, work_root=str(root))
     result = client.post(
         endpoint, headers={"Authorization": "Bearer " + other}, json=data
@@ -731,7 +757,7 @@ def tunnel(environment, tmp_path):
         check=True,
         timeout=120,
     )
-    client, _, _, _, _, _ = environment
+    client, _, _, sid, uid, _ = environment
     wp = store.create_workplace(
         {"id": "wp_secrets", "name": "Secret tunnel", "kind": "tunnel"}
     )
@@ -772,6 +798,17 @@ def tunnel(environment, tmp_path):
             assert hub.is_online(wp["id"]), log.read_text()
             assert hub.get(wp["id"]).secret_broker
             store.update_agent("main", {"workplace_id": wp["id"]})
+            # Stage 4: the chat's active destination is the tunnel itself
+            # (matching unrestricted grant + explicit acknowledgement, real
+            # policy calls). Tool execution then routes through the verified
+            # destination contract instead of the local host.
+            store.access.assign(uid, uid, "unrestricted", wp["id"])
+            store.access.set_chat_access(uid, sid, wp["id"], execution_mode="unrestricted",
+                                         unrestricted_acknowledged=True)
+            # The lane-saturation test drives 8 concurrent broker consumers;
+            # provision aggregate headroom explicitly (quota enforcement
+            # itself is covered by dedicated quota tests, not here).
+            store.access.set_quota(uid, uid, {"max_concurrent_jobs": 10})
             yield root, home, log, wp["id"]
         finally:
             proc.terminate()
@@ -784,11 +821,19 @@ def test_real_tunnel_cli_forms_files_http_and_privacy(environment, tunnel):
 
     client, origin, upstream, sid, uid, _ = environment
     root, home, log, wid = tunnel
-    (root / ".env").write_text("# public\nAPP_PORT=3000\n")
+    # Destination-owned scope: the admitted workplace lands under
+    # <connector-root>/<workplace_id>, never at coordinator paths.
+    scope = root / wid
+    scope.mkdir(parents=True, exist_ok=True)
+    (scope / ".env").write_text("# public\nAPP_PORT=3000\n")
     values = {"KEY": SECRET, "PEM": "synthetic tunnel key\r\nsecond line\n"}
     session_token = artifacts_fs.bind_session(sid)
     user_token = user_ctx.bind_user(uid)
     agent_token = sandbox.bind_agent("main")
+    from app.runtime.access import bind_execution as _bind_execution, reset_execution as _reset_execution
+    tunnel_ctx = store.access.resolve_context(uid, sid)
+    assert tunnel_ctx.active_workplace_id == wid
+    exec_token = _bind_execution(tunnel_ctx)
     try:
 
         def remote(args, timeout=30):
@@ -830,34 +875,34 @@ def test_real_tunnel_cli_forms_files_http_and_privacy(environment, tunnel):
                 'secret apply deployment --file .env --format dotenv --map \'{"API_KEY":"KEY"}\''
             )
         )["ok"]
-        assert dotenv_values(root / ".env", interpolate=False) == {
+        assert dotenv_values(scope / ".env", interpolate=False) == {
             "APP_PORT": "3000",
             "API_KEY": SECRET,
         }
         assert json.loads(
             remote("secret apply deployment --file key.pem --format text --field PEM")
         )["ok"]
-        assert (root / "key.pem").read_bytes() == values["PEM"].encode()
-        (root / "config.json").write_text('{"port":3000}')
+        assert (scope / "key.pem").read_bytes() == values["PEM"].encode()
+        (scope / "config.json").write_text('{"port":3000}')
         assert json.loads(
             remote(
                 'secret apply deployment --file config.json --format json --map \'{"key":"KEY"}\''
             )
         )["ok"]
-        assert json.loads((root / "config.json").read_text()) == {
+        assert json.loads((scope / "config.json").read_text()) == {
             "port": 3000,
             "key": SECRET,
         }
-        (root / "app").mkdir()
+        (scope / "app").mkdir()
         assert json.loads(
             remote(
                 'secret apply deployment --file app/.env --format compose --map \'{"TOKEN":"KEY"}\''
             )
         )["ok"]
-        assert SECRET in (root / "app" / ".env").read_text()
-        unchanged = (root / ".env").read_bytes()
+        assert SECRET in (scope / "app" / ".env").read_text()
+        unchanged = (scope / ".env").read_bytes()
         assert "exit code: 1" in remote("secret apply deployment --file ../outside.env")
-        assert (root / ".env").read_bytes() == unchanged
+        assert (scope / ".env").read_bytes() == unchanged
         http_form = {
             "fields": [{"name": "KEY"}],
             "auth": {"type": "bearer", "token_field": "KEY"},
@@ -923,6 +968,7 @@ def test_real_tunnel_cli_forms_files_http_and_privacy(environment, tunnel):
                 assert "content_b64" not in response and "body_b64" not in response
         assert not list(root.rglob(".tomo-secret-*"))
     finally:
+        _reset_execution(exec_token)
         sandbox.reset_agent(agent_token)
         artifacts_fs.reset_session(session_token)
         user_ctx.reset_user(user_token)
@@ -957,6 +1003,8 @@ def test_tunnel_broker_cross_session_expiry_and_cancel(environment, tunnel):
     session_token = artifacts_fs.bind_session(sid)
     user_token = user_ctx.bind_user(uid)
     agent_token = sandbox.bind_agent("main")
+    from app.runtime.access import bind_execution as _bind_execution2, reset_execution as _reset_execution2
+    _exec_token2 = _bind_execution2(store.access.resolve_context(uid, sid))
     try:
         with ThreadPoolExecutor(1) as pool:
             command = (
@@ -991,6 +1039,7 @@ def test_tunnel_broker_cross_session_expiry_and_cancel(environment, tunnel):
             )
         assert not (root / ".env").exists()
     finally:
+        _reset_execution2(_exec_token2)
         sandbox.reset_agent(agent_token)
         artifacts_fs.reset_session(session_token)
         user_ctx.reset_user(user_token)

@@ -54,6 +54,8 @@ async def smart_approve(command: str, description: str) -> SmartVerdict:
         from app.runtime.artifacts.fs import current_session_id
 
         client = get_auxiliary_llm('smart_approval', session_id=current_session_id())
+        from app.runtime.policy import authorize_model_client
+        authorize_model_client(client)
         resp = await client.complete(
             [
                 {"role": "system", "content": system},

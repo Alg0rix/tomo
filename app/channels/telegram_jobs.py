@@ -36,9 +36,14 @@ def unbind_dispatcher(dispatcher) -> None:
 
 def _target(job: dict[str, Any]) -> dict[str, Any]:
     target = job.get("delivery") or {}
+    from app.runtime.policy import durable_context
+    try:
+        execution = durable_context(job)
+    except PermissionError as exc:
+        raise DeliveryBlocked("Originating execution identity is unavailable") from exc
     session = store.get_session(job["session_id"])
     if (target.get("channel") != "telegram" or not session
-            or session["user_id"] != job["user_id"]
+            or session["user_id"] != (execution.session_owner_id or execution.user_id)
             or session.get("telegram_chat_id") != str(target.get("chat_id"))):
         raise DeliveryBlocked("Job does not belong to this Telegram conversation")
     _check_target(target)
@@ -178,17 +183,20 @@ async def callback(query: dict[str, Any], api) -> bool:
             elif action == "log":
                 from app.services.background_jobs import manager
 
-                log = manager.logs(job["session_id"], job["id"], tail=1024 * 1024)
+                from app.runtime.policy import durable_context
+                from app.runtime.access import execution_scope
+                with execution_scope(durable_context(job)):
+                    log = manager.logs(job["session_id"], job["id"], tail=1024 * 1024)
                 text = str(log.get("text") or (str(log.get("stdout") or "") + "\n" + str(log.get("stderr") or ""))).strip()
                 note = "Retained log (older output truncated)." if log.get("truncated") else "Retained log."
                 if log.get("logs_expired"):
                     text = "The retained log expired."
                 if len(text) > 3000:
-                    from app.runtime.artifacts.fs import ensure_artifacts_dir
+                    from app.runtime.artifacts.fs import write_artifact_text
 
                     filename = f"{job['id']}.log"
-                    path = ensure_artifacts_dir(job["session_id"]) / filename
-                    await asyncio.to_thread(path.write_text, text, encoding="utf-8")
+                    with execution_scope(durable_context(job)):
+                        await asyncio.to_thread(write_artifact_text, job["session_id"], filename, text)
                     _target(job)
                     await bound_api.send_file(target["chat_id"], filename, text.encode(),
                                               caption=note, kind="document", silent=True,
@@ -214,7 +222,10 @@ async def callback(query: dict[str, Any], api) -> bool:
                     return True
                 store.update_background_job(job["id"], {"card_confirmation": None})
                 operation = manager.stop_job if confirmation["action"] == "stop" else manager.close_monitoring
-                await asyncio.to_thread(operation, job["session_id"], job["id"])
+                from app.runtime.policy import durable_context
+                from app.runtime.access import execution_scope
+                with execution_scope(durable_context(job)):
+                    await asyncio.to_thread(operation, job["session_id"], job["id"])
                 await update_card(job["id"], force=True)
         finally:
             await bound_api.aclose()
@@ -236,6 +247,13 @@ def admit_continuation(jobs: list[dict[str, Any]]) -> bool:
     task = dispatcher.tasks.get(chat_id)
     if ((task and not task.done()) or dispatcher.pending.get(chat_id)
             or len(dispatcher.tasks) >= dispatcher.MAX_ACTIVE_CHATS):
+        return False
+    if any((j.get("status") or "") in {"starting", "running", "stopping"} for j in jobs):
+        # Drains deliver completion; a still-running job cannot drain (its
+        # claim fails or yields empty results). Admitting it anyway burns an
+        # aggregate execution slot and replaces the chat's live turn UI with
+        # a stale job-session object, misrouting reply-to-card busy checks
+        # away from the queue path. Completion re-fires admission on update.
         return False
     # This is an internal completion item, never synthesized inbound user text.
     item = {"text": "", "message": {
@@ -271,6 +289,10 @@ async def run_continuation(dispatcher, message: dict[str, Any]) -> dict | None:
     sid = jobs[0]["session_id"]
     ui = TelegramTurnUI(api, target["chat_id"], sid, actor_id=target.get("actor_id"),
                         thread_id=target.get("thread_id"), reply_to=jobs[0].get("card_message_id"))
+    # Only an actual drain replaces the chat's live turn UI. The early
+    # returns above (completed/superseded/blocked jobs) must not clobber
+    # another session's running turn UI with a stale job-session object;
+    # that misroutes reply-to-card busy checks away from the queue path.
     dispatcher.uis[target["chat_id"]] = ui
     ui.input_mode = dispatcher.modes.get(target["chat_id"], "steer")
     ui.on_stop = lambda: dispatcher.stopped.add(target["chat_id"])

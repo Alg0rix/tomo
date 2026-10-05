@@ -12,10 +12,21 @@ from app.models.mixins import swarm as swarm_store
 _scope: ContextVar[dict[str, Any] | None] = ContextVar("swarm_board_scope", default=None)
 
 
+def current_scope() -> dict[str, Any] | None:
+    """The swarm runtime's bound task scope, if this turn runs inside one."""
+    return _scope.get()
+
+
 def bind(*, run_id: str, task_id: str, agent_id: str,
          allowed_tools: set[str] | None = None,
          write_scope: list[str] | None = None,
          coordinator_id: str = "", cursor: int = 0) -> Token:
+    from app.runtime.access import current_execution, AccessDenied
+    from app.services.store import store
+    execution = store.access.revalidate(current_execution())
+    run = store.with_db(lambda conn: swarm_store.get_run(conn, run_id))
+    if not run or run['session_id'] != execution.session_id:
+        raise AccessDenied("Swarm board is outside the owned session")
     return _scope.set({"run_id": run_id, "task_id": task_id, "agent_id": agent_id,
                        "allowed_tools": allowed_tools, "write_scope": write_scope or [],
                        "coordinator_id": coordinator_id, "cursor": cursor, "question": None})
@@ -82,8 +93,10 @@ async def deliver(messages: list[dict[str, Any]]):
     if not scope:
         return
     from app.services.store import store
+    from app.runtime.access import current_execution
     deadline = asyncio.get_running_loop().time() + QUESTION_TIMEOUT
     while True:
+        store.access.revalidate(current_execution())
         events = store.with_db(lambda c: swarm_store.list_events(c, scope["run_id"], scope["cursor"]))
         context = []
         receipts = []
@@ -130,6 +143,8 @@ async def deliver(messages: list[dict[str, Any]]):
 
 
 def run(arguments: dict[str, Any]) -> str:
+    from app.runtime.policy import authorize_tool
+    authorize_tool("swarm_board", arguments)
     scope = _scope.get()
     if not scope:
         return "Error: swarm board is available only inside a swarm run"

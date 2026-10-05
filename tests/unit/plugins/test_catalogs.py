@@ -229,7 +229,7 @@ def test_marketplace_page_and_administration(markets, tmp_path, monkeypatch):
     path = tmp_path / "source.json"
     path.write_text(json.dumps(manifest()))
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "user", "enabled": True}
+        store, "get_user", lambda uid: {"id": uid, "role": "member", "enabled": True}
     )
     assert (
         client.post(
@@ -238,7 +238,7 @@ def test_marketplace_page_and_administration(markets, tmp_path, monkeypatch):
         == 403
     )
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "admin", "enabled": True}
+        store, "get_user", lambda uid: {"id": uid, "role": "admin", "enabled": True}
     )
     assert (
         client.post(

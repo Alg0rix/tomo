@@ -20,6 +20,8 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
 
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("fetch_artifact", arguments)
     filename = str(arguments.get("filename") or "").strip()
     err = validate_filename(filename)
     if err:
@@ -47,7 +49,7 @@ def run(arguments: dict[str, Any]) -> str:
     except ValueError as exc:
         return f"Error: {exc}"
 
-    if not agent_has_remote_workplace(agent_id or None) and not dest_path:
+    if execution.execution_mode == "unrestricted" and not agent_has_remote_workplace(agent_id or None) and not dest_path:
         host_path = str(artifacts_dir(session_id) / filename)
         return json.dumps(
             {
@@ -80,7 +82,8 @@ def run(arguments: dict[str, Any]) -> str:
             "filename": filename,
             "size": len(data),
             "session_id": session_id,
-            "work_root": str(resolve_work_root(agent_id or None)),
+            "work_root": (next(r.mount_path for r in execution.resources if r.workplace_id == execution.active_workplace_id)
+                          if execution.execution_mode == 'restricted' else str(resolve_work_root(agent_id or None))),
         },
         ensure_ascii=False,
     )

@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import AuthDep, require_owned_session, session_user_id
-from app.services import connections, secret_files, secret_store
+from app.services import connections, secret_files, secret_store, store
+from app.runtime.access import AccessDenied
 
 router = APIRouter(prefix="/api", tags=["secrets"])
 
@@ -39,10 +40,69 @@ def broker_scope(request: Request) -> dict:
             401,
             "Broker access missing or expired; run from a local or updated tunnel Tomo chat bash tool",
         )
+    # A bearer capability is not a platform elevation or a stale account lease.
+    try:
+        user = store.access.require_user(scope.get("user_id") or "")
+        sid = scope.get("session_id") or ""
+        if store.get_owned_session(sid, user["id"]):
+            context = store.access.resolve_context(user["id"], sid)
+        elif user["role"] == "admin":
+            # Only the foundation's explicit legacy Telegram Admin exception;
+            # linked users' private sessions still fail this resolver.
+            context = store.access.resolve_trusted_channel_context(user["id"], sid)
+        else:
+            raise AccessDenied("Session is unavailable")
+        store.access.revalidate(context)
+    except AccessDenied:
+        raise HTTPException(403, "Broker execution identity unavailable") from None
+    if user["role"] != "admin":
+        # Current consumers write host files and use privileged HTTP networking.
+        # They cannot satisfy a restricted Member's containment/network ceiling.
+        raise HTTPException(503, "Isolation-aware credential consumer unavailable")
     return {**scope, "token": token}
 
 
 BrokerScope = Annotated[dict, Depends(broker_scope)]
+
+
+def _broker_execution(scope: dict, *, bundle_name: str | None = None, write: bool = False):
+    from app.runtime.access import AccessDenied
+    context = store.access.resolve_context(scope["user_id"], scope["session_id"])
+    wid = scope.get("workplace_id")
+    if wid:
+        # Tunnel-scoped consumer (scoped credential for a remote
+        # destination). Session-scoping comes first: another session's
+        # bundle is 404, never a mode/destination signal. Then the scope
+        # session must enable the destination (with write permission for
+        # credential-merged file writes), and the destination must be a
+        # verified, currently-online contract enforcer.
+        if bundle_name is not None:
+            try:
+                secret_store.scoped_bundle(scope, bundle_name)
+            except (KeyError, ValueError):
+                raise HTTPException(404, "Secret bundle not found in this session") from None
+        wp = store.get_workplace(wid)
+        if not wp or wp.get("kind") != "tunnel":
+            raise HTTPException(503, "Credential consumer destination is unavailable") from None
+        try:
+            store.access.authorize_resource(context, wid, write=write)
+        except AccessDenied:
+            raise HTTPException(503, "Credential consumer destination is outside the execution scope") from None
+        if context.execution_mode != "unrestricted":
+            # Stage 1 boundary preserved: credential-merged writes and
+            # credential-bearing network use need the explicit unrestricted
+            # destination grant + acknowledgement, never sandbox containment.
+            raise HTTPException(503, "Credential consumer requires explicitly unrestricted destination execution") from None
+        from app.workplaces import remote_contract
+        try:
+            remote_contract.require_tunnel_destination(wp, mode="unrestricted")
+        except AccessDenied as exc:
+            raise HTTPException(503, str(exc)) from None
+        return context
+    if (context.role != "admin" or context.execution_mode != "unrestricted"
+            or any(r.kind != "local" for r in context.resources)):
+        raise HTTPException(503, "Credential consumer requires explicitly unrestricted local Admin execution")
+    return context
 
 
 @router.get("/secret-broker/bundles")
@@ -113,10 +173,20 @@ async def broker_status(request_id: str, scope: BrokerScope):
 
 @router.post("/secret-broker/apply")
 async def broker_apply_file(request: Request, scope: BrokerScope):
+    data = await _body(request, 65_536)
+    bundle = data.get("bundle") if isinstance(data, dict) else None
+    context = _broker_execution(scope, bundle_name=bundle if isinstance(bundle, str) else None, write=True)
+    from app.runtime.access import execution_scope
+    from app.runtime.supervision import admitted_turn
+    def apply():
+        with store.access.execution_guard(context):
+            store.access.audit(context.user_id, "broker.file", session_id=context.session_id,
+                               agent_id=context.agent_id, destination_id=context.destination_id, outcome="admitted")
+            return secret_files.apply_file(scope, data)
     try:
-        return await run_in_threadpool(
-            secret_files.apply_file, scope, await _body(request, 65_536)
-        )
+        with execution_scope(context):
+            async with admitted_turn(context):
+                return await run_in_threadpool(apply)
     except KeyError:
         raise HTTPException(404, "Secret bundle not found in this session") from None
     except ValueError as exc:
@@ -125,8 +195,16 @@ async def broker_apply_file(request: Request, scope: BrokerScope):
 
 @router.post("/connection-broker/http")
 async def broker_http(request: Request, scope: BrokerScope):
+    context = _broker_execution(scope)
+    data = await _body(request)
+    from app.runtime.access import execution_scope
+    from app.runtime.supervision import admitted_turn
     try:
-        return await connections.execute_http(scope, await _body(request))
+        with execution_scope(context):
+            async with admitted_turn(context):
+                store.access.audit(context.user_id, "broker.http", session_id=context.session_id,
+                                   agent_id=context.agent_id, destination_id=context.destination_id, outcome="admitted")
+                return await connections.execute_http(scope, data)
     except KeyError:
         raise HTTPException(404, "Secret bundle not found in this session") from None
     except ValueError as exc:

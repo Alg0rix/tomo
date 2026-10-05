@@ -1,11 +1,8 @@
-"""Bash tool — run a shell command inside the agent work-dir sandbox.
+"""Bash tool — current identity/policy first, then enforced destination.
 
-Commands start with ``cwd`` set to ``$TOMO_HOME/agents/<id>/work`` (see
-:mod:`app.runtime.tools.sandbox`). A wall-clock timeout caps runaway
-processes. Failures and timeouts return ``Error: ...`` strings — never raise.
-
-When ``background`` is true, the command is started without waiting and
-registered in :mod:`app.runtime.tools.process_registry`.
+Restricted execution runs inside the chat container, never host cwd. Explicitly
+activated unrestricted execution uses supervised host/remote paths. Durable
+background work goes through the context-preserving background-job manager.
 """
 
 from __future__ import annotations
@@ -58,6 +55,7 @@ def _truthy(raw: Any) -> bool:
 def _pump(fd: int, buf: list[str], sink: progress.Sink | None, budget: list[int]) -> None:
     """Read ``fd`` until EOF, keeping text in ``buf`` and forwarding it to ``sink``."""
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    retained = 0
     while True:
         try:
             data = os.read(fd, 4096)
@@ -65,7 +63,10 @@ def _pump(fd: int, buf: list[str], sink: progress.Sink | None, budget: list[int]
             data = b""
         text = decoder.decode(data, final=not data)
         if text:
-            buf.append(text)
+            piece = text[:max(0, _MAX_OUTPUT - retained)]
+            if piece:
+                buf.append(piece)
+                retained += len(piece)
             if sink is not None and budget[0] > 0:
                 piece = text[: budget[0]]
                 budget[0] -= len(piece)
@@ -96,7 +97,11 @@ def _run_streaming_with_env(command: str, cwd: str, timeout: float, env: dict[st
     process group.
     """
     sink = progress.current()
-    proc = subprocess.Popen(
+    from app.runtime.isolation import host
+    from app.runtime.tools.sandbox import require_host_execution
+
+    timeout = min(timeout, require_host_execution().quota.duration_seconds)
+    proc = host.popen(
         ["bash", "-lc", command],
         cwd=cwd,
         env=env,
@@ -128,6 +133,7 @@ def _run_streaming_with_env(command: str, cwd: str, timeout: float, env: dict[st
         # Background grandchildren may hold the pipes open; don't wait on them forever.
         for t in readers:
             t.join(max(0.5, deadline - time.monotonic()))
+        host.forget(proc)
         proc.stdout.close()
         proc.stderr.close()
     return proc.returncode, _normalize("".join(out)), _normalize("".join(err))
@@ -137,6 +143,11 @@ def run(arguments: dict[str, Any]) -> str:
     """Execute ``command`` in the sandbox cwd; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: bash expects a dict of arguments"
+    from app.runtime.tools.sandbox import dispatch_execution
+
+    dispatched = dispatch_execution("bash", arguments)
+    if dispatched is not None:
+        return dispatched
     command = arguments.get("command")
     if not isinstance(command, str) or not command.strip():
         return "Error: 'command' argument must be a non-empty string"

@@ -203,6 +203,14 @@ async def _llm_round(
     Yields ``{"kind": "delta", ...}`` chunks, then
     ``{"kind": "_response", "response": LLMResponse}``.
     """
+    from app.runtime.access import current_execution
+    from app.runtime.policy import filter_schemas
+    from app.services import store
+    execution = store.access.revalidate(current_execution())
+    profile = getattr(client, "context_profile", None)
+    if profile and profile.get("id"):
+        store.access.require_use(execution.user_id, "model", profile["id"])
+    tool_schemas = filter_schemas(execution, tool_schemas)
     stream_fn = getattr(client, "stream_complete", None)
     if stream_fn is None:
         resp = await client.complete(messages, tool_schemas)
@@ -400,6 +408,13 @@ async def _handle_clarify(
     session_id: str | None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield clarify HITL events then a tool_result."""
+    from app.runtime.policy import authorize_tool
+    from app.runtime.access import AccessDenied
+    try:
+        authorize_tool(call.name, call.arguments)
+    except AccessDenied as exc:
+        yield {"kind": "tool_result", "tool": call.name, "result": f"Error: {exc}", "error": True}
+        return
     args = call.arguments if isinstance(call.arguments, dict) else {}
     question = args.get("question")
     if not isinstance(question, str) or not question.strip():
@@ -462,7 +477,18 @@ async def _authorize_tool(
     still block, then skip the smart/HITL waiters entirely.
     """
     args = call.arguments if isinstance(call.arguments, dict) else {}
-    work_root = sandbox.resolve_work_root()
+    from app.runtime.access import AccessDenied
+    from app.runtime.policy import authorize_tool
+    try:
+        execution = authorize_tool(call.name, args)
+    except AccessDenied as exc:
+        yield Decision(allowed=False, message=f"Error: {exc}", allow_permanent=False)
+        return
+    if execution.execution_mode == "restricted":
+        from pathlib import Path
+        work_root = Path(next(r.mount_path for r in execution.resources if r.workplace_id == execution.active_workplace_id))
+    else:
+        work_root = sandbox.resolve_work_root()
     is_scheduler = origin == "scheduler"
     decision = evaluate(
         call.name,
@@ -525,7 +551,11 @@ async def _authorize_tool(
 async def _execute_authorized(call: ToolCall, decision: Decision) -> str:
     """Run a tool under the granted outside-jail token."""
     args = call.arguments if isinstance(call.arguments, dict) else {}
-    grant_tok = set_outside_grant(decision.grant)
+    from app.runtime.policy import authorize_tool
+    context = authorize_tool(call.name, args)
+    # Approval is a destructive-action decision within the ceiling, never a
+    # resource/role/mode escalation (including unattended/delegated turns).
+    grant_tok = set_outside_grant(decision.grant if context.execution_mode == "unrestricted" else None)
     try:
         return await asyncio.wait_for(execute_async(call.name, args), _TOOL_TIMEOUT)
     except asyncio.TimeoutError:
@@ -855,6 +885,42 @@ async def _execute_tool_segment(
 
 @observe("agent")
 async def run_turn(
+    user_message: str | None, *, history: list[dict[str, Any]] | None = None,
+    llm: LLMClient | None = None, tools: list[dict[str, Any]] | None = None,
+    system_prompt: str | None = None, agent_id: str | None = None,
+    session_id: str | None = None, max_iterations: int | None = None,
+    enable_atg: bool | None = None, origin: str | None = None,
+    reasoning_effort: str | None = None, conversation: list[dict[str, Any]] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Resolve the session OWNER at ingress, inheriting any parent ceiling."""
+    from app.runtime.access import AccessDenied, execution_scope
+    from app.runtime.policy import resolve_turn
+    from app.runtime.supervision import admitted_turn
+
+    try:
+        context = resolve_turn(session_id, agent_id)
+    except AccessDenied as exc:
+        yield {"kind": "error", "message": str(exc)}
+        return
+    if tools is not None:
+        from dataclasses import replace
+        names = {s.get('function', {}).get('name') for s in tools}
+        context = replace(context, tool_ids=context.tool_ids & names)
+    kwargs = dict(history=history, llm=llm, tools=tools, system_prompt=system_prompt,
+                  agent_id=context.agent_id, session_id=session_id,
+                  max_iterations=max_iterations, enable_atg=enable_atg, origin=origin,
+                  reasoning_effort=reasoning_effort, conversation=conversation)
+    try:
+        with execution_scope(context):
+            async with admitted_turn(context):
+                async with aclosing(_run_turn_owned(user_message, **kwargs)) as source:
+                    async for event in source:
+                        yield event
+    except (AccessDenied, TimeoutError) as exc:
+        yield {"kind": "error", "message": str(exc) or "Execution duration limit reached"}
+
+
+async def _run_turn_owned(
     user_message: str | None,
     *,
     history: list[dict[str, Any]] | None = None,
@@ -899,16 +965,9 @@ async def run_turn(
 
     arts_token = artifacts_fs.bind_session(session_id)
     # Bind session owner so vault / session_search stay private.
-    turn_user_id = "web"
-    if session_id:
-        try:
-            from app.services import store as _store_for_uid
-
-            _sess = _store_for_uid.get_session(session_id)
-            if _sess:
-                turn_user_id = (_sess.get("user_id") or "web").strip() or "web"
-        except Exception:
-            turn_user_id = "web"
+    from app.runtime.access import current_execution
+    execution = current_execution()
+    turn_user_id = execution.user_id
     user_token = user_ctx_mod.bind_user(turn_user_id)
     # Stable system-prompt clock for this turn (hour precision + freeze).
     clock_token = freeze_prompt_clock()
@@ -930,25 +989,35 @@ async def run_turn(
                 session_profile = store.get_session(session_id) if session_id else None
                 if session_profile and session_profile.get("model_profile_id"):
                     client = get_llm(agent_id, reasoning_effort=selected_effort, session_id=session_id)
-                elif selected_effort is None:
-                    client = get_llm(agent_id)
                 else:
-                    client = get_llm(agent_id, reasoning_effort=selected_effort)
+                    client = get_llm(agent_id, reasoning_effort=selected_effort, session_id=session_id)
             if tools is not None:
                 tool_schemas = tools
             elif agent_id:
                 from app.services import store
 
-                from app.runtime.mcp import mcp_manager
+                # External tool transports are control-plane services, not an
+                # owned execution destination. Admin turns never auto-start
+                # them, so Admin schemas stay hidden until a live session
+                # exists. Members execute per-call in their own per-chat
+                # container from the cached catalog (no transport to start),
+                # so offer exactly the assigned cached-enabled set — never
+                # offered-then-denied, never silently widened.
+                if execution.role != "admin":
+                    from app.runtime.mcp import mcp_manager
 
-                connected = await mcp_manager.ensure_for_servers(
-                    store.list_mcp_server_ids_for_agent(agent_id)
-                )
-                tool_schemas = store.get_agent_openai_tools(
-                    agent_id, connected_server_ids=connected
-                )
+                    tool_schemas = store.get_agent_openai_tools(
+                        agent_id,
+                        connected_server_ids=mcp_manager.cached_ids_for_agent(agent_id),
+                    )
+                else:
+                    tool_schemas = store.get_agent_openai_tools(
+                        agent_id, connected_server_ids=[]
+                    )
             else:
                 tool_schemas = get_openai_tools()
+            from app.runtime.policy import filter_schemas, authorized_agents
+            tool_schemas = filter_schemas(execution, tool_schemas)
             from app.channels.telegram_context import current_turn as telegram_turn
 
             excluded_tool = (
@@ -993,10 +1062,12 @@ async def run_turn(
 
                 worker_catalog = [
                     {"id": a["id"], "name": a["name"],
-                     "tools": [s["function"]["name"] for s in store.get_agent_openai_tools(a["id"])
+                     "tools": [s["function"]["name"] for s in filter_schemas(
+                         store.access.resolve_context(execution.user_id, execution.session_id, a["id"], parent=execution),
+                         store.get_agent_openai_tools(a["id"]))
                                if s.get("function", {}).get("name")
                                not in {"delegate", "create_agent", "start_swarm"}]}
-                    for a in store.list_agents() if a.get("enabled")
+                    for a in authorized_agents(execution)
                 ]
                 prompt += (
                     "\n\n## Swarm execution for this turn\n"
@@ -1021,9 +1092,13 @@ async def run_turn(
                     + f"\nCurrent coordinator/template ID: {agent_id}. Create session-local "
                     "agents based on this ID if needed; do not assign it directly as a worker."
                 )
-            from app.services.vision import prepare_image_inputs
-
             try:
+                # Supervised image inputs: native pixels only when the main
+                # model proves vision-capable, else text descriptions from
+                # the assigned auxiliary vision profile (or nothing when no
+                # vision boundary resolves). Owned-chat bytes only.
+                from app.services.vision import prepare_image_inputs
+
                 image_plan = await prepare_image_inputs(history, agent_id)
             except Exception:
                 # Image handling must never kill a turn — degrade to the

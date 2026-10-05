@@ -201,7 +201,7 @@ async def test_revoked_destination_or_replaced_bot_never_runs_agent(setup, monke
             ]
         )
         monkeypatch.setattr(
-            "app.runtime.agent.loop.get_llm", lambda agent_id=None: rotating
+            "app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: rotating
         )
         outcome = await fire_schedule(sch, skip_claim=True)
         assert outcome["status"] == "ok" and outcome["delivery_status"] == "blocked"
@@ -284,7 +284,11 @@ async def test_generic_channel_recovers_saved_final_without_replay(setup, tmp_pa
             return {"id": len(received)}
 
     register_delivery_channel("memory-test", MemoryChannel())
-    sch = store.create_schedule(
+    from tests.fakes.access import owned_host_session
+    owner_sid = owned_host_session()
+    owner_ctx = store.access.resolve_context("usr_admin", owner_sid)
+    sch = store.access.create_schedule_for_context(
+        owner_ctx,
         {
             "agent_id": "main",
             "schedule": "every 1h",
@@ -294,12 +298,11 @@ async def test_generic_channel_recovers_saved_final_without_replay(setup, tmp_pa
                 "channel": "memory-test",
                 "address": "inbox",
             },
-        }
+        },
     )
 
     def saved(content):
-        sid = store.get_or_create_session("main", "recovery")
-        rid = store.begin_schedule_run(sch["id"], session_id=sid)
+        rid = store.begin_schedule_run(sch["id"], session_id=owner_sid)
         store.finish_schedule_run(rid, delivery_content=content)
         return rid
 

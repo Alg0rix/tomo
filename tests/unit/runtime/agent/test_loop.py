@@ -27,6 +27,12 @@ from app.runtime.llm import LLMConfigError
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import store
 from tests.fakes.llm import ScriptedLLM, bash_call, memory_search_call, text_reply, tool_then_text
+from tests.fakes.access import owned_host_session
+
+
+@pytest.fixture(autouse=True)
+def owned_loop_store(tmp_path):
+    store.rebind(tmp_path / 'owned-loop.db')
 
 _DEFAULT_REPLY = "Ready to help."
 _BASH_FINAL = "The command finished."
@@ -159,6 +165,8 @@ async def _collect(user_message: str | None, **kw: Any) -> list[dict[str, Any]]:
     """Drain the ``run_turn`` async generator into a list of events."""
     # Unit tests use scripted LLMs — keep ATG off unless a test opts in.
     kw.setdefault("enable_atg", False)
+    if not kw.get('session_id'):
+        kw['session_id'] = owned_host_session([kw.get('agent_id') or 'main'])
     return [ev async for ev in run_turn(user_message, **kw)]
 
 
@@ -176,7 +184,7 @@ def _final(events: list[dict[str, Any]]) -> dict[str, Any]:
 def _session_history(tmp_path, *entries: dict[str, Any], db_name: str = "loop.db") -> list[dict[str, Any]]:
     """Persist entries in a fresh SQLite session and return store history."""
     store.rebind(tmp_path / db_name)
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = store.create_swarm_session(["main"], user_id="usr_admin")
     for entry in entries:
         store.append_session_history(sid, entry)
     return store.get_session_history(sid)
@@ -224,11 +232,11 @@ async def test_session_reasoning_effort_reaches_llm_factory(tmp_path, monkeypatc
         }
     )
     store.set_default_llm_profile("default")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     store.set_session_reasoning_effort(sid, "balanced")
     seen: dict[str, Any] = {}
 
-    def _get_llm(agent_id=None, reasoning_effort=None):
+    def _get_llm(agent_id=None, reasoning_effort=None, **kwargs):
         seen["agent_id"] = agent_id
         seen["reasoning_effort"] = reasoning_effort
         return ScriptedLLM([text_reply("ok")])
@@ -303,7 +311,8 @@ async def test_deltas_stream_as_produced_not_buffered_until_round_end() -> None:
 
     first_delta_producer_count = None
     async for ev in run_turn(
-        "hello", llm=_StreamingLLM(), tools=[], enable_atg=False
+        "hello", llm=_StreamingLLM(), tools=[], enable_atg=False,
+        session_id=owned_host_session()
     ):
         if ev["kind"] == "delta" and first_delta_producer_count is None:
             first_delta_producer_count = produced["n"]
@@ -338,7 +347,7 @@ async def test_hung_builtin_returns_tool_error_and_turn_finishes(monkeypatch) ->
 
 
 async def test_parallel_results_stream_before_slowest_tool_and_keep_model_order(monkeypatch, tmp_path) -> None:
-    from app.runtime.tools import registry, sandbox
+    from app.runtime.tools import registry
 
     release = threading.Event()
     started = threading.Event()
@@ -362,14 +371,19 @@ async def test_parallel_results_stream_before_slowest_tool_and_keep_model_order(
         ToolCall(id="slow", name="read_file", arguments={"path": "slow"}),
         ToolCall(id="fast", name="read_file", arguments={"path": "fast"}),
     ]), "done"))
-    aid = "parallel-read-" + tmp_path.name
-    root = sandbox.resolve_work_root(aid)
+    # The fake backend returns strings without reading the filesystem, but the
+    # parallel planner only batches reads whose targets exist. Fixture files
+    # live in the explicit owned Admin session's workplace root.
+    from tests.fakes.access import owned_admin_scope
+    _parallel_scope = owned_admin_scope()
+    _pctx, _proot = _parallel_scope.__enter__()
+    sid = _pctx.session_id
     for name in ("slow", "fast"):
-        (root / name).write_text(name)
+        (_proot / name).write_text(name)
     results = []
     try:
         async with asyncio.timeout(5):
-            async for ev in run_turn("Read both", llm=llm, agent_id=aid, enable_atg=False,
+            async for ev in run_turn("Read both", llm=llm, session_id=sid, agent_id="main", enable_atg=False,
                                      tools=[{"type": "function", "function": {"name": "read_file"}}]):
                 if ev["kind"] == "tool_result":
                     results.append(ev)
@@ -381,10 +395,11 @@ async def test_parallel_results_stream_before_slowest_tool_and_keep_model_order(
         assert [m["tool_call_id"] for m in prompts[-1] if m["role"] == "tool"] == ["slow", "fast"]
     finally:
         release.set()
+        _parallel_scope.__exit__(None, None, None)
 
 
 async def test_disjoint_writes_parallel_but_conflicting_reads_and_bash_keep_order(monkeypatch, tmp_path) -> None:
-    from app.runtime.tools import registry, sandbox, write_file
+    from app.runtime.tools import registry, write_file
 
     release = threading.Event()
     started = threading.Event()
@@ -399,8 +414,11 @@ async def test_disjoint_writes_parallel_but_conflicting_reads_and_bash_keep_orde
         return original_write(args)
 
     monkeypatch.setitem(registry._BACKENDS, "write_file", paced_write)
-    aid = "parallel-" + tmp_path.name
-    root = sandbox.resolve_work_root(aid)
+    # Explicit owned Admin session; fixture files live in its workplace root.
+    from tests.fakes.access import owned_admin_scope
+    scope = owned_admin_scope()
+    ctx, root = scope.__enter__()
+    sid = ctx.session_id
     (root / "alias.txt").symlink_to(root / "a.txt")
     calls = [
         ToolCall(id="a", name="write_file", arguments={"path": "a.txt", "content": "first"}),
@@ -413,7 +431,7 @@ async def test_disjoint_writes_parallel_but_conflicting_reads_and_bash_keep_orde
     results = {}
     try:
         async with asyncio.timeout(8):
-            async for ev in run_turn("Update the files", llm=llm, agent_id=aid,
+            async for ev in run_turn("Update the files", llm=llm, session_id=sid, agent_id="main",
                                      origin="scheduler", enable_atg=False,
                                      tools=registry.get_openai_tools(["write_file", "read_file", "bash"])):
                 if ev["kind"] == "tool_result":
@@ -426,22 +444,27 @@ async def test_disjoint_writes_parallel_but_conflicting_reads_and_bash_keep_orde
         assert "changed" in results["after"]
     finally:
         release.set()
+        scope.__exit__(None, None, None)
 
 
 async def test_vision_calls_run_parallel_and_wait_before_overlapping_write(monkeypatch, tmp_path) -> None:
     import base64
     from app.runtime.llm import vision
-    from app.runtime.tools import registry, sandbox
+    from app.runtime.tools import registry
+    from tests.fakes.access import admin_with_vision_profile
 
     release, started = threading.Event(), threading.Event()
     png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
-    aid = "parallel-vision-" + tmp_path.name
-    root = sandbox.resolve_work_root(aid)
-    (root / "shot.png").write_bytes(png)
-    (root / "alias.png").symlink_to(root / "shot.png")
+    # Explicit owned Admin session with an assigned vision profile (real
+    # ceiling + real supervised preprocessing); files live in the session's
+    # workplace root, not a synthetic agent dir. Only the model provider is
+    # doubled — identity, jail and assignment stay real.
+    with admin_with_vision_profile() as (context, root, _profile):
+        (root / "shot.png").write_bytes(png)
+        (root / "alias.png").symlink_to(root / "shot.png")
 
     async def analyze(agent_id, data_url, question=""):
-        assert agent_id == aid
+        assert agent_id == "main"
         assert data_url.startswith("data:image/")
         if question.endswith("slow"):
             started.set()
@@ -460,7 +483,8 @@ async def test_vision_calls_run_parallel_and_wait_before_overlapping_write(monke
     results = []
     try:
         async with asyncio.timeout(8):
-            async for ev in run_turn("Analyze both", llm=llm, agent_id=aid,
+            async for ev in run_turn("Analyze both", llm=llm, agent_id="main",
+                                     session_id=context.session_id,
                                      origin="scheduler", enable_atg=False,
                                      tools=registry.get_openai_tools(["vision_analyze", "write_file"])):
                 if ev["kind"] == "tool_result":
@@ -528,7 +552,7 @@ async def test_vault_search_path_returns_saved_fact(tmp_path) -> None:
     """Scripted recall tool call; result includes seeded KB fact."""
     store.rebind(tmp_path / "recall_loop.db")
     from app.runtime.memory.vault.write import add_entity
-    add_entity("web", "topic/vendor-deadline", "The Q3 vendor onboarding deadline is October 15, 2026.")
+    add_entity("usr_admin", "topic/vendor-deadline", "The Q3 vendor onboarding deadline is October 15, 2026.")
     llm = ScriptedLLM(
         tool_then_text(
             memory_search_call("Q3 vendor onboarding deadline"),
@@ -759,7 +783,7 @@ async def test_empty_ids_stay_distinct_across_two_rounds() -> None:
 
 async def test_setup_failure_surfaces_as_error_event(monkeypatch) -> None:
     """A failing ``get_llm`` yields an error event; ``run_turn`` never raises."""
-    def _boom(agent_id=None) -> None:
+    def _boom(agent_id=None, **kwargs) -> None:
         raise LLMConfigError("bad provider config")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)
@@ -770,11 +794,11 @@ async def test_setup_failure_surfaces_as_error_event(monkeypatch) -> None:
 
 
 async def test_get_openai_tools_failure_surfaces_as_error_event(monkeypatch) -> None:
-    """A failing ``get_openai_tools`` during setup yields an error event."""
-    def _boom() -> None:
+    """A failing owned-agent schema lookup during setup yields an error event."""
+    def _boom(*args, **kwargs) -> None:
         raise RuntimeError("registry exploded")
 
-    monkeypatch.setattr("app.runtime.agent.loop.get_openai_tools", _boom)
+    monkeypatch.setattr(store, 'get_agent_openai_tools', _boom)
     events = await _collect("hi", llm=ScriptedLLM([text_reply(_DEFAULT_REPLY)]))
     assert [e["kind"] for e in events] == ["error"]
     assert "setup" in events[0]["message"].lower()
@@ -807,7 +831,7 @@ async def test_turn_records_goal_from_input_or_history(
 
     monkeypatch.setattr(config, "TOMO_HOME", tmp_path)
     store.rebind(tmp_path / "goal.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     store.update_settings({"memory_vault_enabled": True})
     store.append_session_history(sid, {"type": "user", "content": "old question"})
     store.append_session_history(sid, {"type": "assistant", "content": "old answer"})
@@ -829,7 +853,7 @@ async def test_turn_records_goal_from_input_or_history(
     )
     assert _final(events)["content"] == "done"
     expected = direct_request or "current question"
-    raw = timeline_path("web", date.today().isoformat()).read_text()
+    raw = timeline_path("usr_admin", date.today().isoformat()).read_text()
     assert f"- Goal: {expected}\n" in raw
     assert extraction[0][2] == expected
     assert reviews[0]["user_message"] == expected
@@ -922,14 +946,21 @@ async def test_cancelling_parent_stops_parallel_subagents(monkeypatch) -> None:
             finally:
                 cancelled.add(self.name)
 
-    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None: BlockingChild(agent_id))
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: BlockingChild(agent_id))
     parent = ScriptedLLM([LLMResponse(content=None, tool_calls=[
         ToolCall(id="d1", name="delegate", arguments={"agent_id": "ops", "reason": "one"}),
         ToolCall(id="d2", name="delegate", arguments={"agent_id": "writer", "reason": "two"}),
     ])])
+    # Both delegation targets must be real enabled agents for the nested
+    # turns to start (and then be cancelled).
+    store.create_agent({"id": "writer", "name": "Writer"})
+    sid = owned_host_session()
+    # Parent plus two parallel subagents need three concurrent slots; raise
+    # the real quota instead of bypassing aggregate admission.
+    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": 4})
 
     async def consume():
-        async for _ in run_turn("delegate", llm=parent, tools=_delegate_tools(), agent_id="main", enable_atg=False):
+        async for _ in run_turn("delegate", llm=parent, tools=_delegate_tools(), session_id=sid, agent_id="main", enable_atg=False):
             pass
 
     task = asyncio.create_task(consume())
@@ -957,7 +988,7 @@ async def test_successful_delegate_runs_subagent_and_parent_continues(
     # Subagent: single text reply (its final output).
     subagent_llm = ScriptedLLM([text_reply("ops handled it")])
     monkeypatch.setattr(
-        "app.runtime.agent.loop.get_llm", lambda agent_id=None: subagent_llm
+        "app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: subagent_llm
     )
     events = await _collect(
         "ask ops to help",
@@ -997,7 +1028,7 @@ async def test_delegate_streams_subagent_events_before_tool_result(
     # Ops: one bash call then a final answer.
     ops_llm = ScriptedLLM(tool_then_text(bash_call("uptime"), "ops done"))
 
-    def _llm_for(agent_id: str | None = None):
+    def _llm_for(agent_id: str | None = None, **kwargs):
         return ops_llm if agent_id == "ops" else parent_llm
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm_for)
@@ -1056,7 +1087,7 @@ async def test_subagent_reasoning_surfaces_as_tagged_thinking_event(
         LLMResponse(content="ops done", tool_calls=[], reasoning="Checking uptime output."),
     ])
 
-    def _llm_for(agent_id: str | None = None):
+    def _llm_for(agent_id: str | None = None, **kwargs):
         return ops_llm if agent_id == "ops" else parent_llm
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _llm_for)
@@ -1118,11 +1149,12 @@ async def test_nested_worker_leaves_composer_steer_for_parent(monkeypatch) -> No
     def child_run(prompt, **kwargs):
         return run_turn(prompt, system_prompt="Test worker.", enable_atg=False, **kwargs)
 
+    worker_sid = owned_host_session()
     child_events = [
         event
         async for event, _ in drain_subagent_turn(
             "ops", from_agent_id="main", reason="Check nodes",
-            user_request="Inspect the cluster", session_id="fixture",
+            user_request="Inspect the cluster", session_id=worker_sid,
             llm=ScriptedLLM([text_reply("Worker finished")]), tools=[],
             run_turn_fn=child_run,
         )
@@ -1132,7 +1164,7 @@ async def test_nested_worker_leaves_composer_steer_for_parent(monkeypatch) -> No
     assert child_events[-1]["kind"] == "subagent_final"
 
     parent_events = await _collect(
-        "Review worker results", session_id="fixture", agent_id="main",
+        "Review worker results", session_id=worker_sid, agent_id="main",
         llm=ScriptedLLM([text_reply("Parent applied the guidance")]), tools=[],
     )
     assert inbox == []

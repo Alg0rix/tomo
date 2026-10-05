@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.runtime.tools import register_workplace, sandbox
 from app.runtime.tools.registry import reset_registry
 from app.runtime.tools.workplace_ctx import current_workplace_id, reset_workplace
 from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 def _rebind(tmp_path: Path) -> None:
@@ -17,17 +20,29 @@ def _rebind(tmp_path: Path) -> None:
     reset_workplace()
 
 
+@pytest.fixture()
+def admin_fs():
+    # Explicit owned Admin unrestricted context (real policy grant + ack).
+    # Host tools are fenced to the session workplace root, not TOMO_WORK.
+    with owned_admin_scope() as (_ctx, root):
+        yield root
+
+
 def test_register_local_and_bind(tmp_path: Path) -> None:
     _rebind(tmp_path)
     proj = tmp_path / "tomo-server"
     proj.mkdir()
-    sandbox.bind_agent("ops")
     try:
-        out = register_workplace.run(
-            {"kind": "local", "path": str(proj), "name": "tomo-server"}
-        )
+        # Registration is Admin control-plane work; chat activation happens
+        # separately through access settings, never implicitly from the tool.
+        with owned_admin_scope():
+            sandbox.bind_agent("ops")
+            out = register_workplace.run(
+                {"kind": "local", "path": str(proj), "name": "tomo-server"}
+            )
         assert out.startswith("Registered workplace")
-        assert current_workplace_id() is not None
+        assert "Enable the resource" in out
+        assert current_workplace_id() is None
         wps = store.list_workplaces()
         local = [
             w
@@ -50,10 +65,10 @@ def test_reuse_same_local_path(tmp_path: Path) -> None:
     _rebind(tmp_path)
     proj = tmp_path / "same"
     proj.mkdir()
-    sandbox.bind_agent("main")
     try:
-        out1 = register_workplace.run({"kind": "local", "path": str(proj)})
-        out2 = register_workplace.run({"kind": "local", "path": str(proj)})
+        with owned_admin_scope():
+            out1 = register_workplace.run({"kind": "local", "path": str(proj)})
+            out2 = register_workplace.run({"kind": "local", "path": str(proj)})
         assert "Registered" in out1
         assert "Reused" in out2
         locals_ = [

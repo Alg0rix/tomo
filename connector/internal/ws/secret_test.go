@@ -20,9 +20,10 @@ func TestPrivateHTTPReplayNeverPersistsRepliesOrRepeatsAfterRestart(t *testing.T
 	}))
 	defer server.Close()
 	store := testStore(t)
-	msg := request("private-post", "secret_http", map[string]any{
+	admitTestSession(t)
+	msg := request("private-post", "secret_http", withExecContext(map[string]any{
 		"url": server.URL, "method": "POST", "headers": map[string]any{}, "body_b64": "", "timeout": float64(5), "expires_at": float64(time.Now().Unix() + 60),
-	})
+	}))
 	for i := 0; i < 2; i++ {
 		if out := store.execute(msg); !out.OK {
 			t.Fatal(out.Error)

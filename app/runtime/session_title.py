@@ -123,6 +123,8 @@ async def generate_session_title(
                 ),
             },
         ]
+        from app.runtime.policy import authorize_model_client
+        authorize_model_client(client)
         resp = await client.complete(messages, tools=None)
         raw = (resp.content or "").strip()
         title = sanitize_llm_title(raw)
