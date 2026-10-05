@@ -261,7 +261,7 @@ func TestJobOwnerIsolationAndTeardown(t *testing.T) {
 	admA := mkadm("alice", "s1")
 	res, err := HandleWithProgress("process_start", map[string]any{
 		"exec_context": testEnvelope(t, "alice", "s1", "wp_a", "wp_a", 1, rwScope("wp_a"))["exec_context"],
-		"command": "sleep 30", "timeout": float64(30),
+		"command":      "sleep 30", "timeout": float64(30),
 	}, nil, admA)
 	if err != nil {
 		t.Fatalf("start: %v", err)
