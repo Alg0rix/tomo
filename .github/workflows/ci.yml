@@ -96,6 +96,19 @@ jobs:
       - name: Sync deps
         run: uv sync --locked --group dev
 
+      # Runtime/terminal/tool and document-conversion tests exercise the real
+      # restricted backend. A Docker daemon alone is not enough: without the
+      # full-toolchain image, conversion correctly fails closed with 503.
+      - name: Build restricted sandbox
+        run: |
+          docker info
+          docker build -t tomo:local .
+          docker build -f Dockerfile.full \
+            --build-arg TOMO_BASE_IMAGE=tomo:local -t tomo:local-full .
+          docker build -f Dockerfile.sandbox \
+            --build-arg TOMO_FULL_IMAGE=tomo:local-full -t tomo:sandbox .
+          docker image inspect tomo:sandbox
+
       - name: Test
         run: uv run pytest -q --durations=20
 
