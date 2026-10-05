@@ -34,7 +34,7 @@ async def fire_schedule(
     When ``skip_claim`` is True (manual run-now), still records a run without
     the due-window claim gate.
     """
-    from app.channels.web import stream_turn_sse
+    from app.services.chat import start_session_turn
     from app.services.store import store
 
     ts = now if now is not None else time.time()
@@ -101,6 +101,7 @@ async def fire_schedule(
         "claimed": claimed,
     }
     execution_finished = False
+    active, queue = None, None
     token = bind_execution(context)
     try:
         from app.channels.delivery import open_delivery
@@ -114,13 +115,18 @@ async def fire_schedule(
             final = ""
             completed = False
             turn_error = ""
-            agen = await stack.enter_async_context(
-                contextlib.aclosing(
-                    stream_turn_sse(session_id, agent_id, message, 0, origin="scheduler")
-                )
+            # Publish through the same managed turn as web/Telegram so UI
+            # subscribers receive reasoning deltas, replay, and completion.
+            # Only this scheduler run owns delivery; do not give the chat
+            # recovery layer a delivery target or permission to replay work.
+            active, queue = await start_session_turn(
+                session_id, message, context.user_id, origin='scheduler',
             )
-            async for chunk in agen:
-                # The chat service emits complete SSE frames, including coordinator done.
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                # Complete SSE frames, including coordinator done.
                 for frame in chunk.split("\n\n"):
                     event = ""
                     data: dict[str, Any] = {}
@@ -180,7 +186,14 @@ async def fire_schedule(
                 now=time.time(),
             )
     finally:
-        reset_execution(token)
+        try:
+            if active is not None:
+                active.unsubscribe(queue)
+                if active.task and not active.task.done():
+                    active.task.cancel()
+                    await asyncio.gather(active.task, return_exceptions=True)
+        finally:
+            reset_execution(token)
     return result
 
 

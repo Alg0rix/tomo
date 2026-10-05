@@ -254,6 +254,7 @@ async def start_session_turn(
     *, delivery: dict[str, Any] | None = None,
     recovery: dict[str, Any] | None = None,
     background_job_ids: list[str] | None = None,
+    origin: str | None = None,
 ) -> tuple[_ActiveTurn, asyncio.Queue]:
     """Start a background agent turn and return ``(turn, subscription_queue)``.
 
@@ -297,6 +298,7 @@ async def start_session_turn(
             "attachment_ids": attachment_ids, "execution_mode": execution_mode,
             "delivery": delivery,
             "background_job_ids": background_job_ids,
+            "origin": origin,
         })
     except Exception:
         store.end_session_turn(session_id)
@@ -351,7 +353,8 @@ async def start_session_turn(
                     execution_mode=execution_mode,
                     acquire_lock=False,
                     resume=resume,
-                    **({"background_jobs": jobs, "origin": "background"} if jobs else {}),
+                    origin='background' if jobs else request.get('origin'),
+                    **({"background_jobs": jobs} if jobs else {}),
                 )
             ) as agen:
                 async for chunk in agen:
@@ -409,7 +412,9 @@ async def recover_web_turns() -> None:
     global _shutting_down
     _shutting_down = False
     for request in turn_recovery.pending_requests():
-        if request.get("background_job_ids"):
+        if request.get("background_job_ids") or request.get('origin') == 'scheduler':
+            # Business jobs have their own run/outbox lifecycle. Never replay
+            # their side effects through interactive chat crash recovery.
             turn_recovery.finish_request(request)
             continue
         if request.get("delivery"):
