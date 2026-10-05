@@ -7,7 +7,8 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from . import doc, paths, write
+from . import dedupe, doc, paths, write
+from .relations import VOCAB
 from .consolidate import _facts
 
 log = logging.getLogger(__name__)
@@ -50,8 +51,12 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
         {'role': 'system', 'content': (
             'Extract 0–3 durable facts newly learned in this turn. Return ONLY a JSON array of '
             '{"entity":"type/slug","fact":"concise fact","supersedes":"exact old fact text or empty",'
-            '"aliases":["names","abbreviations","related search terms"]}. '
-            'Types: person, project, tool, place, org, topic. Reuse existing pages and aliases for the same thing. '
+            '"aliases":["names","abbreviations","related search terms"],'
+            '"relations":[{"rel":"' + '|'.join(VOCAB) + '","to":"type/slug"}]}. '
+            'Types: person, project, tool, place, org, topic. Reuse existing pages and aliases for the same thing; '
+            'never start a second page for something that already has one under another slug or type '
+            '(money-plugin vs plugin-money, tool/x vs project/x). '
+            'relations is optional: only clear structural links (runs_on a host, part_of a project, works_at an org). '
             'Put preferences on the thing itself (favorite driver -> person/max-verstappen), never a page for the user. '
             'Include aliases such as Max, Verstappen, F1, Formula 1 for that driver. '
             'On a correction/change of the same attribute, supersedes MUST copy the old fact exactly. '
@@ -79,6 +84,12 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
             key = item['entity']
             if key.split('/')[1] in {'me', 'user', 'self', 'the-user', 'myself', user_id}:
                 continue
+            # A person page that is really the account owner belongs on user/profile.
+            if dedupe.is_self(user_id, key, [*item['aliases'], *aliases.get(key, [])]):
+                key = 'user/profile'
+                item['aliases'] = [a for a in item['aliases'] if a.casefold() not in dedupe.SELF]
+                if item['supersedes'] not in visible.get(key, []):
+                    item['supersedes'] = ''
             # A manual edit/move/forget made while the model ran wins over stale extraction.
             if current.get(key, []) != snapshot.get(key, []):
                 continue
@@ -89,6 +100,9 @@ async def extract_turn(user_id: str, session_id: str, user_message: str, final_c
                                       source=paths.timeline_source(user_id, date.today().isoformat(), f'turn-{session_id}', home_root=home_root),
                                       home_root=home_root, conn=conn)
             count += int(result['added'])
+            for rel, to in item.get('relations', []):
+                if to != key and paths.entity_path(user_id, key, home_root=home_root).is_file():
+                    write.relate(user_id, key, rel, to, home_root=home_root, conn=conn)
     return count
 
 

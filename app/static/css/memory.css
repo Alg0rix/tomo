@@ -334,3 +334,46 @@ mark.mem-hl { background: color-mix(in srgb, var(--accent) 28%, transparent); co
 @media (prefers-reduced-motion: reduce) {
   .mem-fade, .mem-skel i { animation: none; }
 }
+
+/* ── Pages · typed connections, duplicates, tools ───── */
+.mem-edge.is-relation { stroke: var(--text-faint); stroke-width: 1.8; }
+.mem-edge.is-auto { stroke-dasharray: 3 3; opacity: .55; }
+.mem-conn { position: relative; display: flex; align-items: center; }
+.mem-conn > .mem-item { flex: 1; min-width: 0; }
+.mem-conn-x {
+  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  color: var(--text-faint); font: 15px/1 var(--font-sans); opacity: 0; transition: opacity .15s;
+}
+.mem-conn:hover .mem-conn-x, .mem-conn-x:focus-visible { opacity: 1; }
+.mem-conn-x:hover { color: var(--danger); background: var(--danger-soft); }
+.mem-chips .mem-conn-x { opacity: 1; }
+.mem-auto { margin-top: 10px; }
+.mem-auto summary {
+  display: flex; align-items: center; gap: 6px; padding: 8px 8px 4px; cursor: pointer; list-style: none;
+  font: 600 11px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint);
+}
+.mem-auto summary::-webkit-details-marker { display: none; }
+.mem-auto summary::before { content: '▸'; font-size: 10px; transition: transform .15s; }
+.mem-auto[open] summary::before { transform: rotate(90deg); }
+.mem-auto summary span { margin-left: auto; font: 10.5px var(--font-mono); letter-spacing: 0; }
+.mem-auto-note { margin: 0 8px 4px; font-size: 11.5px; color: var(--text-faint); }
+.mem-inline-links .mem-auto summary, .mem-inline-links .mem-auto-note { padding-left: 0; margin-left: 0; }
+
+.mem-dup {
+  display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--mem-type-person) 40%, var(--border));
+  background: color-mix(in srgb, var(--mem-type-person) 8%, transparent);
+  font-size: 13px; color: var(--text-dim);
+}
+.mem-dup b { color: var(--text); font-weight: 600; }
+.mem-dup small { font: 10.5px var(--font-mono); color: var(--text-faint); }
+.mem-dup-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.mem-r-tools { display: flex; gap: 16px; margin-top: 18px; }
+.mem-tool { padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.mem-tool-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.mem-tool-subj { padding-bottom: 9px; font-weight: 600; color: var(--text); font-size: 13.5px; }
+.mem-tool-rel { flex: 0 0 160px; }
+.mem-tool-to { flex: 1 1 220px; }
+.mem-tool-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+.mem-tool-note small { font: 10.5px var(--font-mono); color: var(--text-faint); }

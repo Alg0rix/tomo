@@ -8,8 +8,17 @@ from datetime import datetime
 from pathlib import Path
 
 from . import doc, index, paths, write
+from .relations import VOCAB
 
 log = logging.getLogger(__name__)
+
+
+def _valid_key(key: str) -> bool:
+    try:
+        paths.entity_key(key)
+    except ValueError:
+        return False
+    return True
 
 
 def _facts(raw: str) -> list[dict]:
@@ -30,7 +39,12 @@ def _facts(raw: str) -> list[dict]:
         aliases = item.get('aliases', [])
         if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
             raise ValueError('invalid aliases')
-        result.append({'entity': item['entity'], 'fact': fact.strip(), 'supersedes': str(item.get('supersedes') or '').strip(), 'aliases': aliases})
+        # Relations are optional extras; a malformed one is dropped, not the fact.
+        rels = item.get('relations', [])
+        rels = [(r['rel'], r['to'].strip()) for r in rels if isinstance(r, dict) and r.get('rel') in VOCAB
+                and isinstance(r.get('to'), str) and _valid_key(r['to'].strip())] if isinstance(rels, list) else []
+        result.append({'entity': item['entity'], 'fact': fact.strip(), 'supersedes': str(item.get('supersedes') or '').strip(),
+                       'aliases': aliases, 'relations': rels})
     return result
 
 

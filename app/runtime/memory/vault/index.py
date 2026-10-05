@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from pathlib import Path
-from . import doc, paths
+from . import doc, paths, relations
 
 DDL = '''
 CREATE TABLE IF NOT EXISTS vault_docs (path TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, type TEXT, slug TEXT, title TEXT, updated TEXT, mtime INTEGER, hash TEXT, tags TEXT, body TEXT);
 CREATE INDEX IF NOT EXISTS vault_docs_user ON vault_docs(user_id, kind);
 CREATE TABLE IF NOT EXISTS vault_aliases (alias TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(alias,path));
-CREATE TABLE IF NOT EXISTS vault_links (src TEXT NOT NULL, dst TEXT NOT NULL, dst_resolved TEXT, PRIMARY KEY(src,dst));
+CREATE TABLE IF NOT EXISTS vault_links (src TEXT NOT NULL, dst TEXT NOT NULL, dst_resolved TEXT, origin TEXT NOT NULL DEFAULT 'manual', rel TEXT NOT NULL DEFAULT '', PRIMARY KEY(src,dst,origin,rel));
 CREATE INDEX IF NOT EXISTS vault_links_dst ON vault_links(dst_resolved);
 CREATE TABLE IF NOT EXISTS vault_fact_pages (path TEXT PRIMARY KEY, hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS vault_facts (id TEXT PRIMARY KEY, path TEXT NOT NULL, user_id TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL, superseded INTEGER NOT NULL);
@@ -21,6 +22,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(path UNINDEXED, user_id 
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    columns = {r[1] for r in conn.execute('PRAGMA table_info(vault_links)')}
+    if columns and 'origin' not in columns:
+        # The index is derived: drop untyped links and force every page to reindex.
+        conn.execute('DROP TABLE vault_links')
+        conn.execute('DROP TABLE IF EXISTS vault_fact_pages')
     for statement in DDL.split(';'):
         if statement.strip():
             conn.execute(statement)
@@ -50,6 +56,21 @@ def _resolve(conn: sqlite3.Connection, user_id: str) -> None:
         keys.setdefault(row['alias'].casefold(), row['path'])
     for row in conn.execute('SELECT src,dst FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (user_id,)).fetchall():
         conn.execute('UPDATE vault_links SET dst_resolved=? WHERE src=? AND dst=?', (keys.get(row['dst'].split('#', 1)[0].strip().casefold()), row['src'], row['dst']))
+
+
+def edges(page: doc.Document) -> list[tuple[str, str, str]]:
+    """(dst, origin, rel): relation (typed), auto (mention), source (provenance), manual."""
+    from . import links
+
+    out = [(dst, 'relation', rel) for rel, dst in relations.parse(page)]
+    auto = links._BLOCK.search(page.body)
+    out += [(dst, 'auto', '') for dst in doc.links(auto.group())] if auto else []
+    rest = links._BLOCK.sub('', relations.BLOCK.sub('', page.body))
+    sources = re.findall(r'\(src: \[\[([^\[\]\n]+)\]\]\)', rest)
+    out += [(dst.strip(), 'source', '') for dst in sources]
+    rest = re.sub(r'\(src: \[\[[^\[\]\n]+\]\]\)', '', rest)
+    out += [(dst, 'manual', '') for dst in doc.links(rest)]
+    return out
 
 
 def _write_human_index(conn: sqlite3.Connection, user_id: str, home_root: Path | None) -> None:
@@ -118,8 +139,8 @@ def reindex_file(conn: sqlite3.Connection, user_id: str, path: Path, *, home_roo
             conn.execute('INSERT INTO vault_facts_fts VALUES (?,?,?,?,?,?,?)',
                          (fact_id, user_id, f'{typ}/{slug}', title, ' '.join([slug, *aliases]), ' '.join(tags), fact['text']))
     conn.execute('INSERT INTO vault_fact_pages VALUES (?,?)', (key, digest))
-    for link in doc.links(parsed.body):
-        conn.execute('INSERT OR IGNORE INTO vault_links(src,dst) VALUES (?,?)', (key,link))
+    for dst, origin, rel in edges(parsed):
+        conn.execute('INSERT OR IGNORE INTO vault_links(src,dst,origin,rel) VALUES (?,?,?,?)', (key, dst, origin, rel))
     conn.execute('INSERT INTO vault_fts VALUES (?,?,?,?,?,?)', (key,user_id,title,' '.join(aliases), ' '.join(tags),parsed.body))
     _resolve(conn, user_id)
     _write_human_index(conn, user_id, home_root)

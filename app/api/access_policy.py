@@ -43,7 +43,7 @@ _MEMBER = {
         "list_session_artifacts", "get_session_artifact", "delete_session_artifact", "create_session_artifact",
         "list_agent_artifacts_compat", "share_session_artifact", "get_session_artifact_share", "revoke_session_artifact_share",
         "memory_add_api", "memory_upload_api", "memory_graph_api", "memory_index_api", "memory_entity_api", "memory_forget_api",
-        "memory_edit_api", "memory_move_api", "memory_overview_api", "memory_journal_api", "memory_timeline_api",
+        "memory_edit_api", "memory_move_api", "memory_overview_api", "memory_duplicates_api", "memory_merge_api", "memory_relation_api", "memory_journal_api", "memory_timeline_api",
     },
     "app.api.platform": {
         "list_workplaces", "get_workplace", "list_models", "list_llm_profiles", "get_chat_model_options",

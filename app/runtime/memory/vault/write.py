@@ -44,7 +44,7 @@ def atomic_write(path: Path, content: str) -> None:
 
 
 def _aliases(slug: str, aliases: list[str] | None) -> list[str]:
-    candidates = [slug, slug.replace('-', ' ').replace('_', ' '), *re.split('[-_]', slug), *(aliases or [])]
+    candidates = [slug, slug.replace('-', ' ').replace('_', ' '), *(aliases or [])]
     clean = [re.sub(r'[\r\n,\[\]]', ' ', a).strip()[:80] for a in candidates if isinstance(a, str)]
     unique = list(dict.fromkeys(a for a in clean if a))
     legacy = [a for a in unique if re.fullmatch(r'(?:[a-z]+/)?id-[a-f0-9]{64}', a)]
@@ -224,3 +224,28 @@ def record_turn(session_id: str | None, agent_id: str | None, user_message: str 
         import logging
 
         logging.getLogger(__name__).exception('vault turn recording failed')
+
+
+def relate(user_id: str, key: str, rel: str, target: str, *, remove: bool = False,
+           home_root: Path | None = None, conn=None) -> bool:
+    """Add or drop one typed relation on an existing page; returns whether it changed."""
+    from . import relations
+
+    paths.entity_key(key)
+    paths.entity_key(target)
+    if rel not in relations.VOCAB:
+        raise ValueError('unknown relation')
+    if target == key:
+        raise ValueError('a page cannot relate to itself')
+    path = paths.entity_path(user_id, key, home_root=home_root)
+    with _lock(user_id):
+        if not path.is_file():
+            return False
+        page = doc.parse(path.read_text(encoding='utf-8'))
+        pairs = relations.parse(page)
+        if ((rel, target) in pairs) != remove:
+            return False
+        pairs = [p for p in pairs if p != (rel, target)] if remove else [*pairs, (rel, target)]
+        relations.store(page, pairs)
+        _save(user_id, path, page, home_root, conn)
+        return True

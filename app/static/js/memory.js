@@ -44,7 +44,7 @@
 
   var state = {
     view: 'pages',
-    byKey: {}, adj: {}, out: {}, inc: {},
+    byKey: {}, adj: {}, out: {}, inc: {}, edge: {}, vocab: {}, dups: {},
     activity: [], agents: [],
     focus: null, q: '', type: '', sort: 'name',
     pos: {}, anim: 0,
@@ -104,8 +104,19 @@
   }
 
   // ── Data ──────────────────────────────────────────────────────────
+  function loadDuplicates() {
+    return fetch('/api/memory/duplicates', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { groups: [] }; })
+      .then(function (d) {
+        state.dups = {};
+        (d.groups || []).forEach(function (g) { g.keys.forEach(function (k) { state.dups[k] = g; }); });
+      })
+      .catch(function () { state.dups = {}; });
+  }
+
   function load(keepFocus) {
-    return fetch('/api/memory/overview', { credentials: 'same-origin' })
+    return Promise.all([fetch('/api/memory/overview', { credentials: 'same-origin' }), loadDuplicates()])
+      .then(function (res) { return res[0]; })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         index(data);
@@ -130,7 +141,8 @@
   }
 
   function index(data) {
-    state.byKey = {}; state.adj = {}; state.out = {}; state.inc = {};
+    state.byKey = {}; state.adj = {}; state.out = {}; state.inc = {}; state.edge = {};
+    state.vocab = data.relations || {};
     (data.entities || []).forEach(function (e) {
       state.byKey[e.key] = e;
       state.adj[e.key] = new Set();
@@ -139,6 +151,7 @@
     });
     (data.links || []).forEach(function (l) {
       if (!state.byKey[l.from] || !state.byKey[l.to]) return;
+      state.edge[l.from + '\n' + l.to] = l;
       state.adj[l.from].add(l.to);
       state.adj[l.to].add(l.from);
       if (state.out[l.from].indexOf(l.to) < 0) state.out[l.from].push(l.to);
@@ -300,8 +313,84 @@
     return keys.length;
   }
 
+  // ── Connections: typed relations > explicit mentions > automatic ──
+  var RANK = { relation: 0, manual: 1, auto: 2 };
+  function relLabel(rel, incoming) {
+    var label = incoming ? (state.vocab[rel] || rel) : rel;
+    return String(label).replace(/_/g, ' ');
+  }
+  function edgeRank(a, b) {
+    var x = state.edge[a + '\n' + b], y = state.edge[b + '\n' + a];
+    return Math.min(x ? RANK[x.kind] : 9, y ? RANK[y.kind] : 9);
+  }
+  function connections(key) {
+    var rels = [], mentions = [], auto = [], seen = {};
+    var outs = state.out[key] || [], ins = state.inc[key] || [];
+    outs.forEach(function (k) {
+      var l = state.edge[key + '\n' + k];
+      if (l.kind === 'relation') l.rels.forEach(function (r) { rels.push({ key: k, label: relLabel(r), rel: r, own: true }); });
+    });
+    ins.forEach(function (k) {
+      var l = state.edge[k + '\n' + key];
+      if (l.kind === 'relation') l.rels.forEach(function (r) { rels.push({ key: k, label: relLabel(r, true), rel: r }); });
+    });
+    rels.forEach(function (c) { seen[c.key] = 1; });
+    outs.concat(ins).forEach(function (k) {
+      if (seen[k]) return;
+      seen[k] = 1;
+      var rank = edgeRank(key, k);
+      if (rank === RANK.manual) mentions.push(k);
+      else if (rank === RANK.auto) auto.push(k);
+    });
+    return { rels: rels, mentions: mentions, auto: auto };
+  }
+  function autoReason(key, k) {
+    var l = state.edge[key + '\n' + k];
+    if (l && l.via) return 'says “' + l.via + '”';
+    l = state.edge[k + '\n' + key];
+    if (l && l.via) return 'mentions “' + l.via + '”';
+    return 'name match';
+  }
+
+  function connectionsHtml(e, chips) {
+    var c = connections(e.key);
+    // Side panel: list rows with the label underneath. Reader (narrow screens): chips.
+    var item = function (k, sub) {
+      if (!chips) return itemHtml(k, esc(sub));
+      var p = state.byKey[k];
+      return '<button type="button" class="mem-chip" data-focus="' + esc(k) + '"><i class="mem-dot" style="--c:' + typeColor(p.type) + '"></i>' +
+        esc(p.title) + (sub ? ' <small>' + esc(sub) + '</small>' : '') + '</button>';
+    };
+    var sec = function (title, n) {
+      return chips ? '<div class="mem-r-sec"><h3>' + title + '</h3><span>' + n + '</span></div>'
+        : '<div class="mem-side-sec">' + title + '<span>' + n + '</span></div>';
+    };
+    var wrap = function (rows) { return chips ? '<div class="mem-chips">' + rows + '</div>' : rows; };
+    var html = '';
+    if (c.rels.length) {
+      html += sec('Relations', c.rels.length) + wrap(c.rels.map(function (r) {
+        return '<div class="mem-conn">' + item(r.key, r.label) +
+          (r.own ? '<button type="button" class="mem-conn-x" data-unrelate="' + esc(r.rel) + '" data-to="' + esc(r.key) +
+            '" title="Remove relation" aria-label="Remove relation ' + esc(r.label) + ' ' + esc(state.byKey[r.key].title) + '">×</button>' : '') +
+          '</div>';
+      }).join(''));
+    }
+    if (c.mentions.length) {
+      html += sec('Mentions', c.mentions.length) + wrap(c.mentions.map(function (k) {
+        return item(k, (state.out[e.key] || []).indexOf(k) >= 0 ? 'linked here' : 'links here');
+      }).join(''));
+    }
+    if (c.auto.length) {
+      html += '<details class="mem-auto"' + (c.rels.length + c.mentions.length ? '' : ' open') + '><summary>Also mentioned <span>' + c.auto.length + '</span></summary>' +
+        '<p class="mem-auto-note">Linked automatically because a name appears in a fact.</p>' +
+        wrap(c.auto.map(function (k) { return item(k, autoReason(e.key, k)); }).join('')) + '</details>';
+    }
+    return html;
+  }
+
   // ── Pages · map (focus + neighbours + a faint second ring) ────────
   var SVGNS = 'http://www.w3.org/2000/svg';
+  var MAP_NEAR = 10, MAP_FAR = 6;
 
   function layout(focusKey, w, h) {
     var cx = w / 2, cy = h / 2;
@@ -310,9 +399,11 @@
     var pos = {}, roles = {}, angleOf = {};
     pos[focusKey] = { x: cx, y: cy };
     roles[focusKey] = 'focus';
+    // Strongest connections claim the ring first; automatic mentions fill what's left.
     var near = Array.from(state.adj[focusKey] || []).sort(function (a, b) {
-      return TYPES.indexOf(state.byKey[a].type) - TYPES.indexOf(state.byKey[b].type) || a.localeCompare(b);
-    }).slice(0, 12);
+      return edgeRank(focusKey, a) - edgeRank(focusKey, b) ||
+        TYPES.indexOf(state.byKey[a].type) - TYPES.indexOf(state.byKey[b].type) || a.localeCompare(b);
+    }).slice(0, MAP_NEAR);
     near.forEach(function (k, i) {
       var a = -Math.PI / 2 + (i / Math.max(1, near.length)) * Math.PI * 2;
       angleOf[k] = a;
@@ -323,10 +414,11 @@
     near.forEach(function (k) {
       Array.from(state.adj[k]).sort().forEach(function (k2) {
         if (roles[k2] || far.some(function (f) { return f.key === k2; })) return;
+        if (edgeRank(k, k2) === RANK.auto) return;
         far.push({ key: k2, via: k });
       });
     });
-    far = far.slice(0, 10);
+    far = far.slice(0, MAP_FAR);
     var perParent = {};
     far.forEach(function (f) { (perParent[f.via] = perParent[f.via] || []).push(f.key); });
     Object.keys(perParent).forEach(function (via) {
@@ -413,7 +505,7 @@
     var edges = [];
     keys.forEach(function (a) {
       state.out[a].forEach(function (b) {
-        if (L.pos[b]) edges.push({ a: a, b: b, far: L.roles[a] === 'far' || L.roles[b] === 'far' });
+        if (L.pos[b]) edges.push({ a: a, b: b, far: L.roles[a] === 'far' || L.roles[b] === 'far', kind: state.edge[a + '\n' + b].kind });
       });
     });
 
@@ -429,7 +521,7 @@
         var p = cur[e.a], q2 = cur[e.b];
         var dx = q2.x - p.x, dy = q2.y - p.y;
         var bx = (p.x + q2.x) / 2 - dy * 0.08, by = (p.y + q2.y) / 2 + dx * 0.08;
-        return '<path class="mem-edge' + (e.far ? ' is-far' : '') + '" d="M' + p.x.toFixed(1) + ',' + p.y.toFixed(1) +
+        return '<path class="mem-edge is-' + e.kind + (e.far ? ' is-far' : '') + '" d="M' + p.x.toFixed(1) + ',' + p.y.toFixed(1) +
           ' Q' + bx.toFixed(1) + ',' + by.toFixed(1) + ' ' + q2.x.toFixed(1) + ',' + q2.y.toFixed(1) + '"/>';
       }).join('');
       state.pos = cur;
@@ -447,19 +539,15 @@
         if (t < 1) requestAnimationFrame(tick);
       })(start);
     }
-    els.mapNote.textContent = L.near ? plural(state.adj[state.focus].size, 'link') : 'not linked yet';
+    var total = state.adj[state.focus].size;
+    els.mapNote.textContent = !L.near ? 'not linked yet' : total > L.near ? L.near + ' of ' + plural(total, 'link') : plural(total, 'link');
   }
 
   function renderSideLinks() {
     var e = state.byKey[state.focus];
     if (!e) { els.sideLinks.innerHTML = ''; return; }
-    var outs = state.out[e.key] || [];
-    var ins = (state.inc[e.key] || []).filter(function (k) { return outs.indexOf(k) < 0; });
-    var block = function (title, keys) {
-      return keys.length ? '<div class="mem-side-sec">' + title + '<span>' + keys.length + '</span></div>' + keys.map(function (k) { return itemHtml(k); }).join('') : '';
-    };
-    els.sideLinks.innerHTML = (block('Links to', outs) + block('Linked from', ins)) ||
-      '<p class="mem-side-empty">Nothing links here yet. Links appear when a fact mentions another page, like [[project/tomo]].</p>';
+    els.sideLinks.innerHTML = connectionsHtml(e, false) ||
+      '<p class="mem-side-empty">Nothing links here yet. Links appear when a fact mentions another page, like [[project/tomo]], or when you add a relation.</p>';
   }
 
   // ── Pages · reader ────────────────────────────────────────────────
@@ -498,14 +586,12 @@
     }
     var live = activeFacts(e);
     var gone = (e.facts || []).filter(function (f) { return f.superseded; });
-    var outs = state.out[e.key] || [];
-    var ins = (state.inc[e.key] || []).filter(function (k) { return outs.indexOf(k) < 0; });
     var others = (e.aliases || []).filter(function (a) { return a !== e.slug && a !== e.title.toLowerCase(); });
 
     els.reader.innerHTML =
       '<div class="mem-fade">' +
       '<div class="mem-r-type"><i class="mem-dot" style="--c:' + typeColor(e.type) + '"></i>' + esc(e.type) + '</div>' +
-      '<h2>' + esc(e.title) + '</h2>' +
+      '<h2>' + esc(e.title) + '</h2>' + dupBanner(e) +
       (others.length ? '<div class="mem-r-aliases">Also known as ' + others.map(esc).join(', ') + '</div>' : '') +
       '<div class="mem-r-stats">' +
         '<span><b>' + live.length + '</b> ' + (live.length === 1 ? 'fact' : 'facts') + '</span>' +
@@ -517,10 +603,12 @@
       '<div class="mem-r-sec"><h3>What Tomo knows</h3></div>' +
       (live.length ? '<ol class="mem-facts">' + live.map(function (f) { return factHtml(e, f); }).join('') + '</ol>'
         : '<p class="mem-reader-empty">No facts left on this page.</p>') +
-      '<div class="mem-inline-links">' +
-        (outs.length ? '<div class="mem-r-sec"><h3>Links to</h3><span>' + outs.length + '</span></div>' + chipRow(outs) : '') +
-        (ins.length ? '<div class="mem-r-sec"><h3>Linked from</h3><span>' + ins.length + '</span></div>' + chipRow(ins) : '') +
+      '<div class="mem-inline-links">' + connectionsHtml(e, true) + '</div>' +
+      '<div class="mem-r-tools">' +
+        '<button type="button" class="mem-textbtn" data-add-relation>+ Relation</button>' +
+        '<button type="button" class="mem-textbtn" data-merge-into>Merge into another page…</button>' +
       '</div>' +
+      '<div data-tool-slot></div>' +
       (e.mentions ? '<div class="mem-r-sec"><h3>Recent activity</h3><span>' + e.mentions + '</span>' +
         '<button type="button" class="mem-textbtn" data-journal-entity="' + esc(e.key) + '">Open in journal →</button></div>' +
         '<ul class="mem-activity" data-recent><li><time>…</time><p class="mem-muted">Loading…</p></li></ul>' : '') +
@@ -559,6 +647,85 @@
         put(flat);
       })
       .catch(function () { put([]); });
+  }
+
+  function pageOptions(exclude) {
+    return Object.values(state.byKey).filter(function (page) { return page.key !== exclude; })
+      .sort(function (a, b) { return a.title.localeCompare(b.title); }).map(function (page) {
+        return '<option value="' + esc(page.key) + '">' + esc(page.title + ' · ' + page.type) + '</option>';
+      }).join('');
+  }
+
+  function dupBanner(e) {
+    var g = state.dups[e.key];
+    if (!g) return '';
+    var others = g.keys.filter(function (k) { return k !== e.key && state.byKey[k]; });
+    if (!others.length) return '';
+    return '<div class="mem-dup" role="note"><div><b>Possibly the same thing as</b> ' + others.map(function (k) {
+      return '<button type="button" class="mem-link" style="--c:' + typeColor(state.byKey[k].type) + '" data-focus="' + esc(k) + '">' + esc(state.byKey[k].title) +
+        ' <small>' + esc(state.byKey[k].type) + '</small></button>';
+    }).join(', ') + '</div><div class="mem-dup-acts">' + others.map(function (k) {
+      return '<button type="button" class="btn ghost sm" data-merge-from="' + esc(k) + '">Merge ' + esc(state.byKey[k].title) + ' (' + esc(state.byKey[k].type) + ') into this page</button>';
+    }).join('') + '</div></div>';
+  }
+
+  function post(e, action, body) {
+    return fetch('/api/memory/entity/' + encodeURIComponent(e.type) + '/' + encodeURIComponent(e.slug) + '/' + action, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) throw new Error(d.detail || 'HTTP ' + r.status);
+        return d;
+      });
+    });
+  }
+
+  function toolForm(html, submitLabel, onSubmit) {
+    var slot = els.reader.querySelector('[data-tool-slot]');
+    var form = document.createElement('form');
+    form.className = 'mem-correction mem-tool';
+    form.innerHTML = html + '<div class="mem-correction-actions"><span role="status"></span><button type="button" class="btn ghost sm" data-cancel>Cancel</button>' +
+      '<button type="submit" class="btn primary sm">' + submitLabel + '</button></div>';
+    slot.replaceChildren(form);
+    form.querySelector('[data-cancel]').addEventListener('click', function () { slot.replaceChildren(); });
+    form.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { ev.preventDefault(); slot.replaceChildren(); } });
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var submit = form.querySelector('[type="submit"]');
+      submit.disabled = true;
+      onSubmit(form).catch(function (err) {
+        form.querySelector('[role="status"]').textContent = err.message;
+        submit.disabled = false;
+      });
+    });
+    (form.querySelector('select,input') || form.querySelector('[type="submit"]')).focus();
+    return form;
+  }
+
+  function addRelation() {
+    var e = state.byKey[state.focus];
+    toolForm('<div class="mem-tool-row"><span class="mem-tool-subj">' + esc(e.title) + '</span>' +
+      '<label class="mem-tool-rel">Relation<select class="input" name="rel">' + Object.keys(state.vocab).map(function (r) {
+        return '<option value="' + esc(r) + '">' + esc(relLabel(r)) + '</option>';
+      }).join('') + '</select></label>' +
+      '<label class="mem-tool-to">Page<select class="input" name="to">' + pageOptions(e.key) + '</select></label></div>', 'Add relation', function (form) {
+      var to = form.elements.to.value;
+      return post(e, 'relations', { rel: form.elements.rel.value, to: to }).then(function () { return load(true); });
+    });
+  }
+
+  function mergeInto(sourceKey, targetKey) {
+    var src = state.byKey[sourceKey], dst = state.byKey[targetKey];
+    var e = state.byKey[state.focus];
+    var html = targetKey
+      ? '<p class="mem-tool-note">Move every fact, name and link from <b>' + esc(src.title) + '</b> <small>' + esc(src.type) +
+        '</small> into <b>' + esc(dst.title) + '</b> <small>' + esc(dst.type) + '</small>? ' + esc(src.title) + ' is removed; a backup is kept outside the vault.</p>'
+      : '<label>Merge <b>' + esc(e.title) + '</b> into<select class="input" name="into">' + pageOptions(e.key) + '</select></label>' +
+        '<p class="mem-tool-note">Facts, names and links move to the chosen page. This page is removed; a backup is kept outside the vault.</p>';
+    toolForm(html, 'Merge', function (form) {
+      var into = targetKey || form.elements.into.value;
+      return post(src || e, 'merge', { into: into }).then(function (d) { return load(true).then(function () { focus(d.into); }); });
+    });
   }
 
   function correctFact(li, n, move) {
@@ -893,6 +1060,17 @@
       return;
     }
     if (t.closest('form')) return;
+    if (t.closest('[data-add-relation]')) { addRelation(); return; }
+    if (t.closest('[data-merge-into]')) { mergeInto(state.focus, null); return; }
+    var mf = t.closest('[data-merge-from]');
+    if (mf) { mergeInto(mf.dataset.mergeFrom, state.focus); return; }
+    var ur = t.closest('[data-unrelate]');
+    if (ur) {
+      ur.disabled = true;
+      post(state.byKey[state.focus], 'relations', { rel: ur.dataset.unrelate, to: ur.dataset.to, remove: true })
+        .then(function () { return load(true); }).catch(function () { ur.disabled = false; });
+      return;
+    }
     var edit = t.closest('[data-edit], [data-move]');
     if (edit) { correctFact(edit.closest('.mem-fact'), Number(edit.dataset.edit || edit.dataset.move), edit.hasAttribute('data-move')); return; }
     var fg = t.closest('[data-forget]');

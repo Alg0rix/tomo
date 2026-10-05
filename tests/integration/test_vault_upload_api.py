@@ -120,3 +120,26 @@ def test_fact_endpoint_uses_authenticated_owner_and_old_api_removed(client):
     # Removed legacy endpoints fail closed (member default-deny), never 200.
     for endpoint in ['/api/knowledge', '/api/knowledge/upload', '/api/knowledge/kb1']:
         assert http.get(endpoint).status_code in (403, 404)
+
+
+def test_relations_duplicates_and_merge_api(client):
+    http, uid, sid = client
+    for entity, content in [('tool/omaxim', 'A host.'), ('tool/tomo', 'Runs on omaxim.'),
+                            ('tool/money-plugin', 'Tracks spending.'), ('tool/plugin-money', 'Balance is sample data.')]:
+        assert http.post('/api/memory/facts', json={'entity': entity, 'content': content}).status_code == 200
+    overview = http.get('/api/memory/overview').json()
+    auto = next(e for e in overview['links'] if (e['from'], e['to']) == ('tool/tomo', 'tool/omaxim'))
+    assert auto['kind'] == 'auto' and auto['via'] == 'omaxim' and auto['fact'] == 0
+    assert overview['relations']['runs_on'] == 'hosts'
+    result = http.post('/api/memory/entity/tool/tomo/relations', json={'rel': 'runs_on', 'to': 'tool/omaxim'})
+    assert result.json() == {'ok': True, 'changed': True}
+    assert http.post('/api/memory/entity/tool/tomo/relations', json={'rel': 'nope', 'to': 'tool/omaxim'}).status_code == 400
+    edge = next(e for e in http.get('/api/memory/overview').json()['links'] if e['from'] == 'tool/tomo')
+    assert edge['kind'] == 'relation' and edge['rels'] == ['runs_on']
+    groups = http.get('/api/memory/duplicates').json()['groups']
+    assert [g['keys'] for g in groups] == [['tool/money-plugin', 'tool/plugin-money']]
+    merged = http.post('/api/memory/entity/tool/plugin-money/merge', json={'into': 'tool/money-plugin'})
+    assert merged.status_code == 200 and merged.json()['facts_added'] == 1
+    assert http.get('/api/memory/entity/tool/plugin-money').status_code == 404
+    assert http.get('/api/memory/duplicates').json()['groups'] == []
+    assert http.post('/api/memory/entity/tool/plugin-money/merge', json={'into': 'tool/money-plugin'}).status_code == 400

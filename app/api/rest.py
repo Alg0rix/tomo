@@ -1284,7 +1284,8 @@ async def memory_overview_api(request: Request, _: AuthDep):
     """Pages with their facts, the links between them, and a per-day activity
     count for the journal heatmap. Journal entries themselves are paged
     through /memory/journal so a long history never loads at once."""
-    from app.runtime.memory.vault import doc, index, journal
+    from app.runtime.memory.vault import doc, index, journal, relations
+    from app.runtime.memory.vault import links as vault_links
     uid = session_user_id(request)
 
     def fact_rows(body):
@@ -1297,11 +1298,25 @@ async def memory_overview_api(request: Request, _: AuthDep):
         aliases: dict[str, list[str]] = {}
         for r in conn.execute('SELECT alias,path FROM vault_aliases WHERE path IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
             aliases.setdefault(r['path'], []).append(r['alias'])
-        pairs = set()
-        for r in conn.execute('SELECT src,dst_resolved FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?)', (uid,)).fetchall():
+        # One edge per ordered pair, labelled by its strongest origin:
+        # relation (typed, with labels) > manual ([[link]] in text) > auto (name mention).
+        rank = {'relation': 0, 'manual': 1, 'auto': 2}
+        pairs: dict[tuple[str, str], dict] = {}
+        for r in conn.execute('SELECT src,dst_resolved,origin,rel FROM vault_links WHERE src IN (SELECT path FROM vault_docs WHERE user_id=?) ORDER BY src,dst,origin,rel', (uid,)).fetchall():
             if r['src'] in paths and r['dst_resolved'] in paths and r['src'] != r['dst_resolved']:
-                pairs.add((paths[r['src']], paths[r['dst_resolved']]))
-        links = [{'from': src, 'to': dst} for src, dst in sorted(pairs)]
+                kind = 'manual' if r['origin'] == 'source' else r['origin']
+                edge = pairs.setdefault((paths[r['src']], paths[r['dst_resolved']]),
+                                        {'from': paths[r['src']], 'to': paths[r['dst_resolved']], 'kind': kind, 'rels': []})
+                if rank.get(kind, 2) < rank.get(edge['kind'], 2):
+                    edge['kind'] = kind
+                if kind == 'relation' and r['rel'] not in edge['rels']:
+                    edge['rels'].append(r['rel'])
+        bodies = {paths[r['path']]: r['body'] or '' for r in ents}
+        names = vault_links.candidates(conn, uid)
+        for edge in pairs.values():
+            if edge['kind'] == 'auto':
+                edge.update(_auto_reason(bodies[edge['from']], [a for a, k in names.items() if k == edge['to']]))
+        links = [pairs[k] for k in sorted(pairs)]
         backlinks = {}
         for link in links:
             backlinks[link['to']] = backlinks.get(link['to'], 0) + 1
@@ -1327,10 +1342,62 @@ async def memory_overview_api(request: Request, _: AuthDep):
             'mentions': mentions.get(paths[r['path']], 0), 'last_seen': last_seen.get(paths[r['path']], ''),
             'backlinks': backlinks.get(paths[r['path']], 0),
         } for r in ents]
-        return {'entities': entities, 'links': links, 'activity': activity,
+        return {'entities': entities, 'links': links, 'activity': activity, 'relations': relations.VOCAB,
                 'agents': [{'id': a, 'name': names.get(a, a), 'turns': n} for a, n in sorted(agents.items(), key=lambda x: -x[1])]}
 
     return store.with_db(query)
+
+
+def _auto_reason(body: str, names: list[str]) -> dict:
+    """Which name, in which live fact, made an automatic link."""
+    import re
+    from app.runtime.memory.vault import doc
+    page = doc.parse(body)
+    names = sorted(names, key=len, reverse=True)
+    texts = [(n, doc.fact_data(e)['text']) for n, e in enumerate(page.entries) if not e.startswith('~~')]
+    aliases = page.meta.get('aliases', [])
+    texts.append((None, ' '.join(aliases) if isinstance(aliases, list) else ''))
+    for number, text in texts:
+        low = re.sub(r'\[\[[^\[\]\n]+\]\]', ' ', text).casefold()
+        for name in names:
+            if re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', low):
+                return {'via': name, 'fact': number}
+    return {'via': None, 'fact': None}
+
+
+@router.get('/memory/duplicates')
+async def memory_duplicates_api(request: Request, _: AuthDep):
+    from app.runtime.memory.vault import dedupe
+    uid = session_user_id(request)
+    return {'groups': store.with_db(lambda conn: dedupe.duplicates(conn, uid))}
+
+
+@router.post('/memory/entity/{entity_type}/{slug}/merge')
+async def memory_merge_api(request: Request, entity_type: str, slug: str, body: dict, _: AuthDep):
+    from app.runtime.memory.vault import dedupe
+    into = body.get('into')
+    if not isinstance(into, str) or not into.strip():
+        raise HTTPException(400, 'into is required')
+    try:
+        # Merging rewrites links across the vault; keep it off the event loop.
+        return await asyncio.to_thread(dedupe.merge_entity, session_user_id(request),
+                                       f'{entity_type}/{slug}', into.strip())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/memory/entity/{entity_type}/{slug}/relations')
+async def memory_relation_api(request: Request, entity_type: str, slug: str, body: dict, _: AuthDep):
+    from app.runtime.memory.vault import write
+    rel, to = body.get('rel'), body.get('to')
+    if not isinstance(rel, str) or not isinstance(to, str):
+        raise HTTPException(400, 'rel and to are required')
+    try:
+        changed = write.relate(session_user_id(request), f'{entity_type}/{slug}', rel, to.strip(),
+                               remove=body.get('remove') is True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {'ok': True, 'changed': changed}
 
 
 def _agent_names(conn, ids: list[str]) -> dict[str, str]:

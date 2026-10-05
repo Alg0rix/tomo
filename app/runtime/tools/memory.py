@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from app.runtime.memory.vault import doc, paths, read, write
+from app.runtime.memory.vault.dedupe import merge_entity
 
 
 def run(arguments: dict[str, Any]) -> str:
@@ -94,6 +95,22 @@ def run(arguments: dict[str, Any]) -> str:
                 else:
                     ok = write.forget_fact(uid, key, number)
             return ("Replaced vault fact." if action == "replace" else "Removed vault fact.") if ok else "Error: fact changed; list the page and retry"
-        return "Error: action must be add, list, search, replace, or remove"
+        if action in {"relate", "unrelate"}:
+            rel, to = arguments.get("rel"), arguments.get("to")
+            if not isinstance(rel, str) or not isinstance(to, str) or not to.strip():
+                return "Error: rel and to (type/slug) are required"
+            if not path.is_file():
+                return "Error: vault page is empty; add a fact first"
+            changed = write.relate(uid, key, rel.strip(), to.strip(), remove=action == "unrelate")
+            if action == "relate":
+                return f"Related [[{key}]] {rel} [[{to.strip()}]]." if changed else "Relation already present."
+            return "Removed relation." if changed else "Error: no such relation"
+        if action == "merge":
+            into = arguments.get("into")
+            if not isinstance(into, str) or not into.strip():
+                return "Error: into (type/slug of the page to keep) is required"
+            result = merge_entity(uid, key, into.strip())
+            return f"Merged [[{key}]] into [[{result['into']}]] ({result['facts_added']} facts moved)."
+        return "Error: action must be add, list, search, replace, remove, relate, unrelate, or merge"
     except (ValueError, OSError) as exc:
         return f"Error: {exc}"

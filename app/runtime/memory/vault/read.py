@@ -171,8 +171,11 @@ def related(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limi
     if not paths_in:
         return []
     placeholders = ','.join('?' for _ in paths_in)
-    rows = conn.execute(f'''SELECT DISTINCT d.* FROM vault_docs d JOIN vault_links l ON (d.path=l.dst_resolved AND l.src IN ({placeholders})) OR (d.path=l.src AND l.dst_resolved IN ({placeholders})) WHERE d.user_id=? AND d.kind="entity" AND d.path NOT IN ({placeholders}) ORDER BY d.path LIMIT ?''', (*paths_in,*paths_in,user_id,*paths_in,limit)).fetchall()
-    return [dict(r) for r in rows]
+    # Typed relations first, then explicit links, then automatic mentions.
+    rows = conn.execute(f'''SELECT d.*, MIN(CASE l.origin WHEN 'relation' THEN 0 WHEN 'manual' THEN 1 WHEN 'source' THEN 2 ELSE 3 END) AS rank
+        FROM vault_docs d JOIN vault_links l ON (d.path=l.dst_resolved AND l.src IN ({placeholders})) OR (d.path=l.src AND l.dst_resolved IN ({placeholders}))
+        WHERE d.user_id=? AND d.kind="entity" AND d.path NOT IN ({placeholders}) GROUP BY d.path ORDER BY rank,d.path LIMIT ?''', (*paths_in,*paths_in,user_id,*paths_in,limit)).fetchall()
+    return [{k: r[k] for k in r.keys() if k != 'rank'} for r in rows]
 
 
 def related_text(conn: sqlite3.Connection, user_id: str, paths_in: list[str], *, limit: int = 4) -> str:
@@ -218,7 +221,7 @@ def snippet(conn: sqlite3.Connection, user_id: str, query: str, *, budget: int =
     linked_paths = set()
     for hit in direct:
         for link in doc.links(hit['text']):
-            row = conn.execute('SELECT dst_resolved FROM vault_links WHERE src=? AND dst=?',
+            row = conn.execute('SELECT dst_resolved FROM vault_links WHERE src=? AND dst=? AND dst_resolved IS NOT NULL',
                                (hit['path'], link)).fetchone()
             if row and row['dst_resolved'] and row['dst_resolved'] not in per_page:
                 linked_paths.add(row['dst_resolved'])

@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "memory",
-      "description": "Save durable declarative facts proactively in the per-account Markdown vault, without a storage character quota. entity=type/slug: user/profile for user identity and preferences; agent/<slug> for agent lessons; project/<slug> for projects and repository conventions; person|tool|place|org|topic for facts about things. Link related pages with [[type/slug]]. Never create person/me or a person page for the user. Use list without entity for the complete index, list with entity for a page, search with query for recall (keywords and entity names such as host, service or port, not a chat sentence). Use replace/remove with entity and old (unique substring of a live fact); replace requires content. Prefer one fact per add; aliases improves recall. supersedes must exactly match one live fact. Use session_search for past tasks and manage_skill for reusable procedures.",
+      "description": "Save durable declarative facts proactively in the per-account Markdown vault, without a storage character quota. entity=type/slug: user/profile for user identity and preferences; agent/<slug> for agent lessons; project/<slug> for projects and repository conventions; person|tool|place|org|topic for facts about things. Link related pages with [[type/slug]]. Never create person/me or a person page for the user. Use list without entity for the complete index, list with entity for a page, search with query for recall (keywords and entity names such as host, service or port, not a chat sentence). Use replace/remove with entity and old (unique substring of a live fact); replace requires content. Prefer one fact per add; aliases improves recall. supersedes must exactly match one live fact. Use session_search for past tasks and manage_skill for reusable procedures. Typed relations: relate/unrelate with entity, rel and to (e.g. tool/tomo runs_on tool/omaxim) for structural facts; merge with entity and into folds a duplicate page into the page to keep (facts, aliases and links move; the duplicate is backed up and removed).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -18,7 +18,10 @@
               "replace",
               "remove",
               "list",
-              "search"
+              "search",
+              "relate",
+              "unrelate",
+              "merge"
             ]
           },
           "entity": {
@@ -51,6 +54,29 @@
           "include_superseded": {
             "type": "boolean",
             "description": "Search historical superseded facts too. Default false; use only for questions about previous facts."
+          },
+          "rel": {
+            "type": "string",
+            "enum": [
+              "part_of",
+              "uses",
+              "runs_on",
+              "depends_on",
+              "owns",
+              "works_at",
+              "located_in",
+              "manages",
+              "about",
+              "related_to"
+            ]
+          },
+          "to": {
+            "type": "string",
+            "description": "type/slug of the related page"
+          },
+          "into": {
+            "type": "string",
+            "description": "type/slug of the page that survives a merge"
           }
         },
         "required": [
