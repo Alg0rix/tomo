@@ -348,7 +348,7 @@ class PluginAPI:
         max_output_tokens: int = 1024, timeout: float = 60,
         user_id: str | None = None,
     ) -> dict:
-        """One tool-free LLM call using Tomo profiles, recorded usage and caps."""
+        """One tool-free LLM call using Tomo profiles, with recorded usage."""
         from app.plugins.services import generate
 
         self._require_live()
@@ -356,6 +356,50 @@ class PluginAPI:
             self, prompt, profile_id=profile_id, max_output_tokens=max_output_tokens,
             timeout=timeout, user_id=user_id,
         )
+
+    async def agent(
+        self, prompt: str, *, user_id: str | None = None, agent_id: str | None = None,
+    ) -> dict:
+        """Start one tool-using agent turn in a new session owned by the account.
+
+        Returns ``session_id``, ``agent_id``, and ``status`` once the turn is
+        accepted. The account's current grants apply. From a worker thread use
+        ``asyncio.run``; the turn stays on the server loop.
+        """
+        from app.plugins.services import agent
+
+        self._require_live()
+        return await agent(self, prompt, user_id=user_id, agent_id=agent_id)
+
+    def schedule(
+        self, name: str, prompt: str, *, when: str,
+        user_id: str | None = None, agent_id: str | None = None,
+    ) -> dict:
+        """Create a routine the account owns and can pause in Routines.
+
+        ``when`` is a schedule string such as ``every 30m`` or ``0 9 * * *``.
+        Fires run in a fresh session.
+        """
+        from app.plugins.services import schedule
+
+        self._require_live()
+        return schedule(
+            self, name, prompt, when=when, user_id=user_id, agent_id=agent_id,
+        )
+
+    def unschedule(self, schedule_id: str, *, user_id: str | None = None) -> None:
+        """Delete a routine this plugin created for the account."""
+        from app.plugins.services import unschedule
+
+        self._require_live()
+        unschedule(self, schedule_id, user_id=user_id)
+
+    def schedules(self, *, user_id: str | None = None) -> list[dict]:
+        """Routines this plugin created for the account."""
+        from app.plugins.services import schedules
+
+        self._require_live()
+        return schedules(self, user_id=user_id)
 
     def render(self, request: Request, template: str, **context):
         from app.web.context import page_ctx

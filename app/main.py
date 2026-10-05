@@ -129,6 +129,9 @@ async def _lifespan(_app: FastAPI):
     from app.services.chat import recover_web_turns, suspend_session_turns
     from app.services import background_continuation
 
+    from app.plugins.services import bind_server_loop
+
+    bind_server_loop(asyncio.get_running_loop())
     stop_managed_session = _register_execution_stoppers()
     from app.runtime.isolation import lifecycle
 
@@ -149,7 +152,10 @@ async def _lifespan(_app: FastAPI):
         yield
     finally:
         from app.plugins.manager import get_manager
+        from app.plugins.services import bind_server_loop
         from app.services import store
+
+        bind_server_loop(None)
 
         # Stop ingress before draining all retained OS/task backends. Cancelling
         # a turn alone cannot kill a subprocess executing in a worker thread.

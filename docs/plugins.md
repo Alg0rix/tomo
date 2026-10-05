@@ -289,9 +289,8 @@ No tools, agent loop or extra API key are needed. Calls require an active accoun
 HTTP/collectors pass the authenticated/configuring account ID explicitly.
 
 Guards: nonempty prompt up to 32 KiB UTF-8, output limit 1–4096 tokens sent to the
-provider, timeout greater than zero and at most 60 seconds, and **30 attempted
-calls per account/plugin/calendar hour**, persisted across reloads. Failed provider
-requests consume reservations too. Provider-reported successful usage enters the
+provider, and a timeout greater than zero and at most 60 seconds. There is no
+hourly call cap. Provider-reported successful usage enters the
 existing `usage_events` ledger under `agent_id="plugin:<id>"`, with zero agent turns
 and an account-namespaced synthetic session; prompt contents are not recorded.
 Limits depend on provider enforcement and are not a monetary billing ceiling.
@@ -302,6 +301,29 @@ Subscription profiles are explicitly rejected for bounded generation: their
 backend does not support the output cap. There is no silent unbounded fallback.
 For synchronous plugin tools/worker threads use `asyncio.run(api.generate(...))`;
 async HTTP handlers should await it directly.
+
+### Agent turns and routines
+
+`await api.agent(prompt, *, user_id=None, agent_id=None)` starts one real agent
+turn — tools, memory, and the account's current grants — in a new session owned
+by that account. It returns `session_id`, `agent_id`, and `status="started"`
+once the turn is accepted, and does not wait for the model. The agent defaults
+to the account's coordinator. Prompt limit is 32 KiB. There is no hourly cap.
+Calls from `on_turn_end` are rejected so a finished turn cannot schedule the
+next one.
+
+`api.schedule(name, prompt, *, when, user_id=None, agent_id=None)` creates a
+routine the account owns and can pause or delete in Routines. `when` is a
+schedule string such as `every 30m` or `0 9 * * *`. The prompt is at most 4000
+bytes. Each fire runs in a fresh
+session under the account's grants at that moment. `api.schedules(user_id=None)`
+lists only routines this plugin created. `api.unschedule(schedule_id, user_id=None)`
+deletes one of those; another plugin's routine is unavailable.
+
+Worker threads use `asyncio.run(api.agent(...))`. While Tomo is running, that
+call hops onto the server loop so the turn is not cancelled when the temporary
+loop closes. `api.schedule` is synchronous. Pass the account id explicitly from
+workers and HTTP handlers.
 
 ### Public landing pages and forms
 

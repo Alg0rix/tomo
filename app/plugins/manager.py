@@ -795,11 +795,14 @@ class PluginManager:
             except KeyError:
                 continue
             try:
-                for callback in instance["api"]._turn_end:
-                    try:
-                        callback(context)
-                    except Exception:
-                        logger.exception("Plugin %s turn-end hook failed", plugin_id)
+                from app.plugins.services import turn_hook
+
+                with turn_hook():
+                    for callback in instance["api"]._turn_end:
+                        try:
+                            callback(context)
+                        except Exception:
+                            logger.exception("Plugin %s turn-end hook failed", plugin_id)
             finally:
                 lease.__exit__(None, None, None)
 

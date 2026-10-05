@@ -182,7 +182,7 @@ def test_notification_targets_are_opaque_owned_and_reauthorize(
         asyncio.run(api.notify(token, "down", user_id=alice))
 
 
-def test_generate_uses_real_profile_wire_limits_usage_and_persistent_budget(
+def test_generate_uses_real_profile_wire_limits_and_usage(
     tmp_path, accounts
 ):
     store, (alice, _) = accounts
@@ -262,16 +262,6 @@ def test_generate_uses_real_profile_wire_limits_usage_and_persistent_budget(
             asyncio.run(
                 api.generate("x" * 32769, profile_id=profile["id"], user_id=alice)
             )
-        # Persisted reservations survive replacing the API object.
-        with api.settings.database() as conn:
-            conn.execute("UPDATE generation_budget SET calls=30")
-            conn.commit()
-        reloaded = PluginAPI("monitor", tmp_path, tmp_path / "monitor")
-        with pytest.raises(ValueError, match="limit reached"):
-            asyncio.run(
-                reloaded.generate("again", profile_id=profile["id"], user_id=alice)
-            )
-        assert len(requests) == 2
         from app.runtime.llm import LLMConfigError
 
         def subscription(conn):
@@ -291,3 +281,54 @@ def test_generate_uses_real_profile_wire_limits_usage_and_persistent_budget(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_agent_starts_an_owned_turn_and_schedule_stays_on_that_account(tmp_path, accounts, monkeypatch):
+    store, (alice, _) = accounts
+    admin = "usr_admin"
+    started = {}
+
+    class Turn:
+        def unsubscribe(self, _queue):
+            return None
+
+    async def fake_start(session_id, message, user_id, *args, **kwargs):
+        started.update(
+            session_id=session_id, message=message, user_id=user_id, origin=kwargs.get("origin")
+        )
+        return Turn(), None
+
+    monkeypatch.setattr("app.services.chat.start_session_turn", fake_start)
+    api = PluginAPI("money", tmp_path, tmp_path / "money")
+    result = asyncio.run(api.agent("Review the inbox", user_id=admin))
+    assert result["status"] == "started"
+    assert result["agent_id"]
+    assert started["user_id"] == admin
+    assert started["message"] == "Review the inbox"
+    assert started["origin"] == "plugin"
+    assert store.get_session(result["session_id"])["user_id"] == admin
+    with pytest.raises(ValueError, match="1–32768"):
+        asyncio.run(api.agent("   ", user_id=admin))
+    store.update_user(alice, {"enabled": False})
+    with pytest.raises(PermissionError):
+        asyncio.run(api.agent("Review the inbox", user_id=alice))
+
+    from app.plugins.services import turn_hook
+
+    with turn_hook():
+        with pytest.raises(RuntimeError, match="on_turn_end"):
+            asyncio.run(api.agent("Review the inbox", user_id=admin))
+
+    routine = api.schedule(
+        "Inbox review", "Review pending captures", when="every 30m", user_id=admin
+    )
+    assert routine["name"] == "money: Inbox review"
+    assert routine["enabled"] is True
+    listed = api.schedules(user_id=admin)
+    assert [row["id"] for row in listed] == [routine["id"]]
+    other = PluginAPI("other", tmp_path, tmp_path / "other")
+    with pytest.raises(PermissionError):
+        other.unschedule(routine["id"], user_id=admin)
+    api.unschedule(routine["id"], user_id=admin)
+    assert api.schedules(user_id=admin) == []
+    assert store.get_schedule(routine["id"]) is None

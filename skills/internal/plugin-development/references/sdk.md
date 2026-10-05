@@ -24,7 +24,11 @@
 | `api.capture_notification_target(*, user_id=None)` | Capture owned active channel/session as opaque saved ID; Telegram built-in; no arbitrary recipients |
 | `await api.notify(target_id, message, *, user_id=None)` | Recheck active account, session ownership and channel authorization; ≤4000 characters; no automatic retries |
 | `api.read_workplace_file(id, path, *, max_bytes=65536, timeout=10, user_id=None)` | Bounded UTF-8 text via POSIX head over tunnel; shell-quoted paths; admin only; ≤1 MiB; content/path/truncated |
-| `await api.generate(prompt, *, profile_id=None, max_output_tokens=1024, timeout=60, user_id=None)` | Tool-free API-profile call; active account; ≤32 KiB prompt, ≤4096 output tokens, ≤60s, 30 attempts/account/plugin/hour; recorded usage; subscription profiles rejected |
+| `await api.generate(prompt, *, profile_id=None, max_output_tokens=1024, timeout=60, user_id=None)` | Tool-free API-profile call; active account; ≤32 KiB prompt, ≤4096 output tokens, ≤60s; no hourly cap; recorded usage; subscription profiles rejected |
+| `await api.agent(prompt, *, user_id=None, agent_id=None)` | One tool-using turn in a new owned session; returns once accepted; ≤32 KiB; no hourly cap; rejected from `on_turn_end`; worker `asyncio.run` hops to the server loop |
+| `api.schedule(name, prompt, *, when, user_id=None, agent_id=None)` | User-owned routine (`every 30m`, cron); ≤4000-byte prompt; no count cap; visible in Routines; each fire is a fresh session |
+| `api.unschedule(schedule_id, *, user_id=None)` | Delete a routine this plugin created for the account |
+| `api.schedules(*, user_id=None)` | Routines this plugin created for the account |
 | `api.starter(label, prompt)` | Home composer prompt chip; ≤4 per plugin |
 | `api.on_turn_end(callback)` | Synchronous callback receiving TurnEndContext |
 | `api.on_dispose(callback)` | Synchronous cleanup callback |
@@ -47,11 +51,12 @@ waits up to five seconds total, then logs noncooperative workers; Python cannot
 kill their threads. No raw core SQL, tunnel RPC or credentials are exposed.
 
 `TurnEndContext` has `session_id`, `agent_id`, `message`, `prompt_tokens`, and
-`completion_tokens`. It is an observation, not an instruction to start another
-agent turn. Look up the authenticated session owner if storing user-specific
-hook data; do not invent a user ID or conflate agent and user identity.
+`completion_tokens`. It is an observation. `api.agent` and `api.schedule` raise
+if called from this hook. Look up the authenticated session owner if storing
+user-specific hook data; do not invent a user ID or conflate agent and user identity.
 
 `api.pages`, `api.tools`, `api.skills`, `api.home_cards`, and `api.starters` are registration results for runtime
 inspection. Use the public registration methods/directories rather than changing
-these collections yourself. Tomo has no BB provider bridge, RPC registration,
-core UI replacement, npm build step, cron scheduler, or process isolation in this SDK.
+these collections yourself. Routines created with `api.schedule` are ordinary
+account routines, not a private clock. Tomo has no BB provider bridge, RPC
+registration, core UI replacement, npm build step, or process isolation in this SDK.

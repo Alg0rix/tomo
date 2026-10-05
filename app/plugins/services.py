@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from contextvars import Context
+from contextvars import Context, ContextVar
 import hashlib
 import json
 import logging
@@ -16,6 +16,30 @@ import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_server_loop: asyncio.AbstractEventLoop | None = None
+_in_turn_hook: ContextVar[bool] = ContextVar("plugin_turn_hook", default=False)
+
+
+def bind_server_loop(loop: asyncio.AbstractEventLoop | None) -> None:
+    """Remember the process loop that owns agent turns. Cleared on shutdown."""
+    global _server_loop
+    _server_loop = loop
+
+
+@contextmanager
+def turn_hook():
+    """Mark on_turn_end callbacks so they cannot start another agent turn."""
+    token = _in_turn_hook.set(True)
+    try:
+        yield
+    finally:
+        _in_turn_hook.reset(token)
+
+
+def _reject_turn_hook() -> None:
+    if _in_turn_hook.get():
+        raise RuntimeError("Cannot start an agent turn from on_turn_end")
 
 
 def active_user(user_id: str | None = None) -> str:
@@ -47,7 +71,7 @@ class PluginSettings:
                 "CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, user_id TEXT, session_id TEXT, target TEXT)"
             )
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS generation_budget (user_id TEXT, hour INTEGER, calls INTEGER, PRIMARY KEY(user_id, hour))"
+                "CREATE TABLE IF NOT EXISTS plugin_schedules (schedule_id TEXT PRIMARY KEY, user_id TEXT, name TEXT)"
             )
             yield conn
         finally:
@@ -200,24 +224,6 @@ async def generate(api, prompt, *, profile_id, max_output_tokens, timeout, user_
     finite_timeout(timeout)
     client = get_llm(profile_id=profile_id, max_output_tokens=max_output_tokens)
     try:
-        # Reserve before making a paid call; failures also consume a slot.
-        with api.settings.database() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            hour = int(time.time() // 3600)
-            conn.execute("DELETE FROM generation_budget WHERE hour < ?", (hour,))
-            row = conn.execute(
-                "SELECT calls FROM generation_budget WHERE user_id=? AND hour=?",
-                (uid, hour),
-            ).fetchone()
-            if row and row[0] >= 30:
-                raise ValueError(
-                    "Plugin generation limit reached (30 calls/account/hour)"
-                )
-            conn.execute(
-                "INSERT INTO generation_budget VALUES (?,?,1) ON CONFLICT(user_id,hour) DO UPDATE SET calls=calls+1",
-                (uid, hour),
-            )
-            conn.commit()
         response = await asyncio.wait_for(
             client.complete([{"role": "user", "content": prompt}]), timeout
         )
@@ -246,3 +252,200 @@ async def generate(api, prompt, *, profile_id, max_output_tokens, timeout, user_
         }
     finally:
         await client.aclose()
+
+
+def _prompt(value, limit: int, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value.encode()) > limit:
+        raise ValueError(f"{label} must contain 1–{limit} UTF-8 bytes")
+    return value.strip()
+
+
+def _agent_id(uid: str, agent_id: str | None) -> str:
+    from app.services import store
+
+    if agent_id is None:
+        coordinator = store.get_coordinator()
+        if not coordinator:
+            raise ValueError("No coordinator agent is available")
+        store.access.require_use(uid, "agent", coordinator["id"])
+        return coordinator["id"]
+    if not isinstance(agent_id, str) or not agent_id.strip() or len(agent_id) > 64:
+        raise ValueError("agent_id is invalid")
+    aid = agent_id.strip()
+    store.access.require_use(uid, "agent", aid)
+    if not store.get_agent(aid):
+        raise ValueError("Agent is unavailable")
+    return aid
+
+
+def _public_schedule(schedule: dict) -> dict:
+    return {
+        "id": schedule["id"],
+        "name": schedule.get("name") or "",
+        "agent_id": schedule.get("agent_id") or "",
+        "schedule": schedule.get("schedule_display") or schedule.get("cron") or "",
+        "enabled": bool(schedule.get("enabled")),
+        "next_run": schedule.get("next_run"),
+        "message": schedule.get("message") or "",
+    }
+
+
+def _anchor_session(api, uid: str, aid: str) -> str:
+    """Stable chat whose grants a routine revalidates. Fires use a fresh session."""
+    from app.services import store
+
+    key = f"agent_session:{aid}"
+    saved = api.settings.get(key, user_id=uid)
+    if isinstance(saved, str) and store.get_owned_session(saved, uid):
+        return saved
+    sid = store.create_swarm_session([aid], uid, aid)
+    api.settings.set(key, sid, user_id=uid)
+    return sid
+
+
+async def _launch_turn(session_id: str, prompt: str, uid: str, context) -> None:
+    from app.runtime.access import bind_execution, reset_execution
+    from app.services.chat import start_session_turn
+
+    token = bind_execution(context)
+    try:
+        turn, queue = await start_session_turn(
+            session_id, prompt, uid, origin="plugin"
+        )
+        turn.unsubscribe(queue)
+    finally:
+        reset_execution(token)
+
+
+async def agent(api, prompt: str, *, user_id, agent_id) -> dict:
+    """Start one tool-using turn in a new session owned by the account.
+
+    Returns after the turn is accepted, not after the model finishes. A worker
+    thread's ``asyncio.run`` hops onto the server loop when one is bound, so
+    the turn is not cancelled when that temporary loop closes.
+    """
+    from app.services import store
+
+    _reject_turn_hook()
+    uid = active_user(user_id)
+    text = _prompt(prompt, 32768, "Prompt")
+    aid = _agent_id(uid, agent_id)
+    sid = store.create_swarm_session([aid], uid, aid)
+    try:
+        context = store.access.resolve_context(uid, sid, aid)
+    except Exception:
+        store.delete_session(sid)
+        raise
+
+    async def launch():
+        await _launch_turn(sid, text, uid, context)
+
+    try:
+        current = asyncio.get_running_loop()
+    except RuntimeError:
+        current = None
+    server = _server_loop
+    try:
+        if server and server.is_running() and current is not server:
+            await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(launch(), server)
+            )
+        else:
+            await launch()
+    except Exception:
+        from app.services.chat import get_active_session_turn
+
+        if get_active_session_turn(sid) is None and not store.is_session_turn_active(sid):
+            store.delete_session(sid)
+        raise
+    return {"session_id": sid, "agent_id": aid, "status": "started"}
+
+
+def schedule(api, name: str, prompt: str, *, when: str, user_id, agent_id) -> dict:
+    """Create a user-owned routine. It shows up in Routines and uses current grants."""
+    from app.services import store
+
+    _reject_turn_hook()
+    uid = active_user(user_id)
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+        raise ValueError("Schedule name must contain 1–80 characters")
+    text = _prompt(prompt, 4000, "Prompt")
+    if not isinstance(when, str) or not when.strip() or len(when.strip()) > 120:
+        raise ValueError("Schedule must contain 1–120 characters")
+    aid = _agent_id(uid, agent_id)
+    label = f"{api.id}: {name.strip()}"
+    if len(label) > 120:
+        raise ValueError("Schedule name is too long")
+    sid = _anchor_session(api, uid, aid)
+    context = store.access.resolve_context(uid, sid, aid)
+    created = store.access.create_schedule_for_context(
+        context,
+        {
+            "name": label,
+            "agent_id": aid,
+            "schedule": when.strip(),
+            "message": text,
+            "enabled": True,
+        },
+    )
+    try:
+        with api.settings.database() as conn:
+            conn.execute(
+                "INSERT INTO plugin_schedules VALUES (?,?,?)",
+                (created["id"], uid, label),
+            )
+            conn.commit()
+    except Exception:
+        store.delete_schedule(created["id"])
+        raise
+    return _public_schedule(created)
+
+
+def unschedule(api, schedule_id: str, *, user_id) -> None:
+    from app.services import store
+
+    _reject_turn_hook()
+    uid = active_user(user_id)
+    if not isinstance(schedule_id, str) or not schedule_id.strip():
+        raise ValueError("schedule_id is required")
+    with api.settings.database() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM plugin_schedules WHERE schedule_id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not row:
+            raise PermissionError("Schedule is unavailable")
+    store.delete_schedule(schedule_id)
+    with api.settings.database() as conn:
+        conn.execute(
+            "DELETE FROM plugin_schedules WHERE schedule_id=? AND user_id=?",
+            (schedule_id, uid),
+        )
+        conn.commit()
+
+
+def schedules(api, *, user_id) -> list[dict]:
+    from app.services import store
+
+    uid = active_user(user_id)
+    with api.settings.database() as conn:
+        rows = conn.execute(
+            "SELECT schedule_id FROM plugin_schedules WHERE user_id=? ORDER BY name",
+            (uid,),
+        ).fetchall()
+    visible = []
+    stale = []
+    for (schedule_id,) in rows:
+        schedule = store.get_schedule(schedule_id)
+        if not schedule or schedule.get("owner_user_id") != uid:
+            stale.append(schedule_id)
+            continue
+        visible.append(_public_schedule(schedule))
+    if stale:
+        with api.settings.database() as conn:
+            conn.executemany(
+                "DELETE FROM plugin_schedules WHERE schedule_id=? AND user_id=?",
+                [(schedule_id, uid) for schedule_id in stale],
+            )
+            conn.commit()
+    return visible
