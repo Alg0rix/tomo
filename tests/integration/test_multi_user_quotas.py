@@ -89,6 +89,56 @@ def test_nested_check_shares_turn_slot_but_durable_work_does_not(quota_env):
     assert asyncio.run(main())
 
 
+@pytest.mark.parametrize('admin', [False, True], ids=['member', 'admin'])
+def test_turn_outlives_process_duration_budget_and_releases_admission(quota_env, admin):
+    """The shared web/agent/swarm supervisor must not time-cut whole turns."""
+    from app.runtime.supervision import admitted_turn
+
+    alice, sessions = quota_env
+    uid = 'usr_admin' if admin else alice
+    store.access.set_quota('usr_admin', uid, {'duration_seconds': 1, 'max_concurrent_jobs': 1})
+    sid = store.create_home_session(uid)['session_id'] if admin else sessions[0]
+    context = resolve(uid, sid)
+
+    async def work():
+        async with admitted_turn(context):
+            async with admitted_turn(context):
+                await asyncio.sleep(1.2)
+                result = 'completed beyond the per-process deadline'
+        # Completion must release the same quota slot, not disable admission.
+        async with admitted_turn(context):
+            return result
+
+    assert asyncio.run(asyncio.wait_for(work(), 5)) == 'completed beyond the per-process deadline'
+
+
+@pytest.mark.parametrize('admin', [False, True], ids=['member', 'admin'])
+def test_unlimited_turn_still_honors_stop_and_releases_admission(quota_env, admin):
+    from app.runtime.supervision import admitted_turn
+
+    alice, sessions = quota_env
+    uid = 'usr_admin' if admin else alice
+    store.access.set_quota('usr_admin', uid, {'max_concurrent_jobs': 1})
+    sid = store.create_home_session(uid)['session_id'] if admin else sessions[0]
+    context = resolve(uid, sid)
+
+    async def main():
+        entered = asyncio.Event()
+        async def work():
+            async with admitted_turn(context):
+                entered.set()
+                await asyncio.Event().wait()
+        task = asyncio.create_task(work())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with admitted_turn(context):
+            return 'readmitted after Stop'
+
+    assert asyncio.run(asyncio.wait_for(main(), 5)) == 'readmitted after Stop'
+
+
 def test_storage_reservation_quota_and_failed_write_release(quota_env):
     """Over-quota reserves deny; failed writes release; success is rescanned."""
     from app.runtime import storage as storage_ledger
