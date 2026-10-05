@@ -35,7 +35,9 @@ def setup(tmp_path):
     alice_sid = db.create_home_session(alice)["session_id"]
     bob_sid = db.create_home_session(bob)["session_id"]
     yield db, alice, bob, alice_sid, bob_sid
-    db._conn.close()
+    # OS teardown can finish before a cancelled job publishes its final audit.
+    # Serialize SQLite close with those callbacks, just like Store.rebind does.
+    db.with_db(lambda conn: conn.close())
 
 
 def instance(db, image="tomo:sandbox"):
