@@ -114,7 +114,18 @@ class AccessService:
             if grant and grant["state"] != "active":
                 return False
             if kind == "unrestricted":
-                return bool(grant and grant["permission"] == "use")
+                if grant:
+                    return grant["permission"] == "use"
+                if user["role"] != "admin":
+                    return False
+                # Admins already control the host. Keep their ordinary workflow
+                # usable without per-destination setup, but never override a
+                # deliberate revocation or another user's private/RO resource.
+                revoked = self.store.with_db(lambda c: c.execute(
+                    "SELECT 1 FROM access_audit WHERE subject_user_id=? AND resource_type='unrestricted' "
+                    "AND destination_id=? AND action='grant.revoke' LIMIT 1", (user_id, rid),
+                ).fetchone())
+                return not revoked and self.workplace_permission(user_id, rid) == "read_write"
             obj = self.store.get_agent(rid) if kind == "agent" else self.store.get_llm_profile(rid)
             if not obj or not obj["enabled"]:
                 return False
@@ -289,13 +300,20 @@ class AccessService:
     @_serialized
     def _change_grant(self, actor: str, uid: str, kind: str, rid: str, permission: str | None) -> dict:
         old = self._grant(uid, kind, rid)
-        affected = self._affected_sessions(uid, kind, rid) if old else []
+        implicit = bool(not old and kind == "unrestricted" and self.can_use(uid, kind, rid))
+        affected = self._affected_sessions(uid, kind, rid) if old or implicit else []
         # Every changed grant rebuilds affected environments; even upgrades must
         # not silently widen already-running/delegated resource ceilings.
-        teardown = bool(old and (old["permission"] != permission or old["state"] != "active"))
+        teardown = bool((old and (old["permission"] != permission or old["state"] != "active"))
+                        or (implicit and permission is None))
         if teardown:
             def pending(c):
-                c.execute("UPDATE resource_grants SET state='pending' WHERE user_id=? AND resource_type=? AND resource_id=?", (uid, kind, rid))
+                # Materialize an implicit Admin entitlement before teardown so
+                # new chats cannot admit work while its revocation is pending.
+                if implicit:
+                    c.execute("INSERT INTO resource_grants(user_id,resource_type,resource_id,permission,state,granted_by,updated_at) VALUES (?,?,?,'use','pending',?,?)", (uid, kind, rid, actor, time.time()))
+                else:
+                    c.execute("UPDATE resource_grants SET state='pending' WHERE user_id=? AND resource_type=? AND resource_id=?", (uid, kind, rid))
                 c.commit()
             self.store.with_db(pending)
             self._mark_pending(affected)
@@ -370,7 +388,7 @@ class AccessService:
     def set_chat_access(self, user_id: str, session_id: str, active_workplace_id: str,
                         additional_workplace_ids=(), execution_mode: str = "restricted",
                         unrestricted_acknowledged: bool = False) -> dict:
-        self.require_user(user_id)
+        user = self.require_user(user_id)
         # Pending sessions may retry the user-initiated access update/teardown.
         session = self.store.get_owned_session(session_id, user_id)
         if not session:
@@ -395,7 +413,7 @@ class AccessService:
                 raise AccessDenied("Resource is unavailable")
         if execution_mode == "unrestricted":
             self.require_use(user_id, "unrestricted", active_workplace_id)
-            if not unrestricted_acknowledged:
+            if user["role"] != "admin" and not unrestricted_acknowledged:
                 raise AccessDenied("Explicit unrestricted execution acknowledgement is required")
         additional = [wid for wid in ids if wid != active_workplace_id]
         if (session["workplace_id"] == active_workplace_id and session["additional_workplace_ids"] == additional
@@ -411,13 +429,19 @@ class AccessService:
                    subject_user_id=user_id, permission=execution_mode)
         return self.store.get_owned_session(session_id, user_id)
 
+    def default_execution_mode(self, user_id: str, workplace_id: str) -> str:
+        """Admins keep host workflows; Members never inherit that default."""
+        user = self.require_user(user_id)
+        return "unrestricted" if user["role"] == "admin" and self.can_use(user_id, "unrestricted", workplace_id) else "restricted"
+
     def initialize_chat(self, user_id: str, session_id: str, workplace_id: str = "") -> None:
         """Only used immediately after creation, before any execution starts."""
         self.require_user(user_id)
         wid = workplace_id or self.ensure_personal_space(user_id)["id"]
         self.workplace_permission(user_id, wid)
+        mode = self.default_execution_mode(user_id, wid)
         def initialize(c):
-            c.execute("UPDATE sessions SET workplace_id=? WHERE id=? AND user_id=? AND access_generation=0 AND message_count=0", (wid, session_id, user_id))
+            c.execute("UPDATE sessions SET workplace_id=?,execution_mode=? WHERE id=? AND user_id=? AND access_generation=0 AND message_count=0", (wid, mode, session_id, user_id))
             c.commit()
         self.store.with_db(initialize)
         # Choose a currently ASSIGNED profile for a new Member chat when the

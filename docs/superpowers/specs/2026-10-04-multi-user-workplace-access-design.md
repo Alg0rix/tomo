@@ -11,7 +11,7 @@ workflow: superpowers-brainstorming
 
 Multiple users share Tomo's default coordinator while keeping their data, credentials, and execution permissions separate. Members can use the full toolchain, select working folders, enable additional shared folders, and execute through tunnels.
 
-Members are **untrusted by default**. An Admin can separately grant folder access and unrestricted execution on a specific machine/workplace. An unrestricted grant deliberately removes the sandbox guarantee for that destination; it is not a general elevation of the user's platform role.
+Members are **untrusted by default**. An Admin can separately grant folder access and unrestricted execution on a specific machine/workplace. An unrestricted grant deliberately removes the sandbox guarantee for that destination; it is not a general elevation of the user's platform role. As clarified by the operator on 2026-10-05, trusted Admin accounts keep host execution by default without per-chat setup, including root installations and linked Telegram. The explicit grant/activation workflow below applies to Members; an Admin can still opt into Restricted.
 
 The user approved the architecture, sharing/lifecycle behavior, and error-handling/security sections through the Superpowers brainstorming process. This document awaits final written-spec review. It supersedes the exploratory draft in `docs/specs/2026-10-04-multi-user-workplace-access.md`.
 
@@ -121,7 +121,7 @@ The same checks apply to interactive terminals, delegated tasks, swarms, MCP/too
 
 ### Default
 
-A new chat uses **Personal space** with persistent user-scoped files. Users need not configure mounts or understand containers. Personal storage may be reused across chats; managed projects separate work by task.
+A new chat uses **Personal space** with persistent user-scoped files. Admin chats default to host execution on accessible writable destinations, without an unrestricted assignment or acknowledgement step. Linked Telegram Admin chats use the same default. Member chats remain Restricted and cannot inherit Admin host privileges. Deliberate Restricted choices, explicit revocations and pending teardown are preserved. Users need not configure mounts or understand containers. Personal storage may be reused across chats; managed projects separate work by task.
 
 ### Picker
 
@@ -157,7 +157,7 @@ New chats enable only their active folder. User-selected additional access is pe
 
 ### Unrestricted mode
 
-Only an Admin can issue a destination-specific grant. The user must explicitly activate unrestricted execution in the chat, with a warning that host access follows the OS account and cross-user isolation is not guaranteed. Keep the mode and destination visible. Never switch into unrestricted execution implicitly.
+Only an Admin can issue a destination-specific grant to a Member. Members must explicitly activate unrestricted execution in the chat, with a warning that host access follows the OS account and cross-user isolation is not guaranteed. Trusted Admins have host execution by default on accessible writable destinations; no grant or acknowledgement setup is required, even if Tomo runs as root. Explicit revocations and Restricted choices still apply. Keep the mode, destination and OS-account confidentiality warning visible. Never fallback from failed Member/explicitly Restricted execution to host execution.
 
 A grant for one workplace does not authorize unrelated destinations on the same or another machine. However, once execution is unrestricted at the granted destination, filesystem access is governed by the OS account rather than folder mounts; the UI must not imply otherwise.
 
@@ -245,7 +245,7 @@ Verification must exercise real authorization and execution boundaries, not only
 8. Approval choices and unattended jobs do not widen permissions.
 9. Member APIs/keys/tools cannot modify other accounts, issue keys for others, manage server providers/secrets/plugins, or change shared agent configuration.
 10. Restricted environments run the full toolchain without exposing Tomo's database, credentials, runtime sockets, or other users' storage.
-11. Unrestricted execution requires both a matching Admin grant and explicit chat activation; other destinations and platform admin actions remain unauthorized.
+11. Member unrestricted execution requires both a matching Admin grant and explicit chat activation; other destinations and platform admin actions remain unauthorized. Admin web/linked-Telegram chats work without execution setup, including on root installs; explicit Restricted choices, revoked access, current role changes and ownership checks still apply.
 12. Offline tunnels and backend/policy failures never execute locally or under a privileged default.
 13. Cross-machine transfers require source read plus destination write and scoped credentials.
 14. Revocation stops affected managed execution, removes retained access, and denies queued/new work. Unrestricted supervision limits are stated, not hidden.

@@ -119,13 +119,14 @@ async def redeem_code(chat_id: int, code: str, *, chat_type: str | None, sender_
                             and target.get('user_id') in (None, source_id)):
                         target['user_id'] = uid
                         conn.execute(f'UPDATE {table} SET delivery_target=? WHERE id=?', (json.dumps(target), row['id']))
-            # Adopt conversation data, never the legacy Admin's destination or
-            # unrestricted mode. Current account grants govern future turns.
+            # Adopt conversation data, never the legacy principal's destination
+            # or privileges. The verified account supplies its own default:
+            # Admin keeps host tools; Member stays restricted.
             conn.execute(
                 "UPDATE sessions SET user_id=?, workplace_id=?, additional_workplace_ids_json='[]', "
-                "execution_mode='restricted', model_profile_id=?, model_name=?, access_pending=0 "
+                "execution_mode=?, model_profile_id=?, model_name=?, access_pending=0 "
                 "WHERE user_id=?",
-                (uid, personal_id, model_id, model_name, source_id),
+                (uid, personal_id, execution_mode, model_id, model_name, source_id),
             )
             for table in ('learning_events', 'secret_bundles'):
                 conn.execute(f'UPDATE {table} SET user_id=? WHERE user_id=?', (uid, source_id))
@@ -153,6 +154,7 @@ async def redeem_code(chat_id: int, code: str, *, chat_type: str | None, sender_
         store.access._mark_pending(session_ids)
         store.access._stop(session_ids)
         personal_id = store.access.ensure_personal_space(uid)['id']
+        execution_mode = store.access.default_execution_mode(uid, personal_id)
         models = store.access.list_visible_models(uid)
         model_id = models[0]['id'] if models else ''
         model_name = models[0]['model'] if models else ''

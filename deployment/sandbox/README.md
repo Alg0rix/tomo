@@ -36,6 +36,19 @@ persistent files on the runtime host. A containerized coordinator needs a
 trusted broker deployment with consistent paths; no generic HTTP broker or
 remote-daemon path translation is established here.
 
+## Admin compatibility and Member boundary
+
+Trusted Admin web/linked-Telegram chats use host execution by default, with no
+unrestricted assignment or acknowledgement step. Commands run as the Tomo OS
+account; a root installation therefore gives Admin commands root access. This
+is host/operator authority, not a sandbox or cross-user confidentiality claim.
+An Admin may explicitly select Restricted. Previously configured Restricted
+chats and revoked/pending access are not silently re-enabled.
+
+The non-root broker prerequisite below applies to restricted execution, not
+to ordinary Admin host tools. Members remain Restricted unless separately
+granted and explicitly activating an exact unrestricted destination.
+
 ## Local boundary and lifecycle
 
 Restricted local execution uses nonroot per-chat containers, authorized RO/RW
@@ -127,8 +140,9 @@ an operator marker alone does not establish an equivalent per-chat boundary.
   exercised. Do not provision these advertised restricted paths for untrusted
   Members on the strength of the protocol tests.
 
-Explicit unrestricted execution still requires destination-specific grants and
-chat acknowledgement, with host-account effects accepted by the operator.
+Member unrestricted execution still requires destination-specific grants and
+chat acknowledgement. Trusted Admin host defaults do not waive remote protocol
+admission, resource ownership, explicit revocations or host-account caveats.
 Offline/unsupported backends must reject without local fallback. Revocation
 requires confirmed backend teardown; a failed acknowledgement retains the
 pending barrier.

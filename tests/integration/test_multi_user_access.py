@@ -140,6 +140,59 @@ def test_unrestricted_requires_matching_grant_and_explicit_activation(db):
         db.access.resolve_context(uid, sid)
 
 
+def test_admin_defaults_to_host_without_grants_but_member_stays_restricted(db):
+    uid = member(db, "defaultmember")
+    model_for(db, uid)
+    admin_sid = db.create_home_session("usr_admin")["session_id"]
+    telegram_sid = db.get_or_create_session("main", "usr_admin", telegram_chat_id="42")
+    for sid in (admin_sid, telegram_sid):
+        ctx = db.access.resolve_context("usr_admin", sid)
+        assert ctx.role == "admin" and ctx.execution_mode == "unrestricted"
+        assert db.access.can_use("usr_admin", "unrestricted", ctx.destination_id)
+    member_sid = db.create_home_session(uid)["session_id"]
+    assert db.access.resolve_context(uid, member_sid).execution_mode == "restricted"
+    assert not db.access.can_use(uid, "unrestricted", db.get_session(member_sid)["workplace_id"])
+    assert not [g for g in db.access.list_grants("usr_admin", "usr_admin") if g["resource_type"] == "unrestricted"]
+
+
+def test_admin_explicit_restricted_mode_and_revocation_are_not_overridden(db):
+    db.access.register_execution_stopper(lambda sid: None)  # No work admitted.
+    sid = db.create_home_session("usr_admin")["session_id"]
+    active = db.get_session(sid)["workplace_id"]
+    db.access.set_chat_access("usr_admin", sid, active, execution_mode="restricted")
+    assert db.access.resolve_context("usr_admin", sid).execution_mode == "restricted"
+    db.access.set_chat_access("usr_admin", sid, active, execution_mode="unrestricted")
+    before = db.access.resolve_context("usr_admin", sid)
+    stopped = []
+    db.access.register_execution_stopper(stopped.append)
+    db.access.revoke("usr_admin", "usr_admin", "unrestricted", active)
+    assert sid in stopped
+    with pytest.raises(AccessDenied):
+        db.access.revalidate(before)
+    new_sid = db.create_home_session("usr_admin")["session_id"]
+    assert db.access.resolve_context("usr_admin", new_sid).execution_mode == "restricted"
+    db.with_db(migrate)
+    assert not db.access.can_use("usr_admin", "unrestricted", active)
+
+
+def test_upgrade_restores_only_unconfigured_admin_personal_chats(db):
+    db.access.register_execution_stopper(lambda sid: None)  # No work admitted.
+    old = db.create_home_session("usr_admin")["session_id"]
+    chosen = db.create_home_session("usr_admin")["session_id"]
+    db.access.set_chat_access("usr_admin", chosen, db.get_session(chosen)["workplace_id"], execution_mode="restricted")
+    # Persist the old release's automatic restricted default, not a user choice.
+    def old_default(conn):
+        conn.execute("UPDATE sessions SET execution_mode='restricted',access_generation=0 WHERE id=?", (old,))
+        conn.commit()
+    db.with_db(old_default)
+    db.with_db(migrate)
+    assert db.access.resolve_context("usr_admin", old).execution_mode == "unrestricted"
+    assert db.get_session(old)["access_generation"] > 0
+    assert db.access.resolve_context("usr_admin", chosen).execution_mode == "restricted"
+    db.with_db(migrate)
+    assert db.access.resolve_context("usr_admin", chosen).execution_mode == "restricted"
+
+
 def test_revocation_stays_pending_without_backend_then_stops_real_managed_process(db):
     owner, recipient = member(db, "owner"), member(db, "recipient")
     model_for(db, recipient)

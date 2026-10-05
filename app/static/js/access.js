@@ -57,6 +57,7 @@
     var sid = wrap.dataset.sessionId;
     if (!sid || sid.indexOf('draft') === 0) { Tomo.toast('Send a message to create the chat first. Choose its starting folder in New chat.', 'err'); return; }
     var state = await Tomo.api('/api/sessions/' + encodeURIComponent(sid) + '/access');
+    var admin = document.body.dataset.role === 'admin';
     var dialog = document.createElement('dialog'); dialog.className = 'access-dialog';
     dialog.setAttribute('aria-labelledby', 'accessDialogTitle');
     dialog.innerHTML = '<h2 id="accessDialogTitle">Working location</h2><p class="access-note">The active folder is the default destination. Changing access stops managed work; it does not move files. Shared files may be edited concurrently; edits are not automatically merged.</p>' +
@@ -64,11 +65,12 @@
       '<button type="button" class="btn ghost sm" data-create>+ Create project</button><h3>Additional access</h3><div data-resources></div>' +
       '<label class="field">Execution mode<select class="input" name="mode"><option value="restricted">Restricted container</option><option value="unrestricted">Unrestricted at this destination</option></select></label>' +
       '<div class="access-warning" data-warning hidden><strong>OS-account confidentiality warning</strong><p>Unrestricted execution can access everything the server OS account can reach, including other users’ data and credentials. Folder grants are not a filesystem boundary in this mode. Tomo cannot guarantee cross-user confidentiality, rollback, or termination of escaped processes.</p><label><input type="checkbox" name="ack"> I understand and explicitly activate unrestricted execution at this destination.</label></div>' +
-      '<p class="access-note">Remote execution, cross-machine transfers and Member interactive terminals are not available. Restricted networking is disabled. Missing sandbox or bounded storage rejects execution; there is no host fallback.</p>' +
+      '<p class="access-note">Admin chats use host execution by default. Restricted execution requires a non-root sandbox broker and bounded storage; it never falls back to the host.</p>' +
       '<p class="access-status" role="alert"></p><div class="access-actions"><button type="button" class="btn ghost" data-cancel>Cancel</button><button type="submit" class="btn primary">Save access</button></div></form>';
     document.body.appendChild(dialog);
     var form = dialog.querySelector('form'), active = form.elements.active, mode = form.elements.mode;
     var status = dialog.querySelector('.access-status');
+    dialog.querySelector('[data-warning] label').hidden = admin;
     if (state.legacy_unrestricted) {
       var notice = document.createElement('p'); notice.className = 'access-warning';
       notice.textContent = 'This migrated Admin chat currently uses unrestricted host execution. OS-account access may expose other users’ files and credentials. Saving access selects a granted folder; this legacy exception is not available to new chats.';
@@ -93,7 +95,7 @@
       mode.querySelector('option[value="unrestricted"]').disabled = !allowed;
       if (!allowed) mode.value = 'restricted';
       dialog.querySelector('[data-warning]').hidden = mode.value !== 'unrestricted';
-      form.elements.ack.required = mode.value === 'unrestricted';
+      form.elements.ack.required = mode.value === 'unrestricted' && !admin;
     }
     mode.value = state.execution_mode;
     render();
