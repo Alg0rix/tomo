@@ -24,8 +24,11 @@ def sid(tmp_path):
     manager.reset()
     store.rebind(tmp_path / 'supervisor.db')
     ensure_stoppers()
+    # Runtime registries can outlive a previous fixture's database. Use a fresh
+    # owner so unrelated bootstrap-Admin work cannot consume this user's quota.
+    owner = store.create_user({'username': 'job_admin', 'password': 'password123', 'role': 'admin'})
     # Solo-ops owned Admin session: agent deletion below must remove it.
-    sid = owned_host_session(['ops'])
+    sid = owned_host_session(['ops'], user_id=owner['id'])
     yield sid
     manager.reset()
 
