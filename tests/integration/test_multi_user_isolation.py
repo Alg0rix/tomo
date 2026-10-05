@@ -44,6 +44,27 @@ def instance(db, image="tomo:sandbox"):
     return ContainerBackend(policy=db.access, image=image, namespace="test-" + uuid.uuid4().hex)
 
 
+def test_confirmed_idle_namespace_can_revoke_without_runtime(setup):
+    db, alice, bob, sid, bob_sid = setup
+    broker = instance(db)
+    broker._recover_namespace()  # Real runtime proves this unique namespace empty.
+    broker.runtime = '/missing-runtime'
+    db.access.register_execution_stopper(broker.stop_session)
+    profile = db.access.list_visible_models(alice)[0]['id']
+    db.access.revoke('usr_admin', alice, 'model', profile)
+    assert not db.get_session(sid)['access_pending']
+    assert not db.access.can_use(alice, 'model', profile)
+    with pytest.raises(AccessDenied):
+        db.access.resolve_context(alice, sid)
+    # Missing runtime still cannot admit restricted execution: idle proof is
+    # permission to skip unnecessary teardown, not a host fallback.
+    db.access.assign('usr_admin', alice, 'model', profile)
+    ctx = db.access.resolve_context(alice, sid)
+    with pytest.raises(AccessUnavailable):
+        broker.execute(ctx, ['sh', '-c', 'echo must-not-run'])
+    broker.close()
+
+
 def test_no_identity_unavailable_image_and_private_override_never_execute_host(setup, monkeypatch, tmp_path):
     db, alice, bob, sid, bob_sid = setup
     broker = instance(db, image="tomo:missing-isolation-" + uuid.uuid4().hex)
@@ -86,6 +107,28 @@ def real(setup, monkeypatch):
     monkeypatch.setattr(tool_dispatch, "backend", broker)
     yield broker, setup
     broker.close()
+
+
+def test_durable_admission_prevents_false_idle_after_broker_restart(real):
+    broker, (db, alice, bob, sid, bob_sid) = real
+    ctx = db.access.resolve_context(alice, sid)
+    broker.hold(ctx)
+    # A new supervisor has no in-memory handles. Persisted uncertainty must
+    # still force actual runtime teardown, even after a clean-namespace proof.
+    restarted = ContainerBackend(policy=db.access, runtime='/missing-runtime')
+    restarted.namespace = broker.namespace
+    try:
+        with pytest.raises(AccessUnavailable):
+            restarted.stop_session(sid)
+        assert db.with_db(lambda c: c.execute(
+            'SELECT pending FROM container_admissions WHERE namespace=? AND session_id=?',
+            (broker.namespace, sid),
+        ).fetchone())[0] == 1
+        broker.stop_session(sid)
+        restarted.stop_session(sid)  # Actual teardown now gives durable proof.
+    finally:
+        broker.stop_session(sid)
+        restarted.close()
 
 
 def test_real_file_shell_python_cross_user_readonly_ffmpeg_and_recreation(real):

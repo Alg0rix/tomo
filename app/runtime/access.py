@@ -20,6 +20,10 @@ class AccessUnavailable(AccessDenied):
     """Required policy or execution barrier is not currently available."""
 
 
+class AccessChangePending(AccessUnavailable):
+    """Owner-safe recovery guidance, safe to display at HTTP ingress."""
+
+
 @dataclass(frozen=True)
 class ExecutionQuota:
     cpu: float = 2

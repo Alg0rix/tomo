@@ -52,7 +52,10 @@
   });
   root.addEventListener('click', function (event) {
     var button = event.target.closest('[data-key],[data-unshare],[data-revoke-grant],[data-tg-unlink]'); if (!button) return;
-    if (!window.confirm('Revoke this access? Affected managed work will stop.')) return;
+    var warning = button.dataset.type === 'unrestricted'
+      ? 'Revoke host access at this destination? This also disables an Admin’s host default; it does not just remove an optional assignment. Restricted execution needs a working sandbox. Affected managed work will stop.'
+      : 'Revoke this access? Affected managed work will stop. If teardown fails, access remains pending until recovery.';
+    if (!window.confirm(warning)) return;
     action(async function () {
       if (button.dataset.key) { await api('/api/api-keys/' + encodeURIComponent(button.dataset.key), 'DELETE'); $('newKeyToken').hidden = true; await keys(); }
       else if (button.dataset.tgUnlink) { await api('/api/users/' + encodeURIComponent(uid) + '/telegram/' + encodeURIComponent(button.dataset.tgUnlink), 'DELETE'); await telegram(); Tomo.toast('Telegram unlinked', 'ok'); }
@@ -77,7 +80,7 @@
     assignmentOptions();
     $('accountGrants').innerHTML = (data.grants || []).filter(function (g) { return g.state !== 'revoked'; }).map(function (g) {
       var item = (catalog[g.resource_type] || []).find(function (r) { return r.id === g.resource_id; });
-      return '<div class="access-row"><span>' + esc(g.resource_type + ' · ' + (item ? item.name : 'Unavailable resource') + ' · ' + g.permission + ' · ' + g.state) + '</span><button class="btn ghost sm" data-revoke-grant="1" data-type="' + esc(g.resource_type) + '" data-resource="' + esc(g.resource_id) + '">Revoke</button></div>';
+      return '<div class="access-row"><span>' + esc(g.resource_type + ' · ' + (item ? item.name : 'Unavailable resource') + ' · ' + g.permission + ' · ' + g.state) + '</span><button class="btn ghost sm" data-revoke-grant="1" data-type="' + esc(g.resource_type) + '" data-resource="' + esc(g.resource_id) + '">' + (g.state === 'pending' ? 'Retry revocation' : (g.resource_type === 'unrestricted' ? 'Revoke host access' : 'Revoke')) + '</button></div>';
     }).join('') || '<p class="access-note">No explicit assignments.</p>';
   }
   function assignmentOptions() {

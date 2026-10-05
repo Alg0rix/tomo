@@ -140,6 +140,31 @@ def test_unrestricted_requires_matching_grant_and_explicit_activation(db):
         db.access.resolve_context(uid, sid)
 
 
+def test_pending_model_reports_unfinished_teardown_instead_of_forbidden(db):
+    uid = member(db, 'pendingmodel')
+    profile = model_for(db, uid)
+    db.create_home_session(uid)
+    with pytest.raises(AccessUnavailable):
+        db.access.revoke('usr_admin', uid, 'model', profile)
+    with pytest.raises(AccessUnavailable, match='pending.*teardown'):
+        db.access.require_use(uid, 'model', profile)
+
+
+def test_pending_admin_host_change_does_not_create_a_restricted_chat(db):
+    sid = db.create_home_session('usr_admin')['session_id']
+    wid = db.get_session(sid)['workplace_id']
+    with pytest.raises(AccessUnavailable):
+        db.access.revoke('usr_admin', 'usr_admin', 'unrestricted', wid)
+    before = db.with_db(lambda c: c.execute('SELECT COUNT(*) FROM sessions').fetchone()[0])
+    with pytest.raises(AccessUnavailable, match='pending.*teardown'):
+        db.create_home_session('usr_admin')
+    with pytest.raises(AccessUnavailable):
+        db.create_swarm_session(['main'], 'usr_admin', 'main')
+    with pytest.raises(AccessUnavailable):
+        db.get_or_create_session('main', 'usr_admin', telegram_chat_id='43')
+    assert db.with_db(lambda c: c.execute('SELECT COUNT(*) FROM sessions').fetchone()[0]) == before
+
+
 def test_admin_defaults_to_host_without_grants_but_member_stays_restricted(db):
     uid = member(db, "defaultmember")
     model_for(db, uid)

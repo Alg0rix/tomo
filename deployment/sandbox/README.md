@@ -49,6 +49,26 @@ The non-root broker prerequisite below applies to restricted execution, not
 to ordinary Admin host tools. Members remain Restricted unless separately
 granted and explicitly activating an exact unrestricted destination.
 
+## Teardown proof and host-only recovery
+
+Container admission is durably journaled **before** invoking the runtime. Only
+confirmed namespace recovery or per-chat teardown records idle state. A clean
+namespace plus no uncertain admission lets host-only chats change access
+without Docker; missing/unknown history still requires actual runtime cleanup.
+Root, a missing binary, and an empty in-memory registry are never proof.
+
+Older host-only installs may retain pending grants from failed Docker teardown.
+Recovery requires an operator-approved backup and maintenance stop, confirmed
+absence/termination of managed host and container execution, then an explicit
+offline idle certificate and restoration of the intended account policy. Do
+not clear pending flags or container admission records on a live system just
+to bypass an error. Existing revocations and deliberate Restricted choices
+must be reviewed, not automatically discarded.
+
+Pending changes return actionable 503 recovery guidance rather than 403 or a
+silent Restricted default for a new Admin chat. The account UI distinguishes
+retrying a pending revocation from revoking Admin host entitlement.
+
 ## Local boundary and lifecycle
 
 Restricted local execution uses nonroot per-chat containers, authorized RO/RW

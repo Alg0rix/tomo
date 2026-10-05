@@ -90,6 +90,50 @@ def test_project_share_pending_teardown_is_visible_and_retry_does_not_waive_fail
         broken.close()
 
 
+def test_pending_model_chat_reports_recovery_not_forbidden(http):
+    import uuid
+    from app.services import store
+    from app.runtime.isolation.backend import ContainerBackend
+    app, admin, alice, bob, profile, ac, c, bc = http
+    sid = c.post('/api/sessions/home', json={}).json()['session_id']
+    broken = ContainerBackend(policy=store.access, runtime='/missing-runtime', namespace='pending-model-' + uuid.uuid4().hex)
+    store.access.register_execution_stopper(broken.stop_session)
+    try:
+        assert ac.delete('/api/users/' + alice['id'] + '/grants/model/' + profile['id']).status_code == 503
+        response = c.post('/api/sessions/' + sid + '/chat/stream', json={'message': 'Do not execute'})
+        # Existing sessions also have a session-level barrier. It remains 503,
+        # not an ownership error; a fresh authorized chat exposes model guidance.
+        assert response.status_code == 503
+        response = c.post('/api/sessions/home', json={})
+        assert response.status_code == 503
+        assert 'pending' in response.text.lower() and 'teardown' in response.text.lower()
+        assert bc.get('/api/sessions/' + sid + '/access').status_code == 404
+    finally:
+        broken.close()
+
+
+def test_admin_pending_model_is_not_a_chat_403(http):
+    import uuid
+    from app.services import store
+    from app.runtime.isolation.backend import ContainerBackend
+    app, admin, alice, bob, profile, ac, c, bc = http
+    assert ac.post('/api/sessions/home', json={}).status_code == 200
+    url = '/api/users/' + admin['id'] + '/grants/model/' + profile['id']
+    assert ac.put(url, json={'permission': 'use'}).status_code == 200
+    broken = ContainerBackend(policy=store.access, runtime='/missing-runtime', namespace='pending-admin-' + uuid.uuid4().hex)
+    store.access.register_execution_stopper(broken.stop_session)
+    try:
+        assert ac.delete(url).status_code == 503
+        fresh = ac.post('/api/sessions/home', json={}).json()['session_id']
+        assert ac.get('/api/sessions/' + fresh + '/access').json()['execution_mode'] == 'unrestricted'
+        response = ac.post('/api/sessions/' + fresh + '/chat/stream', json={'message': 'Do not execute'})
+        assert response.status_code == 503
+        assert 'pending' in response.text.lower() and 'teardown' in response.text.lower()
+        assert c.get('/api/sessions/' + fresh + '/access').status_code == 404
+    finally:
+        broken.close()
+
+
 def test_attachment_import_never_falls_back_and_checks_owner(http):
     app, admin, alice, bob, profile, ac, c, bc = http
     sid = c.post('/api/sessions/home', json={}).json()['session_id']
