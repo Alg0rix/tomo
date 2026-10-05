@@ -12,7 +12,7 @@ def _context() -> tuple[str, dict[str, Any] | None]:
     execution = authorize_tool('process')
     sid = execution.session_id
     session = store.get_session(sid)
-    if session is None or session['user_id'] != (execution.session_owner_id or execution.user_id):
+    if session is None or session['user_id'] != execution.user_id:
         raise ValueError('Process controls require the current authorized session')
     target = capture_current_target()
     if session.get('channel') == 'telegram' and target is None:

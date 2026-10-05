@@ -21,6 +21,33 @@ ADMIN_USER_ID = "usr_admin"
 _admin_login_counter = 0
 
 
+def seed_telegram_accounts(chat_ids):
+    """Real enabled test accounts and explicit destination bindings.
+
+    IDs retain the fixture's readable chat label, but carry no authority by
+    themselves: the user rows, current roles, and link rows are all real.
+    No production authorization function is replaced.
+    """
+    import time
+    from app.services import store
+
+    def seed(conn):
+        for chat_id in chat_ids:
+            uid = f'tg_{chat_id}'
+            username = f'telegram_{str(chat_id).replace("-", "minus")}'
+            conn.execute(
+                'INSERT OR IGNORE INTO users(id,username,password_hash,role,enabled,created_at,updated_at) '
+                "SELECT ?,?,password_hash,'admin',1,?,? FROM users WHERE id='usr_admin'",
+                (uid, username, time.time(), time.time()),
+            )
+            conn.execute(
+                'INSERT OR REPLACE INTO telegram_account_links(chat_id,user_id,created_at) VALUES(?,?,?)',
+                (str(chat_id), uid, time.time()),
+            )
+        conn.commit()
+    store.with_db(seed)
+
+
 def ensure_stoppers():
     """Register production teardown from sync or async tests alike."""
     import asyncio

@@ -71,11 +71,6 @@
     var form = dialog.querySelector('form'), active = form.elements.active, mode = form.elements.mode;
     var status = dialog.querySelector('.access-status');
     dialog.querySelector('[data-warning] label').hidden = admin;
-    if (state.legacy_unrestricted) {
-      var notice = document.createElement('p'); notice.className = 'access-warning';
-      notice.textContent = 'This migrated Admin chat currently uses unrestricted host execution. OS-account access may expose other users’ files and credentials. Saving access selects a granted folder; this legacy exception is not available to new chats.';
-      dialog.querySelector('h2').after(notice);
-    }
     function render() {
       fill(active, state.workplaces, state.active_workplace_id);
       // The default is an actual resource in a persisted chat, never empty.

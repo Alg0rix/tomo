@@ -151,6 +151,8 @@ async def test_cancel_before_runner_starts_cannot_replay_claimed_result(setup):
 
 @pytest.fixture
 def telegram(monkeypatch):
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([42, -100])
     bot = Bot()
     original = TelegramAPI.__init__
     def mocked(self, token, **kwargs):
@@ -324,12 +326,9 @@ def captured_target(chat_id=42, topic=None):
 
 
 def telegram_job(target, **data):
-    # Mirror production: telegram jobs execute as the designated Admin
-    # principal (trusted channel ceiling) for the chat session, never as the
-    # raw tg_* identity. The durable context must match the job owner.
+    # The durable context and job carry the real linked account owner.
     sid = store.get_or_create_session('main', target['user_id'], telegram_chat_id=str(target['chat_id']))
-    admin_id = store.get_settings().get('telegram_execution_admin_id') or 'usr_admin'
-    context = store.access.resolve_trusted_channel_context(admin_id, sid)
+    context = store.access.resolve_context(target['user_id'], sid)
     return store.create_background_job({'session_id': sid, 'user_id': context.user_id,
                                        'execution_context': context.to_dict(),
                                        'delivery': target, 'actor_id': target['actor_id'], **data})

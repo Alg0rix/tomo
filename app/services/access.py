@@ -285,15 +285,7 @@ class AccessService:
         self.store.with_db(clear)
 
     def _principal_sessions(self, user_id: str) -> list[dict]:
-        sessions = self.store.list_sessions(user_id=user_id)
-        user = self.store.get_user(user_id)
-        if user and user["role"] == "admin":
-            # Legacy channel sessions have no account owner. Conservatively
-            # stop all trusted legacy Telegram work when an Admin principal's
-            # permissions change; linked users' private chats stay excluded.
-            sessions += [s for s in self.store.list_sessions()
-                         if s["channel"] == "telegram" and s["user_id"].startswith("tg_")]
-        return sessions
+        return self.store.list_sessions(user_id=user_id)
 
     def _affected_sessions(self, user_id: str, kind: str, rid: str) -> list[str]:
         sessions = self._principal_sessions(user_id)
@@ -478,15 +470,7 @@ class AccessService:
 
     def resolve_context(self, user_id: str, session_id: str, agent_id: str | None = None, *, parent: ExecutionContext | None = None) -> ExecutionContext:
         user = self.require_user(user_id)
-        if parent and parent.trusted_channel:
-            self.require_admin(user_id)
-            session = self.store.get_session(session_id)
-            if not session or session["channel"] != "telegram" or session["user_id"] != parent.session_owner_id:
-                raise AccessDenied("Trusted channel session is unavailable")
-            if session["access_pending"]:
-                raise AccessUnavailable("Session execution teardown is pending")
-        else:
-            session = self.require_session(user_id, session_id)
+        session = self.require_session(user_id, session_id)
         aid = agent_id or session["coordinator_id"]
         self.require_use(user_id, "agent", aid)
         agent = self.store.get_agent(aid)
@@ -499,15 +483,11 @@ class AccessService:
         if mode not in ("restricted", "unrestricted"):
             raise AccessDenied("Execution mode is unavailable")
         active = session["workplace_id"]
-        legacy_admin = bool(user["role"] == "admin" and not active and session["access_generation"] == 0)
-        if not active and not legacy_admin:
+        if not active:
             raise AccessDenied("Select an authorized working location")
-        if legacy_admin:
-            mode, destination = "unrestricted", "__legacy_host__"
-        else:
-            destination = active
-            if mode == "unrestricted":
-                self.require_use(user_id, "unrestricted", active)
+        destination = active
+        if mode == "unrestricted":
+            self.require_use(user_id, "unrestricted", active)
         resources = []
         destination_machine = None
         for wid in dict.fromkeys([active, *session["additional_workplace_ids"]]):
@@ -544,8 +524,7 @@ class AccessService:
             tools -= _MEMBER_ADMIN_TOOLS
             tools = self._explicit_member_external_scope(aid, tools)
         context = ExecutionContext(user_id, session_id, aid, user["role"], active, tuple(resources), mode,
-                                   destination, session["access_generation"], self.get_quota(user_id), tools,
-                                   bool(parent and parent.trusted_channel), session["user_id"], legacy_admin)
+                                   destination, session["access_generation"], self.get_quota(user_id), tools)
         if parent:
             if parent.user_id != user_id or parent.session_id != session_id or parent.access_generation != context.access_generation:
                 raise AccessDenied("Execution ceiling is no longer valid")
@@ -562,40 +541,6 @@ class AccessService:
                 raise AccessDenied("Active working location is outside the execution ceiling")
             context = replace(context, resources=tuple(narrowed), tool_ids=context.tool_ids & parent.tool_ids)
         return context
-
-    def resolve_trusted_channel_context(self, admin_id: str, session_id: str, agent_id: str | None = None) -> ExecutionContext:
-        """Explicit Admin channel policy; never generic unknown-user fallback."""
-        self.require_admin(admin_id)
-        session = self.store.get_session(session_id)
-        if not session or session["channel"] != "telegram" or not session["user_id"].startswith("tg_"):
-            raise AccessDenied("Trusted legacy Telegram session is unavailable")
-        # Seed a ceiling from the explicitly selected Admin principal only.
-        seed = ExecutionContext(admin_id, session_id, agent_id or session["coordinator_id"], "admin",
-                                session["workplace_id"], execution_mode=session["execution_mode"],
-                                access_generation=session["access_generation"], trusted_channel=True,
-                                session_owner_id=session["user_id"])
-        # Initial resolution has no resource/tool ceiling yet. It still checks
-        # real account, Telegram ownership, grants, capabilities and mode.
-        return self._resolve_channel_initial(seed)
-
-    def _resolve_channel_initial(self, seed: ExecutionContext) -> ExecutionContext:
-        # A trusted seed is private construction, not a serializable privilege
-        # decision. Temporarily use the actual session owner only for lookup.
-        # resolve_context takes a validated channel marker but checks its ceiling;
-        # build that ceiling from current Admin resources without granting members.
-        session = self.store.get_session(seed.session_id)
-        agent = self.store.get_agent(seed.agent_id)
-        resources = []
-        for wid in [session["workplace_id"], *session["additional_workplace_ids"]]:
-            if wid:
-                permission = self.workplace_permission(seed.user_id, wid)
-                wp = self.store.get_workplace(wid)
-                resources.append(ResourceAccess(wid, wp["root_path"], permission, wp["destination_id"], wp["kind"], wp["storage_kind"], f"/workplaces/{wid}"))
-        mode = "unrestricted" if not session["workplace_id"] and session["access_generation"] == 0 else session["execution_mode"]
-        ceiling = replace(seed, resources=tuple(resources), execution_mode=mode,
-                          destination_id=session["workplace_id"] or "__legacy_host__",
-                          tool_ids=frozenset(t["id"] for t in self.store.get_agent_tools(agent["id"]) if t.get("enabled")))
-        return self.resolve_context(seed.user_id, seed.session_id, seed.agent_id, parent=ceiling)
 
     def _explicit_member_external_scope(self, agent_id: str, tools: frozenset) -> frozenset:
         """Keep Member external tools only with explicit per-agent assignment.

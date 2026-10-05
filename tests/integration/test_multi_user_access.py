@@ -314,23 +314,20 @@ def test_account_downgrade_and_quota_barriers(db):
         db.access.set_quota("usr_admin", uid, {"cpu": float("nan")})
 
 
-def test_legacy_channel_execution_requires_explicit_current_admin_and_is_revocable(db):
+def test_telegram_execution_requires_real_ownership_and_current_role_is_revocable(db):
     uid = member(db, "channeladmin")
     db.update_user(uid, {"role": "admin"})
-    sid = db.get_or_create_session("main", "tg_123", telegram_chat_id="123")
+    sid = db.get_or_create_session("main", uid, telegram_chat_id="123")
     other = member(db, "channelmember")
     with pytest.raises(AccessDenied):
         db.access.resolve_context("tg_123", sid)
     with pytest.raises(AccessDenied):
-        db.access.resolve_trusted_channel_context(other, sid)
-    context = db.access.resolve_trusted_channel_context(uid, sid)
-    assert context.trusted_channel
-    assert context.user_id == uid
-    assert context.session_owner_id == "tg_123"
-    assert context.legacy_admin
+        db.access.resolve_context(other, sid)
+    context = db.access.resolve_context(uid, sid)
+    assert context.user_id == uid and context.active_workplace_id
+    assert context.execution_mode == 'unrestricted'
     assert db.access.revalidate(context) == context
-    # A non-login channel still runs under the explicit Admin principal; role
-    # changes cannot forget its processes just because session owner is tg_*.
+    # Channel does not change ownership or current-account revocation.
     with pytest.raises(AccessUnavailable):
         db.update_user(uid, {"role": "member"})
     assert db.get_session(sid)["access_pending"]

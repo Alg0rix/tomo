@@ -282,13 +282,9 @@ async def start_session_turn(
     try:
         if background_job_ids:
             jobs = [store.get_background_job(jid) for jid in background_job_ids]
-            # Trusted legacy Telegram jobs execute as the designated Admin
-            # principal for another user's chat session; mirror the drain's
-            # trusted-channel exception so admitted work can actually start.
             if (store.background_jobs_paused(session_id)
                     or any(not j or j["session_id"] != session_id
-                           or (j["user_id"] != session["user_id"]
-                               and not (j.get("execution_context") or {}).get("trusted_channel"))
+                           or j["user_id"] != session["user_id"]
                            for j in jobs)
                     or not store.claim_background_jobs(background_job_ids)):
                 raise SessionTurnBusy(session_id)

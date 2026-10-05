@@ -212,7 +212,7 @@ async def test_revoked_destination_or_replaced_bot_never_runs_agent(setup, monke
         await api.aclose()
 
 
-async def test_schedule_tool_cannot_redirect_or_manage_another_topic(
+async def test_same_account_can_list_and_manage_other_topic_without_redirecting_delivery(
     setup, monkeypatch
 ):
     bot, api = setup
@@ -229,7 +229,7 @@ async def test_schedule_tool_cannot_redirect_or_manage_another_topic(
                         {
                             "action": "update",
                             "schedule_id": sch["id"],
-                            "message": "stolen",
+                            "message": "Updated from my other topic",
                         },
                     ),
                     (
@@ -253,11 +253,11 @@ async def test_schedule_tool_cannot_redirect_or_manage_another_topic(
         outputs = [
             json.loads(m["content"]) for m in llm.calls[-1][0] if m["role"] == "tool"
         ][-3:]
-        assert outputs[0]["jobs"] == []
-        assert outputs[1]["success"] is False and outputs[2]["success"] is False
-        assert (
-            store.get_schedule(sch["id"])["message"] == "Generate and send my report."
-        )
+        assert sch['id'] in {job['id'] for job in outputs[0]['jobs']}
+        assert outputs[1]['success'] is True and outputs[2]['success'] is False
+        updated = store.get_schedule(sch['id'])
+        assert updated['message'] == 'Updated from my other topic'
+        assert updated['delivery_target'] == sch['delivery_target']
         assert len([j for j in store.list_schedules() if j.get("delivery_target")]) == 1
     finally:
         await api.aclose()

@@ -43,7 +43,7 @@ def _target(job: dict[str, Any]) -> dict[str, Any]:
         raise DeliveryBlocked("Originating execution identity is unavailable") from exc
     session = store.get_session(job["session_id"])
     if (target.get("channel") != "telegram" or not session
-            or session["user_id"] != (execution.session_owner_id or execution.user_id)
+            or session["user_id"] != execution.user_id
             or session.get("telegram_chat_id") != str(target.get("chat_id"))):
         raise DeliveryBlocked("Job does not belong to this Telegram conversation")
     _check_target(target)

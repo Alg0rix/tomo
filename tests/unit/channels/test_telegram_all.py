@@ -40,6 +40,8 @@ def _inject_scripted_llm(monkeypatch) -> None:
 
 def _rebind(tmp_path) -> None:
     store.rebind(tmp_path / "tg-channel.db")
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([4242, 9, 1])
     store.update_settings({"telegram_allowed_chat_ids": ["4242", "9", "1"]})
 
 

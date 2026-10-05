@@ -404,11 +404,11 @@ class ScopedScheduleCreate(ScheduleCreate):
 
 def _schedule(request: Request, schedule_id: str) -> dict:
     user = authenticated_user(request)
-    schedule = store.get_schedule(schedule_id)
-    if not schedule or (schedule.get("owner_user_id") != user["id"] and
-                        not (user["role"] == "admin" and not schedule.get("owner_user_id"))):
-        raise HTTPException(404, "Schedule not found")
-    return schedule
+    from app.runtime.access import AccessDenied
+    try:
+        return store.access.require_schedule(user["id"], schedule_id)
+    except AccessDenied as exc:
+        raise HTTPException(404, "Schedule not found") from exc
 
 
 def _public_schedule(schedule: dict) -> dict:
@@ -420,7 +420,7 @@ def _validate_schedule_execution(request: Request, schedule: dict) -> None:
 
     if schedule.get("execution_context"):
         store.access.revalidate(ExecutionContext.from_dict(schedule["execution_context"]))
-    elif authenticated_user(request)["role"] != "admin":
+    else:
         raise HTTPException(503, "Schedule execution context unavailable")
 
 
@@ -429,8 +429,7 @@ async def list_schedules(request: Request, _: AuthDep):
     user = authenticated_user(request)
     agents = {a["id"]: a for a in store.access.list_visible_agents(user["id"])}
     rows = []
-    schedules = [s for s in store.list_schedules() if s.get("owner_user_id") == user["id"] or
-                 (user["role"] == "admin" and not s.get("owner_user_id"))]
+    schedules = store.access.list_visible_schedules(user["id"])
     for s in schedules:
         row = _public_schedule(s)
         agent = agents.get(s.get("agent_id"))
@@ -500,7 +499,7 @@ async def run_schedule(schedule_id: str, request: Request, _: AuthDep):
 
     _validate_schedule_execution(request, _schedule(request, schedule_id))
     try:
-        result = await run_schedule_now(schedule_id)
+        result = await run_schedule_now(schedule_id, user_id=session_user_id(request))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result

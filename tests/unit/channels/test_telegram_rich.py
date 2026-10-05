@@ -23,6 +23,8 @@ from tests.unit.channels.test_telegram_ux import Bot, inject, message, until
 @pytest.fixture
 def settings(tmp_path):
     store.rebind(tmp_path / "rich.db")
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([42, -100])
     store.update_settings(
         {
             "telegram_rich_messages": True,

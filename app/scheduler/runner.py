@@ -74,14 +74,13 @@ async def fire_schedule(
         # not a cached grant), activating the same destination/resources the
         # owner holds now. The creation chat stays untouched.
         session_id = store.create_swarm_session([agent_id], user_id=context.user_id)
-        if not context.legacy_admin:
-            store.access.set_chat_access(
-                context.user_id, session_id, context.active_workplace_id,
-                additional_workplace_ids=[r.workplace_id for r in context.resources
-                                          if r.workplace_id != context.active_workplace_id],
-                execution_mode=context.execution_mode,
-                unrestricted_acknowledged=context.execution_mode == "unrestricted",
-            )
+        store.access.set_chat_access(
+            context.user_id, session_id, context.active_workplace_id,
+            additional_workplace_ids=[r.workplace_id for r in context.resources
+                                      if r.workplace_id != context.active_workplace_id],
+            execution_mode=context.execution_mode,
+            unrestricted_acknowledged=context.execution_mode == "unrestricted",
+        )
         context = store.access.resolve_context(context.user_id, session_id, agent_id)
     except PermissionError:
         # Missing owner is never the historical privileged scheduler identity.

@@ -188,10 +188,7 @@ class AccessPolicyMiddleware:
             if aid and user["role"] != "admin":
                 require_agent(request, aid)
             if name in _EXECUTION and sid:
-                if store.get_owned_session(sid, user["id"]):
-                    context = store.access.resolve_context(user["id"], sid)
-                else:
-                    context = store.access.resolve_trusted_channel_context(user["id"], sid)
+                context = store.access.resolve_context(user["id"], sid)
                 if name in _EXECUTION:
                     require_chat_inputs(context)
         except (HTTPException, AccessDenied) as exc:

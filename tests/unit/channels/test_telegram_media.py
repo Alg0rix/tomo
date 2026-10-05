@@ -64,6 +64,8 @@ class MediaBot(Bot):
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     store.rebind(tmp_path / "media.db")
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([42, 43])
     monkeypatch.setattr("app.core.config.TOMO_HOME", tmp_path)
     store.update_settings(
         {"telegram_allowed_chat_ids": [42, 43], "approvals_mode": "smart"}

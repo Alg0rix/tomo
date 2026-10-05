@@ -219,7 +219,6 @@ class BackgroundJobManager:
                     return self._start(command, workplace_hint)
 
     def _start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
-        from app.runtime.tools.user_ctx import current_user_id
         from app.runtime.tools.progress import current_call_id
         from app.channels.delivery import capture_current_target
         from app.services import background_job_backends as backends
@@ -230,7 +229,7 @@ class BackgroundJobManager:
         if sid in self._closing_sessions:
             raise ValueError('Background commands cannot start while their session is closing')
         session = store.get_session(sid) if sid else None
-        if session is None or session['user_id'] != (execution.session_owner_id or current_user_id()):
+        if session is None or session['user_id'] != execution.user_id:
             raise ValueError('Background commands require the current authorized session')
         if not isinstance(command, str) or not command.strip():
             raise ValueError('Command must be a non-empty string')

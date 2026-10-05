@@ -109,7 +109,7 @@ async def _drain(sid: str) -> None:
             session = store.get_session(sid)
             coordinator = store.get_agent(session.get("coordinator_id", "")) if session else None
             if (not session or not coordinator or not coordinator.get("enabled")
-                    or any(j["user_id"] != session["user_id"] and not (j.get("execution_context") or {}).get("trusted_channel") for j in pending)):
+                    or any(j["user_id"] != session["user_id"] for j in pending)):
                 _block(pending, "Originating session/owner/coordinator is unavailable")
                 return
             from app.runtime.policy import durable_context

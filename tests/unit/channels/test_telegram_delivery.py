@@ -69,6 +69,8 @@ def calls(*items):
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     store.rebind(tmp_path / "delivery.db")
+    from tests.fakes.access import seed_telegram_accounts
+    seed_telegram_accounts([42, -100])
     monkeypatch.setattr("app.core.config.TOMO_HOME", tmp_path / "home")
     monkeypatch.setattr("app.core.config.TOMO_WORK", tmp_path / "work")
     store.update_settings(
@@ -101,7 +103,7 @@ async def test_telegram_context_delivers_photo_and_document_without_leaking_to_w
         monkeypatch,
         [
             calls(
-                ("save_artifact", {"filename": "shot.png", "source_path": "shot.png"}),
+                ("save_artifact", {"filename": "shot.png", "source_path": str(root / "shot.png")}),
                 ("save_artifact", {"filename": "report.md", "content": "# Report"}),
             ),
             calls(

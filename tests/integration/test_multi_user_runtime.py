@@ -171,6 +171,37 @@ def test_schedule_captures_owner_and_ceiling_and_other_account_cannot_manage(acc
     assert store.get_schedule(sid) is not None
 
 
+def test_schedule_listing_is_account_wide_not_delivery_scoped(accounts):
+    from app.channels.telegram import TelegramAPI
+    from app.channels.telegram_context import bind_turn, reset_turn
+    from app.channels.telegram_ui import TelegramTurnUI
+    from app.runtime.artifacts.fs import bind_session, reset_session
+
+    owner = context(accounts)
+    local = store.access.create_schedule_for_context(owner, {
+        'name': 'Local routine', 'schedule': 'every 1h', 'message': 'Local result'})
+    telegram = store.access.create_schedule_for_context(owner, {
+        'name': 'Telegram routine', 'schedule': 'every 1h', 'message': 'Telegram result',
+        'delivery_target': {'version': 1, 'channel': 'telegram', 'chat_id': 42}})
+    store.access.create_schedule_for_context(context(accounts, 1), {
+        'name': 'Other account routine', 'schedule': 'every 1h', 'message': 'Private'})
+    expected = {local['id'], telegram['id']}
+    with execution_scope(owner):
+        web = json.loads(execute('schedule', {'action': 'list'}))
+        assert {job['id'] for job in web['jobs']} == expected
+        # Listing must also work in a Telegram turn, without requiring that
+        # the current delivery target matches a job or is authorized to send.
+        # No network call is made by the real Telegram UI/API objects here.
+        session_token = bind_session(owner.session_id)
+        turn_token = bind_turn(TelegramTurnUI(TelegramAPI('not-used'), 42, owner.session_id))
+        try:
+            tg = json.loads(execute('schedule', {'action': 'list'}))
+            assert {job['id'] for job in tg['jobs']} == expected
+        finally:
+            reset_turn(turn_token)
+            reset_session(session_token)
+
+
 @pytest.mark.asyncio
 async def test_schedule_runs_selected_authorized_agent_in_owned_context_with_real_http_provider(accounts):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

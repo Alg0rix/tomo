@@ -46,6 +46,73 @@ def http(tmp_path):
         c.close()
 
 
+def test_unowned_routines_are_never_visible_or_executable_even_for_admin(http):
+    app, admin, alice, bob, profile, ac, c, bc = http
+    agent = store.access.list_visible_agents(admin['id'])[0]['id']
+    job = store.create_schedule({'name': 'Unowned routine', 'agent_id': agent,
+                                 'schedule': 'every 1h', 'message': 'Unowned private work'})
+    assert job['id'] not in {s['id'] for s in ac.get('/api/schedules').json()['schedules']}
+    page = ac.get('/scheduler')
+    assert page.status_code == 200 and job['name'] not in page.text
+    assert ac.post(f"/api/schedules/{job['id']}/run").status_code == 404
+    for member in (c, bc):
+        assert job['id'] not in {s['id'] for s in member.get('/api/schedules').json()['schedules']}
+        assert job['name'] not in member.get('/scheduler').text
+        assert member.get(f"/api/schedules/{job['id']}").status_code == 404
+
+
+def test_manual_routine_http_run_propagates_authenticated_owner_to_real_runner_and_provider(http):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    app, admin, alice, bob, profile, ac, c, bc = http
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            self.send_response(200)
+            if body.get('stream'):
+                self.send_header('Content-Type', 'text/event-stream')
+                self.end_headers()
+                payload = {'choices': [{'index': 0, 'delta': {'content': 'Routine completed'},
+                                        'finish_reason': 'stop'}]}
+                self.wfile.write(('data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n\n').encode())
+            else:
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'choices': [{'message': {
+                    'role': 'assistant', 'content': 'Routine completed'}, 'finish_reason': 'stop'}]}).encode())
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assigned = store.create_llm_profile({'name': 'Routine provider', 'model': 'routine-model',
+            'api_key': 'local-test', 'base_url': f'http://127.0.0.1:{server.server_port}/v1'})
+        store.set_default_llm_profile(assigned['id'])
+        store.access.assign(admin['id'], alice['id'], 'model', assigned['id'])
+        sid = store.create_home_session(alice['id'])['session_id']
+        agent = store.get_session(sid)['coordinator_id']
+        response = c.post('/api/schedules', json={'name': 'Owner routine', 'agent_id': agent, 'session_id': sid,
+                         'schedule': 'every 1h', 'message': 'Run my routine'})
+        assert response.status_code == 200, response.text
+        job_id = response.json()['id']
+        # Even Admin cannot manually run another account's private routine.
+        assert ac.post(f'/api/schedules/{job_id}/run').status_code == 404
+        assert bc.post(f'/api/schedules/{job_id}/run').status_code == 404
+        run = c.post(f'/api/schedules/{job_id}/run')
+        assert run.status_code == 200 and run.json()['status'] == 'ok', run.text
+        run_sid = run.json()['session_id']
+        assert store.get_session(run_sid)['user_id'] == alice['id']
+        assert any(e['type'] == 'final' and 'Routine completed' in e['content']
+                   for e in store.get_session_history(run_sid))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+
+
 def test_member_cookie_and_key_cannot_reach_any_global_surface(http):
     app, admin, alice, bob, profile, ac, c, bc = http
     key = c.post("/api/api-keys", json={"user_id": alice["id"], "name": "personal"})
