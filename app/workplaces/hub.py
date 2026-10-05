@@ -52,6 +52,33 @@ def client_supports_stream(caps: str = "") -> bool:
     return "exec-stream" in (caps or "").lower()
 
 
+#: Minimum connector version that enforces destination-owned execution
+#: contracts (per-request owner/resource/generation validation). Older
+#: connectors transport bytes but enforce nothing: they stay fail-closed.
+MIN_EXEC_VERSION = "0.4.0"
+
+#: Capability a connector must advertise for any supervised execution RPC.
+EXEC_CONTEXT_CAP = "exec-context-v1"
+
+#: Capability a connector advertises only when the destination provides an
+#: equivalent per-chat container boundary (full-toolchain image) for
+#: restricted work. Unrestricted destinations do not need it; restricted
+#: execution refuses without it.
+REMOTE_SANDBOX_CAP = "remote-sandbox-v1"
+
+
+def client_supports_exec_context(*, caps: str = "", version: str = "") -> bool:
+    """Destination enforces per-request owner/resource/generation contracts."""
+    if EXEC_CONTEXT_CAP not in {c.strip() for c in (caps or "").lower().split(",") if c.strip()}:
+        return False
+    return _version_gte(version, MIN_EXEC_VERSION)
+
+
+def client_reports_sandbox(*, caps: str = "") -> bool:
+    """Destination claims an equivalent per-chat container boundary."""
+    return REMOTE_SANDBOX_CAP in {c.strip() for c in (caps or "").lower().split(",") if c.strip()}
+
+
 # req_id → live output sink. Module-level (not per session) so a reconnect
 # that adopts pending RPCs keeps streaming into the same tool card.
 _progress_sinks: dict[str, tuple[str, Callable[[str], None]]] = {}
@@ -85,8 +112,10 @@ class ConnectorSession:
         replay_ok: bool = False,
         stream_ok: bool = False,
         secret_broker: bool = False,
+        caps: str = "",
     ) -> None:
         self.workplace_id = workplace_id
+        self.caps = caps or ""
         self.stream_ok = stream_ok
         self.secret_broker = secret_broker
         self.websocket = websocket
@@ -106,6 +135,16 @@ class ConnectorSession:
 
     def touch(self) -> None:
         self.last_seen = time.time()
+
+    @property
+    def exec_capable(self) -> bool:
+        """Destination enforces per-request owner/resource/generation contracts."""
+        return client_supports_exec_context(caps=self.caps, version=self.version)
+
+    @property
+    def sandbox_capable(self) -> bool:
+        """Destination attests an equivalent per-chat container boundary."""
+        return self.exec_capable and client_reports_sandbox(caps=self.caps)
 
     async def send(self, message: dict[str, Any]) -> None:
         await self.websocket.send_json(message)
@@ -364,6 +403,11 @@ __all__ = [
     "hub",
     "client_supports_replay",
     "client_supports_stream",
+    "client_supports_exec_context",
+    "client_reports_sandbox",
     "emit_rpc_progress",
+    "EXEC_CONTEXT_CAP",
+    "REMOTE_SANDBOX_CAP",
+    "MIN_EXEC_VERSION",
     "DISCONNECT_GRACE",
 ]

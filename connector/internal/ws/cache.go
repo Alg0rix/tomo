@@ -204,6 +204,11 @@ func (s *rpcStore) executeWithProgress(msg envelope, progress executor.Progress)
 		if !existing.record.Completed {
 			return rpcError(msg.ID, "execution status uncertain after interruption; inspect effects before issuing a new request")
 		}
+		// Replays re-validate the envelope: revoked generations never
+		// replay old results.
+		if _, err := executor.AdmitRequest(msg.Method, msg.Params); err != nil {
+			return rpcError(msg.ID, err.Error())
+		}
 		var out envelope
 		_ = json.Unmarshal(existing.record.Response, &out)
 		return out
@@ -254,6 +259,12 @@ func executeRPC(msg envelope, progress executor.Progress) (out envelope) {
 	out = rpcError(msg.ID, "execution status uncertain: handler panicked; inspect effects before issuing a new request")
 	defer func() { _ = recover() }()
 	params := msg.Params
+	// Destination-owned admission runs before any handler, including
+	// replayed requests: a revoked generation never replays old results.
+	adm, err := executor.AdmitRequest(msg.Method, params)
+	if err != nil {
+		return rpcError(msg.ID, err.Error())
+	}
 	if msg.BrokerURL != "" && (msg.Method == "exec_bash" || msg.Method == "bash") {
 		if token, ok := params["broker_token"].(string); ok && token != "" {
 			// Runtime bridge address is not part of the replay fingerprint.
@@ -272,7 +283,7 @@ func executeRPC(msg envelope, progress executor.Progress) (out envelope) {
 			params["env"] = env
 		}
 	}
-	result, err := executor.HandleWithProgress(msg.Method, params, progress)
+	result, err := executor.HandleWithProgress(msg.Method, params, progress, adm)
 	if err != nil {
 		return rpcError(msg.ID, err.Error())
 	}

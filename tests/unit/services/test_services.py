@@ -10,8 +10,6 @@ import shlex
 import time
 import pytest
 from app.models.mixins.background_jobs import LOG_LIMIT
-from app.runtime.artifacts.fs import bind_session, reset_session
-from app.runtime.tools import sandbox, user_ctx
 from app.services import store
 from app.services.background_jobs import manager, _group_alive
 from app.runtime.agent.context import history_to_messages
@@ -22,36 +20,48 @@ from tests.fakes.llm import ScriptedLLM, text_reply
 # --- from test_background_job_manager.py ---
 @pytest.fixture
 def sid(tmp_path):
+    from tests.fakes.access import ensure_stoppers, owned_host_session
     manager.reset()
     store.rebind(tmp_path / 'supervisor.db')
-    store.update_agent('ops', {'workplace_id': ''})
-    sid = store.get_or_create_session('ops', 'web')
-    tokens = (bind_session(sid), sandbox.bind_agent('ops'), user_ctx.bind_user('web'))
+    ensure_stoppers()
+    # Solo-ops owned Admin session: agent deletion below must remove it.
+    sid = owned_host_session(['ops'])
     yield sid
     manager.reset()
-    reset_session(tokens[0])
-    sandbox.reset_agent(tokens[1])
-    user_ctx.reset_user(tokens[2])
+
+
+def _uid(sid):
+    return store.get_session(sid)['user_id']
+
+
+def started(sid, command, **kwargs):
+    # Tool-path start: binds the session's real execution context, mirroring
+    # run_turn ingress. Control calls below use explicit user ids instead
+    # (HTTP-path ownership checks without a bound turn context).
+    from app.runtime.access import execution_scope
+    uid = _uid(sid)
+    with execution_scope(store.access.resolve_context(uid, sid)):
+        return manager.start(command, **kwargs)
 
 
 def wait_terminal(sid, job_id, timeout=5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        item = manager.get_job(sid, job_id)
+        item = manager.get_job(sid, job_id, user_id=_uid(sid))
         if item['status'] in {'succeeded', 'failed', 'stopped', 'interrupted'}:
             return item
         time.sleep(0.02)
-    raise AssertionError(manager.get_job(sid, job_id))
+    raise AssertionError(manager.get_job(sid, job_id, user_id=_uid(sid)))
 
 
 def test_multiple_jobs_survive_turn_and_capture_real_origin(sid):
     store.append_session_history(sid, {'type': 'tool_call', 'function': 'bash', 'agent_id': 'ops',
                                      'params': {'command': 'sleep .3; echo first'}})
-    first = manager.start('sleep .3; echo first')
-    second = manager.start('sleep .3; echo failed >&2; exit 7')
+    first = started(sid, 'sleep .3; echo first')
+    second = started(sid, 'sleep .3; echo failed >&2; exit 7')
     assert first['id'] != second['id']
     assert first['origin_message_id'] is not None
-    assert len(manager.list_jobs(sid)) == 2
+    assert len(manager.list_jobs(sid, user_id=_uid(sid))) == 2
     a, b = wait_terminal(sid, first['id']), wait_terminal(sid, second['id'])
     assert a['status'] == 'succeeded' and a['returncode'] == 0 and a['stdout'] == 'first\n'
     assert b['status'] == 'failed' and b['returncode'] == 7 and b['stderr'] == 'failed\n'
@@ -63,13 +73,13 @@ def test_drains_running_pipes_and_combined_cap(sid, tmp_path):
     code = ('import os,time; from pathlib import Path; '
             'os.write(1,b"x"*1500000); os.write(2,b"y"*1500000); '
             f'print("tail",flush=True)\nwhile not Path({str(release)!r}).exists(): time.sleep(.02)')
-    item = manager.start(f'python3 -c {shlex.quote(code)}')
+    item = started(sid, f'python3 -c {shlex.quote(code)}')
     try:
         deadline = time.monotonic() + 10
-        running = manager.get_job(sid, item['id'])
+        running = manager.get_job(sid, item['id'], user_id=_uid(sid))
         while 'tail' not in running['stdout'] and time.monotonic() < deadline:
             time.sleep(.02)
-            running = manager.get_job(sid, item['id'])
+            running = manager.get_job(sid, item['id'], user_id=_uid(sid))
         assert 'tail' in running['stdout']
         assert running['status'] == 'running'
         assert running['log_cursor'] >= 3000000
@@ -83,60 +93,63 @@ def test_drains_running_pipes_and_combined_cap(sid, tmp_path):
 
 
 def test_stop_group_only_and_late_stop_preserves_result(sid):
-    stopped = manager.start('sleep 30 & wait')
-    other = manager.start('sleep .5; echo alive')
-    result = manager.stop_job(sid, stopped['id'])
+    stopped = started(sid, 'sleep 30 & wait')
+    other = started(sid, 'sleep .5; echo alive')
+    result = manager.stop_job(sid, stopped['id'], user_id=_uid(sid))
     assert result['status'] == 'stopped'
     assert result['continuation_status'] == 'cancelled'
     assert not _group_alive(int(stopped['backend_handle']))
     done = wait_terminal(sid, other['id'])
     assert done['stdout'] == 'alive\n'
-    assert manager.stop_job(sid, other['id'])['status'] == 'succeeded'
+    assert manager.stop_job(sid, other['id'], user_id=_uid(sid))['status'] == 'succeeded'
 
 
 def test_cleanup_children_on_shell_exit(sid):
-    item = manager.start('sleep 30 & echo child=$!; exit 0')
+    item = started(sid, 'sleep 30 & echo child=$!; exit 0')
     done = wait_terminal(sid, item['id'])
     assert done['status'] == 'succeeded' and done['returncode'] == 0
     assert not _group_alive(int(item['backend_handle']))
 
 
 def test_no_unbound_or_cross_session_controls(sid):
-    token = bind_session(None)
-    try:
-        with pytest.raises(ValueError, match='authorized session'):
-            manager.start('echo nope')
-    finally:
-        reset_session(token)
-    item = manager.start('echo fine')
-    other = store.get_or_create_session('ops', 'other')
-    assert manager.get_job(other, item['id']) is None
+    # Tool path without an execution identity fails closed (no host fallback).
+    with pytest.raises(PermissionError):
+        manager.start('echo nope')
+    item = started(sid, 'echo fine')
+    # HTTP path with an explicit owner: same-user cross-session reads miss.
+    other = store.create_swarm_session(['ops'], user_id=_uid(sid))
+    assert manager.get_job(other, item['id'], user_id=_uid(sid)) is None
     with pytest.raises(ValueError, match='not found'):
-        manager.stop_job(other, item['id'])
+        manager.stop_job(other, item['id'], user_id=_uid(sid))
 
 
 def test_close_unknown_releases_monitor_only(sid):
-    item = store.create_background_job({'session_id': sid, 'user_id': 'web', 'backend': 'tunnel', 'status': 'unknown'})
-    result = manager.close_monitoring(sid, item['id'])
+    item = store.create_background_job({'session_id': sid, 'user_id': _uid(sid), 'backend': 'tunnel', 'status': 'unknown'})
+    result = manager.close_monitoring(sid, item['id'], user_id=_uid(sid))
     assert result['status'] == 'unknown' and result['monitoring_closed']
     assert result['continuation_status'] == 'cancelled'
-    complete = manager.start('echo completed')
+    complete = started(sid, 'echo completed')
     wait_terminal(sid, complete['id'])
     with pytest.raises(ValueError, match='Unknown'):
-        manager.close_monitoring(sid, complete['id'])
+        manager.close_monitoring(sid, complete['id'], user_id=_uid(sid))
 
 
 def test_startup_reconciliation_and_shutdown(sid):
-    old = store.create_background_job({'session_id': sid, 'user_id': 'web', 'status': 'running'})
-    pending = store.create_background_job({'session_id': sid, 'user_id': 'web'})
+    from app.runtime.access import execution_scope
+    uid = _uid(sid)
+    with execution_scope(store.access.resolve_context(uid, sid)):
+        old = store.create_background_job({'session_id': sid, 'user_id': uid, 'status': 'running',
+                                           'execution_context': store.access.resolve_context(uid, sid).to_dict()})
+        pending = store.create_background_job({'session_id': sid, 'user_id': uid,
+                                               'execution_context': store.access.resolve_context(uid, sid).to_dict()})
     store.update_background_job(pending['id'], {'status': 'succeeded', 'returncode': 0})
     manager.startup()
-    assert manager.get_job(sid, old['id'])['status'] == 'interrupted'
-    assert manager.get_job(sid, pending['id'])['continuation_status'] == 'pending'
+    assert manager.get_job(sid, old['id'], user_id=uid)['status'] == 'interrupted'
+    assert manager.get_job(sid, pending['id'], user_id=uid)['continuation_status'] == 'pending'
     assert store.background_jobs_paused(sid)
-    live = manager.start('sleep 30')
+    live = started(sid, 'sleep 30')
     asyncio.run(manager.shutdown())
-    result = manager.get_job(sid, live['id'])
+    result = manager.get_job(sid, live['id'], user_id=_uid(sid))
     assert result['status'] == 'interrupted'
     assert not _group_alive(int(live['backend_handle']))
 
@@ -151,7 +164,7 @@ def test_identical_commands_keep_distinct_origin_calls(sid):
     for call_id in ('first-call', 'second-call'):
         token = progress.bind_call_id(call_id)
         try:
-            jobs.append(manager.start('echo repeated'))
+            jobs.append(started(sid, 'echo repeated'))
         finally:
             progress.reset_call_id(token)
     assert jobs[0]['origin_message_id'] != jobs[1]['origin_message_id']
@@ -161,10 +174,10 @@ def test_identical_commands_keep_distinct_origin_calls(sid):
 
 
 def test_clear_future_completion_suppressed_and_delete_stops(sid):
-    item = manager.start('sleep .3; echo done')
+    item = started(sid, 'sleep .3; echo done')
     store.clear_session_by_id(sid)
     assert wait_terminal(sid, item['id'])['continuation_status'] == 'cancelled'
-    live = manager.start('sleep 30')
+    live = started(sid, 'sleep 30')
     assert store.delete_session(sid)
     assert store.get_background_job(live['id']) is None
     assert not _group_alive(int(live['backend_handle']))
@@ -183,7 +196,7 @@ def test_remote_unknown_reconciles_original_handle_without_retry(sid, monkeypatc
         observed.append((kind, workplace, handle))
         return {'status': 'succeeded', 'exit_code': 0, 'stdout': 'remote result'}
     monkeypatch.setattr(backend, 'observe_remote', observe)
-    item = manager.start('remote-command')
+    item = started(sid, 'remote-command')
     assert item['status'] == 'unknown' and item['backend_handle'] == 'handle-123'
     done = wait_terminal(sid, item['id'])
     assert done['status'] == 'succeeded' and done['stdout'] == 'remote result'
@@ -191,7 +204,7 @@ def test_remote_unknown_reconciles_original_handle_without_retry(sid, monkeypatc
 
 
 def test_agent_deletion_cleans_solo_session_jobs(sid):
-    live = manager.start('sleep 60')
+    live = started(sid, 'sleep 60')
     assert store.delete_agent('ops')
     assert store.get_session(sid) is None
     assert store.get_background_job(live['id']) is None
@@ -210,8 +223,11 @@ def test_deletion_waits_for_start_registration_then_stops_owned_process(sid, mon
         assert release.wait(3)
         original(item)
     monkeypatch.setattr(manager, '_start_local', block)
+    from app.runtime.access import execution_scope
+    with execution_scope(store.access.resolve_context(_uid(sid), sid)):
+        context_scope = copy_context()
     with ThreadPoolExecutor(max_workers=2) as pool:
-        started = pool.submit(copy_context().run, manager.start, 'sleep 60')
+        started = pool.submit(context_scope.run, manager.start, 'sleep 60')
         assert entered.wait(3)
         deleted = pool.submit(store.delete_session, sid)
         try:
@@ -227,9 +243,9 @@ def test_deletion_waits_for_start_registration_then_stops_owned_process(sid, mon
 
 
 def test_log_tail_limit_counts_utf8_bytes(sid):
-    job = store.create_background_job({'session_id': sid, 'user_id': 'web',
+    job = store.create_background_job({'session_id': sid, 'user_id': _uid(sid),
                                        'stdout': '界' * 100, 'stderr': 'é' * 10})
-    logs = manager.logs(sid, job['id'], tail=25)
+    logs = manager.logs(sid, job['id'], tail=25, user_id=_uid(sid))
     assert len(logs['stdout'].encode()) + len(logs['stderr'].encode()) <= 25
 
 

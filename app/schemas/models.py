@@ -95,6 +95,38 @@ class SessionCreate(BaseModel):
     workplace_id: str | None = None
 
 
+class ChatAccessIn(BaseModel):
+    active_workplace_id: str
+    additional_workplace_ids: list[str] = Field(default_factory=list)
+    execution_mode: Literal["restricted", "unrestricted"] = "restricted"
+    unrestricted_acknowledged: bool = False
+
+
+class ManagedProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ResourceGrantIn(BaseModel):
+    user_id: str
+    resource_type: Literal["workplace", "agent", "model", "unrestricted"]
+    resource_id: str
+    permission: Literal["read", "read_write", "use"] = "use"
+
+
+class ProjectShareIn(BaseModel):
+    user_id: str
+    permission: Literal["read", "read_write"] = "read"
+
+
+class ExecutionQuotaIn(BaseModel):
+    cpu: float = Field(default=2, gt=0, le=128)
+    memory_mb: int = Field(default=2048, gt=0)
+    disk_mb: int = Field(default=4096, gt=0)
+    duration_seconds: int = Field(default=300, gt=0)
+    max_concurrent_jobs: int = Field(default=2, gt=0, le=1024)
+    gpu_allowed: bool = False
+
+
 class SessionWorkplaceIn(BaseModel):
     """Set or clear a chat's default workplace."""
 
@@ -180,6 +212,7 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=32, pattern=r"^[a-zA-Z0-9_]+$")
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=80)
+    role: Literal["admin", "member"] = "member"
 
 
 class UserUpdate(BaseModel):
@@ -187,6 +220,7 @@ class UserUpdate(BaseModel):
 
     display_name: str | None = Field(default=None, max_length=80)
     enabled: bool | None = None
+    role: Literal["admin", "member"] | None = None
     password: str | None = Field(default=None, max_length=128)
 
 
@@ -212,6 +246,8 @@ class WorkplaceCreate(BaseModel):
     ssh_user: str = ""
     ssh_password: str = ""
     ssh_key: str = ""
+    ssh_sandbox_root: str = ""
+    ssh_sandbox_image: str = ""
 
 
 class WorkplaceUpdate(BaseModel):
@@ -226,6 +262,8 @@ class WorkplaceUpdate(BaseModel):
     ssh_user: str | None = None
     ssh_password: str | None = None
     ssh_key: str | None = None
+    ssh_sandbox_root: str | None = None
+    ssh_sandbox_image: str | None = None
 
 
 class ScheduleCreate(BaseModel):

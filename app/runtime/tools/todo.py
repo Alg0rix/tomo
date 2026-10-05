@@ -128,6 +128,15 @@ class TodoStore:
 
 def get_store(session_id: str | None = None) -> TodoStore:
     """Return the bound store, or the session store, or a process fallback."""
+    from app.runtime.access import current_execution, AccessDenied
+    execution = current_execution(required=False)
+    if execution:
+        from app.services import store as app_store
+        execution = app_store.access.revalidate(execution)
+        if session_id and session_id != execution.session_id:
+            raise AccessDenied("Todo session is outside execution scope")
+        with _stores_lock:
+            return _stores.setdefault(execution.session_id, TodoStore())
     bound = _current.get()
     if bound is not None:
         return bound
@@ -258,6 +267,8 @@ def run(arguments: dict[str, Any]) -> str:
     """Todo tool entrypoint. Always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: todo expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("todo", arguments)
 
     store = get_store()
 

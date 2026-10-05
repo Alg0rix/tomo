@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import zlib
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from app.core.config import BRAND
-from app.core.deps import session_user_id, session_username
+from app.core.deps import authenticated_user
 from app.core.self_update import package_version
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,12 @@ def room_tint(plugin_id: str) -> str:
 
 def page_ctx(request: Request, page: str, **extra):
     from app.plugins.manager import get_manager
-    from app.services import store
 
+    try:
+        user = authenticated_user(request)
+    except HTTPException:
+        # Public login/setup/share chrome has no execution identity.
+        user = None
     plugin_nav = [
         {
             "id": plugin["id"],
@@ -35,16 +39,15 @@ def page_ctx(request: Request, page: str, **extra):
             "page": "plugin-" + plugin["id"],
         }
         for plugin in get_manager().list()
-        if plugin["running"] and plugin["pages"]
+        if user and user["role"] == "admin" and plugin["running"] and plugin["pages"]
     ]
-    user_id = session_user_id(request)
-    user = store.get_user(user_id) if user_id != "web" else None
+    user_id = (user or {}).get("id", "")
     return {
         "page": page,
         "brand": BRAND,
         "app_version": package_version(),
         "current_user_id": user_id,
-        "current_username": session_username(request),
+        "current_username": (user or {}).get("username", ""),
         "current_role": (user or {}).get("role") or "",
         "plugin_nav": plugin_nav,
         **extra,

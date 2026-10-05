@@ -119,7 +119,15 @@ async def redeem_code(chat_id: int, code: str, *, chat_type: str | None, sender_
                             and target.get('user_id') in (None, source_id)):
                         target['user_id'] = uid
                         conn.execute(f'UPDATE {table} SET delivery_target=? WHERE id=?', (json.dumps(target), row['id']))
-            for table in ('sessions', 'learning_events', 'secret_bundles'):
+            # Adopt conversation data, never the legacy Admin's destination or
+            # unrestricted mode. Current account grants govern future turns.
+            conn.execute(
+                "UPDATE sessions SET user_id=?, workplace_id=?, additional_workplace_ids_json='[]', "
+                "execution_mode='restricted', model_profile_id=?, model_name=?, access_pending=0 "
+                "WHERE user_id=?",
+                (uid, personal_id, model_id, model_name, source_id),
+            )
+            for table in ('learning_events', 'secret_bundles'):
                 conn.execute(f'UPDATE {table} SET user_id=? WHERE user_id=?', (uid, source_id))
             for row in conn.execute('SELECT id,payload_json FROM episodic_memories WHERE user_id=?', (source_id,)).fetchall():
                 payload = json.loads(row['payload_json'])
@@ -137,7 +145,18 @@ async def redeem_code(chat_id: int, code: str, *, chat_type: str | None, sender_
             raise
         return {'user_id': uid, 'merged': merged}
 
-    return store.with_db(redeem)
+    # Ownership changes use the same admission fence and confirmed teardown as
+    # grant changes. Do not hold the DB lock while stopping managed work.
+    with store.access._mutation_lock:
+        uid = store.with_db(lookup)
+        session_ids = [s['id'] for s in store.list_sessions(user_id=source_id)]
+        store.access._mark_pending(session_ids)
+        store.access._stop(session_ids)
+        personal_id = store.access.ensure_personal_space(uid)['id']
+        models = store.access.list_visible_models(uid)
+        model_id = models[0]['id'] if models else ''
+        model_name = models[0]['model'] if models else ''
+        return store.with_db(redeem)
 
 
 def unlink(user_id: str, chat_id: str) -> bool:

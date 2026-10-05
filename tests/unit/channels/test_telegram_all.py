@@ -34,7 +34,7 @@ def _inject_scripted_llm(monkeypatch) -> None:
     client = ScriptedLLM([text_reply("Telegram reply.")] * 20)
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: client,
+        lambda agent_id=None, **kwargs: client,
     )
 
 

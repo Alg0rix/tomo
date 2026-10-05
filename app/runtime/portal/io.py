@@ -38,7 +38,9 @@ def parse_location(spec: str) -> Location:
     if not text:
         raise ValueError("location is empty")
     if is_portal_path(text):
-        return Location(kind="portal", path=text)
+        loc = Location(kind="portal", path=text)
+        _authorize_location(loc)
+        return loc
 
     # wp:<id>:<path> or <id>:<path>
     raw = text
@@ -58,16 +60,17 @@ def parse_location(spec: str) -> Location:
 
     from app.services import store
 
+    from app.runtime.access import current_execution, AccessDenied
+    context = store.access.revalidate(current_execution())
+    enabled = {r.workplace_id for r in context.resources}
+    visible = [w for w in store.access.list_visible_workplaces(context.user_id) if w['id'] in enabled]
+    from app.runtime.tools.workplace_ctx import match_workplace
+    chosen = match_workplace(visible, wid)
+    if not chosen:
+        raise AccessDenied("Requested transfer location is unavailable")
+    wid = chosen['id']
+    store.access.authorize_resource(context, wid)
     wp = store.get_workplace(wid)
-    if not wp:
-        # try name match
-        for w in store.list_workplaces():
-            if (w.get("name") or "").strip().lower() == wid.lower():
-                wp = w
-                wid = w["id"]
-                break
-    if not wp:
-        raise ValueError(f"unknown workplace: {wid}")
     kind = (wp.get("kind") or "local").strip().lower()
     if kind not in ("local", "tunnel", "ssh"):
         raise ValueError(f"unsupported workplace kind: {kind}")
@@ -92,8 +95,31 @@ def _jail_local(wp: dict[str, Any], path: str) -> Path:
     return target
 
 
+def _authorize_location(loc: Location, *, write: bool = False):
+    from app.runtime.access import current_execution
+    from app.services import store
+    context = store.access.revalidate(current_execution())
+    if loc.kind == 'portal':
+        # Coordinator staging is admitted for any bound execution context;
+        # every transfer is audited with owner/session/provenance (see
+        # transfers.start_transfer). Portal names are a shared namespace,
+        # not a confidentiality boundary: never stage secrets or private
+        # keys here (use the session-scoped secret broker instead).
+        return context
+    resource = store.access.authorize_resource(context, loc.workplace_id, write=write)
+    # Enabled transfer-only endpoints on other machines are valid transfer
+    # endpoints; authorize_resource already confines them to the ceiling.
+    # Execution mounts never include them (container/remote dispatch skips
+    # transfer_only), so no whole-machine mount is possible through here.
+    if not loc.workplace or (loc.workplace.get('id'), loc.workplace.get('root_path')) != (resource.workplace_id, resource.root_path):
+        from app.runtime.access import AccessDenied
+        raise AccessDenied("Transfer resource metadata is unavailable")
+    return context
+
+
 def stat_size(loc: Location) -> int:
     """Return file size in bytes (0 if missing for write targets — raises if read)."""
+    _authorize_location(loc)
     if loc.kind == "portal":
         p = resolve_portal_fs(loc.path)
         if not p.is_file():
@@ -113,6 +139,7 @@ def stat_size(loc: Location) -> int:
 
 
 def read_chunk(loc: Location, *, offset: int = 0, size: int = DEFAULT_CHUNK) -> dict[str, Any]:
+    _authorize_location(loc)
     """Read a binary chunk. Returns ``{data: bytes, bytes_read, total_size}``."""
     if loc.kind == "portal":
         p = resolve_portal_fs(loc.path)
@@ -157,6 +184,7 @@ def write_chunk(
     is_last: bool = True,
 ) -> None:
     """Write a binary chunk (portal/local use .part staging like the connector)."""
+    _authorize_location(loc, write=True)
     if loc.kind == "portal":
         p = resolve_portal_fs(loc.path, create=True)
         part = Path(str(p) + ".part")

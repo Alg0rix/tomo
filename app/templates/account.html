@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page access-page" id="accountPage">
+  <header class="page-head"><h1>Account &amp; projects</h1><p class="access-note">Your profile, personal keys and persistent working files. Sharing a project does not share chats, memories or credentials.</p></header>
+  <p id="accountStatus" class="access-status" role="alert"></p>
+  <section class="access-section" aria-labelledby="profileTitle">
+    <h2 id="profileTitle">My profile</h2>
+    <form id="personalProfile"><label class="field">Display name<input class="input" name="display_name" maxlength="160"></label><label class="field">New password<input class="input" name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave blank to keep current password"></label><button class="btn primary" type="submit">Save profile</button></form>
+  </section>
+  <section class="access-section" aria-labelledby="keysTitle">
+    <h2 id="keysTitle">My API keys</h2><p class="access-note">Keys inherit your current permissions. A token is shown only when created.</p>
+    <form id="personalKey" class="access-row"><input class="input" name="name" aria-label="Key name" placeholder="Key name" maxlength="80"><button class="btn ghost" type="submit">Create key</button></form>
+    <pre class="access-key" id="newKeyToken" hidden></pre><div id="personalKeys"></div>
+  </section>
+  <section class="access-section" aria-labelledby="tgTitle">
+    <h2 id="tgTitle">Telegram linking</h2><p class="access-note">Link a private Telegram DM to this account with a one-time code. Codes expire after 10 minutes and work once. Groups and channels cannot link. Unlinking keeps your chats and memories here; the DM starts a separate session next time.</p>
+    <form id="telegramLink" class="access-row"><button class="btn ghost" type="submit">Generate link code</button></form>
+    <pre class="access-key" id="newTelegramCode" hidden></pre><div id="telegramLinks"></div>
+  </section>
+  <section class="access-section" aria-labelledby="projectsTitle">
+    <h2 id="projectsTitle">Projects &amp; shared resources</h2><p class="access-note">Only granted resources appear here. Enable additional access separately in each chat. Read-only inputs cannot be modified; save outputs to a writable folder. Connected execution and cross-machine transfers are currently unavailable.</p>
+    <button class="btn ghost" id="createProject" type="button">+ Create project</button><div id="personalProjects"></div>
+  </section>
+  {% if current_role == 'admin' %}
+  <section class="access-section" id="accountAdministration" aria-labelledby="adminTitle">
+    <h2 id="adminTitle">Account access · Admin</h2><p class="access-note">Assignments are independent of role. The shared coordinator is available by default; assign model profiles before a Member starts chatting. Admins do not gain access to private chats.</p>
+    <label class="field">Account<select class="input" id="managedAccount"></select></label>
+    <form id="managedRole" class="access-row"><label>Role <select class="input" name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label><button class="btn ghost" type="submit">Save role</button></form>
+    <form id="resourceAssignment"><div class="access-row"><select class="input" name="type" aria-label="Assignment type"><option value="model">Model profile</option><option value="agent">Agent</option><option value="workplace">Folder access</option><option value="unrestricted">Unrestricted execution</option></select><select class="input" name="resource" aria-label="Resource"></select><select class="input" name="permission" aria-label="Permission"><option value="use">Use</option><option value="read">Read-only</option><option value="read_write">Read-write</option></select></div><p class="access-warning" data-grant-warning hidden>Granting unrestricted execution removes filesystem containment at that exact destination. The OS account may reach other users’ files and server credentials. The user must also explicitly activate this mode in the chat.</p><button class="btn primary" type="submit">Assign access</button></form>
+    <div id="accountGrants"></div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='js/account.js') }}?v={{ static_ver }}"></script>{% endblock %}

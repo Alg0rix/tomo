@@ -11,12 +11,14 @@ from contextvars import ContextVar, Token
 
 _user_id: ContextVar[str | None] = ContextVar("tool_user_id", default=None)
 
-_DEFAULT = "web"
 
 
 def bind_user(user_id: str | None) -> Token:
     """Bind the account id for the current agent turn / review."""
-    uid = (user_id or "").strip() or _DEFAULT
+    from app.runtime.access import AccessDenied
+    uid = (user_id or "").strip()
+    if not uid:
+        raise AccessDenied("User identity is required")
     return _user_id.set(uid)
 
 
@@ -32,11 +34,16 @@ def reset_user(token: Token | None = None) -> None:
 
 
 def current_user_id() -> str:
-    """Authenticated account for this turn, or ``web`` when unbound."""
+    """Current validated execution owner, never a coordinator/web default."""
+    from app.runtime.access import current_execution, AccessDenied
+    context = current_execution(required=False)
+    if context:
+        from app.services import store
+        return store.access.revalidate(context).user_id
     raw = _user_id.get()
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
-    return _DEFAULT
+    raise AccessDenied("User identity is required")
 
 
 __all__ = ["bind_user", "reset_user", "current_user_id"]

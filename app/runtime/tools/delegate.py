@@ -64,6 +64,14 @@ def run(arguments: dict[str, Any]) -> str:
             "Check the enabled agent roster and use its actual name/id."
         )
 
+    from app.runtime.access import AccessDenied
+    from app.runtime.policy import authorize_tool
+    from app.services import store
+    try:
+        parent = authorize_tool("delegate", arguments)
+        store.access.resolve_context(parent.user_id, parent.session_id, target, parent=parent)
+    except AccessDenied:
+        return "Error: delegation target is unavailable within this execution ceiling"
     return f"Delegated to {target}"
 
 

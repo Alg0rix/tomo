@@ -23,11 +23,11 @@ func TestExecBashStreamsBeforeExit(t *testing.T) {
 		chunks = append(chunks, c)
 	}
 	start := time.Now()
-	res, err := execBash(map[string]any{
-		"script": "echo first; sleep 0.6; echo 'søcond ✓' >&2",
-		"cwd":    t.TempDir(),
-		"stream": true,
-	}, progress)
+	adm := admitScope(t, t.TempDir(), "wp_a", "u1", "s1")
+	env := testEnvelope(t, "u1", "s1", "wp_a", "wp_a", 1, rwScope("wp_a"))
+	env["script"] = "echo first; sleep 0.6; echo 'søcond ✓' >&2"
+	env["stream"] = true
+	res, err := execBash(env, progress, adm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,10 @@ func TestExecBashStreamsBeforeExit(t *testing.T) {
 
 func TestExecBashWithoutStreamFlagSendsNothing(t *testing.T) {
 	called := false
-	if _, err := execBash(map[string]any{"script": "echo hi", "cwd": t.TempDir()}, func(string) { called = true }); err != nil {
+	adm := admitScope(t, t.TempDir(), "wp_a", "u1", "s1")
+	env2 := testEnvelope(t, "u1", "s1", "wp_a", "wp_a", 1, rwScope("wp_a"))
+	env2["script"] = "echo hi"
+	if _, err := execBash(env2, func(string) { called = true }, adm); err != nil {
 		t.Fatal(err)
 	}
 	if called {

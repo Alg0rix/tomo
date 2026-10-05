@@ -49,6 +49,19 @@ def _env(tmp_path, monkeypatch) -> None:
             pass
 
 
+@pytest.fixture(autouse=True)
+def _admin_scope(_env):
+    # Learning reviews mutate shared coordinator state (Admin-only by
+    # design; Members get None). Bind an explicit owned Admin identity via
+    # the real policy so tool dispatch authorizes instead of failing closed.
+    # Depends on _env: the scope must be created after the per-test rebind.
+    # Yields the bound session id: review metrics must name this session.
+    from tests.fakes.access import owned_admin_scope
+
+    with owned_admin_scope() as (ctx, _root):
+        yield ctx.session_id
+
+
 def test_digest_includes_goal_trail_skills() -> None:
     msgs = [
         {"role": "user", "content": "fix the flaky test"},
@@ -118,7 +131,7 @@ def test_cooldown_does_not_burn_nudge() -> None:
     assert p3 is not None and p3.review_memory
 
 
-async def test_skill_review_automatically_merges_without_inflating_usage() -> None:
+async def test_skill_review_automatically_merges_without_inflating_usage(_admin_scope) -> None:
     from app.runtime.tools.registry import execute
 
     for sid, body in (("python-testing", "Run pytest."), ("python-fixtures", "Use fixtures.")):
@@ -145,7 +158,7 @@ async def test_skill_review_automatically_merges_without_inflating_usage() -> No
     ])
     result = await run_learning_review(
         client=client, messages=[{"role": "user", "content": "run the tests"}],
-        metrics=TurnMetrics(agent_id="main", ended_kind="final", tool_calls=4),
+        metrics=TurnMetrics(agent_id="main", session_id=_admin_scope, ended_kind="final", tool_calls=4),
         user_message="run the tests", final_content="Tests passed.",
     )
     assert result and result["saved"]
@@ -157,7 +170,7 @@ async def test_skill_review_automatically_merges_without_inflating_usage() -> No
     assert any(e["saved"] for e in store.list_learning_events(limit=5))
 
 
-async def test_review_archives_inactive_skills_but_keeps_recent_support_edits(monkeypatch) -> None:
+async def test_review_archives_inactive_skills_but_keeps_recent_support_edits(monkeypatch, _admin_scope) -> None:
     import time
     from app.runtime.tools.registry import execute
 
@@ -171,7 +184,7 @@ async def test_review_archives_inactive_skills_but_keeps_recent_support_edits(mo
     result = await run_learning_review(
         client=ScriptedLLM([text_reply("Nothing to save.")]),
         messages=[{"role": "user", "content": "run the tests"}],
-        metrics=TurnMetrics(agent_id="main", ended_kind="final", tool_calls=4),
+        metrics=TurnMetrics(agent_id="main", session_id=_admin_scope, ended_kind="final", tool_calls=4),
         user_message="run the tests", final_content="Tests passed.",
     )
     assert result and result["saved"]
@@ -181,7 +194,7 @@ async def test_review_archives_inactive_skills_but_keeps_recent_support_edits(mo
     assert any("Archived inactive skill" in str(e["actions"]) for e in store.list_learning_events(limit=5))
 
 
-async def test_review_saves_via_memory_tool() -> None:
+async def test_review_saves_via_memory_tool(_admin_scope) -> None:
     client = ScriptedLLM(
         [
             LLMResponse(
@@ -206,7 +219,7 @@ async def test_review_saves_via_memory_tool() -> None:
     assert plan and plan.review_memory
 
     metrics = TurnMetrics(
-        agent_id="main", session_id="s1", ended_kind="final", tool_calls=0
+        agent_id="main", session_id=_admin_scope, ended_kind="final", tool_calls=0
     )
     result = await run_learning_review(
         client=client,
@@ -224,13 +237,13 @@ async def test_review_saves_via_memory_tool() -> None:
     assert any(e.get("saved") for e in events)
 
 
-async def test_review_idle_still_records_event() -> None:
+async def test_review_idle_still_records_event(_admin_scope) -> None:
     client = ScriptedLLM([text_reply("Nothing to save.")])
     _ = observe_turn(agent_id="idle-a", tool_calls=0, ended_kind="final")
     plan = observe_turn(agent_id="idle-a", tool_calls=0, ended_kind="final")
     assert plan and plan.review_memory
     metrics = TurnMetrics(
-        agent_id="idle-a", session_id="s-idle", ended_kind="final", tool_calls=0
+        agent_id="idle-a", session_id=_admin_scope, ended_kind="final", tool_calls=0
     )
     result = await run_learning_review(
         client=client,
@@ -278,7 +291,7 @@ def test_trail_marks_errors() -> None:
 
 
 async def test_review_llm_empty_choices_is_skipped_not_logged_as_error(
-    monkeypatch,
+    monkeypatch, _admin_scope,
 ) -> None:
     """A provider that returns empty choices should not spam the growth log."""
     import app.runtime.agent.retry as retry_mod
@@ -300,7 +313,7 @@ async def test_review_llm_empty_choices_is_skipped_not_logged_as_error(
     plan = observe_turn(agent_id="empty", tool_calls=0, ended_kind="final")
     assert plan and plan.review_memory
     metrics = TurnMetrics(
-        agent_id="empty", session_id="s-empty", ended_kind="final", tool_calls=0
+        agent_id="empty", session_id=_admin_scope, ended_kind="final", tool_calls=0
     )
     result = await run_learning_review(
         client=EmptyChoicesLLM(),
@@ -315,7 +328,7 @@ async def test_review_llm_empty_choices_is_skipped_not_logged_as_error(
     assert not events
 
 
-async def test_review_llm_prefers_stream_complete(monkeypatch) -> None:
+async def test_review_llm_prefers_stream_complete(monkeypatch, _admin_scope) -> None:
     """Learning review must use stream_complete (same path as chat), with tools."""
     import app.runtime.agent.retry as retry_mod
 
@@ -349,7 +362,7 @@ async def test_review_llm_prefers_stream_complete(monkeypatch) -> None:
     assert plan and plan.review_memory
     metrics = TurnMetrics(
         agent_id="stream-pref",
-        session_id="s-sp",
+        session_id=_admin_scope,
         ended_kind="final",
         tool_calls=0,
     )

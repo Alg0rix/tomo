@@ -111,6 +111,11 @@ def seed_settings() -> dict[str, Any]:
         "approvals_mode": "smart",
         "approvals_timeout": 300,
         "approvals_deny": [],
+        # Outbound network for agent retrieval tools (web_search, web_fetch,
+        # vision_analyze URL sources). "off" (default) denies; "scoped"
+        # permits public HTTP(S) only, still behind per-tool SSRF guards.
+        # Operator provisioning step, Admin-only via PUT /api/settings.
+        "network_egress": "off",
     }
 
 

@@ -14,6 +14,8 @@ _SAFE_SLUG = re.compile(r'^[a-z0-9][a-z0-9_-]{0,127}$')
 def vault_root(user_id: str, *, home_root: Path | None = None) -> Path:
     if not _SAFE_ID.fullmatch(user_id or '') or '..' in user_id:
         raise ValueError('invalid user id')
+    from app.runtime.policy import authorize_private_user
+    authorize_private_user(user_id)
     root = home._root(home_root) / 'memory' / 'vault' / user_id
     if root.is_symlink():
         raise ValueError('invalid vault root')

@@ -24,23 +24,17 @@ from tests.fakes.llm import ScriptedLLM, text_reply
 async def test_execute_authorized_still_runs_builtin_tools(
     tmp_path,
 ) -> None:
-    from app.runtime.tools.sandbox import bind_agent, reset_agent
-    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
     from app.services import store
 
     # This tests real local dispatch, independent of earlier agents/workplaces.
+    from tests.fakes.access import owned_admin_scope
     store.rebind(tmp_path / "builtin-tools.db")
-    agent_token = bind_agent(None)
-    workplace_tokens = bind_workplace(force_work_dir=True)
     call = ToolCall(id="c1", name="bash", arguments={"command": "echo hi"})
     decision = Decision(allowed=True, grant=None)
 
-    try:
+    with owned_admin_scope():
         result = await _execute_authorized(call, decision)
         assert "hi" in result
-    finally:
-        reset_workplace(workplace_tokens)
-        reset_agent(agent_token)
 
 
 
@@ -101,10 +95,11 @@ def test_compress_collapses_old_tool_exchanges() -> None:
 @pytest.mark.asyncio
 async def test_parallel_readonly_tools_in_one_round(tmp_path) -> None:
     """Existing independent files execute concurrently, with correctly paired results."""
-    from app.runtime.tools import sandbox
+    from tests.fakes.access import owned_admin_scope
 
-    aid = "parallel-harness-" + tmp_path.name
-    root = sandbox.resolve_work_root(aid)
+    scope = owned_admin_scope()
+    ctx, root = scope.__enter__()
+    sid = ctx.session_id
     for name in ("a.py", "b.py"):
         (root / name).write_text(f"content:{name}")
 
@@ -129,7 +124,10 @@ async def test_parallel_readonly_tools_in_one_round(tmp_path) -> None:
         ]
     )
     tools = [{"type": "function", "function": {"name": "read_file"}}]
-    events = [ev async for ev in run_turn("read both", llm=llm, tools=tools, agent_id=aid)]
+    try:
+        events = [ev async for ev in run_turn("read both", llm=llm, tools=tools, session_id=sid, agent_id="main")]
+    finally:
+        scope.__exit__(None, None, None)
     results = {e["call_id"]: e for e in events if e["kind"] == "tool_result"}
     assert len(results) == 2
     assert not any(e["error"] for e in results.values())

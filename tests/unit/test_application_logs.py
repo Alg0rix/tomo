@@ -93,8 +93,14 @@ def test_live_cli_follows_rotation(tmp_path):
             # Wait until the CLI has opened the actual log, not an arbitrary startup sleep.
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                fds = list(Path(f"/proc/{process.pid}/fd").glob("*"))
-                if any(os.path.realpath(fd) == str(path) for fd in fds):
+                # Fds can close between glob and realpath under load; retry
+                # the snapshot instead of failing on a stale entry.
+                try:
+                    fds = list(Path(f"/proc/{process.pid}/fd").glob("*"))
+                    opened = any(os.path.realpath(fd) == str(path) for fd in fds)
+                except FileNotFoundError:
+                    opened = False
+                if opened:
                     break
                 time.sleep(0.05)
             else:

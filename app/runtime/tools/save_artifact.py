@@ -67,12 +67,16 @@ def run(arguments: dict[str, Any]) -> str:
     if not isinstance(arguments, dict):
         return "Error: arguments must be an object"
 
-    session_id = _resolve_session(arguments)
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("save_artifact", arguments)
+    session_id = execution.session_id
     agent_id = str(arguments.get("agent_id") or current_agent_id() or "").strip()
 
     # Legacy catalog-only: title + path (no filename).
     filename = str(arguments.get("filename") or "").strip()
     if not filename and arguments.get("title") and arguments.get("path"):
+        if execution.execution_mode == "restricted" or execution.role != "admin":
+            return "Error: save an owned artifact with filename and content/source_path"
         title = str(arguments.get("title") or "").strip()
         path = str(arguments.get("path") or "").strip()
         kind = str(arguments.get("kind") or "file").strip() or "file"
@@ -167,7 +171,7 @@ def run(arguments: dict[str, Any]) -> str:
             )
             out = {
                 "result": "Artifact saved successfully",
-                "filepath": info["filepath"],
+                "filepath": info["url"] if execution.execution_mode == "restricted" else info["filepath"],
                 "filename": filename,
                 "size": info["size"],
                 "session_id": session_id,
@@ -198,7 +202,7 @@ def run(arguments: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "result": "Artifact saved successfully",
-                "filepath": info["filepath"],
+                "filepath": info["url"] if execution.execution_mode == "restricted" else info["filepath"],
                 "filename": filename,
                 "size": info["size"],
                 "session_id": session_id,

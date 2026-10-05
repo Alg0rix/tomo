@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from app.core import home
+
 from app.runtime.tools.registry import execute, reset_registry
 from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +25,15 @@ def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     reset_registry()
 
 
-def test_create_agent_happy() -> None:
+@pytest.fixture()
+def admin_fs():
+    # Explicit owned Admin unrestricted context (real policy grant + ack).
+    # Host tools are fenced to the session workplace root, not TOMO_WORK.
+    with owned_admin_scope() as (_ctx, root):
+        yield root
+
+
+def test_create_agent_happy(admin_fs) -> None:
     out = execute(
         "create_agent",
         {
@@ -43,12 +53,12 @@ def test_create_agent_happy() -> None:
     assert home.agent_work_dir(found[0]["id"]).is_dir() or True  # may mkdir later
 
 
-def test_create_agent_requires_name() -> None:
+def test_create_agent_requires_name(admin_fs) -> None:
     out = execute("create_agent", {})
     assert out.startswith("Error")
 
 
-def test_create_agent_with_explicit_id() -> None:
+def test_create_agent_with_explicit_id(admin_fs) -> None:
     out = execute(
         "create_agent",
         {"name": "Coder", "id": "coder_bot", "role": "coding"},

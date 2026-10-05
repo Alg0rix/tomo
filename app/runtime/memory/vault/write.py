@@ -57,7 +57,10 @@ def _save(user_id: str, path: Path, page: doc.Document, home_root, conn) -> None
         key = f'{path.parent.name}/{path.stem}'
         links.update(page, key, links.candidates(db, user_id, page=page, key=key))
         page.meta['updated'] = datetime.now().astimezone().date().isoformat()
-        atomic_write(path, doc.serialize(page))
+        from app.runtime.storage import private_write
+        body = doc.serialize(page)
+        with private_write(len(body.encode()), home_root=home_root):
+            atomic_write(path, body)
         index.reindex_file(db, user_id, path, home_root=home_root)
 
     if conn is None:
@@ -183,7 +186,10 @@ def append_timeline(user_id: str, session_id: str, agent_id: str, summary: str, 
         block = f'## {now:%H:%M} · session {safe_session} · agent {safe_agent}\n' + '\n'.join('- ' + line for line in bullets)
         page.body = (page.body.rstrip() + '\n' + block).strip()
         page.meta['consolidated'] = 'false'
-        atomic_write(path, doc.serialize(page))
+        from app.runtime.storage import private_write
+        body = doc.serialize(page)
+        with private_write(len(body.encode()), home_root=home_root):
+            atomic_write(path, body)
         if conn is None:
             store.with_db(lambda db: index.reindex_file(db, user_id, path, home_root=home_root))
         else:
@@ -207,8 +213,10 @@ def record_turn(session_id: str | None, agent_id: str | None, user_message: str 
         goal = ' '.join((user_message or '').split())[:240]
         outcome = ' '.join(final_content.split())[:480]
         summary = '\n'.join([*([f'Goal: {goal}'] if goal else []), f'Outcome: {outcome}'])
-        uid = session.get('user_id') or 'web'
-        append_timeline(uid, session_id, agent_id or 'main', summary)
+        from app.runtime.policy import resolve_turn
+        execution = resolve_turn(session_id, agent_id)
+        uid = execution.user_id
+        append_timeline(uid, session_id, execution.agent_id, summary)
         from .extract import schedule_extraction
 
         schedule_extraction(uid, session_id, user_message or '', final_content)

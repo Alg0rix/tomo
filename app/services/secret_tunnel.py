@@ -24,14 +24,38 @@ def available(workplace_id: str) -> bool:
 
 
 def call(scope: dict[str, Any], method: str, params: dict, timeout: float = 30) -> dict:
+    from app.runtime.access import AccessDenied
+    from app.workplaces import remote_contract
     current = secret_store.capability_scope(scope.get("token", ""))
     wid = scope.get("workplace_id")
     if not current or not wid or current.get("workplace_id") != wid:
         raise ValueError("Tunnel broker access missing or expired")
     if not available(wid):
         raise ValueError("Tunnel offline or connector needs the secret-broker update")
+    # Scoped credential, destination-enforced: resolve the scope session's
+    # current ceiling and bind this call to it. The destination validates
+    # owner/session/generation before touching files or the network, so a
+    # revoked or cross-session scope fails closed at the destination too.
+    try:
+        context = store.access.resolve_context(current["user_id"], current["session_id"])
+    except AccessDenied as exc:
+        raise ValueError("Tunnel broker execution scope is unavailable") from exc
+    try:
+        store.access.authorize_resource(context, wid)
+    except AccessDenied as exc:
+        raise ValueError("Tunnel destination is outside the execution scope") from exc
+    remote_contract.require_tunnel_destination(
+        store.get_workplace(wid) or {"id": wid}, mode=context.execution_mode
+    )
+    try:
+        remote_contract.ensure_admitted(store.get_workplace(wid) or {"id": wid}, context)
+    except (AccessDenied, ValueError) as exc:
+        raise ValueError("Tunnel destination refused admission") from exc
+    envelope = remote_contract.build_envelope(context, wid)
     result = hub.call(
-        wid, method, {**params, "expires_at": current["expires_at"]}, timeout=timeout
+        wid, method,
+        {**params, "expires_at": current["expires_at"], "exec_context": envelope},
+        timeout=timeout,
     )
     if not result.get("ok") or not isinstance(result.get("result"), dict):
         # Connector errors may originate below a private boundary. Never forward

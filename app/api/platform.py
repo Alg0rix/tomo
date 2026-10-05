@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -9,7 +10,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import EVAL_UI_ENABLED, FS_BROWSE_ROOT
-from app.core.deps import AuthDep, can_manage_telegram, session_user_id
+from app.core.deps import AdminDep, AuthDep, authenticated_user, can_manage_telegram, session_user_id
+from app.api.access_policy import require_agent
 from app.runtime.llm import codex_models, codex_oauth
 from app.schemas import (
     CodexLoginPoll,
@@ -182,8 +184,10 @@ async def update_skill(skill_id: str, body: dict, _: AuthDep):
 
 
 @router.get("/workplaces")
-async def list_workplaces(_: AuthDep):
-    return {"workplaces": store.list_workplaces()}
+async def list_workplaces(request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    return {"workplaces": store.list_workplaces() if user["role"] == "admin"
+            else store.access.list_visible_workplaces(user["id"])}
 
 
 @router.get("/fs/browse")
@@ -214,11 +218,11 @@ async def browse_filesystem(
         if name.startswith(".") and name not in {".config", ".local", ".tomo"}:
             if not needle or needle not in name.casefold():
                 continue
-        if not child.is_dir():
-            continue
         if needle and needle not in name.casefold():
             continue
         try:
+            if not child.is_dir():
+                continue
             resolved = str(child.resolve())
         except OSError:
             continue
@@ -278,7 +282,13 @@ async def create_workplace(body: WorkplaceCreate, _: AuthDep):
 
 
 @router.get("/workplaces/{workplace_id}")
-async def get_workplace(workplace_id: str, _: AuthDep):
+async def get_workplace(workplace_id: str, request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        wp = next((w for w in store.access.list_visible_workplaces(user["id"]) if w["id"] == workplace_id), None)
+        if not wp:
+            raise HTTPException(404, "Workplace not found")
+        return wp
     wp = store.get_workplace(workplace_id)
     if not wp:
         raise HTTPException(status_code=404, detail="Workplace not found")
@@ -288,7 +298,7 @@ async def get_workplace(workplace_id: str, _: AuthDep):
 @router.put("/workplaces/{workplace_id}")
 async def update_workplace(workplace_id: str, body: WorkplaceUpdate, _: AuthDep):
     try:
-        wp = store.update_workplace(workplace_id, body.model_dump(exclude_unset=True))
+        wp = await asyncio.to_thread(store.update_workplace, workplace_id, body.model_dump(exclude_unset=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not wp:
@@ -298,7 +308,7 @@ async def update_workplace(workplace_id: str, body: WorkplaceUpdate, _: AuthDep)
 
 @router.delete("/workplaces/{workplace_id}")
 async def delete_workplace(workplace_id: str, _: AuthDep):
-    if not store.delete_workplace(workplace_id):
+    if not await asyncio.to_thread(store.delete_workplace, workplace_id):
         raise HTTPException(status_code=404, detail="Workplace not found")
     return {"success": True}
 
@@ -306,7 +316,7 @@ async def delete_workplace(workplace_id: str, _: AuthDep):
 @router.post("/workplaces/{workplace_id}/disable")
 async def disable_workplace(workplace_id: str, _: AuthDep):
     try:
-        wp = store.set_workplace_enabled(workplace_id, False)
+        wp = await asyncio.to_thread(store.set_workplace_enabled, workplace_id, False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not wp:
@@ -317,7 +327,7 @@ async def disable_workplace(workplace_id: str, _: AuthDep):
 @router.post("/workplaces/{workplace_id}/enable")
 async def enable_workplace(workplace_id: str, _: AuthDep):
     try:
-        wp = store.set_workplace_enabled(workplace_id, True)
+        wp = await asyncio.to_thread(store.set_workplace_enabled, workplace_id, True)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not wp:
@@ -388,12 +398,41 @@ async def install_via_ssh(body: WorkplaceInstallViaSsh, _: AuthDep):
     }
 
 
+class ScopedScheduleCreate(ScheduleCreate):
+    session_id: str = Field(default="", max_length=80)
+
+
+def _schedule(request: Request, schedule_id: str) -> dict:
+    user = authenticated_user(request)
+    schedule = store.get_schedule(schedule_id)
+    if not schedule or (schedule.get("owner_user_id") != user["id"] and
+                        not (user["role"] == "admin" and not schedule.get("owner_user_id"))):
+        raise HTTPException(404, "Schedule not found")
+    return schedule
+
+
+def _public_schedule(schedule: dict) -> dict:
+    return {k: v for k, v in schedule.items() if k != "execution_context"}
+
+
+def _validate_schedule_execution(request: Request, schedule: dict) -> None:
+    from app.runtime.access import ExecutionContext
+
+    if schedule.get("execution_context"):
+        store.access.revalidate(ExecutionContext.from_dict(schedule["execution_context"]))
+    elif authenticated_user(request)["role"] != "admin":
+        raise HTTPException(503, "Schedule execution context unavailable")
+
+
 @router.get("/schedules")
-async def list_schedules(_: AuthDep):
-    agents = {a["id"]: a for a in store.list_agents()}
+async def list_schedules(request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    agents = {a["id"]: a for a in store.access.list_visible_agents(user["id"])}
     rows = []
-    for s in store.list_schedules():
-        row = dict(s)
+    schedules = [s for s in store.list_schedules() if s.get("owner_user_id") == user["id"] or
+                 (user["role"] == "admin" and not s.get("owner_user_id"))]
+    for s in schedules:
+        row = _public_schedule(s)
         agent = agents.get(s.get("agent_id"))
         row["agent_name"] = agent["name"] if agent else s.get("agent_id")
         rows.append(row)
@@ -401,53 +440,65 @@ async def list_schedules(_: AuthDep):
 
 
 @router.post("/schedules")
-async def create_schedule(body: ScheduleCreate, _: AuthDep):
+async def create_schedule(body: ScopedScheduleCreate, request: Request, _: AuthDep):
+    uid = session_user_id(request)
+    require_agent(request, body.agent_id)
+    sid = body.session_id
+    if not sid:
+        sid = store.create_swarm_session([body.agent_id], uid, body.agent_id)
+    from app.core.deps import require_owned_session
+
+    require_owned_session(request, sid)
+    context = store.access.resolve_context(uid, sid)
     try:
-        return store.create_schedule(body.model_dump(exclude_none=True))
+        return _public_schedule(store.access.create_schedule_for_context(
+            context, body.model_dump(exclude_none=True, exclude={"session_id"})))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/schedules/{schedule_id}")
-async def get_schedule(schedule_id: str, _: AuthDep):
-    sch = store.get_schedule(schedule_id)
-    if not sch:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-    return sch
+async def get_schedule(schedule_id: str, request: Request, _: AuthDep):
+    return _public_schedule(_schedule(request, schedule_id))
 
 
 @router.put("/schedules/{schedule_id}")
-async def update_schedule(schedule_id: str, body: ScheduleUpdate, _: AuthDep):
+async def update_schedule(schedule_id: str, body: ScheduleUpdate, request: Request, _: AuthDep):
+    existing = _schedule(request, schedule_id)
+    data = body.model_dump(exclude_unset=True)
+    if body.agent_id and body.agent_id != existing["agent_id"]:
+        raise HTTPException(403, "Create a new schedule to change its execution scope")
+    if data.get("enabled"):
+        _validate_schedule_execution(request, existing)
     try:
-        sch = store.update_schedule(schedule_id, body.model_dump(exclude_unset=True))
+        sch = store.update_schedule(schedule_id, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not sch:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    return sch
+    return _public_schedule(sch)
 
 
 @router.delete("/schedules/{schedule_id}")
-async def delete_schedule(schedule_id: str, _: AuthDep):
+async def delete_schedule(schedule_id: str, request: Request, _: AuthDep):
+    _schedule(request, schedule_id)
     if not store.delete_schedule(schedule_id):
         raise HTTPException(status_code=404, detail="Schedule not found")
     return {"success": True}
 
 
 @router.get("/schedules/{schedule_id}/runs")
-async def list_schedule_runs(schedule_id: str, _: AuthDep):
-    if not store.get_schedule(schedule_id):
-        raise HTTPException(status_code=404, detail="Schedule not found")
+async def list_schedule_runs(schedule_id: str, request: Request, _: AuthDep):
+    _schedule(request, schedule_id)
     return {"runs": store.list_schedule_runs(schedule_id)}
 
 
 @router.post("/schedules/{schedule_id}/run")
-async def run_schedule(schedule_id: str, _: AuthDep):
+async def run_schedule(schedule_id: str, request: Request, _: AuthDep):
     """Fire a schedule immediately (outside the normal due window)."""
     from app.scheduler.runner import run_schedule_now
 
-    if not store.get_schedule(schedule_id):
-        raise HTTPException(status_code=404, detail="Schedule not found")
+    _validate_schedule_execution(request, _schedule(request, schedule_id))
     try:
         result = await run_schedule_now(schedule_id)
     except ValueError as e:
@@ -456,31 +507,41 @@ async def run_schedule(schedule_id: str, _: AuthDep):
 
 
 @router.post("/schedules/{schedule_id}/pause")
-async def pause_schedule(schedule_id: str, _: AuthDep):
+async def pause_schedule(schedule_id: str, request: Request, _: AuthDep):
+    _schedule(request, schedule_id)
     sch = store.pause_schedule(schedule_id)
     if not sch:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    return sch
+    return _public_schedule(sch)
 
 
 @router.post("/schedules/{schedule_id}/resume")
-async def resume_schedule(schedule_id: str, _: AuthDep):
+async def resume_schedule(schedule_id: str, request: Request, _: AuthDep):
+    _validate_schedule_execution(request, _schedule(request, schedule_id))
     try:
         sch = store.resume_schedule(schedule_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not sch:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    return sch
+    return _public_schedule(sch)
 
 
 @router.get("/models")
-async def list_models(_: AuthDep):
+async def list_models(request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        return {"models": store.access.list_visible_models(user["id"]), "providers": []}
     return {"models": store.list_models(), "providers": store.list_providers()}
 
 
 @router.get("/llm-profiles")
-async def list_llm_profiles(_: AuthDep):
+async def list_llm_profiles(request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        profiles = store.access.list_visible_models(user["id"])
+        default_id = store.get_default_llm_profile_id()
+        return {"profiles": profiles, "default_id": default_id if any(p["id"] == default_id for p in profiles) else ""}
     return {
         "profiles": store.list_llm_profiles(),
         "default_id": store.get_default_llm_profile_id(),
@@ -542,7 +603,21 @@ async def create_llm_profile(body: LLMProfileCreate, _: AuthDep):
 
 
 @router.get("/llm-profiles/chat-options")
-async def get_chat_model_options(_: AuthDep, agent_id: str | None = None):
+async def get_chat_model_options(request: Request, _: AuthDep, agent_id: str | None = None):
+    if agent_id:
+        require_agent(request, agent_id)
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        profiles = store.access.list_visible_models(user["id"])
+        default_id = store.get_default_llm_profile_id()
+        selected_id = (store.get_agent(agent_id) or {}).get("model_id") if agent_id else default_id
+        selected = next((p for p in profiles if p["id"] == selected_id), None)
+        return {"session_id": "", "profile_id": (selected or {}).get("id", ""),
+                "profile_name": (selected or {}).get("name", ""), "model": (selected or {}).get("model", ""),
+                "main_model": (selected or {}).get("model", ""), "selected_model_profile_id": "",
+                "model_profiles": [{"id": p["id"], "name": p["name"], "models": p["available_models"] or [p["model"]]} for p in profiles],
+                "reasoning_efforts": [], "reasoning_effort": None, "selected_reasoning_effort": None,
+                "default_reasoning_effort": None}
     return store.get_chat_model_settings(agent_id)
 
 
@@ -553,7 +628,13 @@ async def get_codex_models(_: AuthDep, profile_id: str | None = None):
 
 
 @router.get("/llm-profiles/{profile_id}")
-async def get_llm_profile(profile_id: str, _: AuthDep):
+async def get_llm_profile(profile_id: str, request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        prof = next((p for p in store.access.list_visible_models(user["id"]) if p["id"] == profile_id), None)
+        if not prof:
+            raise HTTPException(404, "Profile not found")
+        return prof
     prof = store.get_llm_profile(profile_id)
     if not prof:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -783,9 +864,9 @@ async def list_users(_: AuthDep):
 
 
 @router.post("/users")
-async def create_user(body: UserCreate, _: AuthDep):
+async def create_user(body: UserCreate, request: Request, _: AuthDep):
     try:
-        return store.create_user(body.model_dump())
+        return store.access.create_account(session_user_id(request), body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -799,12 +880,12 @@ async def get_user(user_id: str, _: AuthDep):
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: str, body: UserUpdate, _: AuthDep):
+async def update_user(user_id: str, body: UserUpdate, request: Request, _: AuthDep):
     data = body.model_dump(exclude_unset=True)
     if "password" in data and not data["password"]:
         data.pop("password", None)
     try:
-        user = store.update_user(user_id, data)
+        user = await asyncio.to_thread(store.access.update_account, session_user_id(request), user_id, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not user:
@@ -817,7 +898,7 @@ async def delete_user(user_id: str, request: Request, _: AuthDep):
     if user_id == session_user_id(request):
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     try:
-        ok = store.delete_user(user_id)
+        ok = await asyncio.to_thread(store.access.delete_account, session_user_id(request), user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not ok:
@@ -866,20 +947,37 @@ async def unlink_telegram(user_id: str, chat_id: str, request: Request, _: AuthD
 
 
 @router.get("/api-keys")
-async def list_api_keys(_: AuthDep, user_id: str | None = None):
-    return {"keys": store.list_api_keys(user_id)}
+async def list_api_keys(request: Request, _: AuthDep, user_id: str | None = None):
+    user = authenticated_user(request)
+    if user["role"] == "admin":
+        return {"keys": store.list_api_keys(user_id)}
+    if user_id and user_id != user["id"]:
+        raise HTTPException(403, "Cannot manage another account's keys")
+    return {"keys": store.access.list_personal_api_keys(user["id"])}
 
 
 @router.post("/api-keys")
-async def create_api_key(body: ApiKeyCreate, _: AuthDep):
+async def create_api_key(body: ApiKeyCreate, request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin" and body.user_id != user["id"]:
+        raise HTTPException(403, "Cannot manage another account's keys")
     try:
+        if body.user_id == user["id"]:
+            return store.access.create_personal_api_key(user["id"], body.name)
         return store.create_api_key(body.user_id, body.name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/api-keys/{key_id}")
-async def delete_api_key(key_id: str, _: AuthDep):
+async def delete_api_key(key_id: str, request: Request, _: AuthDep):
+    user = authenticated_user(request)
+    if user["role"] != "admin":
+        row = store.get_api_key(key_id)
+        if not row or row["user_id"] != user["id"]:
+            raise HTTPException(404, "API key not found")
+        store.access.delete_personal_api_key(user["id"], key_id)
+        return {"success": True}
     if not store.delete_api_key(key_id):
         raise HTTPException(status_code=404, detail="API key not found")
     return {"success": True}
@@ -912,21 +1010,12 @@ async def update_settings(body: dict, request: Request, _: AuthDep):
     return result
 
 
-def _is_loopback_client(request: Request) -> bool:
-    """True when the TCP peer is loopback (ignores X-Forwarded-For)."""
-    host = (request.client.host if request.client else "") or ""
-    return host in {"127.0.0.1", "::1", "localhost", "testclient"}
-
-
 @router.post("/setup")
-async def complete_setup(request: Request, body: dict):
+async def complete_setup(request: Request, body: dict, _: AdminDep):
+    # Bootstrap already seeds an Admin login. Loopback/proxy reachability must
+    # never let an anonymous caller or sandbox configure privileged providers.
     if store.is_setup_complete():
         raise HTTPException(status_code=403, detail="Setup already complete")
-    # First-run wizard is intentionally unauthenticated, but only from local peers.
-    if not _is_loopback_client(request):
-        raise HTTPException(
-            status_code=403, detail="Setup is only allowed from localhost"
-        )
     base_url = (body.get("base_url") or "").strip()
     api_key = (body.get("api_key") or "").strip()
     model = (body.get("model") or "").strip()

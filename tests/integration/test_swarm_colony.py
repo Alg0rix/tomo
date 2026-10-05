@@ -15,13 +15,30 @@ from app.services.store import store
 from tests.fakes.llm import ScriptedLLM, text_reply
 
 
-def setup_run(tmp_path):
-    store.rebind(tmp_path / "colony.db")
-    sid = store.get_or_create_session("main", "web")
+def setup_run(tmp_path, db_name="colony.db"):
+    # Owned Admin session: the swarm runtime and board bind resolve the real
+    # execution ceiling instead of the legacy anonymous "web" identity.
+    from tests.fakes.access import owned_host_session
+    store.rebind(tmp_path / db_name)
+    sid = owned_host_session()
     rid = store.with_db(lambda c: db.create_run(c, sid, "Check contract"))
     tids = [store.with_db(lambda c: db.create_task(c, run_id=rid, agent_id="research",
             brief="Check", depends_on=[], write_scope=[], tools=[])) for _ in range(2)]
     return sid, rid, tids
+
+
+def scoped_bind(sid, **kwargs):
+    """Bind the swarm board under the run session's real execution context."""
+    from app.runtime.access import execution_scope
+    uid = store.get_session(sid)["user_id"]
+    context = store.access.resolve_context(uid, sid)
+    scope = execution_scope(context)
+    scope.__enter__()
+    try:
+        return scope, swarm_board.bind(**kwargs)
+    except Exception:
+        scope.__exit__(None, None, None)
+        raise
 
 
 def post(rid, kind, payload, tid=""):
@@ -30,7 +47,10 @@ def post(rid, kind, payload, tid=""):
 
 async def test_worker_asks_main_and_receives_answer_before_resuming(tmp_path, monkeypatch):
     store.rebind(tmp_path / "question.db")
-    sid = store.get_or_create_session("main", "web")
+    from tests.fakes.access import owned_host_session
+    sid = owned_host_session()
+    # Swarm orchestration + worker + coordinator review hold three slots.
+    store.access.set_quota("usr_admin", "usr_admin", {"max_concurrent_jobs": 4})
     reviews = []
 
     class Worker(ScriptedLLM):
@@ -78,7 +98,7 @@ async def test_delivery_is_task_scoped_once_and_late_guidance_reopens_final(tmp_
     private = post(rid, "message", {"agent_id": "main", "to_agent_id": "research",
                    "to_task_id": other, "content": "Private to sibling"})
     finding = post(rid, "finding", {"agent_id": "research", "content": "Shared evidence"}, other)
-    token = swarm_board.bind(run_id=rid, task_id=tid, agent_id="research", coordinator_id="main")
+    scope, token = scoped_bind(sid, run_id=rid, task_id=tid, agent_id="research", coordinator_id="main")
     rounds = []
     try:
         class Worker(ScriptedLLM):
@@ -104,11 +124,12 @@ async def test_delivery_is_task_scoped_once_and_late_guidance_reopens_final(tmp_
         assert private not in [e["payload"]["source_event_id"] for e in receipts]
     finally:
         swarm_board.reset(token)
+        scope.__exit__(None, None, None)
 
 
 async def test_question_timeout_and_invalid_recipient_are_honest(tmp_path, monkeypatch):
-    _, rid, (tid, other) = setup_run(tmp_path)
-    token = swarm_board.bind(run_id=rid, task_id=tid, agent_id="research", coordinator_id="main")
+    sid, rid, (tid, other) = setup_run(tmp_path)
+    scope, token = scoped_bind(sid, run_id=rid, task_id=tid, agent_id="research", coordinator_id="main")
     try:
         assert "roster" in swarm_board.run({"action": "send", "to_agent_id": "unknown", "content": "Question"})
         assert "target agent" in swarm_board.run({"action": "send", "to_agent_id": "main", "to_task_id": other, "content": "Question"})
@@ -125,11 +146,13 @@ async def test_question_timeout_and_invalid_recipient_are_honest(tmp_path, monke
         assert "already ended" in swarm_board.run({"action": "send", "to_agent_id": "research", "to_task_id": other, "content": "Late"})
     finally:
         swarm_board.reset(token)
+        scope.__exit__(None, None, None)
 
 
 async def test_cancel_stops_question_wait_and_coordinator_review(tmp_path, monkeypatch):
+    from tests.fakes.access import owned_host_session
     store.rebind(tmp_path / "cancel_colony.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_host_session()
     reviewing = asyncio.Event()
     stopped = asyncio.Event()
     worker = ScriptedLLM([LLMResponse(content=None, tool_calls=[ToolCall(id="ask", name="swarm_board",
@@ -174,9 +197,11 @@ async def test_repeated_reviews_preserve_exact_cache_prefix_and_tools(tmp_path):
             captured.append((copy.deepcopy(messages), copy.deepcopy(tools)))
             return await super().complete(messages, tools)
     llm = Model([text_reply("First review"), text_reply("Second review")])
+    from tests.fakes.access import owned_host_session
+    review_sid = owned_host_session()
     conversation = []
     for update in ("Initial evidence", "New evidence"):
-        async for _ in run_turn(update, llm=llm, agent_id="main", tools=[],
+        async for _ in run_turn(update, llm=llm, agent_id="main", session_id=review_sid, tools=[],
                                 system_prompt="Stable coordination instructions", conversation=conversation,
                                 enable_atg=False):
             pass
@@ -189,8 +214,9 @@ async def test_repeated_reviews_preserve_exact_cache_prefix_and_tools(tmp_path):
 
 async def test_user_steer_is_consumed_by_main_and_translated_for_worker(tmp_path, monkeypatch):
     from app.services import chat
+    from tests.fakes.access import owned_host_session
     store.rebind(tmp_path / "steer_colony.db")
-    sid = store.get_or_create_session("main", "web")
+    sid = owned_host_session()
     inbox = [{"content": "Only read production", "steer_id": "guidance", "attachment_ids": []}]
     def drain(_):
         result = list(inbox)
@@ -237,8 +263,11 @@ async def test_quiet_review_records_usage_without_board_summary(tmp_path, monkey
                    "metrics": {"prompt_tokens": 100, "cached_tokens": 80}}
         monkeypatch.setattr(swarm, "run_turn", turn)
         events = asyncio.Queue()
-        await swarm._supervise(run_id=rid, session_id=sid, coordinator_id="main",
-                               request="Check contract", tasks={}, guidance=[], events=events, conversation=[])
+        from app.runtime.access import execution_scope
+        uid = store.get_session(sid)["user_id"]
+        with execution_scope(store.access.resolve_context(uid, sid)):
+            await swarm._supervise(run_id=rid, session_id=sid, coordinator_id="main",
+                                   request="Check contract", tasks={}, guidance=[], events=events, conversation=[])
         emitted = [events.get_nowait() for _ in range(events.qsize())]
         assert [kind for kind, _, _ in emitted] == ["coordinator_review_done", "coordinator_finished"]
         assert emitted[0][2]["metrics"]["cached_tokens"] == 80

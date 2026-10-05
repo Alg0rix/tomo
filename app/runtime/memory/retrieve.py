@@ -101,14 +101,16 @@ def retrieve_for_turn(
     except Exception:
         return ""
 
-    uid = user_id
-    if uid is None:
-        try:
-            from app.runtime.tools.user_ctx import current_user_id
-
-            uid = current_user_id()
-        except Exception:
-            uid = "web"
+    from app.runtime.tools.user_ctx import current_user_id
+    from app.runtime.access import current_execution, AccessDenied
+    execution = current_execution(required=False)
+    uid = current_user_id() if user_id is None else user_id
+    if execution:
+        execution = store.access.revalidate(execution)
+        if uid != execution.user_id or (session_id and session_id != execution.session_id):
+            raise AccessDenied("Memory scope is outside the execution ceiling")
+    if not uid:
+        raise AccessDenied("Memory identity is required")
 
     parts: list[str] = []
 
@@ -184,7 +186,7 @@ def retrieve_for_turn(
     except Exception as exc:
         _logger.debug("skill retrieve failed: %s", exc)
 
-    if agent_id:
+    if agent_id and (execution is None or execution.role == "admin"):
         try:
             state = store.list_agent_state(agent_id)
             if state:
@@ -217,7 +219,7 @@ def retrieve_for_turn(
             _logger.debug("swarm notes retrieve failed: %s", exc)
 
     try:
-        arts = store.search_artifacts(query, limit=3, session_id=session_id)
+        arts = store.search_artifacts(query, limit=3, session_id=session_id) if session_id else []
         if arts:
             lines = [
                 f"- {a.get('title')} ({a.get('path') or a.get('kind')})"
@@ -230,7 +232,7 @@ def retrieve_for_turn(
     try:
         exec_hits = store.search_execution_snippets(
             query, session_id=session_id, limit=3
-        )
+        ) if session_id else []
         if exec_hits:
             lines = [
                 f"- {h.get('title')}: {(h.get('snippet') or '')[:160]}"

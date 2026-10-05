@@ -234,6 +234,8 @@ def run(arguments: dict[str, Any]) -> str:
     """Fetch ``url`` and return paginated text/Markdown; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: web_fetch expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("web_fetch", arguments)
     url = arguments.get("url")
     if not isinstance(url, str) or not url.strip():
         return "Error: 'url' argument must be a non-empty string"

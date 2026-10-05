@@ -109,6 +109,55 @@ def _attach_image(
     return sid, att["id"]
 
 
+_REAL_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def _attach_owned_image(tmp_path: Path, db_name: str) -> tuple[str, str]:
+    """Owned Admin session + real PNG bytes in the supervised upload dir.
+
+    ``read_owned_upload`` only opens ``$TOMO_HOME/attachments/<sid>/<file>``
+    through non-symlink directory fds, so the fixture writes exactly there
+    with real decodable bytes (Pillow rejects fake magic). Returns
+    ``(session_id, attachment_id)``; callers bind the returned execution.
+    """
+    import base64
+
+    from app.core.config import TOMO_HOME
+    from tests.fakes.access import owned_host_session
+
+    store.rebind(tmp_path / db_name)
+    admin = store.create_user({"username": "ctxvis", "password": "password123", "role": "admin"})
+    sid = owned_host_session(["main"], user_id=admin["id"])
+    raw = base64.b64decode(_REAL_PNG)
+    directory = Path(TOMO_HOME) / "attachments" / sid
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "att_vis1.png"
+    target.write_bytes(raw)
+    att = store.create_attachment(
+        attachment_id="att_vis1",
+        session_id=sid,
+        filename="att_vis1.png",
+        original_name="photo.png",
+        mime_type="image/png",
+        size_bytes=len(raw),
+        file_path=str(target),
+    )
+    return sid, att["id"]
+
+
+def _owned_execution(sid: str):
+    """Execution scope for the session owner (real policy, no mocks)."""
+    from app.runtime.access import execution_scope
+
+    from app.services import store as _store
+
+    session = _store.get_session(sid)
+    context = _store.access.resolve_context(session["user_id"], sid)
+    return execution_scope(context)
+
+
 def test_history_to_messages_defaults_plain_string_with_image_attachment(
     tmp_path: Path,
 ) -> None:
@@ -127,12 +176,15 @@ def test_history_to_messages_defaults_plain_string_with_image_attachment(
 def test_history_to_messages_vision_capable_builds_multimodal_content(
     tmp_path: Path,
 ) -> None:
-    sid, aid = _attach_image(tmp_path, "ctx_vis_on.db")
+    # Owned chat + supervised preprocessing: real PNG bytes through the real
+    # session-scoped read (ownership, symlink-safe open, downscale).
+    sid, aid = _attach_owned_image(tmp_path, "ctx_vis_on.db")
     store.append_session_history(
         sid, {"type": "user", "content": "what is this", "attachment_ids": [aid]}
     )
     history = store.get_session_history(sid)
-    msgs = history_to_messages(history, vision_capable=True)
+    with _owned_execution(sid):
+        msgs = history_to_messages(history, vision_capable=True)
     assert len(msgs) == 1
     content = msgs[0]["content"]
     assert isinstance(content, list)
@@ -144,14 +196,15 @@ def test_history_to_messages_vision_capable_builds_multimodal_content(
 
 
 def test_build_messages_threads_vision_capable_through(tmp_path: Path) -> None:
-    sid, aid = _attach_image(tmp_path, "ctx_vis_build.db")
+    sid, aid = _attach_owned_image(tmp_path, "ctx_vis_build.db")
     store.append_session_history(
         sid, {"type": "user", "content": "what is this", "attachment_ids": [aid]}
     )
     history = store.get_session_history(sid)
-    msgs = build_messages(
-        history, None, system_prompt="s", vision_capable=True
-    )
+    with _owned_execution(sid):
+        msgs = build_messages(
+            history, None, system_prompt="s", vision_capable=True
+        )
     user_msgs = [m for m in msgs if m["role"] == "user"]
     assert len(user_msgs) == 1
     assert isinstance(user_msgs[0]["content"], list)

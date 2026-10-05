@@ -29,6 +29,14 @@ def setup(tmp_path, monkeypatch):
                            'approvals_mode': 'smart', 'memory_vault_enabled': False})
     alice = store.create_user({'username': 'alice', 'password': 'password1', 'role': 'member'})
     bob = store.create_user({'username': 'bob', 'password': 'password1', 'role': 'member'})
+    profile = store.create_llm_profile({'name': 'Assigned linking model', 'model': 'local-test'})
+    store.set_default_llm_profile(profile['id'])
+    for uid in (alice['id'], bob['id']):
+        store.access.assign('usr_admin', uid, 'model', profile['id'])
+    from app.runtime.supervision import stop_session as stop_turns
+    from app.services.background_jobs import manager
+    store.access.register_execution_stopper(stop_turns)
+    store.access.register_execution_stopper(manager.stop_session)
     override = app.dependency_overrides.pop(require_auth, None)
     client = TestClient(app)
     try:
@@ -73,12 +81,17 @@ async def test_web_dm_link_merges_memory_and_keeps_transport_separate(setup, mon
         calls(('memory', {'action': 'add', 'entity': 'user/profile', 'content': 'Likes tea.'})),
         text_reply('Remembered.'),
     ])
-    monkeypatch.setattr('app.runtime.agent.loop.get_llm', lambda agent_id=None: llm)
+    monkeypatch.setattr('app.runtime.agent.loop.get_llm', lambda agent_id=None, **kwargs: llm)
     try:
         await dispatcher.dispatch(update(code))
         assert user_id_for_chat(42) == uid
         assert client.get(f'/api/users/{uid}/telegram').json()['links'][0]['chat_id'] == '42'
-        assert store.get_session(legacy)['user_id'] == uid
+        adopted = store.get_session(legacy)
+        assert adopted['user_id'] == uid
+        assert adopted['workplace_id'] == store.access.ensure_personal_space(uid)['id']
+        assert adopted['execution_mode'] == 'restricted'
+        assert adopted['additional_workplace_ids'] == []
+        assert store.access.resolve_context(uid, legacy).user_id == uid
         assert store.get_session(legacy)['channel'] == 'telegram'
         assert store.get_session(legacy)['telegram_chat_id'] == '42'
         assert store.get_or_create_session('main', uid) == web
@@ -140,7 +153,7 @@ async def test_link_codes_require_owner_private_dm_valid_account_and_single_use(
     store.update_user(uid, {'enabled': False})
     assert not chat_is_allowed(42)
     disabled = client.post(f'/api/users/{uid}/telegram/link-code')
-    assert disabled.status_code == 400
+    assert disabled.status_code == 401
     store.update_user(uid, {'enabled': True})
     assert client.delete(f'/api/users/{uid}/telegram/42').status_code == 200
     monkeypatch.setattr(telegram_accounts, 'CODE_TTL', -1)

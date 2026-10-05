@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from typing import Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -57,6 +59,54 @@ def _bootstrap_runtime() -> None:
         logging.getLogger(__name__).exception("bootstrap secrets failed")
 
 
+def _register_execution_stoppers() -> Callable[[str], None]:
+    """Register real confirmed teardown before admitting web/scheduled work."""
+    from app.runtime.access import AccessUnavailable
+    from app.runtime.isolation import backend
+    from app.runtime.isolation import host, jobs
+    from app.runtime.mcp import mcp_manager
+    from app.runtime.supervision import stop_session as stop_turns
+    from app.services import store
+    from app.services.background_jobs import manager as background_manager
+    from app.services.terminals import terminal_manager
+    from app.workplaces import remote_contract, ssh_contract
+
+    loop = asyncio.get_running_loop()
+
+    def stop_managed_session(session_id: str) -> None:
+        # Kill OS/container work before draining tasks awaiting those processes.
+        # Foundation sets persistent pending/generation fences BEFORE callback.
+        failures = []
+        # Attempt every backend even if one cannot confirm cleanup. One failed
+        # container runtime must not prevent termination of known host work.
+        for stopper in (jobs.stop_session, backend.stop_session, host.stop_session,
+                        background_manager.stop_session, terminal_manager.stop_session, stop_turns,
+                        remote_contract.stop_session, ssh_contract.stop_session_production):
+            try:
+                stopper(session_id)
+            except Exception as exc:
+                failures.append(exc)
+        if mcp_manager.connected_server_ids():
+            # MCP transports are shared/global; conservative teardown closes all
+            # rather than claiming an unscoped transport retained no access.
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if current_loop is loop or loop.is_closed():
+                failures.append(AccessUnavailable("External service teardown is pending"))
+            else:
+                try:
+                    asyncio.run_coroutine_threadsafe(mcp_manager.close_all(), loop).result(timeout=15)
+                except Exception as exc:
+                    failures.append(exc)
+        if failures:
+            raise AccessUnavailable("Managed execution teardown could not be confirmed") from failures[0]
+
+    store.access.register_execution_stopper(stop_managed_session)
+    return stop_managed_session
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # Home + secrets already ensured at import; keep a best-effort refresh.
@@ -79,6 +129,17 @@ async def _lifespan(_app: FastAPI):
     from app.services.chat import recover_web_turns, suspend_session_turns
     from app.services import background_continuation
 
+    stop_managed_session = _register_execution_stoppers()
+    from app.runtime.isolation import lifecycle
+
+    try:
+        # Recover orphaned mounts/processes before resuming any owned work.
+        # Blocking runtime capability checks must not hold the event loop.
+        await asyncio.to_thread(lifecycle.startup)
+    except Exception:
+        # Keep bootstrap/Admin control-plane recovery usable. Restricted
+        # execution still requires the backend's complete capability check.
+        logging.getLogger(__name__).exception("Restricted execution unavailable at startup")
     background_continuation.start()
     await recover_web_turns()
     start_telegram_supervisor()
@@ -87,15 +148,24 @@ async def _lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        from app.services.terminals import terminal_manager
-
         from app.plugins.manager import get_manager
+        from app.services import store
 
-        await terminal_manager.close_all()
-        await suspend_session_turns()
-        await background_continuation.stop()
+        # Stop ingress before draining all retained OS/task backends. Cancelling
+        # a turn alone cannot kill a subprocess executing in a worker thread.
         await stop_scheduler()
         await stop_telegram_supervisor()
+        await background_continuation.stop()
+        for session in store.list_sessions():
+            try:
+                await asyncio.to_thread(stop_managed_session, session["id"])
+            except Exception:
+                logging.getLogger(__name__).exception("Managed shutdown could not be confirmed")
+        await suspend_session_turns()
+        try:
+            await asyncio.to_thread(lifecycle.shutdown)
+        except Exception:
+            logging.getLogger(__name__).exception("Sandbox shutdown could not be confirmed")
         try:
             from app.runtime.mcp import mcp_manager
 
@@ -119,6 +189,9 @@ def create_app() -> FastAPI:
     from app.core.observability import RequestLoggingMiddleware
 
     app.add_middleware(RequestLoggingMiddleware)
+    from app.api.access_policy import AccessPolicyMiddleware
+
+    app.add_middleware(AccessPolicyMiddleware, router=app.router)
     app.add_middleware(
         SessionMiddleware,
         secret_key=config.SESSION_SECRET,
@@ -127,6 +200,11 @@ def create_app() -> FastAPI:
         same_site="lax",
         https_only=COOKIE_HTTPS_ONLY,
     )
+    # Added last = outermost: oversized bodies are rejected before session
+    # parsing, policy checks, or multipart spooling. See request_limits.py.
+    from app.api.request_limits import RequestLimitsMiddleware
+
+    app.add_middleware(RequestLimitsMiddleware)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -139,6 +217,18 @@ def create_app() -> FastAPI:
     app.mount("/plugins", plugin_manager, name="plugins")
     app.include_router(web_router)
     app.include_router(api_router)
+    from app.api.access_routes import router as access_router
+    from app.runtime.access import AccessDenied, AccessUnavailable
+    from fastapi.responses import JSONResponse
+
+    app.include_router(access_router)
+
+    @app.exception_handler(AccessDenied)
+    async def access_denied(request: Request, exc: AccessDenied):
+        return JSONResponse(
+            {"detail": "Execution access unavailable" if isinstance(exc, AccessUnavailable) else "Access denied"},
+            status_code=503 if isinstance(exc, AccessUnavailable) else 403,
+        )
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc: Exception):

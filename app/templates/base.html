@@ -23,9 +23,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Shippori+Mincho:wght@700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', path='css/tomo.css') }}?v={{ static_ver }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/access.css') }}?v={{ static_ver }}">
   {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body data-user-id="{{ current_user_id or '' }}" data-role="{{ current_role or '' }}">
 <div class="app-shell">
   {% include 'partials/app_rail.html' %}
   <div class="body-row">
@@ -38,6 +39,7 @@
 <div id="toasts"></div>
 <script src="{{ url_for('static', path='js/tomo.js') }}?v={{ static_ver }}"></script>
 <script src="{{ url_for('static', path='js/mobile_navigation.js') }}?v={{ static_ver }}"></script>
+<script src="{{ url_for('static', path='js/access.js') }}?v={{ static_ver }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

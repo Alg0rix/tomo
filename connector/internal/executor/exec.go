@@ -19,15 +19,18 @@ type ExecResult struct {
 	ExecutionTime float64 `json:"execution_time"`
 }
 
-func execBash(params map[string]any, progress Progress) (any, error) {
+func execBash(params map[string]any, progress Progress, adm *Admission) (any, error) {
 	script := strings.TrimSpace(paramString(params, "script", "command"))
 	if script == "" {
 		return nil, fmt.Errorf("'script' (or 'command') is required")
 	}
-	timeout := timeoutSec(params["timeout"])
-	cwd := strings.TrimSpace(paramString(params, "cwd"))
-	if cwd == "" {
-		cwd = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
+	timeout := adm.CapTimeout(timeoutSec(params["timeout"]))
+	cwd, err := adm.AuthorizeCwd(strings.TrimSpace(paramString(params, "cwd")))
+	if err != nil {
+		return nil, err
 	}
 	if stream, _ := params["stream"].(bool); !stream {
 		progress = nil
@@ -35,15 +38,18 @@ func execBash(params map[string]any, progress Progress) (any, error) {
 	return runExec(timeout, cwd, paramEnv(params), "bash", "-s", script, progress)
 }
 
-func execPython(params map[string]any) (any, error) {
+func execPython(params map[string]any, adm *Admission) (any, error) {
 	code := strings.TrimSpace(paramString(params, "code"))
 	if code == "" {
 		return nil, fmt.Errorf("'code' is required")
 	}
-	timeout := timeoutSec(params["timeout"])
-	cwd := strings.TrimSpace(paramString(params, "cwd"))
-	if cwd == "" {
-		cwd = strings.TrimRight(WorkRoot(), string(os.PathSeparator))
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
+	timeout := adm.CapTimeout(timeoutSec(params["timeout"]))
+	cwd, err := adm.AuthorizeCwd(strings.TrimSpace(paramString(params, "cwd")))
+	if err != nil {
+		return nil, err
 	}
 	return runExec(timeout, cwd, paramEnv(params), "python3", "-", code, nil)
 }

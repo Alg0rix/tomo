@@ -52,6 +52,7 @@ def create_background_job(conn: sqlite3.Connection, data: dict[str, Any]) -> dic
             'id': 'job_' + uuid.uuid4().hex, 'session_id': '', 'user_id': '',
             'agent_id': None, 'origin_message_id': None, 'workplace_id': '',
             'backend': 'local', 'backend_handle': None, 'command': '', 'cwd': '',
+            'execution_context': None,
             'started_at': time.time(), 'finished_at': None, 'status': 'starting',
             'returncode': None, 'stdout': '', 'stderr': '', 'truncated': False,
             'version': 1, 'log_cursor': 0, 'delivery': None, 'actor_id': None,
@@ -109,7 +110,7 @@ def update_background_job(conn: sqlite3.Connection, job_id: str, updates: dict[s
         item = get_background_job(conn, job_id)
         if item is None:
             return None
-        changes = {k: v for k, v in updates.items() if k not in {'id', 'session_id', 'user_id', 'agent_id', 'delivery', 'actor_id', 'backend', 'workplace_id', 'command', 'cwd', 'started_at'}}
+        changes = {k: v for k, v in updates.items() if k not in {'id', 'session_id', 'user_id', 'agent_id', 'delivery', 'actor_id', 'backend', 'workplace_id', 'command', 'cwd', 'started_at', 'execution_context'}}
         # A completed command never becomes active or emits another event.
         next_status = changes.get('status', item['status'])
         if item['status'] in TERMINAL:

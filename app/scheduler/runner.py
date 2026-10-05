@@ -34,7 +34,7 @@ async def fire_schedule(
     When ``skip_claim`` is True (manual run-now), still records a run without
     the due-window claim gate.
     """
-    from app.services.chat import run_session_turn
+    from app.channels.web import stream_turn_sse
     from app.services.store import store
 
     ts = now if now is not None else time.time()
@@ -58,9 +58,37 @@ async def fire_schedule(
         f"[schedule] {schedule.get('name', schedule_id)}"
     )
     target = schedule.get("delivery_target")
-    # Never share histories/artifacts between jobs aimed at different conversations.
-    user_id = f"scheduler:{schedule_id}" if target else "scheduler"
-    session_id = store.get_or_create_session(agent_id, user_id)
+    from app.runtime.policy import durable_context, intersect_context
+    from app.runtime.access import bind_execution, reset_execution, current_execution
+    try:
+        context = durable_context(schedule)
+        parent = current_execution(required=False)
+        if parent:
+            context = intersect_context(context, parent)
+        if context.agent_id != agent_id:
+            raise PermissionError("Scheduled agent differs from its stored execution ceiling")
+        # Never share histories/artifacts between jobs: each fire runs in a
+        # fresh session owned by the schedule owner. The stored ceiling above
+        # already rejected revoked owners/agents; the run session resolves
+        # against current grants (queued work follows current permissions,
+        # not a cached grant), activating the same destination/resources the
+        # owner holds now. The creation chat stays untouched.
+        session_id = store.create_swarm_session([agent_id], user_id=context.user_id)
+        if not context.legacy_admin:
+            store.access.set_chat_access(
+                context.user_id, session_id, context.active_workplace_id,
+                additional_workplace_ids=[r.workplace_id for r in context.resources
+                                          if r.workplace_id != context.active_workplace_id],
+                execution_mode=context.execution_mode,
+                unrestricted_acknowledged=context.execution_mode == "unrestricted",
+            )
+        context = store.access.resolve_context(context.user_id, session_id, agent_id)
+    except PermissionError:
+        # Missing owner is never the historical privileged scheduler identity.
+        run_id = store.begin_schedule_run(schedule_id, session_id="", now=ts, claimed=claimed)
+        store.finish_schedule_run(run_id, status="error", error="Scheduled execution identity or current policy is unavailable", now=time.time())
+        return {"run_id": run_id, "schedule_id": schedule_id, "session_id": "", "status": "error",
+                "error": "Scheduled execution identity or current policy is unavailable", "claimed": claimed}
     run_id = store.begin_schedule_run(
         schedule_id, session_id=session_id, now=ts, claimed=claimed
     )
@@ -74,6 +102,7 @@ async def fire_schedule(
         "claimed": claimed,
     }
     execution_finished = False
+    token = bind_execution(context)
     try:
         from app.channels.delivery import open_delivery
 
@@ -88,7 +117,7 @@ async def fire_schedule(
             turn_error = ""
             agen = await stack.enter_async_context(
                 contextlib.aclosing(
-                    run_session_turn(session_id, message, user_id, origin="scheduler")
+                    stream_turn_sse(session_id, agent_id, message, 0, origin="scheduler")
                 )
             )
             async for chunk in agen:
@@ -151,6 +180,8 @@ async def fire_schedule(
                 session_id=session_id,
                 now=time.time(),
             )
+    finally:
+        reset_execution(token)
     return result
 
 
@@ -164,6 +195,10 @@ async def _deliver_run(row: dict[str, Any], *, bound=None) -> dict[str, Any]:
     receipt = None
     error = ""
     try:
+        # Stored outbox content is private to the originating current account.
+        # A deleted/missing owner never inherits the scheduler identity.
+        from app.runtime.policy import resolve_turn
+        resolve_turn(row["session_id"])
         if bound is not None:
             receipt = await bound.send_final(row["content"], delivery_id=run_id)
         else:
@@ -225,11 +260,18 @@ async def fire_due_schedules(*, now: float | None = None) -> list[dict[str, Any]
     return list(await asyncio.gather(*[_one(s) for s in due]))
 
 
-async def run_schedule_now(schedule_id: str) -> dict[str, Any]:
+async def run_schedule_now(schedule_id: str, *, user_id: str | None = None) -> dict[str, Any]:
     """Manual trigger — runs immediately outside the due window."""
     from app.services.store import store
 
-    sch = store.get_schedule(schedule_id)
+    from app.runtime.access import current_execution
+    context = current_execution(required=False)
+    actor = user_id or (context.user_id if context else None)
+    if not actor:
+        raise PermissionError("Schedule caller identity is required")
+    if context and actor != context.user_id:
+        raise PermissionError("Schedule caller is outside the execution ceiling")
+    sch = store.access.require_schedule(actor, schedule_id)
     if not sch:
         raise ValueError(f"Schedule not found: {schedule_id}")
     if sch.get("state") == "completed":

@@ -144,6 +144,11 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
 
         payload["approvals_mode"] = normalize_mode(payload["approvals_mode"])
 
+    if "network_egress" in payload and payload["network_egress"] is not None:
+        from app.runtime.net_policy import validate_egress_value
+
+        payload["network_egress"] = validate_egress_value(payload["network_egress"])
+
     for key, value in payload.items():
         if value is None:
             continue

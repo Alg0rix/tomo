@@ -12,7 +12,11 @@ from app.runtime.tools.registry import ToolRegistry
 @pytest.fixture
 def manager(tmp_path, monkeypatch):
     from app.plugins import manager as module
+    from app.services import store
 
+    # Deterministic identity store: private plugin routes authenticate the
+    # real seeded Admin instead of the legacy fake "alice" state.
+    store.rebind(tmp_path / "plugins-identity.db")
     value = PluginManager(tmp_path / "home")
     monkeypatch.setattr(module, "_manager", value)
     yield value
@@ -50,7 +54,7 @@ def client_for(manager, authenticated=True):
     @app.middleware("http")
     async def auth(request: Request, call_next):
         if authenticated:
-            request.state.auth_user_id = "alice"
+            request.state.auth_user_id = "usr_admin"
         return await call_next(request)
 
     app.mount("/plugins", manager)
@@ -58,6 +62,8 @@ def client_for(manager, authenticated=True):
 
 
 def test_live_install_reload_disable_and_persist(manager, tmp_path):
+    from tests.fakes.access import owned_admin_scope
+
     path = source(tmp_path)
     client = client_for(manager)
     registry = ToolRegistry()
@@ -68,13 +74,17 @@ def test_live_install_reload_disable_and_persist(manager, tmp_path):
     assert client.get("/plugins/test/").json() == {"version": "one"}
     assert client.get("/plugins/test/details").json() == {"details": True}
     assert "plugin__test__value" in registry.names()
-    assert json.loads(registry.execute("plugin__test__value", {})) == {"version": "one"}
+    # Owned Admin execution: plugin tools admit the revalidated owned
+    # ceiling while enabled (real enablement gate, real audit).
+    with owned_admin_scope():
+        assert json.loads(registry.execute("plugin__test__value", {})) == {"version": "one"}
     (path / "plugin.py").write_text(
         (path / "plugin.py").read_text().replace('"one"', '"two"')
     )
     manager.change("test", "reload")
     assert client.get("/plugins/test/").json() == {"version": "two"}
-    assert json.loads(registry.execute("plugin__test__value", {})) == {"version": "two"}
+    with owned_admin_scope():
+        assert json.loads(registry.execute("plugin__test__value", {})) == {"version": "two"}
     restored = PluginManager(manager.root)
     assert not restored.list()[0]["running"]
     restored.start()
@@ -83,7 +93,9 @@ def test_live_install_reload_disable_and_persist(manager, tmp_path):
     manager.change("test", "disable")
     assert client.get("/plugins/test/details").status_code == 404
     assert "plugin__test__value" not in registry.names()
-    assert registry.execute("plugin__test__value", {}).startswith("Error:")
+    # Disabled plugins fail closed even for an owned Admin ceiling.
+    with owned_admin_scope():
+        assert registry.execute("plugin__test__value", {}).startswith("Error:")
     assert not PluginManager(manager.root).list()[0]["running"]
 
 
@@ -297,8 +309,11 @@ def test_management_api_admin_and_csrf(manager, monkeypatch, tmp_path):
 
     app.include_router(router)
     client = TestClient(app)
+    # Router-gate unit test with valid role vocabulary (admin/member only).
+    # The full middleware + real-account perimeter is covered by the
+    # multi-user HTTP suite; this isolates the route-level admin gate.
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "user", "enabled": True}
+        store, "get_user", lambda uid: {"id": "alice", "role": "member", "enabled": True}
     )
     assert (
         client.post(
@@ -307,7 +322,7 @@ def test_management_api_admin_and_csrf(manager, monkeypatch, tmp_path):
         == 403
     )
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "admin", "enabled": True}
+        store, "get_user", lambda uid: {"id": "alice", "role": "admin", "enabled": True}
     )
     assert (
         client.post(
@@ -332,11 +347,11 @@ def test_management_api_admin_and_csrf(manager, monkeypatch, tmp_path):
     assert client.get("/api/plugins/ideas?refresh=true").json()["user_id"] == "alice"
     assert client.get("/api/plugins/ideas?refresh=true").json()["refresh"] is True
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "user", "enabled": True}
+        store, "get_user", lambda uid: {"id": "alice", "role": "member", "enabled": True}
     )
     assert client.get("/api/plugins/ideas").status_code == 403
     monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "admin", "enabled": True}
+        store, "get_user", lambda uid: {"id": "alice", "role": "admin", "enabled": True}
     )
     assert client.post("/api/plugins/test/enable").status_code == 200
     assert client.get("/api/plugins").json()[0]["running"]
@@ -382,23 +397,27 @@ def setup(api):
 
 def test_agent_management_tool_requires_admin(manager, monkeypatch, tmp_path):
     from app.runtime.tools.plugin_manager import run
+    from app.runtime.tools.user_ctx import bind_user, reset_user
     from app.services import store
+    from tests.fakes.access import owned_admin_scope
 
-    monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "user", "enabled": True}
-    )
-    assert run({"action": "install", "path": str(source(tmp_path))}).startswith(
-        "Error:"
-    )
+    # Real Member account: the tool's role check denies before any install.
+    member = store.create_user({"username": "plugmember", "password": "password1", "role": "member"})
+    token = bind_user(member["id"])
+    try:
+        assert run({"action": "install", "path": str(source(tmp_path))}).startswith(
+            "Error:"
+        )
+    finally:
+        reset_user(token)
     assert manager.list() == []
-    monkeypatch.setattr(
-        store, "get_user", lambda uid: {"role": "admin", "enabled": True}
-    )
-    assert (
-        json.loads(run({"action": "install", "path": str(tmp_path / "source")}))["id"]
-        == "test"
-    )
-    assert json.loads(run({"action": "enable", "id": "test"}))["running"]
+    # Real Admin identity authorizes; the install itself proceeds.
+    with owned_admin_scope():
+        assert (
+            json.loads(run({"action": "install", "path": str(tmp_path / "source")}))["id"]
+            == "test"
+        )
+        assert json.loads(run({"action": "enable", "id": "test"}))["running"]
 
 
 def test_startup_failure_isolated_from_other_plugins(manager, tmp_path):
@@ -521,8 +540,8 @@ def test_home_card_and_starter_validation(tmp_path):
 
 
 def test_home_card_refresh_api_filters_and_scopes(manager, tmp_path, monkeypatch):
-    from app.api import rest
-    from app.core.deps import require_auth
+    from app.services import store
+    from tests.fakes.access import admin_client
 
     manager.install(str(source(tmp_path, """
 def setup(api):
@@ -532,13 +551,14 @@ def setup(api):
     api.home_card(lambda uid: 1 / 0, id="other", refresh_seconds=30)
 """)))
     manager.change("test", "enable")
-    assert manager.home_contributions("alice")["cards"][0]["refresh_seconds"] == 10
-    app = FastAPI()
-    app.include_router(rest.router)
-    app.dependency_overrides[require_auth] = lambda: None
-    user = {"id": "alice"}
-    monkeypatch.setattr(rest, "session_user_id", lambda request: user["id"])
-    client = TestClient(app)
+    # Two real Admin logins against the production app: per-user card data
+    # with no spoofed session_user_id or request-state identity. Card refresh
+    # is Admin-only (plugins run with server authority until per-user plugin
+    # boundaries exist), so Members are not exercised here.
+    store.rebind(tmp_path / "home-cards-identity.db")
+    client, alice = admin_client(username="cardalice", password="password1", role="admin")
+    bob_client, bob = admin_client(username="cardbob", password="password1", role="admin")
+    assert manager.home_contributions(alice["id"])["cards"][0]["refresh_seconds"] == 10
     response = client.get("/api/home/cards", params=[
         ("keys", "test:monitor"), ("keys", "test:static"), ("keys", "missing:0"),
     ])
@@ -546,9 +566,8 @@ def setup(api):
     cards = response.json()["cards"]
     assert [c["key"] for c in cards] == ["test:monitor"]
     assert cards[0]["refresh_seconds"] == 10
-    assert cards[0]["data"] == {"metric": {"value": "alice", "label": ""}}
-    user["id"] = "bob"
-    assert client.get("/api/home/cards?keys=test:monitor").json()["cards"][0]["data"]["metric"]["value"] == "bob"
+    assert cards[0]["data"] == {"metric": {"value": alice["id"], "label": ""}}
+    assert bob_client.get("/api/home/cards?keys=test:monitor").json()["cards"][0]["data"]["metric"]["value"] == bob["id"]
     assert client.get("/api/home/cards?keys=test:other").json()["cards"][0]["error"] == "Card failed to load"
     assert client.get("/api/home/cards").status_code == 422
     manager.change("test", "disable")

@@ -2,4 +2,4 @@
 package version
 
 // Version is advertised in pair/hello and X-Tomo-Connector-Version.
-const Version = "0.3.3"
+const Version = "0.4.0"

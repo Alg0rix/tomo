@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import pytest
+
+from app.core import home
 from app.runtime.tools import delegate as delegate_tool
 from app.runtime.tools.registry import execute, get_openai_tools, reset_registry
 import json
-from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools import todo as todo_mod
 import re
 from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 # --- from test_delegate.py ---
@@ -32,6 +34,14 @@ def _clear_delegate_ctx() -> None:
     delegate_tool.reset_context()
 
 
+@pytest.fixture()
+def admin_fs():
+    # Explicit owned Admin unrestricted context (real policy grant + ack).
+    # Host tools are fenced to the session workplace root, not TOMO_WORK.
+    with owned_admin_scope() as (_ctx, root):
+        yield root
+
+
 def test_delegate_schema_loaded() -> None:
     tools = get_openai_tools()
     schema = next(t for t in tools if t["function"]["name"] == "delegate")
@@ -39,7 +49,7 @@ def test_delegate_schema_loaded() -> None:
     assert "agent_id" in props or "name" in props or "agent" in props
 
 
-def test_delegate_to_session_member_by_id() -> None:
+def test_delegate_to_session_member_by_id(admin_fs) -> None:
     delegate_tool.bind_context(
         agent_ids=["main", "ops"],
         agents=[
@@ -51,7 +61,7 @@ def test_delegate_to_session_member_by_id() -> None:
     assert result == "Delegated to ops"
 
 
-def test_delegate_to_session_member_by_name() -> None:
+def test_delegate_to_session_member_by_name(admin_fs) -> None:
     delegate_tool.bind_context(
         agent_ids=["main", "ops"],
         agents=[
@@ -63,7 +73,7 @@ def test_delegate_to_session_member_by_name() -> None:
     assert result == "Delegated to ops"
 
 
-def test_delegate_rejects_non_member() -> None:
+def test_delegate_rejects_non_member(admin_fs) -> None:
     delegate_tool.bind_context(
         agent_ids=["main", "ops"],
         agents=[
@@ -77,13 +87,13 @@ def test_delegate_rejects_non_member() -> None:
     assert "research" in result.lower() or "not" in result.lower()
 
 
-def test_delegate_requires_target() -> None:
+def test_delegate_requires_target(admin_fs) -> None:
     delegate_tool.bind_context(agent_ids=["main"], agents=[{"id": "main", "name": "Tomo"}])
     result = execute("delegate", {})
     assert result.startswith("Error:")
 
 
-def test_delegate_without_context_is_error() -> None:
+def test_delegate_without_context_is_error(admin_fs) -> None:
     result = execute("delegate", {"agent_id": "ops"})
     assert result.startswith("Error:")
 
@@ -106,7 +116,7 @@ def _reset(tmp_path, monkeypatch) -> None:
     reset_registry()
 
 
-def test_todo_write_replace_and_read() -> None:
+def test_todo_write_replace_and_read(admin_fs) -> None:
     out = execute(
         "todo",
         {
@@ -125,7 +135,7 @@ def test_todo_write_replace_and_read() -> None:
     assert listed["summary"]["total"] == 2
 
 
-def test_todo_merge_updates_by_id() -> None:
+def test_todo_merge_updates_by_id(admin_fs) -> None:
     execute(
         "todo",
         {
@@ -149,7 +159,7 @@ def test_todo_merge_updates_by_id() -> None:
     assert by_id["2"]["status"] == "pending"
 
 
-def test_legacy_add_list_complete_still_works() -> None:
+def test_legacy_add_list_complete_still_works(admin_fs) -> None:
     added = execute("todo", {"action": "add", "content": "ship tools"})
     data = json.loads(added)
     assert data["summary"]["total"] == 1
@@ -158,13 +168,13 @@ def test_legacy_add_list_complete_still_works() -> None:
     assert json.loads(done)["todos"][0]["status"] == "completed"
 
 
-def test_todo_complete_unknown_is_error() -> None:
+def test_todo_complete_unknown_is_error(admin_fs) -> None:
     assert execute("todo", {"action": "complete", "id": "todo_missing"}).startswith(
         "Error"
     )
 
 
-def test_todo_add_requires_content() -> None:
+def test_todo_add_requires_content(admin_fs) -> None:
     assert execute("todo", {"action": "add"}).startswith("Error")
 
 
@@ -200,7 +210,7 @@ def _reset_skills_tools(tmp_path) -> None:
     reset_registry()
 
 
-def test_list_skills_includes_seeded(tmp_path) -> None:
+def test_list_skills_includes_seeded(tmp_path, admin_fs) -> None:
     # Catalog may be empty without disk packages; install one for the tool path.
     from app.core import config, home
 
@@ -215,7 +225,7 @@ def test_list_skills_includes_seeded(tmp_path) -> None:
     assert "onboarding" in result or "Vendor" in result
 
 
-def test_list_skills_is_compact_and_paginated() -> None:
+def test_list_skills_is_compact_and_paginated(admin_fs) -> None:
     from app.core import config, home
 
     skills_root = home.library_skills_dir(config.TOMO_HOME)
@@ -240,7 +250,7 @@ def test_list_skills_is_compact_and_paginated() -> None:
     assert "Continue with offset" not in second
 
 
-def test_use_skill_returns_description() -> None:
+def test_use_skill_returns_description(admin_fs) -> None:
     from app.core import config, home
 
     d = home.library_skills_dir(config.TOMO_HOME) / "demo-skill"
@@ -258,7 +268,7 @@ def test_use_skill_returns_description() -> None:
     assert skills[0]["name"] in result
 
 
-def test_use_skill_paginates_large_body() -> None:
+def test_use_skill_paginates_large_body(admin_fs) -> None:
     from app.core import config, home
 
     skill_dir = home.library_skills_dir(config.TOMO_HOME) / "large-body"
@@ -289,11 +299,11 @@ def test_use_skill_paginates_large_body() -> None:
     assert "END_BODY" in page
 
 
-def test_use_skill_unknown_is_error() -> None:
+def test_use_skill_unknown_is_error(admin_fs) -> None:
     assert execute("use_skill", {"skill_id": "no_such_skill"}).startswith("Error")
 
 
-def test_use_skill_missing_id_is_error() -> None:
+def test_use_skill_missing_id_is_error(admin_fs) -> None:
     assert execute("use_skill", {}).startswith("Error")
 
 

@@ -60,11 +60,19 @@ def _download_bytes(url: str) -> bytes | str:
 
 def _attachment_bytes(attachment_id: str) -> tuple[bytes | None, str | None, str | None]:
     """``(raw, mime, error)`` for a stored chat attachment."""
+    from app.runtime.access import current_execution
     from app.services import store
 
     att = store.get_attachment(attachment_id)
     if not att:
         return None, None, f"Error: attachment not found: {attachment_id}"
+    execution = current_execution(required=False)
+    if execution is not None:
+        from app.services import store as _store
+
+        execution = _store.access.revalidate(execution)
+        if att.get("session_id") != execution.session_id:
+            return None, None, f"Error: attachment not found: {attachment_id}"
     path = Path(att.get("file_path") or "")
     try:
         raw = path.read_bytes() if path.is_file() else None
@@ -76,15 +84,61 @@ def _attachment_bytes(attachment_id: str) -> tuple[bytes | None, str | None, str
     return raw, mime, None
 
 
+def _restricted_workplace_file(root: Path, source: str) -> Path | str:
+    """Jail *source* under *root* for restricted preprocessing.
+
+    Unlike :func:`jail_path` (explicitly unrestricted host helper), this
+    resolves symlinks and then enforces containment: a link pointing outside
+    the owned workplace root is rejected instead of followed.
+    """
+    text = (source or "").strip()
+    if not text or "\x00" in text:
+        return "Error: source must be a non-empty path"
+    try:
+        root_resolved = root.resolve()
+        candidate = Path(text)
+        if candidate.is_absolute():
+            target = candidate.resolve()
+        else:
+            target = (root_resolved / text).resolve()
+    except OSError as exc:
+        return f"Error: invalid path: {exc}"
+    try:
+        target.relative_to(root_resolved)
+    except ValueError:
+        return "Error: path escapes the working location"
+    return target
+
+
 def _local_path_bytes(source: str) -> tuple[bytes | None, str | None, str | None]:
     """``(raw, mime, error)`` for a workplace-jailed local path."""
+    from app.runtime.access import current_execution
     from app.runtime.tools.sandbox import current_agent_id, jail_path, resolve_work_root
+    from app.services import store as _store
 
-    root = resolve_work_root(current_agent_id())
-    resolved = jail_path(root, source)
-    if isinstance(resolved, str):
-        return None, None, resolved  # jail_path already returns "Error: ..."
+    execution = _store.access.revalidate(current_execution())
+    if execution.execution_mode == "unrestricted":
+        root = resolve_work_root(current_agent_id())
+        resolved = jail_path(root, source)
+        if isinstance(resolved, str):
+            return None, None, resolved  # jail_path already returns "Error: ..."
+    else:
+        # Restricted chats never touch host paths directly: read through the
+        # owned active workplace root with symlink containment. Describe is
+        # read-only; grants already checked.
+        resource = next(
+            (r for r in execution.resources if r.workplace_id == execution.active_workplace_id), None
+        )
+        if resource is None or resource.transfer_only or resource.kind != "local":
+            return None, None, "Error: working location is unavailable for image input"
+        resolved = _restricted_workplace_file(Path(resource.root_path), source)
+        if isinstance(resolved, str):
+            return None, None, resolved
     try:
+        if not resolved.is_file():
+            return None, None, f"Error: could not read {source}: not a file"
+        if resolved.stat().st_size > _MAX_SOURCE_BYTES:
+            return None, None, "Error: image file too large (max 20 MB)"
         raw = resolved.read_bytes()
     except OSError as exc:
         return None, None, f"Error: could not read {source}: {exc}"
@@ -123,6 +177,44 @@ def _normalize_region(region: Any) -> list[int] | str | None:
         return "Error: region must contain integer pixel coordinates"
 
 
+def _require_assigned_vision_profile(context) -> None:
+    """Raise fail-closed unless an assigned vision profile resolves.
+
+    The auxiliary vision model is selected only from profiles the user is
+    assigned (explicit pin, the agent's own vision-capable model, or the
+    first assigned vision-capable profile). Unassigned/global models are
+    never silently borrowed for another user's image bytes. Raising (not an
+    error string) keeps direct-call authorization denials auditable and
+    consistent with :func:`authorize_tool`.
+    """
+    from app.runtime.access import AccessUnavailable
+    from app.runtime.llm.vision import lookup_vision_capability, resolve_vision_profile
+    from app.services import store
+
+    candidates: list[dict] = []
+    try:
+        pinned = resolve_vision_profile(context.agent_id)
+        if pinned and pinned.get("id"):
+            candidates.append(pinned)
+    except Exception:
+        pass
+    try:
+        for prof in store.list_llm_profiles():
+            if not prof.get("enabled", True) or any(p["id"] == prof["id"] for p in candidates):
+                continue
+            if lookup_vision_capability(prof.get("model"), prof.get("base_url") or "") is True:
+                candidates.append(prof)
+    except Exception:
+        pass
+    for prof in candidates:
+        try:
+            store.access.require_use(context.user_id, "model", prof["id"])
+            return
+        except Exception:
+            continue
+    raise AccessUnavailable("No vision-capable model profile is available for this chat")
+
+
 async def _describe(data_url: str, question: str, agent_id: str | None) -> str:
     from app.runtime.llm.vision import analyze_image_data_url
 
@@ -138,6 +230,9 @@ def run(arguments: dict[str, Any]) -> str:
     """Sync tool entry (registry dispatches on a worker thread)."""
     if not isinstance(arguments, dict):
         return "Error: vision_analyze expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    context = authorize_tool("vision_analyze", arguments)
+    _require_assigned_vision_profile(context)
     source = str(arguments.get("source") or arguments.get("image_url") or "").strip()
     question = str(arguments.get("question") or "")
     region = _normalize_region(arguments.get("region"))

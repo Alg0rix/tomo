@@ -1,4 +1,8 @@
-"""Agent work-dir sandbox for file/bash tools.
+"""Legacy unrestricted work-dir helpers (cwd is NOT OS isolation).
+
+Restricted actions dispatch through app.runtime.isolation before these helpers.
+
+Agent work-dir helpers for file/bash tools.
 
 Default cwd is ``$TOMO_WORK/<agent_id>`` (e.g. ``~/tomo/ops``), created on
 demand. When the chat/session binds a **local** workplace (or the agent has
@@ -12,6 +16,7 @@ under the root or an approved outside-path grant.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
 
@@ -113,12 +118,64 @@ def _workplace_local_root(agent_id: str) -> Path | None:
     return None
 
 
+def dispatch_execution(tool: str, arguments: dict) -> str | None:
+    """Authorize and dispatch restricted work; no missing-identity fallback."""
+    from app.runtime.isolation.tool_dispatch import dispatch
+
+    return dispatch(tool, arguments)
+
+
+def require_host_execution():
+    """Legacy helpers must never turn restricted contexts into host paths."""
+    from app.runtime.access import AccessDenied, current_execution
+    from app.services.access import access
+
+    context = access.revalidate(current_execution())
+    if context.execution_mode != "unrestricted":
+        raise AccessDenied("Host paths are unavailable for restricted execution")
+    return context
+
+
+@contextmanager
+def file_execution_guard():
+    """Fence unrestricted file I/O itself, not just its preceding policy check.
+
+    Revocation may return only after this operation releases retained access.
+    Restricted local file tools run in the container and never enter this
+    host guard. Restricted tools with a remote active destination yield
+    without host authority: their _run routes through the verified
+    destination contract first, and the host path below it stays
+    unreachable (no local fallback for remote destinations).
+    """
+    from app.runtime.access import AccessDenied, current_execution
+    from app.services.access import access
+
+    with access.execution_guard(current_execution()) as current:
+        if current.execution_mode != "unrestricted":
+            active = next((r for r in current.resources
+                           if r.workplace_id == current.active_workplace_id), None)
+            if active is not None and active.kind in ("tunnel", "ssh"):
+                yield current
+                return
+            raise AccessDenied("Host files require explicit unrestricted execution")
+        yield current
+
+
 def resolve_work_root(agent_id: str | None = None) -> Path:
     """Return the absolute sandbox root for ``agent_id`` (creates if missing).
 
     Order: session/turn local workplace → else ``$TOMO_WORK/<agent>``
     (``~/tomo/<agent>`` by default).
     """
+    context = require_host_execution()
+    if context.resources:
+        active = next(r for r in context.resources if r.workplace_id == context.active_workplace_id)
+        if active.kind != "local":
+            from app.runtime.access import AccessDenied
+
+            raise AccessDenied("Selected remote destination cannot use host paths")
+        return Path(active.root_path).resolve()
+
     from app.core.paths import ensure_under
 
     aid = _safe_agent_id(agent_id if agent_id is not None else current_agent_id())
@@ -132,37 +189,21 @@ def resolve_work_root(agent_id: str | None = None) -> Path:
 
 
 def unrestricted_local_paths(agent_id: str | None = None) -> bool:
-    """The top-level main agent has no path jail when chat has no project."""
-    from app.runtime.agent.subagent import current_depth
-    from app.runtime.tools.workplace_ctx import (
-        current_workplace_hint,
-        current_workplace_id,
-        force_work_dir,
-    )
-    from app.services import store
-
-    if (
-        not force_work_dir()
-        or current_workplace_id()
-        or current_workplace_hint()
-        or current_depth() > 0
-    ):
-        return False
-    agent = store.get_agent(agent_id if agent_id is not None else current_agent_id())
-    return bool(agent and agent.get("is_super"))
+    """Unrestricted mode deliberately follows the host OS account, not grants."""
+    require_host_execution()
+    return True
 
 
 def jail_path(root: Path, relative: str) -> Path | str:
-    """Resolve a path under ``root``, or return an ``Error: ...`` string.
+    """Resolve an explicitly unrestricted host path, or return a safe error.
 
-    Relative paths join under ``root``. Absolute paths are allowed only when
-    they resolve *inside* ``root`` (so a local workplace rooted at ``/`` can
-    use ``/tmp/foo``; a work-dir root still rejects ``/etc/passwd``).
-    ``..`` escapes outside ``root`` are rejected — unless an active
-    :mod:`app.runtime.permissions.grants` outside grant covers the target.
-    The main agent without a selected project accepts any local target.
-    Never raises.
+    Restricted file tools never call this host helper. Their I/O is performed
+    inside the container; cwd/path approval is not a confinement boundary.
     """
+    try:
+        require_host_execution()
+    except PermissionError as exc:
+        return f"Error: {exc}"
     if not isinstance(relative, str):
         return "Error: path must be a string"
     text = relative.strip()
@@ -177,22 +218,6 @@ def jail_path(root: Path, relative: str) -> Path | str:
             target = candidate.resolve()
         else:
             target = (root_resolved / text).resolve()
-        if unrestricted_local_paths():
-            return target
-        try:
-            target.relative_to(root_resolved)
-        except ValueError:
-            from app.runtime.permissions.grants import (
-                current_outside_grant,
-                path_allowed_by_grant,
-            )
-
-            if path_allowed_by_grant(target, current_outside_grant()):
-                return target
-            return (
-                f"Error: path escapes workplace root ({root}). "
-                "Use a path relative to the workplace, or an absolute path under it."
-            )
     except OSError as exc:
         return f"Error: invalid path: {exc}"
     return target

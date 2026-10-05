@@ -152,11 +152,18 @@ async def session_chat_stream_post(
     session = require_owned_session(request, session_id)
     message = (body.message or "").strip()
     attachment_ids = list(body.attachment_ids or [])
+    from app.api.access_policy import require_attachments
+
+    require_attachments(session_id, attachment_ids)
     if body.execution_mode not in {"solo", "swarm"}:
         raise HTTPException(status_code=400, detail="Invalid execution mode")
     if not message and not attachment_ids:
         raise HTTPException(status_code=400, detail="Message is required")
     uid = session_user_id(request)
+    from app.api.access_policy import require_chat_inputs
+    from app.runtime.access import current_execution
+
+    require_chat_inputs(current_execution(), message, attachment_ids)
     coordinator_id = session.get("coordinator_id") or session.get("agent_id") or ""
 
     async def event_source():
@@ -245,6 +252,13 @@ async def session_chat_steer(
 
     message = (body.message or "").strip()
     attachment_ids = list(body.attachment_ids or [])
+    from app.api.access_policy import require_attachments
+
+    require_attachments(session_id, attachment_ids)
+    from app.api.access_policy import require_chat_inputs
+    from app.runtime.access import current_execution
+
+    require_chat_inputs(current_execution(), message, attachment_ids)
     result = push_session_steer(session_id, message, attachment_ids=attachment_ids)
     if not result.get("accepted"):
         reason = result.get("reason") or "rejected"
@@ -420,7 +434,15 @@ async def chat_stream_post(
     try:
         session_id = store.get_or_create_session(agent_id, uid)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail="Session unavailable") from exc
+    from app.api.access_policy import require_attachments
+    from app.runtime.access import execution_scope
+
+    require_attachments(session_id, attachment_ids)
+    context = store.access.resolve_context(uid, session_id)
+    from app.api.access_policy import require_chat_inputs
+
+    require_chat_inputs(context, message, attachment_ids)
 
     async def event_source():
         from app.channels.sse_map import fmt_sse
@@ -431,13 +453,14 @@ async def chat_stream_post(
             yield busy
             return
         try:
-            active, queue = await start_session_turn(
-                session_id,
-                message,
-                uid,
-                start_seq=0,
-                attachment_ids=attachment_ids,
-            )
+            with execution_scope(store.access.revalidate(context)):
+                active, queue = await start_session_turn(
+                    session_id,
+                    message,
+                    uid,
+                    start_seq=0,
+                    attachment_ids=attachment_ids,
+                )
         except SessionTurnBusy:
             yield busy
             return
@@ -566,9 +589,14 @@ async def chat_stream(
                 )
                 return
 
-        async with contextlib.aclosing(
-            heartbeat_stream(agent_id, start_seq=1000)
-        ) as agen:
+        # A shared agent's global busy state is not a Member's private state.
+        from app.core.deps import authenticated_user
+
+        if authenticated_user(request)["role"] != "admin" and not session_id:
+            yield fmt_sse({"event": "state", "data": {"agent_id": agent_id, "busy": False}})
+            return
+        heartbeat = session_heartbeat_stream(session_id, start_seq=1000) if session_id else heartbeat_stream(agent_id, start_seq=1000)
+        async with contextlib.aclosing(heartbeat) as agen:
             async for chunk in agen:
                 if await request.is_disconnected():
                     return
@@ -588,12 +616,15 @@ async def chat_stream(
 @router.get("/agents/{agent_id}/state")
 async def agent_state(
     agent_id: str,
+    request: Request,
     _: AuthDep,
     session_id: str | None = None,
 ):
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if session_id:
+        require_owned_session(request, session_id)
     busy = bool(session_id) and store.is_agent_busy(agent_id, session_id)
     return {
         "agent_id": agent_id,

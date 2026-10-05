@@ -10,13 +10,16 @@ from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import background_continuation as continuation
 from app.services import chat, store
 from tests.fakes.llm import text_reply
+from tests.fakes.access import owned_host_session
 from tests.unit.channels.test_telegram_delivery import RecordingLLM
 from tests.unit.channels.test_telegram_ux import Bot, message, until
 
 
 @pytest.fixture
 async def setup(tmp_path, monkeypatch):
+    from app.main import _register_execution_stoppers
     store.rebind(tmp_path / 'continuation.db')
+    _register_execution_stoppers()
     monkeypatch.setattr('app.core.config.TOMO_WORK', tmp_path / 'work')
     monkeypatch.setattr('app.core.config.TOMO_HOME', tmp_path / 'home')
     store.update_settings({'approvals_mode': 'auto', 'learning_enabled': False})
@@ -35,7 +38,7 @@ async def setup(tmp_path, monkeypatch):
 
 def install(monkeypatch, replies):
     llm = RecordingLLM(replies)
-    monkeypatch.setattr('app.runtime.agent.loop.get_llm', lambda agent_id=None: llm)
+    monkeypatch.setattr('app.runtime.agent.loop.get_llm', lambda agent_id=None, **kwargs: llm)
     return llm
 
 
@@ -51,8 +54,18 @@ async def run(sid, text, **kwargs):
     return turn
 
 
+def owned_job(sid, uid, **kwargs):
+    # Durable jobs carry the owner's real execution ceiling; the drain
+    # revalidates it against current policy before running anything.
+    context = store.access.resolve_context(uid, sid)
+    return store.create_background_job({
+        'session_id': sid, 'user_id': uid,
+        'execution_context': context.to_dict(), **kwargs,
+    })
+
+
 async def test_real_process_resumes_original_task_once_without_fake_user(setup, monkeypatch):
-    sid = store.create_swarm_session(['main'], user_id='web')
+    sid = owned_host_session()
     llm = install(monkeypatch, [background('sleep .3; echo finished-build'),
                                 text_reply('Build started.'), text_reply('Build passed.')])
     await run(sid, 'Build this project')
@@ -76,7 +89,8 @@ async def test_real_process_resumes_original_task_once_without_fake_user(setup, 
 
 
 async def test_busy_session_batches_pending_results_after_user_turn(setup, monkeypatch):
-    sid = store.create_swarm_session(['main'], user_id='web')
+    sid = owned_host_session()
+    uid = store.get_session(sid)['user_id']
     gate = asyncio.Event()
     entered = asyncio.Event()
     llm = install(monkeypatch, [text_reply('User turn finished.'), text_reply('Both builds passed.')])
@@ -87,12 +101,12 @@ async def test_busy_session_batches_pending_results_after_user_turn(setup, monke
             await gate.wait()
         return await original(messages, tools)
     monkeypatch.setattr(llm, 'complete', block)
-    turn, queue = await chat.start_session_turn(sid, 'Check these builds', 'web')
+    turn, queue = await chat.start_session_turn(sid, 'Check these builds', uid)
     turn.unsubscribe(queue)
     await entered.wait()
     jobs = []
     for command in ['build one', 'build two']:
-        job = store.create_background_job({'session_id': sid, 'user_id': 'web', 'command': command})
+        job = owned_job(sid, uid, command=command)
         job = store.update_background_job(job['id'], {'status': 'succeeded', 'returncode': 0})
         jobs.append(job)
         continuation.on_job_update(job)
@@ -107,7 +121,7 @@ async def test_busy_session_batches_pending_results_after_user_turn(setup, monke
 
 
 async def test_stop_agent_leaves_process_running_and_pauses_until_followup(setup, monkeypatch):
-    sid = store.create_swarm_session(['main'], user_id='web')
+    sid = owned_host_session()
     llm = install(monkeypatch, [background('sleep .3; echo survived'), text_reply('Running.'),
                                 text_reply('Following up.'), text_reply('Process passed.')])
     await run(sid, 'Start build')
@@ -122,10 +136,11 @@ async def test_stop_agent_leaves_process_running_and_pauses_until_followup(setup
 
 
 async def test_cancel_before_runner_starts_cannot_replay_claimed_result(setup):
-    sid = store.create_swarm_session(['main'], user_id='web')
-    job = store.create_background_job({'session_id': sid, 'user_id': 'web'})
+    sid = owned_host_session()
+    uid = store.get_session(sid)['user_id']
+    job = owned_job(sid, uid)
     store.update_background_job(job['id'], {'status': 'succeeded', 'returncode': 0})
-    turn, queue = await chat.start_session_turn(sid, '', 'web', background_job_ids=[job['id']])
+    turn, queue = await chat.start_session_turn(sid, '', uid, background_job_ids=[job['id']])
     turn.unsubscribe(queue)
     chat.cancel_session_turn(sid)
     await asyncio.gather(turn.task, return_exceptions=True)
@@ -205,8 +220,8 @@ async def test_revoked_telegram_destination_never_runs_model(setup, telegram, mo
 
 async def test_pending_restart_requires_followup_then_continues(setup, monkeypatch):
     await continuation.stop()
-    sid = store.create_swarm_session(['main'], user_id='web')
-    job = store.create_background_job({'session_id': sid, 'user_id': 'web'})
+    sid = owned_host_session()
+    job = owned_job(sid, store.get_session(sid)['user_id'])
     store.update_background_job(job['id'], {'status': 'succeeded', 'returncode': 0})
     llm = install(monkeypatch, [text_reply('Following up.'), text_reply('Recovered result.')])
     continuation.start()
@@ -221,13 +236,19 @@ async def test_pending_restart_requires_followup_then_continues(setup, monkeypat
 
 async def test_deleted_owner_blocks_pending_continuation(setup, monkeypatch):
     user = store.create_user({'username': 'deleted_owner', 'password': 'synthetic-test-password'})
+    model = store.create_llm_profile({'name': 'Doomed model', 'model': 'test-model', 'api_key': 'k'})
+    store.access.assign('usr_admin', user['id'], 'model', model['id'])
     sid = store.create_swarm_session(['main'], user_id=user['id'])
-    job = store.create_background_job({'session_id': sid, 'user_id': user['id']})
+    job = owned_job(sid, user['id'])
     store.update_background_job(job['id'], {'status': 'succeeded', 'returncode': 0})
+    # Deleting the account stops its managed work first: the supervised
+    # stopper cancels the pending job, so there is nothing left to drain.
     store.delete_user(user['id'])
+    assert store.get_background_job(job['id'])['continuation_status'] == 'cancelled'
     llm = install(monkeypatch, [])
     continuation.wake_pending()
-    await until(lambda: store.get_background_job(job['id'])['continuation_status'] == 'blocked')
+    await asyncio.sleep(0.2)
+    assert store.get_background_job(job['id'])['continuation_status'] == 'cancelled'
     assert not llm.calls
 
 
@@ -262,6 +283,7 @@ async def test_reply_to_old_card_queues_for_old_session_when_new_chat_busy(setup
                                 text_reply('New task done.'), text_reply('Old build followup done.')])
     dispatcher = TelegramDispatcher(api)
     gate, entered = asyncio.Event(), asyncio.Event()
+
     original = llm.complete
     async def block(messages, tools=None):
         if len(llm.calls) == 2 and not entered.is_set():
@@ -302,8 +324,14 @@ def captured_target(chat_id=42, topic=None):
 
 
 def telegram_job(target, **data):
+    # Mirror production: telegram jobs execute as the designated Admin
+    # principal (trusted channel ceiling) for the chat session, never as the
+    # raw tg_* identity. The durable context must match the job owner.
     sid = store.get_or_create_session('main', target['user_id'], telegram_chat_id=str(target['chat_id']))
-    return store.create_background_job({'session_id': sid, 'user_id': target['user_id'],
+    admin_id = store.get_settings().get('telegram_execution_admin_id') or 'usr_admin'
+    context = store.access.resolve_trusted_channel_context(admin_id, sid)
+    return store.create_background_job({'session_id': sid, 'user_id': context.user_id,
+                                       'execution_context': context.to_dict(),
                                        'delivery': target, 'actor_id': target['actor_id'], **data})
 
 
@@ -483,6 +511,9 @@ async def test_job_deleted_during_flood_wait_blocks_http_retry(setup, telegram):
 
     bot, normal_api = telegram
     job = telegram_job(captured_target())
+    # Terminal locally so session teardown confirms trivially (no phantom OS
+    # process to stop); the retry path under test only needs the session gone.
+    store.update_background_job(job['id'], {'status': 'succeeded', 'returncode': 0})
     calls = []
     def flood(request):
         calls.append(request)

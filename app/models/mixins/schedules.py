@@ -81,6 +81,8 @@ def _row_to_schedule(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"],
         "name": row["name"],
         "agent_id": row["agent_id"],
+        "owner_user_id": row["owner_user_id"] if "owner_user_id" in keys else "",
+        "execution_context": json.loads(row["execution_context_json"]) if "execution_context_json" in keys else {},
         "cron": row["cron"] or "",
         "interval_seconds": int(row["interval_seconds"] or 0),
         "message": row["message"] or "",
@@ -270,8 +272,8 @@ def create_schedule(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     conn.execute(
         "INSERT INTO schedules (id, name, agent_id, cron, interval_seconds, message, "
         "enabled, last_run, next_run, created_at, schedule_kind, schedule_display, "
-        "schedule_expr, state, pause_reason, repeat_times, run_count, claim_until, delivery_target) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "schedule_expr, state, pause_reason, repeat_times, run_count, claim_until, delivery_target, owner_user_id, execution_context_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             sid,
             name,
@@ -292,6 +294,8 @@ def create_schedule(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
             int(fields.get("run_count") or 0),
             None,
             json.dumps(fields["delivery_target"]) if fields.get("delivery_target") else None,
+            str(fields.get("owner_user_id") or ""),
+            json.dumps(fields.get("execution_context") or {}),
         ),
     )
     conn.commit()

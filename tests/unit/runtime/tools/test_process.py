@@ -6,13 +6,11 @@ import time
 
 import pytest
 
-from app.core import home
-from app.runtime.artifacts.fs import bind_session, reset_session
-from app.runtime.tools.user_ctx import bind_user, reset_user
-from app.services import store
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, reset_registry
+from app.services import store
 from app.services.background_jobs import manager as _job_manager
+from tests.fakes.access import owned_admin_scope
 
 
 @pytest.fixture(autouse=True)
@@ -20,23 +18,21 @@ def _reset(tmp_path) -> None:
     reset_registry()
     _job_manager.reset()
     store.rebind(tmp_path / "process.db")
-    store.update_agent("ops", {"workplace_id": ""})
-    sid = store.get_or_create_session("ops", "web")
-    session_token = bind_session(sid)
-    user_token = bind_user("web")
     sandbox.reset_agent()
     yield
-    reset_session(session_token)
-    reset_user(user_token)
     _job_manager.reset()
     sandbox.reset_agent()
     reset_registry()
 
 
-def test_bash_background_registers_job() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
-    sandbox.bind_agent("ops")
+@pytest.fixture()
+def admin_fs():
+    # Explicit owned Admin unrestricted context (real policy grant + ack).
+    with owned_admin_scope() as (_ctx, root):
+        yield root
+
+
+def test_bash_background_registers_job(admin_fs) -> None:
     result = execute(
         "bash", {"command": "sleep 0.3; echo done", "background": True}
     )
@@ -55,10 +51,7 @@ def test_bash_background_registers_job() -> None:
     assert "succeeded" in status
 
 
-def test_process_kill() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
-    sandbox.bind_agent("ops")
+def test_process_kill(admin_fs) -> None:
     result = execute("bash", {"command": "sleep 30", "background": True})
     job_id = result.splitlines()[0].rsplit(" ", 1)[-1]
     killed = execute("process", {"action": "kill", "id": job_id})
@@ -66,11 +59,11 @@ def test_process_kill() -> None:
     assert "stopped" in killed or "returncode" in killed
 
 
-def test_process_unknown_id_is_error() -> None:
+def test_process_unknown_id_is_error(admin_fs) -> None:
     assert execute("process", {"action": "status", "id": "job_nope"}).startswith(
         "Error"
     )
 
 
-def test_process_bad_action_is_error() -> None:
+def test_process_bad_action_is_error(admin_fs) -> None:
     assert execute("process", {"action": "pause"}).startswith("Error")

@@ -154,7 +154,7 @@ def _render(existing: str, values: dict[str, str], fmt: str) -> str:
 
 def apply_file(scope: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """Apply references to a local file, preserving unrelated env/JSON settings."""
-    if set(data) - {"bundle", "file", "format", "mapping", "field"}:
+    if set(data) - {"bundle", "file", "file_abs", "format", "mapping", "field"}:
         raise ValueError(
             "File application accepts only bundle/file/format/field mappings"
         )
@@ -171,7 +171,10 @@ def apply_file(scope: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     temporary = None
     try:
         with _LOCK:
-            path = _target(scope, data.get("file"))
+            # Prefer the caller's cwd-absolute path when it stays inside
+            # this shell's workspace; fall back to the as-given path.
+            raw_abs = data.get("file_abs")
+            path = _target(scope, raw_abs or data.get("file"))
             existing = _read(path)
             private = secret_store.runtime_values(row)
             content = _render(

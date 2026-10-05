@@ -80,6 +80,18 @@
             <p class="faint" id="wpKeyStatus" style="margin:6px 0 0;font-size:12px">{% if workplace.key_set %}Key set{% else %}No key{% endif %}</p>
           </div>
         </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Sandbox root</div>
+          <div style="flex:1;max-width:420px">
+            <input class="input" id="wpSshSandboxRoot" value="{{ workplace.ssh_sandbox_root }}" style="width:100%" spellcheck="false" placeholder="/srv/tomo/ssh-sandbox (destination base dir)">
+            <p class="faint" style="margin:6px 0 0;font-size:12px">Operator-provisioned destination base dir. Restricted SSH runs only through the destination agent under this root; empty keeps restricted SSH denied.</p>
+          </div>
+        </div>
+        <div class="config-row wp-ssh-only" style="display:none"><div class="lbl">Sandbox marker</div>
+          <div style="flex:1;max-width:420px">
+            <input class="input" id="wpSshSandboxImage" value="{{ workplace.ssh_sandbox_image }}" style="width:100%" spellcheck="false" placeholder="sha256:… (must match <root>/.tomo-sandbox-image)">
+            <p class="faint" style="margin:6px 0 0;font-size:12px">Pinned marker verified at every admission. Write the same marker to <span class="mono">&lt;root&gt;/.tomo-sandbox-image</span> on the destination out-of-band.</p>
+          </div>
+        </div>
         <div class="config-row wp-tunnel-only" style="display:none"><div class="lbl">Connector</div>
           <div class="faint">Use Generate code below to pair a new device.</div>
         </div>
@@ -111,6 +123,8 @@
         {% if workplace.root_path %}
         <div class="config-row"><div class="lbl">Remote root</div><div class="mono">{{ workplace.root_path }}</div></div>
         {% endif %}
+        <div class="config-row"><div class="lbl">Sandbox</div><div>{% if workplace.ssh_sandbox_root and workplace.ssh_sandbox_image %}<span class="mono">{{ workplace.ssh_sandbox_root }}</span> · marker <span class="mono">{{ workplace.ssh_sandbox_image[:19] }}…</span>{% else %}<span class="faint">not provisioned — restricted SSH denied</span>{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Execution</div><div>{% if workplace.online and workplace.remote_exec_ok %}<span class="badge ok">supervised SSH contracts v2</span>{% else %}<span class="faint">offline — execution refused</span>{% endif %}{% if workplace.online and workplace.remote_exec_ok %} · {% if workplace.remote_sandbox_ok %}<span class="badge ok">restricted-ready</span>{% else %}<span class="badge muted">unrestricted-only</span>{% endif %}{% endif %}</div></div>
         {% endif %}
         <div class="config-row"><div class="lbl">Agents</div><div>{{ workplace.agent_count }} assigned</div></div>
         <div class="config-row"><div class="lbl">Updated</div><div class="faint">{{ ts(workplace.updated_at) if workplace.updated_at else '—' }}</div></div>
@@ -121,6 +135,7 @@
         <div class="config-row"><div class="lbl">Device IP</div><div class="mono">{{ workplace.connector_remote_ip or '—' }}</div></div>
         <div class="config-row"><div class="lbl">Platform</div><div class="mono">{{ workplace.connector_platform or '—' }}</div></div>
         <div class="config-row"><div class="lbl">Connector ver</div><div class="mono">{% if workplace.connector_version %}{{ workplace.connector_version if workplace.connector_version.startswith('v') else 'v' ~ workplace.connector_version.split('/')[0] }}{% else %}—{% endif %}</div></div>
+        <div class="config-row"><div class="lbl">Execution</div><div>{% if workplace.online and workplace.remote_exec_ok %}<span class="badge ok">supervised contracts v2</span>{% elif workplace.online %}<span class="badge muted">update connector (needs exec-context-v1 ≥ 0.4.0)</span>{% else %}<span class="faint">offline — execution refused</span>{% endif %}{% if workplace.online and workplace.remote_exec_ok %} · {% if workplace.remote_sandbox_ok %}<span class="badge ok">restricted-ready</span>{% else %}<span class="badge muted">unrestricted-only</span>{% endif %}{% endif %}</div></div>
         <div class="config-row"><div class="lbl">Last seen</div><div class="faint">{% if workplace.connector_last_seen_at %}{{ ts(workplace.connector_last_seen_at) }}{% else %}—{% endif %}</div></div>
         {% if workplace.connector_connected_at %}
         <div class="config-row"><div class="lbl">Session since</div><div class="faint">{{ ts(workplace.connector_connected_at) }}</div></div>

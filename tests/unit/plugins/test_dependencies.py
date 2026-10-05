@@ -180,10 +180,16 @@ def test_dependency_api_and_agent_require_admin_and_leave_disabled(
 
     app.include_router(router)
     client = TestClient(app)
-    role = {"role": "user", "enabled": True}
+    role = {"id": "alice", "role": "member", "enabled": True}
     monkeypatch.setattr(store, "get_user", lambda uid: role)
     assert client.post("/api/plugins/demo/sync-dependencies").status_code == 403
-    assert run({"action": "sync_dependencies", "id": "demo"}).startswith("Error:")
+    from app.runtime.tools.user_ctx import bind_user, reset_user
+    member = store.create_user({"username": "depmember", "password": "password1", "role": "member"})
+    token = bind_user(member["id"])
+    try:
+        assert run({"action": "sync_dependencies", "id": "demo"}).startswith("Error:")
+    finally:
+        reset_user(token)
     role["role"] = "admin"
     assert (
         client.post(
@@ -197,10 +203,12 @@ def test_dependency_api_and_agent_require_admin_and_leave_disabled(
             client.post("/api/plugins/demo/sync-dependencies").json()["enabled"]
             is False
         )
-        assert (
-            json.loads(run({"action": "sync_dependencies", "id": "demo"}))["enabled"]
-            is False
-        )
+        from tests.fakes.access import owned_admin_scope
+        with owned_admin_scope():
+            assert (
+                json.loads(run({"action": "sync_dependencies", "id": "demo"}))["enabled"]
+                is False
+            )
     finally:
         for path in tuple(sys.path):
             if str(manager.dependencies.root) in path:

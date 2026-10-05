@@ -82,6 +82,9 @@ def _row_to_workplace(row: sqlite3.Row, agent_count: int) -> dict[str, Any]:
 
     return {
         "id": row["id"],
+        "owner_user_id": col("owner_user_id"),
+        "storage_kind": col("storage_kind", "external"),
+        "destination_id": col("destination_id", "local"),
         "name": row["name"],
         "kind": row["kind"],
         "status": row["status"],
@@ -92,6 +95,8 @@ def _row_to_workplace(row: sqlite3.Row, agent_count: int) -> dict[str, Any]:
         "ssh_user": row["ssh_user"],
         "ssh_password": row["ssh_password"],
         "ssh_key": row["ssh_key"],
+        "ssh_sandbox_root": col("ssh_sandbox_root", ""),
+        "ssh_sandbox_image": col("ssh_sandbox_image", ""),
         "pairing_code": col("pairing_code", "") or "",
         "pairing_expires_at": float(col("pairing_expires_at", 0) or 0),
         "connector_token": col("connector_token", "") or "",
@@ -139,6 +144,9 @@ def public_workplace(row: dict[str, Any]) -> dict[str, Any]:
             wid = str(out.get("id") or "")
             session = hub.get(wid) if wid else None
             out["online"] = session is not None
+            out["connector_caps"] = (session.caps if session is not None else "") or ""
+            out["remote_exec_ok"] = bool(session is not None and session.exec_capable)
+            out["remote_sandbox_ok"] = bool(session is not None and session.sandbox_capable)
             if session is not None:
                 if session.hostname:
                     out["connector_hostname"] = session.hostname
@@ -180,6 +188,19 @@ def public_workplace(row: dict[str, Any]) -> dict[str, Any]:
         st = (out.get("status") or "").strip().lower()
         out["online"] = st == "connected"
         out["connector_connected_at"] = 0.0
+        # Unrestricted SSH executes after grant + acknowledgement once the
+        # probe succeeds; restricted additionally needs a VERIFIED agent
+        # handshake (destination_status reads the admission cache — a
+        # completed admit round-trip, never the stored flag alone).
+        out["remote_exec_ok"] = bool(out["online"])
+        try:
+            from app.workplaces import ssh_contract
+
+            out["remote_sandbox_ok"] = bool(
+                ssh_contract.destination_status(out).get("verified")
+            )
+        except Exception:
+            out["remote_sandbox_ok"] = False
 
     # Rich host line for tiles / page subtitle.
     out["host_detail"] = _host_detail(out)
@@ -315,10 +336,11 @@ def create_workplace(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str
     conn.execute(
         "INSERT INTO workplaces (id, name, kind, status, host, root_path, "
         "ssh_host, ssh_port, ssh_user, ssh_password, ssh_key, "
+        "ssh_sandbox_root, ssh_sandbox_image, "
         "pairing_code, pairing_expires_at, connector_token, "
         "connector_last_seen_at, connector_version, connector_hostname, "
-        "created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "created_at, updated_at, destination_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             wid,
             name,
@@ -331,6 +353,8 @@ def create_workplace(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str
             (data.get("ssh_user") or "").strip(),
             encrypt_secret(data.get("ssh_password")),
             encrypt_secret(data.get("ssh_key")),
+            (data.get("ssh_sandbox_root") or "").strip(),
+            (data.get("ssh_sandbox_image") or "").strip(),
             pairing_code,
             pairing_exp,
             "",
@@ -339,6 +363,7 @@ def create_workplace(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str
             "",
             now,
             now,
+            "local" if kind == "local" else wid,
         ),
     )
     conn.commit()
@@ -363,6 +388,8 @@ def update_workplace(
         kind = new_kind
         sets.append("kind=?")
         params.append(kind)
+        sets.append("destination_id=?")
+        params.append("local" if kind == "local" else workplace_id)
         if kind == "tunnel" and row["kind"] != "tunnel":
             # Fresh tunnel: issue pairing, leave offline until connect.
             code = generate_pairing_code()
@@ -372,7 +399,8 @@ def update_workplace(
             params.append(code)
             sets.append("pairing_expires_at=?")
             params.append(pairing_expires_at())
-    for key in ("name", "root_path", "ssh_host", "ssh_user"):
+    for key in ("name", "root_path", "ssh_host", "ssh_user",
+                "ssh_sandbox_root", "ssh_sandbox_image"):
         if key in data and data[key] is not None:
             sets.append(f"{key}=?")
             params.append(str(data[key]).strip() if isinstance(data[key], str) else data[key])

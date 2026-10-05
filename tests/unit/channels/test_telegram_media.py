@@ -36,11 +36,25 @@ class MediaBot(Bot):
     def transport(self, request):
         if request.method == "GET":
             self.calls.append(("download", {}))
+            if getattr(self, "_last_file_id", None) == "big":
+                # Real 1px PNG bytes (still fully local via MockTransport):
+                # Pillow-supervised preprocessing rejects fake magic, so the
+                # photo fixture must carry decodable image bytes to prove
+                # pixels flow. Document downloads keep the text payload below.
+                import base64
+
+                return httpx2.Response(
+                    200,
+                    content=base64.b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                    ),
+                )
             return httpx2.Response(200, content=b"hello attachment")
         method = request.url.path.rsplit("/", 1)[-1]
         if method == "getFile":
             payload = json.loads(request.content)
             self.calls.append((method, payload))
+            self._last_file_id = payload.get("file_id")
             return httpx2.Response(
                 200, json={"ok": True, "result": {"file_path": "documents/file.txt"}}
             )
@@ -407,6 +421,6 @@ async def test_received_photo_pixels_reach_vision_model(setup, monkeypatch):
     ]
     images = [part for part in parts if part.get("type") == "image_url"]
     assert images and images[0]["image_url"]["url"].startswith(
-        "data:image/jpeg;base64,"
+        "data:image/png;base64,"
     )
     await api.aclose()

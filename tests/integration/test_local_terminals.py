@@ -36,24 +36,39 @@ def output_until(ws, marker):
     return output
 
 
+def _admin_local_session(uid, wid):
+    # Explicitly unrestricted local execution (Admin or granted Member)
+    # uses supervised host PTYs; restricted chats use held container
+    # terminals instead (see test_multi_user_member_terminals).
+    store.access.assign("usr_admin", uid, "unrestricted", wid)
+    sid = store.create_swarm_session(["main"], user_id=uid)
+    store.access.set_chat_access(uid, sid, wid, execution_mode="unrestricted",
+                                 unrestricted_acknowledged=True)
+    return sid
+
+
 def test_local_terminal_sessions_reattach_and_cleanup(tmp_path):
+    from tests.fakes.access import ensure_stoppers
     store.rebind(tmp_path / "terminals.db")
-    alice = store.create_user({"username": "terminal_alice", "password": "password1"})
+    ensure_stoppers()
+    alice = store.create_user({"username": "terminal_alice", "password": "password1", "role": "admin"})
     store.create_user({"username": "terminal_bob", "password": "password1"})
     local_folder = tmp_path / "local-project"
     local_folder.mkdir()
     local = store.create_workplace(
         {"name": "Terminal local", "kind": "local", "root_path": str(local_folder)}
     )
+    other_folder = tmp_path / "other-project"
+    other_folder.mkdir()
+    other_local = store.create_workplace(
+        {"name": "Terminal other", "kind": "local", "root_path": str(other_folder)}
+    )
     remote = store.create_workplace(
         {"name": "Terminal remote", "kind": "tunnel", "root_path": "/remote/project"}
     )
-    sid = store.create_swarm_session(
-        ["main"], user_id=alice["id"], workplace_id=local["id"]
-    )
-    other_sid = store.create_swarm_session(
-        ["main"], user_id=alice["id"], workplace_id=remote["id"]
-    )
+    sid = _admin_local_session(alice["id"], local["id"])
+    other_sid = _admin_local_session(alice["id"], other_local["id"])
+    remote_sid = _admin_local_session(alice["id"], remote["id"])
     base = f"/api/sessions/{sid}/terminals"
     with TestClient(app) as client:
         assert client.get(base).status_code == 401
@@ -81,11 +96,12 @@ def test_local_terminal_sessions_reattach_and_cleanup(tmp_path):
             ).status_code
             == 404
         )
-        # A tunnel workplace must still create a local shell without a connector.
-        remote_context = client.post(
-            f"/api/sessions/{other_sid}/terminals", json={}
-        ).json()
-        assert remote_context["cwd"].endswith(f"/sessions/{other_sid}/workspace")
+        # A tunnel-active chat must never route a terminal through its
+        # connector: remote interactive backends are unavailable, so creation
+        # is refused instead of silently falling back to a local shell.
+        assert client.post(
+            f"/api/sessions/{remote_sid}/terminals", json={}
+        ).status_code == 503
         url = base + "/" + first["id"] + "/ws"
         with (
             pytest.raises(WebSocketDisconnect),
@@ -136,17 +152,22 @@ def test_local_terminal_sessions_reattach_and_cleanup(tmp_path):
         assert client.delete(f"/api/sessions/{sid}").status_code == 200
         with pytest.raises(ProcessLookupError):
             os.kill(second["pid"], 0)
-    with pytest.raises(ProcessLookupError):
-        os.kill(remote_context["pid"], 0)
 
 
 def test_idle_cleanup_spares_foreground_commands(tmp_path, monkeypatch):
     import app.services.terminals as terminals
 
+    from tests.fakes.access import ensure_stoppers
     monkeypatch.setattr(terminals, "IDLE_TIMEOUT", 1)
     store.rebind(tmp_path / "terminal-idle.db")
-    user = store.create_user({"username": "terminal_idle", "password": "password1"})
-    sid = store.create_swarm_session(["main"], user_id=user["id"])
+    ensure_stoppers()
+    user = store.create_user({"username": "terminal_idle", "password": "password1", "role": "admin"})
+    idle_folder = tmp_path / "idle-project"
+    idle_folder.mkdir()
+    wid = store.create_workplace(
+        {"name": "Terminal idle", "kind": "local", "root_path": str(idle_folder)}
+    )["id"]
+    sid = _admin_local_session(user["id"], wid)
     base = f"/api/sessions/{sid}/terminals"
     with TestClient(app) as client:
         login(client, "terminal_idle")
@@ -178,9 +199,19 @@ def test_idle_cleanup_spares_foreground_commands(tmp_path, monkeypatch):
 
 async def test_cancelled_close_finishes_cleanup(tmp_path, monkeypatch):
     from app.services.terminals import TerminalManager
+    from tests.fakes.access import ensure_stoppers
 
+    store.rebind(tmp_path / "terminal-cancel.db")
+    ensure_stoppers()
+    user = store.create_user({"username": "terminal_cancel", "password": "password1", "role": "admin"})
+    cancel_folder = tmp_path / "cancel-project"
+    cancel_folder.mkdir()
+    wid = store.create_workplace(
+        {"name": "Terminal cancel", "kind": "local", "root_path": str(cancel_folder)}
+    )["id"]
+    sid = _admin_local_session(user["id"], wid)
     manager = TerminalManager()
-    terminal = manager.create("cancelled", tmp_path, 80, 24)
+    terminal = manager.create(sid, tmp_path, 80, 24, user_id=user["id"])
     started = asyncio.Event()
     release = asyncio.Event()
     cleanup = terminal._cleanup
@@ -192,16 +223,16 @@ async def test_cancelled_close_finishes_cleanup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(terminal, "_cleanup", delayed_cleanup)
     try:
-        closing = asyncio.create_task(manager.close("cancelled", terminal.id))
+        closing = asyncio.create_task(manager.close(sid, terminal.id, user_id=user["id"]))
         await asyncio.wait_for(started.wait(), timeout=2)
         closing.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closing
         # Still counted while cleanup is in flight; cancellation cannot free a slot early.
-        assert manager.get("cancelled", terminal.id) is terminal
+        assert manager.get(sid, terminal.id, user_id=user["id"]) is terminal
         release.set()
         async with asyncio.timeout(3):
-            while manager.list("cancelled"):
+            while manager.list(sid, user_id=user["id"]):
                 await asyncio.sleep(0.01)
         with pytest.raises(ProcessLookupError):
             os.kill(terminal.process.pid, 0)
@@ -213,10 +244,17 @@ async def test_cancelled_close_finishes_cleanup(tmp_path, monkeypatch):
 def test_terminal_limits_validation_shell_exit_and_draft_pruning(tmp_path, monkeypatch):
     import app.services.terminals as terminals
 
+    from tests.fakes.access import ensure_stoppers
     monkeypatch.setattr(terminals, "MAX_PER_SESSION", 2)
     store.rebind(tmp_path / "terminal-limits.db")
-    user = store.create_user({"username": "terminal_limits", "password": "password1"})
-    sid = store.create_swarm_session(["main"], user_id=user["id"])
+    ensure_stoppers()
+    user = store.create_user({"username": "terminal_limits", "password": "password1", "role": "admin"})
+    limits_folder = tmp_path / "limits-project"
+    limits_folder.mkdir()
+    wid = store.create_workplace(
+        {"name": "Terminal limits", "kind": "local", "root_path": str(limits_folder)}
+    )["id"]
+    sid = _admin_local_session(user["id"], wid)
     base = f"/api/sessions/{sid}/terminals"
     with TestClient(app) as client:
         login(client, "terminal_limits")
@@ -240,6 +278,11 @@ def test_terminal_limits_validation_shell_exit_and_draft_pruning(tmp_path, monke
         assert client.post(base, json={}).status_code == 201
         pruned = client.post("/api/sessions/prune-drafts").json()["deleted"]
         assert sid in pruned
-        assert terminals.terminal_manager.list(sid) == []
+        # The pruned session no longer resolves, so list() cannot authorize
+        # it; assert directly that no retained handle references the session.
+        assert all(
+            t.session_id != sid
+            for t in terminals.terminal_manager.terminals.values()
+        )
         with pytest.raises(ProcessLookupError):
             os.kill(second["pid"], 0)

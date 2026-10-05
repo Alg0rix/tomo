@@ -5,9 +5,7 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-from app.core.deps import require_auth
-from app.main import app
+from tests.fakes.access import admin_client
 from app.services import store
 from app.core import config
 from app.runtime.memory.vault.write import add_entity, record_turn
@@ -22,9 +20,8 @@ from app.api.openai_compat import last_user_message, resolve_session_id
 def test_companion_snapshot_shape(tmp_path) -> None:
     store.rebind(tmp_path / "comp.db")
     store.update_settings({"setup_complete": True, "learning_enabled": True})
-    app.dependency_overrides[require_auth] = lambda: None
+    client, _admin = admin_client()
     try:
-        client = TestClient(app)
         r = client.get("/api/companion")
         assert r.status_code == 200
         data = r.json()
@@ -44,32 +41,30 @@ def test_companion_snapshot_shape(tmp_path) -> None:
         for gone in ("growth", "heatmap", "recent_events", "diagnostics", "user_profile_preview"):
             assert gone not in data
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 def test_companion_events_saved_only(tmp_path) -> None:
     store.rebind(tmp_path / "comp_saved.db")
-    app.dependency_overrides[require_auth] = lambda: None
+    client, _admin = admin_client()
     try:
-        store.insert_learning_event(saved=True, diary="a", created_at=100.0)
-        store.insert_learning_event(saved=False, note="idle", created_at=200.0)
-        client = TestClient(app)
+        store.insert_learning_event(saved=True, diary="a", created_at=100.0, user_id=_admin["id"])
+        store.insert_learning_event(saved=False, note="idle", created_at=200.0, user_id=_admin["id"])
         r = client.get("/api/companion/events?saved_only=true")
         assert r.status_code == 200
         entries = r.json()["entries"]
         assert len(entries) == 1
         assert entries[0]["status"] == "learned"
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 def test_companion_events_pagination(tmp_path) -> None:
     store.rebind(tmp_path / "comp2.db")
-    app.dependency_overrides[require_auth] = lambda: None
+    client, _admin = admin_client()
     try:
-        store.insert_learning_event(saved=True, diary="a", created_at=100.0)
-        store.insert_learning_event(saved=False, note="idle", created_at=200.0)
-        client = TestClient(app)
+        store.insert_learning_event(saved=True, diary="a", created_at=100.0, user_id=_admin["id"])
+        store.insert_learning_event(saved=False, note="idle", created_at=200.0, user_id=_admin["id"])
         r = client.get("/api/companion/events?limit=1")
         assert r.status_code == 200
         body = r.json()
@@ -82,15 +77,14 @@ def test_companion_events_pagination(tmp_path) -> None:
         assert [e["created_at"] for e in page2["entries"]] == [100.0]
         assert page2["has_more"] is False
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 def test_companion_page_renders(tmp_path) -> None:
     store.rebind(tmp_path / "comp3.db")
     store.update_settings({"setup_complete": True})
-    app.dependency_overrides[require_auth] = lambda: None
+    client, _admin = admin_client()
     try:
-        client = TestClient(app)
         r = client.get("/companion")
         assert r.status_code == 200
         assert b"Companion" in r.content
@@ -98,25 +92,25 @@ def test_companion_page_renders(tmp_path) -> None:
         assert b"companion.js" in r.content
         assert b"companion.css" in r.content
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 # --- from test_memory_vault_api.py ---
 def test_memory_graph_entity_timeline_and_forget(tmp_path, monkeypatch):
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'vault.db')
+    client, _admin = admin_client()
+    uid = _admin['id']
     agent_id = store.get_coordinator()['id']
-    session_id = store.get_or_create_session(agent_id, 'web')
+    session_id = store.get_or_create_session(agent_id, uid)
     record_turn(session_id, agent_id, 'Before enabling', 'No timeline yet')
-    assert not timeline_path('web', date.today().isoformat()).exists()
+    assert not timeline_path(uid, date.today().isoformat()).exists()
     store.update_settings({'memory_vault_enabled': True})
-    add_entity('web', 'project/tomo', 'Tomo uses [[tool/python]].')
-    add_entity('web', 'tool/python', 'Python is a language.')
+    add_entity(uid, 'project/tomo', 'Tomo uses [[tool/python]].')
+    add_entity(uid, 'tool/python', 'Python is a language.')
     add_entity('other', 'person/secret', 'Hidden fact.')
     record_turn(session_id, agent_id, 'Tomo uses Python', 'Recorded in the vault')
-    app.dependency_overrides[require_auth] = lambda: None
     try:
-        client = TestClient(app)
         graph = client.get('/api/memory/graph')
         assert graph.status_code == 200
         data = graph.json()
@@ -133,17 +127,16 @@ def test_memory_graph_entity_timeline_and_forget(tmp_path, monkeypatch):
         assert client.get('/api/memory/entity/person/secret').status_code == 404
         assert client.get('/memory').status_code == 200
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 def test_memory_corrections_are_scoped_and_expose_origin(tmp_path, monkeypatch):
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'corrections.db')
-    add_entity('web', 'tool/server', 'Server listens on port 8000.')
+    client, _admin = admin_client()
+    add_entity(_admin['id'], 'tool/server', 'Server listens on port 8000.')
     add_entity('other', 'tool/server', 'Private port 6000.')
-    app.dependency_overrides[require_auth] = lambda: None
     try:
-        client = TestClient(app)
         base = '/api/memory/entity/tool/server'
         assert client.post(base + '/edit', json={'number': 0, 'text': ''}).status_code == 400
         assert client.post(base + '/edit', json={'number': 0, 'text': 'Server listens on port 9000.', 'expected': 'stale'}).status_code == 409
@@ -158,7 +151,7 @@ def test_memory_corrections_are_scoped_and_expose_origin(tmp_path, monkeypatch):
         assert '6000' not in str(overview)
         assert 'Private port 6000.' in store.with_db(lambda conn: conn.execute('SELECT body FROM vault_docs WHERE user_id="other"').fetchone()[0])
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 def test_world_card_in_system_prompt_without_query(tmp_path, monkeypatch):
@@ -166,10 +159,16 @@ def test_world_card_in_system_prompt_without_query(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'card.db')
-    sid = store.get_or_create_session(store.get_coordinator()['id'], 'web')
-    add_entity('web', 'person/max-verstappen', 'The user’s favorite F1 driver.')
-    add_entity('other', 'person/private', 'Secret favorite.')
-    prompt = build_system_prompt(None, session_id=sid, home_root=tmp_path)
+    _card_client, _card_admin = admin_client()
+    try:
+        sid = store.get_or_create_session(store.get_coordinator()['id'], _card_admin['id'])
+        add_entity(_card_admin['id'], 'person/max-verstappen', 'The user’s favorite F1 driver.')
+        add_entity('other', 'person/private', 'Secret favorite.')
+        from tests.fakes.access import owned_admin_scope as _scope_for_card
+        with _scope_for_card(user_id=_card_admin['id']):
+            prompt = build_system_prompt(None, session_id=sid, home_root=tmp_path)
+    finally:
+        _card_client.close()
     assert 'World card' in prompt
     assert 'favorite F1 driver' in prompt
     assert 'Secret favorite' not in prompt
@@ -181,12 +180,14 @@ def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, 'TOMO_HOME', tmp_path)
     store.rebind(tmp_path / 'journal.db')
+    client, _admin = admin_client()
+    uid = _admin['id']
     agent_id = store.get_coordinator()['id']
-    live = store.get_or_create_session(agent_id, 'web')
-    add_entity('web', 'project/tomo', 'Tomo is an agent runtime.', aliases=['tomo-app'])
+    live = store.get_or_create_session(agent_id, uid)
+    add_entity(uid, 'project/tomo', 'Tomo is an agent runtime.', aliases=['tomo-app'])
 
     def day(d, body, consolidated):
-        path = timeline_path('web', d)
+        path = timeline_path(uid, d)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, doc.serialize(doc.Document({'date': d, 'consolidated': consolidated}, body)))
 
@@ -197,9 +198,7 @@ def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
     day('2025-12-31', '- Hidden fact.', 'true')
     timeline_path('other', '2026-01-03').parent.mkdir(parents=True, exist_ok=True)
     atomic_write(timeline_path('other', '2026-01-04'), '- Other account [[project/tomo]] secret.\n')
-    app.dependency_overrides[require_auth] = lambda: None
     try:
-        client = TestClient(app)
         first = client.get('/api/memory/journal', params={'days': 2}).json()
         assert [d['date'] for d in first['days']] == ['2026-01-03', '2026-01-02']
         assert first['next'] == '2026-01-02'
@@ -227,7 +226,7 @@ def test_memory_journal_pages_filters_and_links_sessions(tmp_path, monkeypatch):
         assert (tomo['mentions'], tomo['last_seen']) == (2, '2026-01-03')
         assert {a['id']: a['turns'] for a in overview['agents']} == {'ops': 2, agent_id: 1}
     finally:
-        app.dependency_overrides.pop(require_auth, None)
+        client.close()
 
 
 # --- from test_openai_compat_helpers.py ---

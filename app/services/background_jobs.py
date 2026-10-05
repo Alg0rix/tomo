@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import codecs
 from collections import deque
 import logging
@@ -22,9 +22,12 @@ _logger = logging.getLogger(__name__)
 
 
 class _Local:
-    def __init__(self, proc: subprocess.Popen, environment: Any):
+    def __init__(self, proc: subprocess.Popen, environment: Any, duration_seconds: int):
         self.proc = proc
         self.environment = environment
+        # Captured at fenced admission. Observation/termination must still work
+        # after revocation marks policy pending; it is not a new tool action.
+        self.deadline = time.monotonic() + duration_seconds
         self.lock = threading.RLock()
         self.chunks: deque[tuple[str, str, int]] = deque()
         self.size = 0
@@ -128,7 +131,15 @@ class BackgroundJobManager:
                 self._closing_sessions.discard(sid)
 
     def _publish(self, job_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        previous = store.get_background_job(job_id)
+        if previous and previous['status'] in TERMINAL and changes.get('status') in ACTIVE:
+            changes = {k: v for k, v in changes.items() if k != 'status'}
         item = store.update_background_job(job_id, changes)
+        if item and item.get('execution_context') and previous and previous['status'] != item['status']:
+            saved = item['execution_context']
+            store.access.audit(saved['user_id'], 'background.state', session_id=item['session_id'],
+                               agent_id=saved['agent_id'], destination_id=saved['destination_id'],
+                               job_id=job_id, outcome=item['status'])
         if item and self._callback:
             try:
                 self._callback(item)
@@ -159,7 +170,13 @@ class BackgroundJobManager:
                 # Remote handles survive independently; observation does not replay commands.
                 if item['backend'] != 'local' and item['status'] in ACTIVE and item.get('backend_handle') and not item['monitoring_closed']:
                     store.set_background_jobs_paused(item['session_id'], True)
-                    self._watch_remote(item['id'])
+                    try:
+                        from app.runtime.policy import durable_context
+                        durable_context(item)
+                    except PermissionError:
+                        self._publish(item['id'], {'status': 'unknown', 'reason': 'Stored execution identity is unavailable', 'continuation_status': 'blocked'})
+                    else:
+                        self._watch_remote(item['id'])
 
     def _origin(self, sid: str, command: str, agent_id: str | None) -> int | None:
         from app.runtime.tools.progress import current_call_id
@@ -180,22 +197,40 @@ class BackgroundJobManager:
         return store.with_db(lookup)
 
     def start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
-        with self._lock:
-            return self._start(command, workplace_hint)
+        from app.runtime.policy import authorize_tool
+        context = authorize_tool('bash', {'workplace': workplace_hint})
+        with store.access.execution_guard(context):
+            with self._lock:
+                # Shared aggregate ledger (durable: the row outlives any
+                # turn). Container-backed rows are admitted by the container
+                # reservation instead; see app/runtime/isolation/jobs.py.
+                from app.runtime import ledger
+                try:
+                    ledger.check(context.user_id, context.quota)
+                except PermissionError as exc:
+                    raise PermissionError('User aggregate background concurrency limit reached') from exc
+                active = [j for j in store.list_background_jobs() if j['user_id'] == context.user_id and j['status'] in ACTIVE]
+                if len(active) >= context.quota.max_concurrent_jobs:
+                    raise PermissionError('User aggregate background concurrency limit reached')
+                # The nested host/container spawn below is part of THIS
+                # admitted unit (the row is already registered), so it
+                # shares the slot instead of consuming a second one.
+                with ledger.spawning_scope(context.user_id, 'background'):
+                    return self._start(command, workplace_hint)
 
     def _start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
-        from app.runtime.artifacts.fs import current_session_id
-        from app.runtime.tools.sandbox import current_agent_id
         from app.runtime.tools.user_ctx import current_user_id
         from app.runtime.tools.progress import current_call_id
         from app.channels.delivery import capture_current_target
         from app.services import background_job_backends as backends
 
-        sid = current_session_id()
+        from app.runtime.access import current_execution
+        execution = store.access.revalidate(current_execution())
+        sid = execution.session_id
         if sid in self._closing_sessions:
             raise ValueError('Background commands cannot start while their session is closing')
         session = store.get_session(sid) if sid else None
-        if session is None or session['user_id'] != current_user_id():
+        if session is None or session['user_id'] != (execution.session_owner_id or current_user_id()):
             raise ValueError('Background commands require the current authorized session')
         if not isinstance(command, str) or not command.strip():
             raise ValueError('Command must be a non-empty string')
@@ -205,15 +240,22 @@ class BackgroundJobManager:
         if session.get('channel') == 'telegram' and delivery is None:
             raise ValueError('Telegram background commands require a bound channel destination')
         backend, workplace_id, cwd = backends.resolve_backend(workplace_hint)
-        aid = current_agent_id()
+        if backend == 'ssh':
+            raise PermissionError('SSH background execution has no destination-side enforcement; use synchronous SSH exec or a tunnel destination')
+        if backend not in {'local', 'container', 'tunnel'}:
+            raise PermissionError('Remote background backend has no verified supervised execution boundary')
+        aid = execution.agent_id
         item = store.create_background_job({
-            'session_id': sid, 'user_id': session['user_id'], 'agent_id': aid,
+            'session_id': sid, 'user_id': execution.user_id, 'agent_id': aid,
+            'execution_context': execution.to_dict(),
             'origin_message_id': self._origin(sid, command, aid),
             'origin_call_id': current_call_id(),
             'backend': backend, 'workplace_id': workplace_id or '', 'cwd': cwd,
             'command': command, 'delivery': delivery,
             'actor_id': delivery.get('actor_id') if delivery else None,
         })
+        store.access.audit(execution.user_id, 'background.start', session_id=sid, agent_id=aid,
+                           destination_id=execution.destination_id, job_id=item['id'], outcome='admitted')
         try:
             if backend == 'local':
                 self._start_local(item)
@@ -236,17 +278,25 @@ class BackgroundJobManager:
         return item
 
     def _start_local(self, item: dict[str, Any]) -> None:
-        from app.services.secret_store import shell_environment
-        environment = shell_environment(86400, work_root=item['cwd'])
+        from app.runtime.policy import durable_context
+        context = durable_context(item)
+        if context.execution_mode == 'restricted':
+            raise PermissionError('Restricted background execution requires the container backend')
+        if context.role == 'admin':
+            from app.services.secret_store import shell_environment
+            environment = shell_environment(context.quota.duration_seconds, work_root=item['cwd'])
+        else:
+            environment = nullcontext({'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': item['cwd'], 'LANG': 'C.UTF-8'})
         env = environment.__enter__()
         try:
-            proc = subprocess.Popen(['bash', '-lc', item['command']], cwd=item['cwd'], env=env,
+            from app.runtime.isolation import host
+            proc = host.popen(['bash', '-lc', item['command']], cwd=item['cwd'], env=env,
                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, start_new_session=True)
         except Exception:
             environment.__exit__(None, None, None)
             raise
-        state = _Local(proc, environment)
+        state = _Local(proc, environment, context.quota.duration_seconds)
         with self._lock:
             self._local[item['id']] = state
         try:
@@ -289,6 +339,10 @@ class BackgroundJobManager:
         last_cursor = -1
         try:
             while state.proc.poll() is None:
+                if time.monotonic() >= state.deadline:
+                    state.interrupted = True
+                    _clean_group(state.proc.pid)
+                    break
                 snapshot = state.snapshot()
                 if snapshot['log_cursor'] != last_cursor:
                     self._publish(job_id, snapshot)
@@ -320,6 +374,8 @@ class BackgroundJobManager:
             _clean_group(state.proc.pid)
             self._publish(job_id, {'status': 'unknown', 'reason': 'Local supervisor observation failed'})
         finally:
+            from app.runtime.isolation import host
+            host.forget(state.proc)
             state.environment.__exit__(None, None, None)
             with self._lock:
                 self._local.pop(job_id, None)
@@ -356,7 +412,22 @@ class BackgroundJobManager:
                     self._publish(job_id, {'status': 'unknown', 'reason': 'Remote handle was not confirmed'})
                     return
                 try:
-                    result = backends.observe_remote(item['backend'], item['workplace_id'], handle)
+                    from app.runtime.policy import durable_context
+                    from app.runtime.access import execution_scope
+                    with execution_scope(durable_context(item)):
+                        # Server-side duration bound: the destination enforces
+                        # its own timeout too, but a hung or lying destination
+                        # must not run managed work past the owner's quota.
+                        try:
+                            from app.runtime.access import current_execution
+                            quota = current_execution().quota.duration_seconds
+                            if quota and time.time() - float(item.get('started_at') or 0) > quota:
+                                backends.stop_remote_job(item)
+                                self._publish(job_id, {'status': 'stopped', 'reason': 'Duration quota exceeded at destination supervision'})
+                                return
+                        except Exception:
+                            pass
+                        result = backends.observe_remote(item['backend'], item['workplace_id'], handle)
                     changes = self._remote_changes(result)
                     if item.get('stop_requested') and changes['status'] in {'succeeded', 'failed'} and changes.get('returncode', 0) < 0:
                         changes['status'] = 'stopped'
@@ -369,18 +440,27 @@ class BackgroundJobManager:
             with self._lock:
                 self._remote_threads.pop(job_id, None)
 
-    def list_jobs(self, session_id: str) -> list[dict[str, Any]]:
-        return store.list_background_jobs(session_id, include_logs=False) if store.get_session(session_id) else []
+    def list_jobs(self, session_id: str, *, user_id: str | None = None) -> list[dict[str, Any]]:
+        from app.runtime.policy import require_owned_service
+        owner = require_owned_service(session_id, user_id=user_id)
+        return [j for j in store.list_background_jobs(session_id, include_logs=False) if j['user_id'] == owner]
 
-    def get_job(self, session_id: str, job_id: str) -> dict[str, Any] | None:
+    def get_job(self, session_id: str, job_id: str, *, user_id: str | None = None) -> dict[str, Any] | None:
+        from app.runtime.policy import require_owned_service
+        owner = require_owned_service(session_id, user_id=user_id)
         item = store.get_background_job(job_id)
+        if item and item['user_id'] != owner:
+            return None
         return item if item and item['session_id'] == session_id and store.get_session(session_id) else None
 
-    def stop_job(self, session_id: str, job_id: str) -> dict[str, Any]:
-        item = self.get_job(session_id, job_id)
+    def stop_job(self, session_id: str, job_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        item = self.get_job(session_id, job_id, user_id=user_id)
+        return self._stop_job(item, job_id, session_id)
+
+    def _stop_job(self, item, job_id, session_id) -> dict[str, Any]:
         if item is None:
             raise ValueError('Background job not found')
-        if item['status'] in TERMINAL or item['monitoring_closed']:
+        if item['status'] in TERMINAL:
             return item
         with self._lock:
             state = self._local.get(job_id)
@@ -402,26 +482,28 @@ class BackgroundJobManager:
                     _signal_group(state.proc.pid, signal.SIGKILL)
             if state.thread:
                 state.thread.join(1.5)
-            return self.get_job(session_id, job_id)
+            return store.get_background_job(job_id)
         from app.services import background_job_backends as backends
         self._publish(job_id, {'status': 'stopping', 'stop_requested': True})
         try:
-            result = backends.stop_remote(item['backend'], item['workplace_id'], item['backend_handle'])
+            # Stored owner/session identity: killing must work after the
+            # live ceiling moved (revocation stops run post-bump).
+            result = backends.stop_remote_job(item)
             changes = self._remote_changes(result)
         except Exception as exc:
             changes = {'status': 'unknown', 'reason': str(exc)}
         return self._publish(job_id, changes)
 
-    def close_monitoring(self, session_id: str, job_id: str) -> dict[str, Any]:
-        item = self.get_job(session_id, job_id)
+    def close_monitoring(self, session_id: str, job_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        item = self.get_job(session_id, job_id, user_id=user_id)
         if item is None:
             raise ValueError('Background job not found')
         if item['status'] != 'unknown':
             raise ValueError('Only Unknown jobs can close monitoring; the process may still run')
         return self._publish(job_id, {'monitoring_closed': True, 'continuation_status': 'cancelled'})
 
-    def logs(self, session_id: str, job_id: str, tail: int = 65536, cursor: int | None = None) -> dict[str, Any]:
-        item = self.get_job(session_id, job_id)
+    def logs(self, session_id: str, job_id: str, tail: int = 65536, cursor: int | None = None, *, user_id: str | None = None) -> dict[str, Any]:
+        item = self.get_job(session_id, job_id, user_id=user_id)
         if item is None:
             raise ValueError('Background job not found')
         limit = max(1, min(int(tail), LOG_LIMIT))
@@ -438,17 +520,26 @@ class BackgroundJobManager:
                 'version': item['version'], 'status': item['status']}
 
     def stop_session(self, session_id: str) -> None:
-        """Best-effort cleanup before session cascade; never deliver old results."""
-        for item in self.list_jobs(session_id):
+        """Confirmed teardown; failure leaves the policy's barrier pending."""
+        from app.runtime.access import AccessUnavailable
+        for item in store.list_background_jobs(session_id):
             self._publish(item['id'], {'continuation_suppressed': True, 'continuation_status': 'cancelled', 'delivery_status': 'blocked'})
-            if item['status'] in ACTIVE and not item['monitoring_closed']:
-                try:
-                    self.stop_job(session_id, item['id'])
-                except Exception:
-                    _logger.exception('Background job cleanup failed for deleted session')
+            if item['status'] in ACTIVE:
+                if item['backend'] == 'container':
+                    from app.runtime.isolation import jobs
+                    jobs.stop_session(session_id)
+                    self._publish(item['id'], {'status': 'stopped', 'returncode': -1})
+                    continue
+                stopped = self._stop_job(item, item['id'], session_id)
+                if not stopped or stopped['status'] not in TERMINAL:
+                    raise AccessUnavailable('Background termination could not be confirmed')
 
     async def shutdown(self) -> None:
         self._stopping.set()
+        for item in store.list_background_jobs():
+            if item['backend'] == 'container' and item['status'] in ACTIVE:
+                from app.runtime.isolation import jobs
+                jobs.stop_session(item['session_id'])
         with self._lock:
             locals_ = list(self._local.items())
             remote_threads = list(self._remote_threads.values())
@@ -477,6 +568,10 @@ class BackgroundJobManager:
         """Test-only deterministic cleanup; never leave child processes behind."""
         self._stopping.set()
         self._callback = None
+        for item in store.list_background_jobs():
+            if item['backend'] == 'container' and item['status'] in ACTIVE:
+                from app.runtime.isolation import jobs
+                jobs.stop_session(item['session_id'])
         with self._lock:
             locals_ = list(self._local.values())
             remotes = list(self._remote_threads.values())

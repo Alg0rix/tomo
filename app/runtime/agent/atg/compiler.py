@@ -92,6 +92,8 @@ class _AsyncLLMCaller:
                 f"Compile LLM call budget exhausted ({MAX_COMPILE_LLM_CALLS})."
             )
         self.calls += 1
+        from app.runtime.policy import authorize_model_client
+        authorize_model_client(self.llm)
         resp = await self.llm.complete(
             [
                 {"role": "system", "content": system},

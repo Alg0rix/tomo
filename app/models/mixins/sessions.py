@@ -8,6 +8,7 @@ fields so the API/UI shapes are unchanged.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 import uuid
@@ -60,8 +61,20 @@ def resolve_live_agent_ids(
         return list(stored), False
 
     enabled = list_enabled_agent_ids(conn)
+    owner = conn.execute("SELECT user_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+    account = conn.execute("SELECT role FROM users WHERE id=?", (owner["user_id"],)).fetchone() if owner else None
+    if account and account["role"] == "member":
+        from app.models.mixins.agents import get_coordinator
+
+        coordinator = get_coordinator(conn)
+        shared = coordinator["id"] if coordinator else ""
+        assigned = {r["resource_id"] for r in conn.execute(
+            "SELECT resource_id FROM resource_grants WHERE user_id=? AND resource_type='agent' AND state='active'",
+            (owner["user_id"],),
+        )}
+        enabled = [aid for aid in enabled if aid == shared or aid in assigned]
     if not enabled:
-        return list(stored), True
+        return ([] if account and account["role"] == "member" else list(stored)), True
 
     coord = (coordinator_id or "").strip()
     if not coord or coord not in enabled:
@@ -144,6 +157,10 @@ def _session_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
         "title": row["title"],
         "message_count": row["message_count"],
         "workplace_id": workplace_id,
+        "additional_workplace_ids": json.loads(row["additional_workplace_ids_json"]),
+        "execution_mode": row["execution_mode"],
+        "access_generation": row["access_generation"],
+        "access_pending": bool(row["access_pending"]),
         "reasoning_effort": reasoning_effort,
         "model_profile_id": row["model_profile_id"],
         "model_name": row["model_name"],

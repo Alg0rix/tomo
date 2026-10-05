@@ -62,6 +62,11 @@ def _accept_plan(
             errors.append(reason)
         return []
 
+    from app.runtime.access import current_execution, AccessDenied
+    from app.runtime.policy import authorized_agents, filter_schemas
+    context = store.access.revalidate(current_execution())
+    if context.session_id != session_id:
+        raise AccessDenied("Swarm cannot switch sessions")
     raw_agents = plan.get("agents") or []
     raw_tasks = plan.get("tasks") or []
     if not isinstance(raw_agents, list) or len(raw_agents) > MAX_ACTIVE:
@@ -93,8 +98,10 @@ def _accept_plan(
         resolved_keys.update(ready_keys)
         for key in ready_keys:
             unresolved_keys.pop(key)
-    configured = {a["id"]: a for a in store.list_agents() if a.get("enabled")}
+    allowed_ids = {a["id"] for a in authorized_agents(context)}
+    configured = {a["id"]: a for a in store.list_agents() if a.get("enabled") and a["id"] in allowed_ids}
     local = {a["id"]: a for a in store.with_db(lambda conn: db.list_agents(conn, session_id))}
+    local = {key: a for key, a in local.items() if a["base_agent_id"] in allowed_ids}
     names = {a["name"]: a["id"] for a in local.values()}
     candidate_names = set(names)
     new_agent_bases: dict[str, str] = {}
@@ -114,7 +121,8 @@ def _accept_plan(
         if base_agent_id not in enabled_tool_cache:
             enabled_tool_cache[base_agent_id] = {
                 s.get("function", {}).get("name")
-                for s in store.get_agent_openai_tools(base_agent_id)
+                for s in filter_schemas(store.access.resolve_context(context.user_id, session_id, base_agent_id, parent=context),
+                                        store.get_agent_openai_tools(base_agent_id))
                 if s.get("function", {}).get("name") not in _ORCHESTRATION_TOOLS
             } | {"swarm_board"}
         return enabled_tool_cache[base_agent_id]
@@ -214,12 +222,18 @@ async def _worker(
             s.get("function", {}).get("name"): s
             for s in store.get_agent_openai_tools(base)
         }
-        available.update({s["function"]["name"]: s for s in get_openai_tools(["swarm_board"])})
-        selected = set(task["tools"])
+        selected = set(task["tools"]) - {"swarm_board"}
         missing = selected - available.keys()
         if missing:
             raise RuntimeError(f"Assigned tools are no longer available: {', '.join(sorted(missing))}")
         allowed = selected | {"swarm_board"}
+        # Bind before provisioning schemas: the runtime grants swarm_board per
+        # worker task at bind time, and schema filtering honors that grant.
+        # The bind itself verifies the run's session ownership.
+        token = swarm_board.bind(run_id=run_id, task_id=tid, agent_id=aid,
+                                 allowed_tools=allowed, write_scope=task["write_scope"],
+                                 coordinator_id=task["coordinator_id"])
+        available.update({s["function"]["name"]: s for s in get_openai_tools(["swarm_board"])})
         tool_schemas = [available[name] for name in dict.fromkeys([*task["tools"], "swarm_board"])]
         prompt = build_system_prompt(base, session_id=session_id)
         prompt += (
@@ -240,9 +254,6 @@ async def _worker(
             f"Dependencies: {json.dumps(dependencies, ensure_ascii=False)}\n"
             f"File-edit tool scope: {json.dumps(task['write_scope'])}"
         )
-        token = swarm_board.bind(run_id=run_id, task_id=tid, agent_id=aid,
-                                 allowed_tools=allowed, write_scope=task["write_scope"],
-                                 coordinator_id=task["coordinator_id"])
         async for raw in run_turn(message, history=None, agent_id=base,
                                   session_id=session_id, system_prompt=prompt,
                                   tools=tool_schemas):
@@ -342,6 +353,29 @@ async def _supervise(*, run_id: str, session_id: str, coordinator_id: str,
 
 
 async def run_swarm_turn(
+    request: str, *, session_id: str, coordinator_id: str,
+    history: list[dict[str, Any]] | None, origin: str | None = None,
+    initial_plan: dict[str, Any] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    from contextlib import aclosing
+    from app.runtime.policy import resolve_turn
+    from app.runtime.access import execution_scope, AccessDenied
+    from app.runtime.supervision import admitted_turn
+
+    try:
+        context = resolve_turn(session_id, coordinator_id)
+        with execution_scope(context):
+            async with admitted_turn(context):
+                async with aclosing(_run_swarm_owned(request, session_id=session_id,
+                    coordinator_id=coordinator_id, history=history, origin=origin,
+                    initial_plan=initial_plan)) as source:
+                    async for event in source:
+                        yield event
+    except (AccessDenied, TimeoutError) as exc:
+        yield {"kind": "error", "message": str(exc) or "Swarm duration limit reached"}
+
+
+async def _run_swarm_owned(
     request: str, *, session_id: str, coordinator_id: str,
     history: list[dict[str, Any]] | None, origin: str | None = None,
     initial_plan: dict[str, Any] | None = None,

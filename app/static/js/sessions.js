@@ -273,95 +273,34 @@
     return s.channel === 'telegram' ? 'Telegram · ' + s.telegram_chat_id + ' · ' + name : name;
   }
 
-  function workplaceFullPath(w) {
-    if (!w) return '';
-    var kind = (w.kind || '').toLowerCase();
-    if (kind === 'local') {
-      return (w.root_path || w.host_detail || w.host || '').trim();
-    }
-    if (kind === 'ssh') {
-      var user = (w.ssh_user || '').trim();
-      var host = (w.ssh_host || '').trim();
-      var port = w.ssh_port || 22;
-      var base = user && host ? (user + '@' + host) : (host || user || '');
-      if (port && port !== 22 && host) base += ':' + port;
-      var root = (w.root_path || '').trim();
-      return root ? (base + ' · ' + root) : base;
-    }
-    // tunnel
-    var hn = (w.connector_hostname || w.host_detail || w.name || '').trim();
-    var ip = (w.connector_remote_ip || '').trim();
-    if (hn && ip) return hn + ' (' + ip + ')';
-    return hn || ip || (w.name || w.id || '');
-  }
-
-  function workplaceLabel(wid, opts) {
-    if (!wid) return 'Tomo work dir (~/tomo/<agent>)';
+  function workplaceLabel(wid) {
+    if (!wid) return 'Personal space / legacy chat';
     var w = workplaces.find(function (x) { return x.id === wid; });
-    if (!w) return wid;
-    var kind = w.kind || '?';
-    var name = w.name || wid;
-    var path = workplaceFullPath(w);
-    var full = !!opts && opts.full;
-    if (kind === 'tunnel') {
-      var state = w.online ? 'online' : 'offline';
-      return full
-        ? (name + ' · tunnel · ' + state + (path ? ' · ' + path : ''))
-        : (name + ' · tunnel · ' + state + (path ? ' · ' + path : ''));
-    }
-    if (kind === 'local') {
-      // Always include full absolute path when known.
-      return path ? (name + ' · ' + path) : (name + ' · local');
-    }
-    if (kind === 'ssh') {
-      return path ? (name + ' · ' + path) : (name + ' · ssh');
-    }
-    return path ? (name + ' · ' + path) : (name + ' · ' + kind);
+    return w ? Tomo.access.label(w) : 'Unavailable resource';
   }
 
   function fillWorkplaceSelect(selectEl, selectedId) {
-    if (!selectEl) return;
-    var sel = selectedId || '';
-    var opts = ['<option value="">Tomo work dir (~/tomo/&lt;agent&gt;)</option>'];
-    // Prefer local first for chat folder context.
-    var sorted = workplaces.slice().sort(function (a, b) {
-      var ka = (a.kind === 'local') ? 0 : 1;
-      var kb = (b.kind === 'local') ? 0 : 1;
-      if (ka !== kb) return ka - kb;
-      return String(a.name || a.id).localeCompare(String(b.name || b.id));
-    });
-    sorted.forEach(function (w) {
-      var id = w.id || '';
-      var kind = w.kind || '?';
-      var name = w.name || id;
-      var path = workplaceFullPath(w);
-      var extra = '';
-      if (kind === 'tunnel') {
-        extra = (w.online ? ' · online' : ' · offline') + (path ? ' · ' + path : '');
-      } else if (path) {
-        extra = ' · ' + path;
-      }
-      opts.push(
-        '<option value="' + esc(id) + '"' + (id === sel ? ' selected' : '') +
-        ' title="' + esc(path || name) + '">' +
-        esc(name) + ' · ' + esc(kind) + esc(extra) +
-        '</option>'
-      );
-    });
-    selectEl.innerHTML = opts.join('');
-    selectEl.value = sel;
+    if (selectEl) Tomo.access.fill(selectEl, workplaces, selectedId || '');
   }
 
   function applyChatHeader(s) {
-    const label = sessionLabel(s);
-    const title = (s.title || '').trim() || label;
+    var label = sessionLabel(s);
+    // Operator-trust origin stays visible: unlinked Telegram chats run as an
+    // explicitly allowlisted operator identity, never as a Member account.
+    if (s && s.channel === 'telegram') {
+      label += (s.user_id && s.user_id.indexOf('tg_') === 0)
+        ? ' · Unlinked operator chat (allowlist only)'
+        : ' · Linked account chat';
+    }
+    const title = (s.title || '').trim() || sessionLabel(s);
     document.getElementById('chatAgentName').textContent = title;
     var wid = (s && s.workplace_id) || chatWrap.dataset.workplaceId || '';
     document.getElementById('chatSessionMeta').textContent =
       label;
     chatWrap.dataset.agentName = label;
     chatWrap.dataset.workplaceId = wid;
-    // Read-only badge — workplace is fixed for the thread; show full path.
+    Tomo.access.updateBar(s, workplaces);
+    // Compatibility metadata; visible access controls are above the chat.
     var badge = document.getElementById('chatWorkplaceBadge');
     if (badge) {
       var text = workplaceLabel(wid, { full: true });
@@ -498,7 +437,7 @@
       list.sort(function (a, b) {
         return (b.updated_at || 0) - (a.updated_at || 0);
       });
-      var head = key === '__telegram__' ? 'Telegram' : (key === '__none__' ? 'Tomo work dir (~/tomo/<agent>)' : workplaceLabel(key, { full: true }));
+      var head = key === '__telegram__' ? 'Telegram' : (key === '__none__' ? 'Personal space / legacy chat' : workplaceLabel(key));
       html += '<div class="session-group">' +
         '<div class="session-group-head" title="' + esc(head) + '">' + esc(shortGroupLabel(key, head)) +
         ' <span class="faint">' + list.length + '</span></div>' +
@@ -1781,7 +1720,7 @@
       agents = {};
       (data.agents || []).forEach(function (a) { agents[a.id] = a; });
       try {
-        var wpData = await Tomo.api('/api/workplaces');
+        var wpData = await Tomo.api('/api/access/resources');
         workplaces = (wpData && wpData.workplaces) || [];
       } catch (e2) {
         workplaces = [];
@@ -2036,7 +1975,7 @@
 
   async function refreshWorkplacesAndSelect(selectedId) {
     try {
-      var wpData = await Tomo.api('/api/workplaces');
+      var wpData = await Tomo.api('/api/access/resources');
       workplaces = (wpData && wpData.workplaces) || workplaces;
     } catch (e) { /* keep cache */ }
     fillWorkplaceSelect(document.getElementById('newChatWorkplace'), selectedId || '');
@@ -2100,7 +2039,12 @@
     });
   }
 
-  // Workplace is fixed at chat create — no mid-thread switcher.
+  var createProjectBtn = document.getElementById('newChatCreateProject');
+  if (createProjectBtn) createProjectBtn.addEventListener('click', async function () {
+    try { var project = await Tomo.access.createProject(); if (project) await refreshWorkplacesAndSelect(project.id); }
+    catch (e) { Tomo.toast(e.message || 'Project creation failed', 'err'); }
+  });
+  chatWrap.addEventListener('tomo:access-changed', function () { refreshSessions(); });
 
   if (editBtn && editModal) {
     editBtn.addEventListener('click', function () {

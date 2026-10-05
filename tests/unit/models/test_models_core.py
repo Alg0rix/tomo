@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from app.services import store
 from fastapi.testclient import TestClient
-from app.core.deps import require_auth
 from app.main import app
 import time
 import sqlite3
@@ -139,28 +138,32 @@ def test_cannot_disable_last_enabled(tmp_path) -> None:
 
 def test_delete_ok_when_another_enabled(tmp_path) -> None:
     store.rebind(tmp_path / "users-delete.db")
-    store.create_user({"username": "bob", "password": "password1"})
+    # Last-enabled-Admin protection is intended: deleting the bootstrap Admin
+    # requires another enabled Admin to exist first.
+    store.create_user({"username": "bob", "password": "password1", "role": "admin"})
     admin = store.get_user_by_username("admin")
     assert store.delete_user(admin["id"]) is True
     assert store.get_user_by_username("admin") is None
 
 
-def _client(tmp_path) -> TestClient:
+def _client(tmp_path):
+    from tests.fakes.access import admin_client
+
     store.rebind(tmp_path / "users-api.db")
-    app.dependency_overrides[require_auth] = lambda: None
-    return TestClient(app)
+    return admin_client()
 
 
-def _cleanup() -> None:
-    app.dependency_overrides.pop(require_auth, None)
+def _cleanup(client) -> None:
+    client.close()
 
 
 def test_users_api_crud(tmp_path) -> None:
-    client = _client(tmp_path)
+    client, _admin = _client(tmp_path)
     try:
         res = client.get("/api/users")
         assert res.status_code == 200
-        assert len(res.json()["users"]) == 1
+        # Seeded bootstrap Admin plus this test's logged-in Admin.
+        assert {u["username"] for u in res.json()["users"]} == {"admin", _admin["username"]}
 
         res = client.post(
             "/api/users",
@@ -182,18 +185,22 @@ def test_users_api_crud(tmp_path) -> None:
         assert res.status_code == 200
         assert store.get_user(uid) is None
     finally:
-        _cleanup()
+        _cleanup(client)
 
 
 def test_api_rejects_delete_last_enabled(tmp_path) -> None:
-    client = _client(tmp_path)
+    client, admin = _client(tmp_path)
     try:
-        admin = store.get_user_by_username("admin")
-        res = client.delete(f"/api/users/{admin['id']}")
+        seeded = store.get_user_by_username("admin")
+        # Removing the other Admin is allowed while one remains.
+        assert client.delete(f"/api/users/{seeded['id']}").status_code == 200
+        # Demoting the last remaining enabled Admin is refused.
+        res = client.put(f"/api/users/{admin['id']}", json={"role": "member"})
         assert res.status_code == 400
         assert "last enabled" in res.json()["detail"].lower()
+        assert store.get_user(admin["id"])["role"] == "admin"
     finally:
-        _cleanup()
+        _cleanup(client)
 
 
 def test_login_page_does_not_hint_default_credentials(tmp_path) -> None:
@@ -209,27 +216,48 @@ def test_login_page_does_not_hint_default_credentials(tmp_path) -> None:
 
 
 def test_openapi_docs_disabled(tmp_path) -> None:
-    """Swagger/OpenAPI must not be public (create_app sets docs_url=None)."""
+    """Swagger/OpenAPI must not be served (create_app sets docs_url=None).
+
+    Unknown paths fail closed: anonymous requests redirect to login, and even
+    authenticated Admins get the 404 page rather than API docs.
+    """
+    from tests.fakes.access import admin_client
+
     store.rebind(tmp_path / "users-docs.db")
-    client = TestClient(app)
+    anon = TestClient(app)
     for path in ("/docs", "/redoc", "/openapi.json"):
-        res = client.get(path)
-        assert res.status_code == 404, path
+        res = anon.get(path, follow_redirects=False)
+        assert res.status_code == 303, path
+        assert res.headers["location"].startswith("/login"), path
+        body = anon.get(path).text
+        # Fail-closed to the login page: no Swagger UI, no OpenAPI JSON.
+        assert "login-page" in body, path
+        assert "swagger-ui" not in body.lower(), path
+        assert '"openapi"' not in body.lower(), path
+    admin, _ = admin_client()
+    try:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            res = admin.get(path, follow_redirects=False)
+            assert res.status_code == 404, path
+    finally:
+        admin.close()
 
 
 def test_login_post_success_and_fail(tmp_path) -> None:
     store.rebind(tmp_path / "users-login.db")
-    # Real session middleware — no auth override.
+    # Real session middleware — no auth override. Uses a fresh account so the
+    # test never depends on the ambient bootstrap-admin password.
+    store.create_user({"username": "loginuser", "password": "password1", "role": "admin"})
     client = TestClient(app)
     res = client.post(
         "/login",
-        data={"username": "admin", "password": "wrong", "next": "/"},
+        data={"username": "loginuser", "password": "wrong", "next": "/"},
     )
     assert res.status_code == 401
 
     res = client.post(
         "/login",
-        data={"username": "admin", "password": "tomo", "next": "/"},
+        data={"username": "loginuser", "password": "password1", "next": "/"},
         follow_redirects=False,
     )
     assert res.status_code == 303
@@ -238,8 +266,8 @@ def test_login_post_success_and_fail(tmp_path) -> None:
     res = client.post(
         "/login",
         data={
-            "username": "admin",
-            "password": "tomo",
+            "username": "loginuser",
+            "password": "password1",
             "next": "https://evil.example/phish",
         },
         follow_redirects=False,
@@ -249,7 +277,7 @@ def test_login_post_success_and_fail(tmp_path) -> None:
 
     res = client.post(
         "/login",
-        data={"username": "admin", "password": "tomo", "next": "/sessions"},
+        data={"username": "loginuser", "password": "password1", "next": "/sessions"},
         follow_redirects=False,
     )
     assert res.status_code == 303
@@ -257,15 +285,15 @@ def test_login_post_success_and_fail(tmp_path) -> None:
 
 
 def test_system_page_includes_accounts(tmp_path) -> None:
-    client = _client(tmp_path)
+    client, admin = _client(tmp_path)
     try:
         res = client.get("/system")
         assert res.status_code == 200
         assert b"Accounts" in res.content
         assert b"sec-users" in res.content
-        assert b"admin" in res.content
+        assert admin["username"].encode() in res.content
     finally:
-        _cleanup()
+        _cleanup(client)
 
 
 # --- from test_sessions_messages.py ---

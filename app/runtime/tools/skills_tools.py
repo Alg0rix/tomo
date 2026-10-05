@@ -28,7 +28,30 @@ def _skill_line(skill: dict[str, Any]) -> str:
         label += f": {name}"
     description = _compact_description(skill.get("description"))
     suffix = f" — {description}" if description else ""
-    return f"{label} [{source}; {int(skill.get('use_count') or 0)} loads]{suffix}"
+    pin = " [pinned]" if skill.get("user_activated") else ""
+    return f"{label} [{source}; {int(skill.get('use_count') or 0)} loads]{pin}{suffix}"
+
+
+def _member_skill_scope(execution) -> tuple[set[str], set[str]] | None:
+    """(allowed ids, assigned ids) for a Member turn; None for Admins.
+
+    Members may only read skills assigned to their current agent. Pins are
+    a per-user global intent but never grant access on their own. The bound
+    execution decides the scope, never a caller-supplied agent hint.
+    """
+    if execution.role == "admin":
+        return None
+    from app.extensions.skills import is_runtime_only_skill
+    from app.services import store
+
+    rows = store.get_effective_agent_skills(execution.agent_id, execution.user_id)
+    usable = [
+        s for s in rows
+        if s.get("enabled", True)
+        and not is_runtime_only_skill(s.get("id"), s.get("source"))
+    ]
+    assigned = {s["id"] for s in usable if s.get("assigned")}
+    return assigned, assigned
 
 
 def _paginate_text(text: str, *, offset: int, limit: int) -> tuple[str, bool]:
@@ -72,6 +95,8 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
         arguments = {}
     if not isinstance(arguments, dict):
         return "Error: list_skills expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    execution = authorize_tool("list_skills", arguments)
 
     query_value = arguments.get("query", "")
     if query_value is None:
@@ -97,13 +122,20 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
 
     from app.services import store
 
-    try:
-        store.sync_skills()
-    except Exception:
-        pass
+    if execution.role == "admin":
+        try:
+            store.sync_skills()
+        except Exception:
+            pass
     from app.extensions.skills import is_runtime_only_skill
 
-    skills = [s for s in store.list_skills() if s.get("enabled", True)
+    if execution.role == "admin":
+        catalog = store.list_skills()
+    else:
+        # Members see their own effective set (assigned + their pins);
+        # shared assignment rows are never exposed for editing here.
+        catalog = store.get_effective_agent_skills(execution.agent_id, execution.user_id)
+    skills = [s for s in catalog if s.get("enabled", True)
               and not is_runtime_only_skill(s.get("id"), s.get("source"))]
     if query:
         needle = query.casefold()
@@ -149,6 +181,8 @@ def list_skills_run(arguments: dict[str, Any]) -> str:
 
 
 def use_skill_run(arguments: dict[str, Any]) -> str:
+    from app.runtime.policy import authorize_tool
+    authorize_tool("use_skill", arguments)
     """Return a skill's body (or a support file) from disk; always a string."""
     if not isinstance(arguments, dict):
         return "Error: use_skill expects a dict of arguments"
@@ -186,6 +220,24 @@ def use_skill_run(arguments: dict[str, Any]) -> str:
         pass
 
     sid = slugify_skill_id(skill_id)
+    from app.runtime.access import current_execution as _current_execution
+
+    _execution = _current_execution(required=False)
+    _member_scope = _member_skill_scope(_execution) if _execution is not None else None
+    if _member_scope is not None:
+        allowed, assigned = _member_scope
+        if sid not in allowed and skill_id not in allowed:
+            return f"Error: skill '{sid}' is not assigned to this agent"
+        if "activate" in arguments:
+            raw = arguments.get("activate")
+            want = raw.strip().lower() in {"1", "true", "yes", "on"} if isinstance(raw, str) else bool(raw)
+            if want and sid not in assigned and skill_id not in assigned:
+                return "Error: only skills assigned to this agent can be pinned"
+            try:
+                store.set_user_skill_active(_execution.user_id, sid, want)
+            except ValueError as exc:
+                return f"Error: {exc}"
+            # Fall through to the read below so one call pins AND loads.
     skill = store.get_skill(sid) or store.get_skill(skill_id)
     discovered = find_discovered_skill(sid)
     from app.runtime.agent.learning.state import in_review_scope
@@ -267,6 +319,8 @@ def _assign_skill_to_agent(skill_id: str, agent_id: str | None) -> None:
 
 
 def manage_skill_run(arguments: dict[str, Any]) -> str:
+    from app.runtime.policy import authorize_tool
+    authorize_tool("manage_skill", arguments)
     """Create / edit / patch / delete library skills (active learning write path)."""
     if not isinstance(arguments, dict):
         return "Error: manage_skill expects a dict of arguments"

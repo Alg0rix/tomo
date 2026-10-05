@@ -648,6 +648,38 @@ class PluginManager:
             }
 
     def execute(self, name: str, arguments: dict) -> str:
+        from app.runtime.access import current_execution as _current_execution
+
+        context = _current_execution(required=False)
+        if context is not None and context.role != "admin":
+            # Defense in depth: Member plugin calls never run in the
+            # coordinator process, even via direct manager use.
+            from app.runtime.policy import authorize_tool as _authorize_tool
+
+            try:
+                owned = _authorize_tool(name, arguments)
+                from app.runtime.plugins.member_sandbox import (
+                    sandboxed_plugin_call as _sandboxed_plugin_call,
+                )
+
+                prefix = "plugin__"
+                remainder = name[len(prefix):]
+                plugin_id = None
+                with self._lock:
+                    for candidate in sorted(self._rows, key=len, reverse=True):
+                        if remainder.startswith(candidate + "__"):
+                            plugin_id = candidate
+                            break
+                if plugin_id is None:
+                    return f"Error: plugin tool '{name}' failed: unavailable"
+                return _sandboxed_plugin_call(owned, plugin_id, name, arguments)
+            except Exception as exc:
+                from app.runtime.access import AccessDenied as _Denied
+                from app.runtime.access import AccessUnavailable as _Unavailable
+
+                if isinstance(exc, (_Denied, _Unavailable)):
+                    return f"Error: {exc}"
+                return f"Error: plugin tool '{name}' failed"
         plugin_id = name.split("__", 2)[1]
         try:
             with self.lease(plugin_id) as instance:

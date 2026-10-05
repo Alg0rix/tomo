@@ -22,7 +22,7 @@ async def test_admin_log_history_and_live_stream(tmp_path, monkeypatch):
     path = log_dir / "tomo.jsonl"
     record = {"timestamp": "2026-01-01T00:00:00+00:00", "level": "ERROR", "type": "plugin", "message": "hook failed", "session_id": "s1"}
     path.write_text(json.dumps(record) + "\n")
-    admin = store.create_user({"username": "logadmin", "password": "password1"})
+    admin = store.create_user({"username": "logadmin", "password": "password1", "role": "admin"})
     member = store.create_user({"username": "logmember", "password": "password1", "role": "member"})
     admin_key = store.create_api_key(admin["id"])["token"]
     member_key = store.create_api_key(member["id"])["token"]

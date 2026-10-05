@@ -40,28 +40,40 @@ def _enabled_skill_tools(agent_id: str) -> set[str]:
     return store.get_enabled_tool_ids(agent_id) & _SKILL_TOOLS
 
 
-def _catalog_rows(agent_id: str) -> tuple[list[dict[str, Any]], set[str]]:
-    """Return (ordered enabled skills, assigned ids). Assigned skills first."""
+def _catalog_rows(agent_id: str, user_id: str | None = None) -> tuple[list[dict[str, Any]], set[str], set[str]]:
+    """Return (ordered enabled skills, assigned ids, user-pinned ids).
+
+    Assigned skills first, then this user's own pins (their per-user
+    activation overlay — shared ``agent_skills`` rows are never written),
+    then the rest. ``user_id=None`` preserves the shared-config view.
+    """
     from app.services import store
 
     from app.extensions.skills import is_runtime_only_skill
 
     store.sync_skills()
-    rows = store.get_agent_skills(agent_id)
+    if user_id:
+        rows = store.get_effective_agent_skills(agent_id, user_id)
+    else:
+        rows = store.get_agent_skills(agent_id)
     enabled = [s for s in rows if s.get("enabled", True)
                and not is_runtime_only_skill(s.get("id"), s.get("source"))]
     assigned_ids = {s["id"] for s in enabled if s.get("assigned")}
+    pinned_ids = {s["id"] for s in enabled if s.get("user_activated")}
     assigned = [s for s in enabled if s["id"] in assigned_ids]
-    others = [s for s in enabled if s["id"] not in assigned_ids]
-    return assigned + others, assigned_ids
+    pinned = [s for s in enabled if s["id"] in pinned_ids]
+    others = [s for s in enabled if s["id"] not in assigned_ids and s["id"] not in pinned_ids]
+    return assigned + pinned + others, assigned_ids, pinned_ids
 
 
-def build_skills_system_prompt(agent_id: str | None) -> str:
+def build_skills_system_prompt(agent_id: str | None, user_id: str | None = None) -> str:
     """``## Skills`` section (catalog + guidance), or ``""`` when tools unavailable.
 
     Injected for every agent that has ``list_skills`` / ``use_skill`` /
     ``manage_skill``. Bodies are never inlined — the model must call
     ``use_skill``. Guidance is included even when the catalog is empty.
+    With ``user_id``, the catalog merges that user's own activation pins
+    (marked ``+``); shared assignment (``*``) is never altered here.
     """
     if not agent_id:
         return ""
@@ -69,7 +81,7 @@ def build_skills_system_prompt(agent_id: str | None) -> str:
         skill_tools = _enabled_skill_tools(agent_id)
         if not skill_tools:
             return ""
-        ordered, assigned_ids = _catalog_rows(agent_id)
+        ordered, assigned_ids, pinned_ids = _catalog_rows(agent_id, user_id)
     except Exception:
         return ""
 
@@ -83,6 +95,8 @@ def build_skills_system_prompt(agent_id: str | None) -> str:
     if ordered:
         if assigned_ids:
             parts.append("Skills marked * are assigned to you.")
+        if pinned_ids:
+            parts.append("Skills marked + are your own pins for this turn.")
         parts.append("<available_skills>")
         shown = ordered[:_SKILL_CATALOG_CAP]
         for skill in shown:
@@ -92,7 +106,7 @@ def build_skills_system_prompt(agent_id: str | None) -> str:
             desc = _truncate_desc(
                 str(skill.get("description") or skill.get("name") or sid)
             )
-            mark = "*" if sid in assigned_ids else ""
+            mark = ("*" if sid in assigned_ids else "") + ("+" if sid in pinned_ids else "")
             parts.append(f"- {sid}{mark}: {desc}")
         parts.append("</available_skills>")
         omitted = len(ordered) - len(shown)

@@ -77,6 +77,8 @@ def match_workplace(
     needle_n = needle.replace(" ", "").replace("_", "").replace("-", "")
 
     def score(wp: dict[str, Any]) -> int:
+        if str(wp.get('id') or '').casefold() == needle:
+            return 200  # Exact opaque IDs take precedence over display names.
         fields = [
             str(wp.get("id") or ""),
             str(wp.get("name") or ""),
@@ -103,8 +105,8 @@ def match_workplace(
     if not ranked:
         return None
     ranked.sort(key=lambda x: -x[0])
-    if len(ranked) > 1 and ranked[0][0] == ranked[1][0] and ranked[0][0] < 100:
-        return None  # ambiguous prefix
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None  # Ambiguous names/prefixes must never select another destination.
     return ranked[0][1]
 
 

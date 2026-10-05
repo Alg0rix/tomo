@@ -1238,7 +1238,24 @@
         return;
       }
       attachPreview.classList.remove('hidden');
-      attachPreview.innerHTML = attachmentChipsHtml(uploadedAttachments, true);
+      attachPreview.innerHTML = attachmentChipsHtml(uploadedAttachments, true) +
+        '<button type="button" class="btn ghost sm" data-import-uploads' + (uploading ? ' disabled' : '') + '>Import into working folder</button>' +
+        '<span class="access-note">Images/binary files: import for isolated CLI processing. Requires a writable active folder.</span>';
+      on(attachPreview.querySelector('[data-import-uploads]'), 'click', async function (event) {
+        event.preventDefault(); if (uploading) return;
+        if (!await prepareAttachments() || destroyed) return;
+        uploading = true; refreshSendBtn(); renderAttachmentPreview();
+        try {
+          for (const att of uploadedAttachments.slice()) {
+            const result = await Tomo.api('/api/attachments/' + encodeURIComponent(att.id) + '/import', {method:'POST'});
+            if (destroyed) return;
+            input.value += (input.value ? '\n' : '') + 'Imported file ' + att.name + ' into the working folder: ' + result.path;
+            uploadedAttachments = uploadedAttachments.filter(function (item) { return item.id !== att.id; });
+          }
+          Tomo.toast('Files imported into the selected restricted container storage', 'ok');
+        } catch (e) { if (!destroyed) Tomo.toast(e.message || 'Import failed; no host fallback', 'err'); }
+        finally { uploading = false; if (!destroyed) { renderAttachmentPreview(); refreshSendBtn(); } }
+      });
       Array.prototype.forEach.call(attachPreview.querySelectorAll('.attachment-chip .remove'), function (btn) {
         on(btn, 'click', function (e) {
           e.preventDefault();

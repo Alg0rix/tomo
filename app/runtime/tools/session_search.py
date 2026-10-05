@@ -9,6 +9,8 @@ def run(arguments: dict[str, Any]) -> str:
     """Search session message content; always returns a string."""
     if not isinstance(arguments, dict):
         return "Error: session_search expects a dict of arguments"
+    from app.runtime.policy import authorize_tool
+    authorize_tool("session_search", arguments)
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip():
         return "Error: 'query' argument must be a non-empty string"

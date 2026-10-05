@@ -232,6 +232,13 @@ def _safe_join(session_id: str, filename: str, *, home_root: Path | None = None)
     err = validate_filename(filename)
     if err:
         raise ValueError(err)
+    from app.runtime.access import current_execution, AccessDenied
+    context = current_execution(required=False)
+    if context:
+        from app.services import store
+        current = store.access.revalidate(context)
+        if current.session_id != session_id:
+            raise AccessDenied("Artifact session is unavailable")
     base = ensure_artifacts_dir(session_id, home_root=home_root).resolve()
     target = (base / filename).resolve()
     try:
@@ -245,7 +252,9 @@ def write_artifact_bytes(
     session_id: str, filename: str, data: bytes, *, home_root: Path | None = None
 ) -> dict[str, Any]:
     path = _safe_join(session_id, filename, home_root=home_root)
-    path.write_bytes(data)
+    from app.runtime.storage import private_write
+    with private_write(len(data), home_root=home_root):
+        path.write_bytes(data)
     return {
         "filename": filename,
         "filepath": str(path),
@@ -316,6 +325,13 @@ def list_artifact_files(
     home_root: Path | None = None,
 ) -> dict[str, Any]:
     """List artifact files for one session."""
+    from app.runtime.access import current_execution, AccessDenied
+    context = current_execution(required=False)
+    if context:
+        from app.services import store
+        current = store.access.revalidate(context)
+        if current.session_id != session_id:
+            raise AccessDenied("Artifact session is unavailable")
     sid = safe_session_id(session_id)
     if not sid:
         return {"files": [], "total": 0, "page": 1, "limit": limit, "pages": 0, "session_id": ""}
@@ -366,7 +382,7 @@ def list_artifact_files(
 
     for fname in names:
         fpath = d / fname
-        if not fpath.is_file():
+        if fpath.is_symlink() or not fpath.is_file():
             continue
         if filter_q and filter_q not in fname.lower():
             continue

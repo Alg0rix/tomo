@@ -236,6 +236,8 @@ def run(arguments: dict[str, Any] | None = None) -> str:
     if arguments is not None and not isinstance(arguments, dict):
         return "Error: arguments must be an object"
     args = arguments or {}
+    from app.runtime.policy import authorize_tool
+    authorize_tool("agent_info", args)
 
     action = str(args.get("action") or "").strip().lower()
     spec = (

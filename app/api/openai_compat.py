@@ -13,11 +13,13 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.deps import AuthDep, session_user_id
+from app.api.access_policy import require_agent, require_chat_inputs
+from app.runtime.access import execution_scope
 from app.services import run_session_turn, store
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
@@ -230,14 +232,16 @@ async def chat_completions(body: ChatCompletionsIn, request: Request, _: AuthDep
 
     # Solo path requires a real agent id. Session continuation only needs a
     # non-empty OpenAI ``model`` label (may be a display name).
-    if not provided_session and not store.get_agent(agent_id):
-        return JSONResponse(
-            _openai_error(
-                f"Model (agent) not found: {agent_id}",
-                err_type="not_found_error",
-            ),
-            status_code=404,
-        )
+    if not provided_session:
+        try:
+            require_agent(request, agent_id)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return JSONResponse(
+                _openai_error('Model (agent) is unavailable', err_type='not_found_error'),
+                status_code=404,
+            )
 
     user_text = last_user_message(body.messages)
     if not user_text:
@@ -255,6 +259,8 @@ async def chat_completions(body: ChatCompletionsIn, request: Request, _: AuthDep
         return JSONResponse(sess_err, status_code=status)
     assert session_id is not None
 
+    context = store.access.resolve_context(user_id, session_id)
+    require_chat_inputs(context, user_text)
     response_model = _response_model(agent_id, session_id)
     completion_id = _completion_id()
     created = int(time.time())
@@ -265,20 +271,23 @@ async def chat_completions(body: ChatCompletionsIn, request: Request, _: AuthDep
     }
 
     if body.stream:
+        async def scoped_stream():
+            with execution_scope(store.access.revalidate(context)):
+                async for chunk in _openai_stream(
+                    session_id, user_text, user_id, model=response_model,
+                    completion_id=completion_id, created=created,
+                ):
+                    store.access.revalidate(context)
+                    yield chunk
+
         return StreamingResponse(
-            _openai_stream(
-                session_id,
-                user_text,
-                user_id,
-                model=response_model,
-                completion_id=completion_id,
-                created=created,
-            ),
+            scoped_stream(),
             media_type="text/event-stream",
             headers=headers,
         )
 
-    text, had_error = await _collect_assistant_text(session_id, user_text, user_id)
+    with execution_scope(store.access.revalidate(context)):
+        text, had_error = await _collect_assistant_text(session_id, user_text, user_id)
     payload = {
         "id": completion_id,
         "object": "chat.completion",

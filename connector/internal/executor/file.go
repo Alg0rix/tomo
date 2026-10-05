@@ -11,10 +11,9 @@ import (
 	"strings"
 )
 
-func readFile(params map[string]any) (any, error) {
+func readFile(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
-	root := WorkRoot()
-	target, err := resolvePath(pathArg, root)
+	target, err := adm.AuthorizePath(pathArg, false)
 	if err != nil {
 		return nil, fmt.Errorf("read_file error: %w", err)
 	}
@@ -32,7 +31,7 @@ func readFile(params map[string]any) (any, error) {
 	}, nil
 }
 
-func writeFile(params map[string]any) (any, error) {
+func writeFile(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
 	content, ok := params["content"].(string)
 	if !ok {
@@ -46,8 +45,7 @@ func writeFile(params map[string]any) (any, error) {
 	if mode == "" {
 		mode = "overwrite"
 	}
-	root := WorkRoot()
-	target, err := resolvePath(pathArg, root)
+	target, err := adm.AuthorizePath(pathArg, true)
 	if err != nil {
 		return nil, fmt.Errorf("write_file error: %w", err)
 	}
@@ -76,7 +74,7 @@ func writeFile(params map[string]any) (any, error) {
 	return map[string]any{"ok": true, "path": target, "mode": mode}, nil
 }
 
-func strReplace(params map[string]any) (any, error) {
+func strReplace(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
 	old := paramString(params, "old_string")
 	newS, ok := params["new_string"].(string)
@@ -93,8 +91,7 @@ func strReplace(params map[string]any) (any, error) {
 	if wantCount < 1 && wantCount != -1 {
 		return nil, fmt.Errorf("'count' must be >= 1, or -1 to replace all")
 	}
-	root := WorkRoot()
-	target, err := resolvePath(pathArg, root)
+	target, err := adm.AuthorizePath(pathArg, true)
 	if err != nil {
 		return nil, err
 	}
@@ -173,14 +170,13 @@ func normalizeQuotes(s string) string {
 	return replacer.Replace(s)
 }
 
-func applyPatch(params map[string]any) (any, error) {
+func applyPatch(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
 	patchText, ok := params["patch"].(string)
 	if !ok || strings.TrimSpace(patchText) == "" {
 		return nil, fmt.Errorf("'patch' argument must be a non-empty string")
 	}
-	root := WorkRoot()
-	target, err := resolvePath(pathArg, root)
+	target, err := adm.AuthorizePath(pathArg, true)
 	if err != nil {
 		return nil, err
 	}
@@ -214,10 +210,9 @@ func applyPatch(params map[string]any) (any, error) {
 	return map[string]any{"ok": true, "path": target, "hunks_applied": n}, nil
 }
 
-func deleteFile(params map[string]any) (any, error) {
+func deleteFile(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
-	root := WorkRoot()
-	target, err := resolvePath(pathArg, root)
+	target, err := adm.AuthorizePath(pathArg, true)
 	if err != nil {
 		return nil, err
 	}
@@ -237,10 +232,13 @@ func deleteFile(params map[string]any) (any, error) {
 	return map[string]any{"ok": true, "path": target}, nil
 }
 
-func searchFiles(params map[string]any) (any, error) {
+func searchFiles(params map[string]any, adm *Admission) (any, error) {
 	pattern := paramString(params, "pattern")
 	if pattern == "" {
 		return nil, fmt.Errorf("'pattern' argument must be a non-empty string")
+	}
+	if adm == nil || len(adm.Roots) == 0 {
+		return nil, fmt.Errorf("no admitted execution roots")
 	}
 	globPat := paramString(params, "glob")
 	// Content patterns are regex by default.
@@ -256,56 +254,66 @@ func searchFiles(params map[string]any) (any, error) {
 			return nil, fmt.Errorf("invalid regex: %w", err)
 		}
 	}
-	root := strings.TrimRight(WorkRoot(), string(os.PathSeparator))
 	const maxMatches = 50
 	const maxSnippet = 200
 	skip := map[string]bool{".git": true, "__pycache__": true, "node_modules": true, ".venv": true, "venv": true}
 	matches := []string{}
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if skip[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if globPat != "" {
-			ok, _ := filepath.Match(globPat, d.Name())
-			if !ok {
+	var walkErr error
+	for _, admitted := range adm.Roots {
+		root := strings.TrimRight(filepath.Clean(admitted.Path), string(os.PathSeparator))
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
 				return nil
 			}
-		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil || bytes.IndexByte(data, 0) >= 0 {
+			if d.IsDir() {
+				if skip[d.Name()] {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if globPat != "" {
+				ok, _ := filepath.Match(globPat, d.Name())
+				if !ok {
+					return nil
+				}
+			}
+			data, rerr := os.ReadFile(path)
+			if rerr != nil || bytes.IndexByte(data, 0) >= 0 {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			for i, line := range strings.Split(string(data), "\n") {
+				hit := false
+				if re != nil {
+					hit = re.MatchString(line)
+				} else {
+					hit = strings.Contains(line, pattern)
+				}
+				if !hit {
+					continue
+				}
+				snippet := strings.TrimSpace(line)
+				if len(snippet) > maxSnippet {
+					snippet = snippet[:maxSnippet] + "…"
+				}
+				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, i+1, snippet))
+				if len(matches) >= maxMatches {
+					return io.EOF
+				}
+			}
 			return nil
+		})
+		if err != nil && err != io.EOF {
+			walkErr = err
+			break
 		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		for i, line := range strings.Split(string(data), "\n") {
-			hit := false
-			if re != nil {
-				hit = re.MatchString(line)
-			} else {
-				hit = strings.Contains(line, pattern)
-			}
-			if !hit {
-				continue
-			}
-			snippet := strings.TrimSpace(line)
-			if len(snippet) > maxSnippet {
-				snippet = snippet[:maxSnippet] + "…"
-			}
-			matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, i+1, snippet))
-			if len(matches) >= maxMatches {
-				return io.EOF
-			}
+		if len(matches) >= maxMatches {
+			break
 		}
-		return nil
-	})
-	if err != nil && err != io.EOF {
-		return nil, err
+	}
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	return map[string]any{
 		"matches": matches,
@@ -314,10 +322,9 @@ func searchFiles(params map[string]any) (any, error) {
 	}, nil
 }
 
-func readFileB64(params map[string]any) (any, error) {
+func readFileB64(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
-	root := WorkRoot()
-	path, err := resolvePathAbs(pathArg, root)
+	path, err := adm.AuthorizePath(pathArg, false)
 	if err != nil {
 		return nil, fmt.Errorf("read_file_b64 error: %w", err)
 	}
@@ -374,11 +381,10 @@ func readFileB64(params map[string]any) (any, error) {
 	}, nil
 }
 
-func writeFileB64(params map[string]any) (any, error) {
+func writeFileB64(params map[string]any, adm *Admission) (any, error) {
 	pathArg := paramString(params, "path")
 	dataB64 := paramString(params, "data")
-	root := WorkRoot()
-	path, err := resolvePathAbs(pathArg, root)
+	path, err := adm.AuthorizePath(pathArg, true)
 	if err != nil {
 		return nil, fmt.Errorf("write_file_b64 error: %w", err)
 	}
@@ -419,4 +425,83 @@ func writeFileB64(params map[string]any) (any, error) {
 		}
 	}
 	return map[string]any{"ok": true, "path": path}, nil
+}
+
+func listDir(params map[string]any, adm *Admission) (any, error) {
+	if adm == nil {
+		return nil, fmt.Errorf("execution admission is required")
+	}
+	pathArg := paramString(params, "path")
+	if strings.TrimSpace(pathArg) == "" {
+		pathArg = "."
+	}
+	target, err := adm.AuthorizePath(pathArg, false)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return nil, fmt.Errorf("path not found: %s", pathArg)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", pathArg)
+	}
+	recursive, _ := params["recursive"].(bool)
+	maxDepth := 3
+	if f, ok := asFloat(params["max_depth"]); ok && f >= 0 {
+		maxDepth = int(f)
+		if maxDepth > 5 {
+			maxDepth = 5
+		}
+	}
+	type entry struct {
+		Name  string `json:"name"`
+		Type  string `json:"type"`
+		Size  int64  `json:"size,omitempty"`
+		Depth int    `json:"depth"`
+	}
+	entries := []entry{}
+	var walk func(dir string, depth int) error
+	walk = func(dir string, depth int) error {
+		if depth > maxDepth || len(entries) >= 200 {
+			return nil
+		}
+		items, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		for _, item := range items {
+			if len(entries) >= 200 {
+				break
+			}
+			name := item.Name()
+			if strings.HasPrefix(name, ".tomo") {
+				continue
+			}
+			rel, _ := filepath.Rel(target, filepath.Join(dir, name))
+			typ := "file"
+			var size int64
+			if item.IsDir() {
+				typ = "dir"
+			} else if item.Type()&os.ModeSymlink != 0 {
+				typ = "link"
+			} else if info, err := item.Info(); err == nil {
+				size = info.Size()
+			}
+			entries = append(entries, entry{Name: filepath.ToSlash(rel), Type: typ, Size: size, Depth: depth})
+			if recursive && item.IsDir() {
+				_ = walk(filepath.Join(dir, name), depth+1)
+			}
+		}
+		return nil
+	}
+	if err := walk(target, 0); err != nil {
+		return nil, err
+	}
+	out := make([]any, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, map[string]any{"name": e.Name, "type": e.Type, "size": e.Size, "depth": e.Depth})
+	}
+	capped := len(entries) >= 200
+	return map[string]any{"entries": out, "capped": capped, "path": target}, nil
 }

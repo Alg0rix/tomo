@@ -10,7 +10,6 @@ import json
 from typing import Any, Callable
 
 from app.runtime.tools import progress
-from app.runtime.tools.sandbox import current_agent_id
 from app.runtime.tools.workplace_ctx import (
     current_workplace_hint,
     current_workplace_id,
@@ -55,80 +54,49 @@ def _agent_allowed_workplaces(agent: dict[str, Any]) -> list[dict[str, Any]]:
 
 def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | None:
     """Pick the workplace for this agent + turn (hint / override / default)."""
-    aid = agent_id if agent_id is not None else current_agent_id()
-    if not aid:
-        return None
-    try:
-        from app.services import store
-
-        agent = store.get_agent(aid)
-    except Exception:
-        return None
-    if not agent:
-        return None
-
-    allowed = _agent_allowed_workplaces(agent)
-    # Host named for this call/turn (bash workplace= / "on <host>") beats the
-    # session folder, otherwise workplace= silently runs on the session default.
+    from app.runtime.access import current_execution, AccessDenied, AccessUnavailable
+    from app.services import store
+    context = store.access.revalidate(current_execution())
+    if agent_id and agent_id != context.agent_id:
+        context = store.access.resolve_context(context.user_id, context.session_id, agent_id, parent=context)
+    resource_ids = {r.workplace_id for r in context.resources}
+    visible = [w for w in store.access.list_visible_workplaces(context.user_id) if w["id"] in resource_ids]
     hint = current_workplace_hint()
-    if hint and allowed:
-        hit = match_workplace(allowed, hint)
-        if hit:
-            return hit
-
-    # Explicit per-turn bind (register_workplace / session folder).
     override = current_workplace_id()
-    if override:
-        try:
-            from app.services import store
-
-            wp = store.get_workplace(override)
-            if wp:
-                return wp
-        except Exception:
-            pass
-
-    # Chat chose "Tomo work dir": do not auto-bind the agent's permanent local
-    # workplace (e.g. main → tmp-work → /tmp). Still allow tunnels/SSH via
-    # explicit workplace= or hint.
-    try:
-        from app.runtime.tools.workplace_ctx import force_work_dir
-
-        if force_work_dir():
-            remote_only = [
-                w
-                for w in allowed
-                if (w.get("kind") or "").strip().lower() in ("tunnel", "ssh")
-            ]
-            if not remote_only:
-                return None
-            allowed = remote_only
-    except Exception:
-        pass
-
-    if not allowed:
-        # single empty → local sandbox ($TOMO_WORK/<agent>)
-        return None
-
-    scope = (agent.get("workplace_scope") or "single").strip().lower()
-    # Prefer online tunnel when multiple.
-    if scope in ("all_tunnels", "all", "list") and len(allowed) > 1:
-        for w in allowed:
-            if (w.get("kind") or "") == "tunnel" and hub.is_online(w["id"]):
-                return w
-        # Named primary if set
-        primary = (agent.get("workplace_id") or "").strip()
-        for w in allowed:
-            if w["id"] == primary:
-                return w
-        return allowed[0]
-
-    primary = (agent.get("workplace_id") or "").strip()
-    if primary:
-        for w in allowed:
-            if w["id"] == primary:
-                return w
-    return allowed[0] if allowed else None
+    chosen = None
+    if hint:
+        hit = match_workplace(visible, hint)
+        if not hit:
+            raise AccessDenied("Requested working location is unavailable")
+        chosen = hit["id"]
+    elif override:
+        if override not in resource_ids:
+            raise AccessDenied("Requested working location is unavailable")
+        chosen = override
+    else:
+        chosen = context.active_workplace_id
+    if chosen:
+        store.access.authorize_resource(context, chosen)
+        if context.execution_mode == "unrestricted" and chosen != context.destination_id:
+            raise AccessDenied("Unrestricted execution is not activated for this destination")
+        wp = store.get_workplace(chosen)
+        if not wp:
+            raise AccessUnavailable("Execution destination is unavailable")
+        kind = (wp.get("kind") or "").strip().lower()
+        if kind in {"ssh", "tunnel"}:
+            if not wp.get("online"):
+                raise AccessUnavailable("Execution destination is offline")
+            _require_remote_capability(wp, context.execution_mode)
+        return wp
+    if not context.legacy_admin:
+        raise AccessDenied("An active working location is required")
+    # Only the generation-zero bootstrap migration may use the local sentinel.
+    # Unknown explicit hints still reject, never fall through locally.
+    if hint or override:
+        raise AccessDenied("Requested working location is unavailable")
+    # The legacy exception authorizes ONLY its migrated local host sentinel;
+    # it must not reuse an agent's independent remote bindings as authority.
+    return None
 
 
 def agent_remote_kind(agent_id: str | None = None) -> str | None:
@@ -196,6 +164,24 @@ def format_rpc_result(method: str, result: Any) -> str:
         if result.get("error"):
             return f"Error: {result['error']}"
 
+    if method == "list_dir" and isinstance(result, dict):
+        entries = result.get("entries") or []
+        if not entries:
+            return "(empty directory)"
+        lines = []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            kind = str(item.get("type") or "file")
+            suffix = "/" if kind == "dir" else ("@" if kind == "link" else "")
+            lines.append(f"  {name}{suffix}")
+            if len(lines) >= 200:
+                break
+        if result.get("capped"):
+            lines.append("  (capped)")
+        return "\n".join(lines)
+
     if method == "search_files" and isinstance(result, dict):
         matches = result.get("matches") or []
         if not matches:
@@ -244,6 +230,58 @@ def format_rpc_result(method: str, result: Any) -> str:
     return str(result)
 
 
+def _require_remote_capability(wp: dict[str, Any], mode: str) -> None:
+    """Fail closed unless the destination enforces the execution contract.
+
+    Restricted destinations must attest an equivalent per-chat container
+    boundary; unrestricted destinations (matching Admin grant + explicit chat
+    acknowledgement, checked by the caller) must at least enforce the
+    owner/resource/generation envelope. SSH reaches a general-purpose host
+    account, so it is unrestricted-only: no destination-side restricted
+    boundary can be verified there.
+    """
+    from app.workplaces import remote_contract
+    kind = (wp.get("kind") or "").strip().lower()
+    if kind == "ssh":
+        # Restricted SSH runs only through the operator-provisioned
+        # destination agent (ssh_contract), never a raw cwd jail: the
+        # agent enforces the same owner/generation/scope/quota/teardown
+        # envelope as tunnels. Unprepared destinations stay denied here;
+        # offline/unprepared transports fail closed at call time.
+        from app.workplaces import ssh_contract
+        ssh_contract.require_ssh_destination(wp, mode=mode)
+        return
+    remote_contract.require_tunnel_destination(wp, mode=mode)
+
+
+# Chunked transfer I/O may target enabled transfer-only endpoints on other
+# machines. Every other remote method executes only at the active destination.
+_TRANSFER_IO_METHODS = frozenset({"read_file_b64", "write_file_b64"})
+
+
+def _authorize_remote(wp: dict[str, Any], *, transfer_io: bool = False):
+    from app.runtime.access import current_execution, AccessDenied
+    from app.services import store
+    context = store.access.revalidate(current_execution())
+    wid = str(wp.get("id") or "")
+    resource = store.access.authorize_resource(context, wid)
+    if wid == context.destination_id:
+        pass
+    elif transfer_io and resource.transfer_only:
+        # Chunk I/O for an explicit authorized transfer may target an
+        # enabled transfer-only endpoint on another machine. Execution
+        # methods (exec/process) never take this path: they stay bound to
+        # the active destination.
+        pass
+    else:
+        raise AccessDenied("Remote destination is outside activated execution scope")
+    if context.execution_mode == "unrestricted" and wid != context.destination_id:
+        if not (transfer_io and resource.transfer_only):
+            raise AccessDenied("Unrestricted execution is not activated for this destination")
+    _require_remote_capability(wp, context.execution_mode)
+    return context
+
+
 def _call_tunnel(
     wp: dict[str, Any],
     method: str,
@@ -251,6 +289,8 @@ def _call_tunnel(
     timeout: float,
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
+    from app.workplaces import remote_contract
+    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS)
     wid = str(wp.get("id") or "")
     if not wid:
         return {"ok": False, "error": "missing workplace id"}
@@ -262,8 +302,14 @@ def _call_tunnel(
                 "(connector not connected)"
             ),
         }
+    try:
+        remote_contract.ensure_admitted(wp, context)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    envelope = remote_contract.build_envelope(context, wid)
     token = None
     wire = dict(params)
+    wire["exec_context"] = envelope
     if method in ("exec_bash", "bash"):
         from app.runtime.artifacts.fs import current_session_id
         from app.runtime.tools.user_ctx import current_user_id
@@ -288,15 +334,44 @@ def _call_tunnel(
 def _call_ssh(
     wp: dict[str, Any], method: str, params: dict[str, Any]
 ) -> dict[str, Any]:
+    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS)
     wid = wp.get("id")
     try:
         from app.services import store
-        from app.workplaces import ssh_exec
+        from app.workplaces import ssh_contract, ssh_exec
 
         secrets = store.get_workplace_secrets(str(wid)) if wid else None
         if not secrets:
             return {"ok": False, "error": "SSH workplace secrets not found"}
-        return ssh_exec.call(secrets, method, params)
+        if context.execution_mode == "restricted":
+            # Supervised agent path only: the destination agent enforces
+            # the envelope (owner/generation/scopes/RO/deadlines). No raw
+            # cwd-jail fallback exists on this branch.
+            try:
+                transport = ssh_contract.SSHTransport(
+                    secrets,
+                    root=str(wp.get("ssh_sandbox_root") or ""),
+                    workplace_id=str(wid or ""),
+                )
+            except ssh_contract.AgentTransportError as exc:
+                return {"ok": False, "error": str(exc)}
+            return ssh_contract.call_via_agent(wp, context, method, params or {}, transport)
+        # Unrestricted (checked in _authorize_remote): the matching Admin
+        # grant + explicit chat acknowledgement is the authority here,
+        # exactly as for unrestricted local execution. OS-account caveats
+        # apply and are surfaced wherever the mode is displayed.
+        wire = dict(params or {})
+        try:
+            cap = int(context.quota.duration_seconds or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap > 0:
+            try:
+                want = float(wire.get("timeout", cap))
+            except (TypeError, ValueError):
+                want = float(cap)
+            wire["timeout"] = min(max(want, 1.0), float(cap))
+        return ssh_exec.call(secrets, method, wire)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -324,7 +399,8 @@ def try_remote(
             # Local workplace uses path via sandbox, not remote RPC.
             return None
         if kind not in ("tunnel", "ssh"):
-            return None
+            from app.runtime.access import AccessUnavailable
+            raise AccessUnavailable("Execution destination backend is unavailable")
         to = _timeout_seconds(timeout if timeout is not None else params.get("timeout"))
         if kind == "tunnel":
             # Live terminal output for the bash tool card (connector exec-stream).

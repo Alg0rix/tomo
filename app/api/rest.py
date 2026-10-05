@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import TOMO_HOME
-from app.core.deps import AuthDep, require_owned_session, session_user_id, visible_sessions
+from app.core.deps import AuthDep, authenticated_user, require_owned_session, session_user_id, visible_sessions
+from app.api.access_policy import visible_agents
 from app.schemas import (
     AgentCreate,
     AgentDraft,
@@ -42,7 +43,12 @@ async def dashboard_prompts_api(request: Request, _: AuthDep):
     """Dynamic 'Try asking' chip prompts, personalized per account."""
     from app.runtime import dashboard_prompts
 
-    return await dashboard_prompts.get_dashboard_prompts(session_user_id(request))
+    uid = session_user_id(request)
+    if authenticated_user(request)["role"] != "admin":
+        # Personalized local fallback avoids an unassigned global LLM profile.
+        prompts, source = dashboard_prompts._fallback_prompts(uid)
+        return {"prompts": prompts, "source": source}
+    return await dashboard_prompts.get_dashboard_prompts(uid)
 
 
 @router.get("/home")
@@ -52,6 +58,8 @@ async def home_api(
     """Full Home snapshot; ``tz`` is minutes east of UTC for the local day."""
     from app.services import home
 
+    if authenticated_user(request)["role"] != "admin":
+        return _member_home(request)
     return await asyncio.to_thread(home.snapshot, session_user_id(request), tz)
 
 
@@ -60,6 +68,9 @@ async def home_live_api(request: Request, _: AuthDep):
     """Cheap polled slice: needs, live work, household, recent chats."""
     from app.services import home
 
+    if authenticated_user(request)["role"] != "admin":
+        snapshot = _member_home(request)
+        return {k: snapshot[k] for k in ("needs", "live", "household", "recent")}
     return home.live_snapshot(session_user_id(request))
 
 
@@ -70,6 +81,9 @@ async def home_cards_api(
     """Refresh requested plugin cards that opted into periodic updates."""
     from app.services import home
 
+    if authenticated_user(request)["role"] != "admin":
+        # Plugins currently run with server authority, not a user ceiling.
+        return {"cards": [], "starters": []}
     return await asyncio.to_thread(home.rooms, session_user_id(request), 0, keys=set(keys))
 
 
@@ -78,7 +92,31 @@ async def home_badges_api(request: Request, _: AuthDep):
     """Rail counters polled from every page."""
     from app.services import home
 
+    if authenticated_user(request)["role"] != "admin":
+        snapshot = _member_home(request)
+        return {"needs": len(snapshot["needs"]), "running": len(snapshot["live"])}
     return home.badges(session_user_id(request))
+
+
+def _member_home(request: Request) -> dict:
+    import time
+    from datetime import date
+    from app.services import home
+
+    uid = session_user_id(request)
+    sessions = {s["id"]: s for s in store.list_sessions(user_id=uid)}
+    agents = {a["id"]: a for a in store.access.list_visible_agents(uid)}
+    pending = home.needs(uid, sessions)
+    running = [{"kind": "turn", "title": s.get("title") or "Conversation",
+                "href": f"/sessions?s={s['id']}", "since": s.get("updated_at")}
+               for s in sessions.values() if store.is_session_turn_active(s["id"])]
+    coordinator = store.get_coordinator()
+    upcoming = [{"kind": "routine", "title": s["name"], "at": s["next_run"], "href": "/scheduler"}
+                for s in store.access.list_visible_schedules(uid) if s.get("next_run") and s.get("enabled")]
+    return {"coordinator": {"id": coordinator["id"], "name": coordinator["name"]} if coordinator and coordinator["id"] in agents else None,
+            "needs": pending, "live": running, "household": home.household(agents, sessions, pending),
+            "recent": home.recent(sessions), "today": {"date": date.today().isoformat(), "items": [], "upcoming": upcoming},
+            "foundations": [], "rooms": [], "starters": [], "layout": home.get_layout(uid), "generated_at": time.time()}
 
 
 @router.put("/home/layout")
@@ -128,7 +166,12 @@ async def create_episode_api(request: Request, body: dict, _: AuthDep):
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="JSON object required")
     data = dict(body)
-    data["user_id"] = session_user_id(request)
+    uid = session_user_id(request)
+    data["user_id"] = uid
+    data.pop("id", None)
+    data.pop("episode_id", None)
+    if data.get("session_id"):
+        require_owned_session(request, data["session_id"])
     ep = store.insert_episode(data)
     if not ep:
         raise HTTPException(status_code=400, detail="Could not record episode")
@@ -236,6 +279,14 @@ async def companion_events_api(
     saved_only: bool = Query(False),
 ):
     """Paginated diary (learning events for this account only)."""
+    if agent_id is not None:
+        # Unvalidated filter values must not reach the query layer: unknown
+        # or invisible agents deny with the same generic 404 as other
+        # per-account lookups, without disclosing which agents exist.
+        agent = store.get_agent(agent_id)
+        if agent is None or (authenticated_user(request)["role"] != "admin"
+                             and all(a["id"] != agent_id for a in visible_agents(request))):
+            raise HTTPException(status_code=404, detail="Agent not found")
     return store.companion_diary(
         user_id=session_user_id(request),
         limit=limit,
@@ -246,13 +297,16 @@ async def companion_events_api(
 
 
 @router.get("/agents")
-async def list_agents(_: AuthDep):
-    return {"agents": store.list_agents()}
+async def list_agents(request: Request, _: AuthDep):
+    return {"agents": visible_agents(request)}
 
 
 @router.get("/agents/{agent_id}")
-async def get_agent(agent_id: str, _: AuthDep):
-    agent = store.get_agent(agent_id)
+async def get_agent(agent_id: str, request: Request, _: AuthDep):
+    if authenticated_user(request)["role"] != "admin":
+        agent = next((a for a in visible_agents(request) if a["id"] == agent_id), None)
+    else:
+        agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
@@ -306,7 +360,7 @@ async def delete_agent(agent_id: str, _: AuthDep):
 
 @router.get("/sessions")
 async def list_sessions_api(request: Request, _: AuthDep):
-    agents = store.list_agents()
+    agents = visible_agents(request)
     agent_map = {a["id"]: a for a in agents}
     sessions = []
     for s in visible_sessions(request):
@@ -382,7 +436,7 @@ async def search_sessions_api(
 @router.get("/sessions/{session_id}")
 async def get_session_api(session_id: str, request: Request, _: AuthDep):
     session = require_owned_session(request, session_id)
-    agents = store.list_agents()
+    agents = visible_agents(request)
     agent_map = {a["id"]: a for a in agents}
     ids = session.get("agent_ids") or ([session["agent_id"]] if session.get("agent_id") else [])
     is_swarm = bool(session.get("is_swarm")) or len(ids) > 1
@@ -468,7 +522,7 @@ async def create_session(body: SessionCreate, request: Request, _: AuthDep):
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"session_id": session_id, "workplace_id": (body.workplace_id or "")}
+    return {"session_id": session_id, "workplace_id": store.get_session(session_id)["workplace_id"]}
 
 
 @router.put("/sessions/{session_id}/workplace")
@@ -478,7 +532,7 @@ async def set_session_workplace_api(
     """Set or clear this chat's default workplace (prefer local for folder context)."""
     require_owned_session(request, session_id)
     try:
-        session = store.set_session_workplace(session_id, body.workplace_id or "")
+        session = await asyncio.to_thread(store.set_session_workplace, session_id, body.workplace_id or "")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not session:
@@ -588,7 +642,7 @@ async def session_swarm_history(session_id: str, request: Request, _: AuthDep):
 @router.get("/sessions/{session_id}/attachments")
 async def list_session_attachments_api(session_id: str, request: Request, _: AuthDep):
     require_owned_session(request, session_id)
-    return {"attachments": store.list_session_attachments(session_id)}
+    return {"attachments": [_public_attachment(a) for a in store.list_session_attachments(session_id)]}
 
 
 @router.post("/sessions/{session_id}/attachments")
@@ -600,11 +654,25 @@ async def upload_session_attachment(
     name: str | None = Form(None),
 ):
     require_owned_session(request, session_id)
-    data = await file.read()
+    from app.runtime import storage as storage_ledger
+    uid = session_user_id(request)
+    # Server-wide control-plane caps first (shared spool/DB growth).
+    try:
+        storage_ledger.check_control_plane_limits()
+    except PermissionError as exc:
+        raise HTTPException(status_code=503, detail="Server storage capacity reached") from exc
+    data = await file.read(_MAX_ATTACHMENT_BYTES + 1)
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(data) > _MAX_ATTACHMENT_BYTES:
         raise HTTPException(status_code=400, detail="File too large (max 20MB)")
+    # Per-user disk admission with concurrency-safe reservation: parallel
+    # uploads cannot each pass and then jointly exceed the quota. Released
+    # in `finally` — on success the bytes are counted in the next scan.
+    try:
+        storage_ledger.reserve(uid, len(data))
+    except PermissionError as exc:
+        raise HTTPException(status_code=413, detail="Private storage quota reached") from exc
     safe_name = Path((name or file.filename or "upload")).name[:120] or "upload"
     attachment_id = f"att_{uuid4().hex[:18]}"
     from app.core.paths import ensure_under
@@ -618,8 +686,12 @@ async def upload_session_attachment(
         stored_name = f"{attachment_id}{ext}"
         stored_path = ensure_under(storage_dir, stored_name)
     except ValueError as exc:
+        storage_ledger.release(uid, len(data))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    stored_path.write_bytes(data)
+    try:
+        stored_path.write_bytes(data)
+    finally:
+        storage_ledger.release(uid, len(data))
     mime = file.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
     attachment = store.create_attachment(
         attachment_id=attachment_id,
@@ -630,7 +702,28 @@ async def upload_session_attachment(
         size_bytes=len(data),
         file_path=str(stored_path),
     )
-    return attachment
+    return _public_attachment(attachment)
+
+
+def _public_attachment(attachment: dict) -> dict:
+    return {k: v for k, v in attachment.items() if k != "file_path"}
+
+
+def _attachment_path(request: Request, attachment: dict) -> Path:
+    sid = (attachment.get("session_id") or "").strip()
+    if not sid:
+        raise HTTPException(404, "Attachment not found")
+    require_owned_session(request, sid)
+    root = (Path(TOMO_HOME) / "attachments" / sid).absolute()
+    path = Path(attachment["file_path"]).absolute()
+    # Stored ids/paths are not permission, and symlinks are never downloads.
+    if root.resolve() != root or path.is_symlink():
+        raise HTTPException(404, "Attachment not found")
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        raise HTTPException(404, "Attachment not found") from None
+    return path
 
 
 @router.get("/attachments/{attachment_id}")
@@ -638,16 +731,14 @@ async def download_attachment(attachment_id: str, request: Request, _: AuthDep):
     att = store.get_attachment(attachment_id)
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    sid = (att.get("session_id") or "").strip()
-    if sid:
-        require_owned_session(request, sid)
-    path = Path(att["file_path"])
+    path = _attachment_path(request, att)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(
         path,
         filename=att["original_name"] or att["filename"],
         media_type=att["mime_type"] or "application/octet-stream",
+        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"},
     )
 
 
@@ -656,11 +747,9 @@ async def delete_attachment_api(attachment_id: str, request: Request, _: AuthDep
     att = store.get_attachment(attachment_id)
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    sid = (att.get("session_id") or "").strip()
-    if sid:
-        require_owned_session(request, sid)
+    path = _attachment_path(request, att)
     try:
-        Path(att["file_path"]).unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     except OSError:
         pass
     store.delete_attachment(attachment_id)
@@ -740,8 +829,23 @@ async def chat_clear(agent_id: str, request: Request, _: AuthDep):
 # ── Session artifacts ($TOMO_HOME/sessions/<id>/artifacts/) — Kimi-style ──
 
 
+def _artifact_boundary(session_id: str, filename: str = "") -> None:
+    from app.runtime.artifacts.fs import artifacts_dir
+
+    base = artifacts_dir(session_id).absolute()
+    expected = (Path(TOMO_HOME) / "sessions" / session_id / "artifacts").absolute()
+    if base != expected or base.resolve() != expected:
+        raise HTTPException(404, "Artifact not found")
+    if filename and (base / filename).is_symlink():
+        raise HTTPException(404, "Artifact not found")
+    if not filename and base.is_dir() and any(p.is_symlink() for p in base.iterdir()):
+        raise HTTPException(404, "Artifact not found")
+
+
 def _require_session(request: Request, session_id: str) -> dict:
-    return require_owned_session(request, session_id)
+    session = require_owned_session(request, session_id)
+    _artifact_boundary(session_id)
+    return session
 
 
 @router.get("/sessions/{session_id}/artifacts")
@@ -778,6 +882,7 @@ async def get_session_artifact(
     err = validate_filename(filename)
     if err:
         raise HTTPException(status_code=400, detail=err)
+    _artifact_boundary(session_id, filename)
     base = artifacts_dir(session_id).resolve()
     path = (base / filename).resolve()
     try:
@@ -787,7 +892,7 @@ async def get_session_artifact(
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff"}
+    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"}
     # Never serve agent-authored HTML as an active document on Tomo origin.
     # UI previews load on an isolated data origin inside a sandboxed iframe.
     lower = filename.lower()
@@ -818,6 +923,7 @@ async def delete_session_artifact(
     err = validate_filename(filename)
     if err:
         raise HTTPException(status_code=400, detail=err)
+    _artifact_boundary(session_id, filename)
     if not delete_artifact_file(session_id, filename):
         raise HTTPException(status_code=404, detail="Artifact not found")
     return {"success": True}
@@ -838,6 +944,7 @@ async def create_session_artifact(
         raise HTTPException(status_code=400, detail=err)
     if not isinstance(content, str):
         raise HTTPException(status_code=400, detail="content must be a string")
+    _artifact_boundary(session_id, filename)
     info = write_artifact_text(session_id, filename, content)
     agent_id = ""
     ids = session.get("agent_ids") or []
@@ -857,7 +964,7 @@ async def create_session_artifact(
         )
     except Exception:
         pass
-    return info
+    return {k: v for k, v in info.items() if k != "filepath"}
 
 
 # Compat: agent routes require ?session_id= (artifacts are session-scoped).
@@ -895,6 +1002,7 @@ def _serve_artifact_file(session_id: str, filename: str, *, download: bool) -> F
     err = validate_filename(filename)
     if err:
         raise HTTPException(status_code=400, detail=err)
+    _artifact_boundary(session_id, filename)
     base = artifacts_dir(session_id).resolve()
     path = (base / filename).resolve()
     try:
@@ -904,7 +1012,7 @@ def _serve_artifact_file(session_id: str, filename: str, *, download: bool) -> F
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff"}
+    headers: dict[str, str] = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"}
     lower = filename.lower()
     if lower.endswith((".html", ".htm")):
         return FileResponse(
@@ -934,6 +1042,7 @@ async def share_session_artifact(
     err = validate_filename(filename)
     if err:
         raise HTTPException(status_code=400, detail=err)
+    _artifact_boundary(session_id, filename)
     if not (artifacts_dir(session_id) / filename).is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     share = store.share_artifact(
@@ -1010,26 +1119,46 @@ async def memory_add_api(request: Request, body: dict, _: AuthDep):
 
 @router.post('/memory/upload')
 async def memory_upload_api(request: Request, _: AuthDep, entity: str = Form(...),
-                            file: UploadFile = File(...)):
-    import asyncio
+                            file: UploadFile = File(...), session_id: str | None = Form(None)):
     from app.runtime.memory.vault import paths, write
-    from app.services.doc_parse import parse_document
+    from app.runtime.access import execution_scope
+    from app.runtime.supervision import admitted_turn
+    from app.runtime.isolation.attachments import convert_bytes
+    # Legacy global upload UI has no destination. Do not launch its converter
+    # with server authority; callers must supply an owned isolated chat.
+    if not session_id:
+        raise HTTPException(503, 'Document upload requires an owned session_id; use chat attachments')
+    require_owned_session(request, session_id)
+    from app.runtime import storage as storage_ledger
+    try:
+        storage_ledger.check_control_plane_limits()
+    except PermissionError as exc:
+        raise HTTPException(503, 'Server storage capacity reached') from exc
+    context = store.access.resolve_context(session_user_id(request), session_id)
     try:
         paths.entity_key(entity)
-        chunks, total = [], 0
-        while chunk := await file.read(64 * 1024):
-            total += len(chunk)
-            if total > 20 * 1024 * 1024:
-                raise HTTPException(400, 'File too large (max 20MB)')
-            chunks.append(chunk)
-        if not total:
+        data = await file.read(_MAX_ATTACHMENT_BYTES + 1)
+        if len(data) > _MAX_ATTACHMENT_BYTES:
+            raise HTTPException(400, 'File too large (max 20MB)')
+        if not data:
             raise HTTPException(400, 'File is empty')
         try:
-            parsed = await asyncio.to_thread(parse_document, Path(file.filename or 'upload').name, b''.join(chunks))
-        except Exception as exc:
-            raise HTTPException(400, 'Could not parse the uploaded document') from exc
-        result = write.add_entity(session_user_id(request), entity, parsed.body, origin='user', aliases=[parsed.title], tags=['uploaded', parsed.source_type])
-        return {**result, 'warnings': parsed.warnings, 'truncated': parsed.truncated}
+            storage_ledger.reserve(session_user_id(request), len(data))
+        except PermissionError as exc:
+            raise HTTPException(413, 'Private storage quota reached') from exc
+        try:
+            with execution_scope(context):
+                async with admitted_turn(context):
+                    body = await asyncio.to_thread(convert_bytes, Path(file.filename or 'upload').name, data)
+                    if not body:
+                        raise HTTPException(400, 'No document text was extracted')
+                    def save():
+                        with store.access.execution_guard(context):
+                            return write.add_entity(context.user_id, entity, body, origin='user', tags=['uploaded'])
+                    result = await asyncio.to_thread(save)
+        finally:
+            storage_ledger.release(session_user_id(request), len(data))
+        return {**result, 'warnings': ['Isolated conversion is limited to 70,000 output bytes'], 'truncated': len(body.encode()) >= 69996}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

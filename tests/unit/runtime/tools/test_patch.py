@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.core import home
 from app.runtime.tools import sandbox
 from app.runtime.tools.registry import execute, reset_registry
 from app.services import store
+from tests.fakes.access import owned_admin_scope
 
 
 @pytest.fixture(autouse=True)
@@ -20,11 +20,17 @@ def _reset(tmp_path) -> None:
     reset_registry()
 
 
-def test_patch_happy_path() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
+@pytest.fixture()
+def admin_fs():
+    # Explicit owned Admin unrestricted context (real policy grant + ack).
+    # Host tools are fenced to the session workplace root, not TOMO_WORK.
+    with owned_admin_scope() as (_ctx, root):
+        yield root
+
+
+def test_patch_happy_path(admin_fs) -> None:
+    work = admin_fs
     (work / "a.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
-    sandbox.bind_agent("ops")
     result = execute(
         "patch",
         {
@@ -36,13 +42,11 @@ def test_patch_happy_path() -> None:
     assert (work / "a.txt").read_text(encoding="utf-8") == "one\nTWO\nthree\n"
 
 
-def test_patch_create_file() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
+def test_patch_create_file(admin_fs) -> None:
+    work = admin_fs
     target = work / "new.txt"
     if target.exists():
         target.unlink()
-    sandbox.bind_agent("ops")
     result = execute(
         "patch",
         {
@@ -54,8 +58,7 @@ def test_patch_create_file() -> None:
     assert target.read_text(encoding="utf-8") == "hello\nworld\n"
 
 
-def test_patch_missing_file() -> None:
-    sandbox.bind_agent("ops")
+def test_patch_missing_file(admin_fs) -> None:
     result = execute(
         "patch",
         {
@@ -67,8 +70,12 @@ def test_patch_missing_file() -> None:
     assert "not found" in result.lower()
 
 
-def test_patch_escape_path() -> None:
-    sandbox.bind_agent("ops")
+def test_patch_escape_path(admin_fs) -> None:
+    # Approved unrestricted exception (see test_write_rejects_dotdot_escape):
+    # an explicitly unrestricted Admin host patch follows the OS account.
+    # Escape rejection for untrusted Members is enforced by restricted
+    # containers, covered by tests/integration/test_multi_user_isolation.py.
+    work = admin_fs
     result = execute(
         "patch",
         {
@@ -76,13 +83,12 @@ def test_patch_escape_path() -> None:
             "patch": "@@ -0,0 +1,1 @@\n+x\n",
         },
     )
-    assert result.startswith("Error")
+    assert result.startswith("Applied")
+    assert not (work / "x").exists()
 
 
-def test_patch_bad_hunks() -> None:
-    work = home.agent_work_dir("ops")
-    work.mkdir(parents=True, exist_ok=True)
+def test_patch_bad_hunks(admin_fs) -> None:
+    work = admin_fs
     (work / "a.txt").write_text("x\n", encoding="utf-8")
-    sandbox.bind_agent("ops")
     result = execute("patch", {"path": "a.txt", "patch": "not a patch"})
     assert result.startswith("Error")

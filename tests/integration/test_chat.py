@@ -16,6 +16,7 @@ import pytest
 from app.runtime.llm.base import LLMResponse, ToolCall
 from app.services import run_session_turn, store
 from tests.fakes.llm import ScriptedLLM, bash_call, text_reply, tool_then_text
+from tests.fakes.access import owned_host_session
 
 _DEFAULT_REPLY = "Ready to help."
 _BASH_FINAL = "The command finished."
@@ -27,7 +28,7 @@ def _inject_scripted_llm(monkeypatch) -> None:
     client = ScriptedLLM([text_reply(_DEFAULT_REPLY)] * 20)
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: client,
+        lambda agent_id=None, **kwargs: client,
     )
 
 
@@ -36,7 +37,7 @@ def _patch_llm(monkeypatch, responses: list[LLMResponse]):
     client = ScriptedLLM(list(responses))
     monkeypatch.setattr(
         "app.runtime.agent.loop.get_llm",
-        lambda agent_id=None: client,
+        lambda agent_id=None, **kwargs: client,
     )
     return client
 
@@ -63,7 +64,7 @@ def _parse_sse(raw: str) -> list[tuple[str, dict]]:
 async def _collect(session_id: str, message: str) -> list[tuple[str, dict]]:
     """Drain one ``run_session_turn`` stream into parsed SSE events."""
     chunks: list[str] = []
-    async for chunk in run_session_turn(session_id, message, "web", start_seq=0):
+    async for chunk in run_session_turn(session_id, message, "usr_admin", start_seq=0):
         chunks.append(chunk)
     return _parse_sse("".join(chunks))
 
@@ -78,7 +79,7 @@ def _data(events: list[tuple[str, dict]], name: str) -> list[dict]:
 
 async def test_plain_turn_emits_done_and_persists_user_final(tmp_path) -> None:
     store.rebind(tmp_path / "chat_plain.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
 
     events = await _collect(sid, "hello there")
 
@@ -114,7 +115,7 @@ async def test_plain_turn_emits_done_and_persists_user_final(tmp_path) -> None:
 @pytest.mark.parametrize("agent_id", ["main", "ops"])
 async def test_llm_upgrades_session_title_after_first_final(tmp_path, monkeypatch, agent_id) -> None:
     store.rebind(tmp_path / "chat_title_llm.db")
-    sid = store.create_swarm_session([agent_id], user_id="web")
+    sid = owned_host_session([agent_id])
 
     async def _fake_title(user_text: str, assistant_text: str, *, llm=None, agent_id=None, session_id=None) -> str:
         assert "hello there" in user_text
@@ -136,7 +137,7 @@ async def test_llm_upgrades_session_title_after_first_final(tmp_path, monkeypatc
 
 async def test_llm_title_failure_keeps_provisional(tmp_path, monkeypatch) -> None:
     store.rebind(tmp_path / "chat_title_fail.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
 
     async def _none_title(user_text: str, assistant_text: str, *, llm=None, agent_id=None, session_id=None):
         return None
@@ -151,7 +152,7 @@ async def test_llm_title_failure_keeps_provisional(tmp_path, monkeypatch) -> Non
 
 async def test_second_turn_does_not_reemit_session_title(tmp_path) -> None:
     store.rebind(tmp_path / "chat_title_once.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     await _collect(sid, "first question about billing")
     events = await _collect(sid, "follow up")
     assert _data(events, "session") == []
@@ -160,7 +161,7 @@ async def test_second_turn_does_not_reemit_session_title(tmp_path) -> None:
 
 async def test_bash_turn_emits_tool_events_and_persists_entries(tmp_path, monkeypatch) -> None:
     store.rebind(tmp_path / "chat_bash.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     _patch_llm(monkeypatch, tool_then_text(bash_call("echo 4"), _BASH_FINAL))
 
     events = await _collect(sid, "run: echo 4")
@@ -198,7 +199,7 @@ async def test_bash_turn_emits_tool_events_and_persists_entries(tmp_path, monkey
 async def test_coordinator_turn_live_swarm_membership(tmp_path, monkeypatch) -> None:
     """A bash turn stays on the coordinator; swarm membership is live-enabled."""
     store.rebind(tmp_path / "chat_swarm.db")
-    sid = store.create_swarm_session(["main", "research"], user_id="web")
+    sid = owned_host_session(["main", "research"])
     _patch_llm(monkeypatch, tool_then_text(bash_call("echo 7"), _BASH_FINAL))
 
     await _collect(sid, "run: echo 7")
@@ -229,9 +230,9 @@ async def test_loop_error_clears_busy_after_stream_drains(tmp_path, monkeypatch)
     ``finally`` that does not yield).
     """
     store.rebind(tmp_path / "chat_error_busy.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
 
-    def _boom(agent_id=None) -> None:
+    def _boom(agent_id=None, **kwargs) -> None:
         raise RuntimeError("forced setup failure")
 
     monkeypatch.setattr("app.runtime.agent.loop.get_llm", _boom)
@@ -256,7 +257,7 @@ async def test_mention_forces_ops_without_coordinator_tools(
 ) -> None:
     """``@ops …`` skips the coordinator tool loop and runs ops directly."""
     store.rebind(tmp_path / "chat_mention.db")
-    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+    sid = owned_host_session(["main", "ops"])
 
     class _OpsOnly:
         """Asserts stripped prompt, then returns a scripted text reply."""
@@ -283,7 +284,7 @@ async def test_mention_forces_ops_without_coordinator_tools(
 
     ops = _OpsOnly()
 
-    def _llm(agent_id=None):
+    def _llm(agent_id=None, **kwargs):
         if agent_id == "ops":
             return ops
         return _BoomCoord()
@@ -310,7 +311,7 @@ async def test_mention_non_member_falls_through_to_coordinator(
 ) -> None:
     """``@support`` when support is not a session member → coordinator answers."""
     store.rebind(tmp_path / "chat_mention_nonmember.db")
-    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+    sid = owned_host_session(["main", "ops"])
 
     events = await _collect(sid, "@support help me")
 
@@ -330,12 +331,12 @@ async def test_early_close_persists_seen_event_and_clears_busy(tmp_path, monkeyp
     busy-false ``state`` is never yielded (P1 + P2).
     """
     store.rebind(tmp_path / "chat_close_busy.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     _patch_llm(monkeypatch, tool_then_text(bash_call("echo 4"), _BASH_FINAL))
 
     seen_tool = False
     async with contextlib.aclosing(
-        run_session_turn(sid, "run: echo 4", "web", start_seq=0)
+        run_session_turn(sid, "run: echo 4", "usr_admin", start_seq=0)
     ) as agen:
         async for chunk in agen:
             if chunk.startswith("event: tool\n"):
@@ -350,20 +351,15 @@ async def test_early_close_persists_seen_event_and_clears_busy(tmp_path, monkeyp
     assert store.get_agent("main")["busy"] is False
 
 
-async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leaking_secrets(
+async def test_mcp_tool_turn_denies_unsupported_service_without_leaking_secrets(
     tmp_path, monkeypatch
 ) -> None:
-    """A namespaced ``mcp__`` tool call flows through the same SSE/persist path.
-
-    ``execute_async`` is exercised for real (no ``asyncio.to_thread`` built-in
-    path for this call); only the manager's live-session call is mocked, so
-    the configured server secret never has to touch a real transport.
-    """
+    """Unrestricted host grants do not implement an owned MCP service boundary."""
     from app.runtime.mcp import mcp_manager
     from app.runtime.permissions.modes import set_session_mode
 
     store.rebind(tmp_path / "chat_mcp.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     set_session_mode(sid, "off")  # bypass HITL — permission routing is covered elsewhere
 
     store.create_mcp_server(
@@ -377,9 +373,7 @@ async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leak
     )
 
     async def fake_call_tool(runtime_id, arguments):
-        assert runtime_id == "mcp__gh__create_issue"
-        assert arguments == {"title": "Bug report"}
-        return "Created issue #42"
+        pytest.fail('Unsupported MCP service must not be dispatched')
 
     monkeypatch.setattr(mcp_manager, "call_tool", fake_call_tool)
 
@@ -404,14 +398,14 @@ async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leak
     tool_ev = _data(events, "tool")[0]
     assert tool_ev["tool"] == "mcp__gh__create_issue"
     result_ev = _data(events, "tool_result")[0]
-    assert result_ev["result"] == "Created issue #42"
-    assert result_ev["error"] is False
+    assert result_ev["result"].startswith('Error:')
+    assert result_ev["error"] is True
 
     history = store.get_session_history(sid)
     call = next(h for h in history if h["type"] == "tool_call")
     assert call["function"] == "mcp__gh__create_issue"
     out = next(h for h in history if h["type"] == "tool_output")
-    assert out["content"] == "Created issue #42"
+    assert out["content"].startswith('Error:')
 
     raw = json.dumps([dict(h) for h in history]) + json.dumps(events)
     assert "sekrit-do-not-leak" not in raw
@@ -422,7 +416,7 @@ async def test_mcp_tool_turn_emits_tool_events_and_persists_entries_without_leak
 async def test_concurrent_session_turn_rejected(tmp_path) -> None:
     """Second in-flight turn on the same session is rejected with session_busy."""
     store.rebind(tmp_path / "chat_busy_lock.db")
-    sid = store.create_swarm_session(["main"], user_id="web")
+    sid = owned_host_session()
     assert store.try_begin_session_turn(sid) is True
     try:
         events = await _collect(sid, "should fail")
@@ -443,7 +437,7 @@ async def test_plain_turn_can_delegate_to_enabled_agent(
     from app.runtime.llm.base import LLMResponse, ToolCall
 
     store.rebind(tmp_path / "chat_delegate.db")
-    sid = store.create_swarm_session(["main", "ops"], user_id="web")
+    sid = owned_host_session(["main", "ops"])
 
     class _CoordDelegateThenFinal:
         """First call: delegate to ops. Second call: final text."""
@@ -481,7 +475,7 @@ async def test_plain_turn_can_delegate_to_enabled_agent(
                 yield {"type": "delta", "content": resp.content}
             yield {"type": "done", "response": resp}
 
-    def _llm(agent_id=None):
+    def _llm(agent_id=None, **kwargs):
         if agent_id == "ops":
             return _OpsReply()
         return _CoordDelegateThenFinal()
