@@ -32,6 +32,7 @@ ToolRunner = Callable[[dict[str, Any]], str]
 # Only these repo-controlled import paths may execute. The JSON backend
 # field stays descriptive; catalog discovery never imports tool implementations.
 _BACKENDS: dict[str, str | ToolRunner] = {
+    "search_tools": "app.runtime.tools.discovery:run",
     "plugin_manager": "app.runtime.tools.plugin_manager:run",
     "delegate": "app.runtime.tools.delegate:run",
     "create_agent": "app.runtime.tools.create_agent:run",

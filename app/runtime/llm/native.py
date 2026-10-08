@@ -19,6 +19,7 @@ from app.runtime.llm.http import (
     stream_json,
     user_agent,
 )
+from app.runtime.llm.prompt_cache import stable_tools
 from app.runtime.llm.openai_compat import (
     LLMConfigError,
     LLMRequestError,
@@ -54,9 +55,16 @@ def _message_payload(
     for message in messages:
         role = message.get("role", "user")
         blocks = _blocks(message.get("content"))
-        if role in ("system", "developer"):
+        if role in ("system", "developer") and not history:
             system.extend(blocks)
             continue
+        if role in ("system", "developer"):
+            # Portable native endpoints do not all support mid-conversation
+            # system roles. Keep runtime context in place, after cached history,
+            # as a clearly attributed user block instead of hoisting it.
+            blocks = [{"type": "text", "text": "[Runtime context]\n" + b["text"]}
+                      for b in blocks if b["type"] == "text"]
+            role = "user"
         if role == "tool":
             blocks = [
                 {
@@ -94,7 +102,7 @@ def _message_payload(
                 "input_schema": t["function"].get("parameters")
                 or {"type": "object", "properties": {}},
             }
-            for t in tools
+            for t in stable_tools(tools)
         ]
     return payload
 
@@ -233,6 +241,13 @@ class NativeMessagesClient:
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         payload = _message_payload(self._model, messages, tools)
+        if self._protocol == "messages":
+            # Explicit breakpoints: stable instructions plus the growing trail.
+            # Provider minimum lengths/TTL still determine actual cache hits.
+            if payload.get("system"):
+                payload["system"][-1]["cache_control"] = {"type": "ephemeral"}
+            if payload["messages"]:
+                payload["messages"][-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
         if limit := getattr(self, "max_output_tokens", None):
             payload["max_tokens"] = limit
         if window := getattr(self, "context_window", None):

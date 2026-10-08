@@ -35,7 +35,29 @@ Agents have the `plugin_manager` tool and dedicated `plugin-development`,
 example: “Develop a money plugin, install it, and enable it.” Plugin management
 requires an administrator account. Domain tools appear in the normal agent Tools
 settings and are discovered on subsequent turns. An already running turn retains
-its initial tool schema list; disabled plugin tools refuse execution immediately.
+its initial authorized catalog; disabled plugin tools refuse execution immediately.
+
+Normal chat turns load a small core tool set. Other enabled built-in, plugin,
+and MCP tools are discoverable with `search_tools(query="task or tool name")`.
+Search returns compact matches and loads their full schemas for the next model
+response. `query="*"` with `offset` browses the authorized catalog. Discovery
+does not enable tools, connect MCP servers, or widen an agent's permissions.
+Disabling `search_tools` in the agent Tools panel restores eager schema loading.
+Explicit worker tool lists retain their existing behavior.
+
+Discovered tools remain loaded during a turn and are restored from that agent's
+chat history on follow-ups. Deferred schemas have an approximate 6,000-token
+budget; recent discoveries take priority when restoring a long chat. Search
+reports `budget_limited` and marks matches it cannot load. Compacting the chat
+starts a fresh discovery set. Core tools are outside this deferred budget.
+
+Stable schema ordering and instructions improve prompt-cache reuse. Loading a
+new schema can still invalidate a provider's tool-prefix cache, so already
+loaded tools are kept through the task. Current time and live context follow
+history on the wire, including native Claude/Gemini endpoints. The Claude
+Messages adapter sets ephemeral cache breakpoints on instructions and the
+latest message; actual cache hits depend on provider/model support, minimum
+prompt length, and expiry. Gemini uses its provider's implicit caching.
 
 CLI commands contact the running server, using `TOMO_API_KEY` from the environment
 (an administrator API key) and `TOMO_URL` (default `http://127.0.0.1:8787`):

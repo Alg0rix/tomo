@@ -110,6 +110,44 @@ def test_failed_reload_retains_old_plugin(manager, tmp_path):
     assert manager.list()[0]["running"]
 
 
+def test_large_plugin_catalog_is_deferred_and_disable_removes_discoveries(manager, tmp_path):
+    from app.runtime.tools.discovery import ToolDiscovery
+    from app.services import store
+    from tests.fakes.access import owned_admin_scope
+
+    manager.install(str(source(tmp_path, '''
+def setup(api):
+    for index in range(50):
+        api.tool(f"expense_{index}", f"Expense report {index}",
+                 {"type": "object", "properties": {"amount": {"type": "number"}}},
+                 lambda args: "recorded")
+''')))
+    manager.change("test", "enable")
+    with owned_admin_scope() as (context, _):
+        catalog = store.get_agent_openai_tools(context.agent_id)
+        discovery = ToolDiscovery(catalog)
+        assert not any(s["function"]["name"].startswith("plugin__") for s in discovery.schemas())
+        result = json.loads(discovery.search({"query": "plugin__test__expense_42", "limit": 1}))
+        assert result["loaded_tools"] == ["plugin__test__expense_42"]
+        assert len(json.dumps(discovery.schemas())) < len(json.dumps(catalog))
+        assert registry_plugin_names(discovery.schemas()) == {"plugin__test__expense_42"}
+        # Both agent toggles and plugin lifecycle changes revalidate discovery.
+        enabled = store.get_enabled_tool_ids(context.agent_id) - {"plugin__test__expense_42"}
+        store.set_agent_tools(context.agent_id, {name: True for name in enabled})
+        assert "plugin__test__expense_42" not in registry_plugin_names(discovery.schemas())
+        assert "plugin__test__expense_42" not in json.loads(
+            discovery.search({"query": "plugin__test__expense_42", "limit": 1})
+        )["loaded_tools"]
+        manager.change("test", "disable")
+        assert not registry_plugin_names(discovery.schemas())
+        assert not json.loads(discovery.search({"query": "expense"}))["results"]
+
+
+def registry_plugin_names(schemas):
+    return {s["function"]["name"] for s in schemas
+            if s["function"]["name"].startswith("plugin__")}
+
+
 def test_busy_plugin_cannot_change(manager, tmp_path):
     manager.install(str(source(tmp_path)))
     manager.change("test", "enable")

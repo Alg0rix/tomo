@@ -956,8 +956,11 @@ async def _run_turn_owned(
     consumer. The function is an async generator — iterate with ``async for``.
     """
     from app.runtime.tools import todo as todo_mod
+    from app.runtime.tools import discovery as discovery_mod
 
     metrics = TurnMetrics(agent_id=agent_id, session_id=session_id)
+    discovery_token = discovery_mod.bind(None)
+    discovery = None
     sandbox_token = sandbox.bind_agent(agent_id)
     todo_token = todo_mod.bind_session(session_id)
     from app.runtime.artifacts import fs as artifacts_fs
@@ -1030,6 +1033,14 @@ async def _run_turn_owned(
                 for schema in tool_schemas
                 if schema.get("function", {}).get("name") != excluded_tool
             ]
+            # Explicit worker/caller tool sets remain exact. Normal turns keep
+            # their enabled catalog discoverable without sending every schema.
+            if tools is None and any(
+                s.get("function", {}).get("name") == "search_tools" for s in tool_schemas
+            ):
+                discovery = discovery_mod.ToolDiscovery(tool_schemas)
+                discovery_mod.bind(discovery)
+                tool_schemas = discovery.schemas()
             limit = (
                 max_iterations
                 if max_iterations is not None
@@ -1047,6 +1058,8 @@ async def _run_turn_owned(
                     agent_id, session_id=session_id, include_live_context=False
                 )
                 live_context = build_live_context(agent_id, session_id=session_id)
+            if discovery is not None:
+                prompt += discovery_mod.GUIDANCE
             if any(s.get("function", {}).get("name") == "delegate" for s in tool_schemas):
                 prompt += (
                     "\n\n## Delegation for this turn\n"
@@ -1120,6 +1133,9 @@ async def _run_turn_owned(
                     image_descriptions=image_plan["descriptions"],
                     live_context=live_context,
                 )
+            if discovery is not None:
+                discovery.restore(messages)
+                tool_schemas = discovery.schemas()
             from app.runtime.llm.context_window import resolve_context_window
 
             context_window = getattr(client, "context_window", None)
@@ -1184,6 +1200,8 @@ async def _run_turn_owned(
         iteration = 0
         while iteration < limit:
             iteration += 1
+            if discovery is not None:
+                tool_schemas = discovery.schemas()
             # Mid-turn steers (composer queue → Enter / ctrl+s).
             async for steer_ev in _emit_drained_steers(messages, session_id):
                 yield steer_ev
@@ -1502,6 +1520,7 @@ async def _run_turn_owned(
             ),
         }
     finally:
+        discovery_mod.reset(discovery_token)
         if conversation is not None and "messages" in locals():
             conversation[:] = messages
         reset_prompt_clock(clock_token)

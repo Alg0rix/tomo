@@ -155,3 +155,52 @@ async def test_native_tool_roundtrip_and_truncated_stream(protocol):
             await client.complete(history, tools)
     finally:
         await client.aclose()
+
+
+@pytest.mark.parametrize("protocol", ["messages", "google"])
+async def test_live_context_stays_after_stable_history_on_wire(protocol):
+    requests = []
+
+    def wire(request):
+        requests.append(json.loads(request.content))
+        events = ([{"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                   {"type": "message_stop"}] if protocol == "messages"
+                  else [{"candidates": [{"finishReason": "STOP"}]}])
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                               text="".join("data: " + json.dumps(e) + "\n\n" for e in events))
+
+    client = NativeMessagesClient(base_url="https://native.test/v1", api_key="token",
+                                  model="native-model", protocol=protocol, timeout=30,
+                                  transport=httpx2.MockTransport(wire))
+    history = [
+        {"role": "system", "content": "Stable instructions"},
+        {"role": "user", "content": "Earlier request"},
+        {"role": "assistant", "content": "Earlier reply"},
+        {"role": "system", "content": "Time: 10:00; retrieved memory A"},
+        {"role": "user", "content": "Continue"},
+    ]
+    tools = [{"type": "function", "function": {
+        "name": name, "parameters": {"type": "object", "properties": {}},
+    }} for name in ("z_tool", "a_tool")]
+    try:
+        await client.complete(history, tools)
+        changed = [dict(m) for m in history]
+        changed[3]["content"] = "Time: 11:00; retrieved memory B"
+        await client.complete(changed, list(reversed(tools)))
+    finally:
+        await client.aclose()
+    if protocol == "messages":
+        assert requests[0]["system"] == requests[1]["system"]
+        assert requests[0]["system"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert requests[0]["messages"][:2] == requests[1]["messages"][:2]
+        assert requests[0]["messages"][-1]["content"][0]["text"].startswith("[Runtime context]\nTime:")
+        assert requests[0]["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert [t["name"] for t in requests[0]["tools"]] == ["a_tool", "z_tool"]
+    else:
+        assert requests[0]["systemInstruction"] == requests[1]["systemInstruction"]
+        assert requests[0]["systemInstruction"] == {"parts": [{"text": "Stable instructions"}]}
+        assert requests[0]["contents"][:2] == requests[1]["contents"][:2]
+        assert requests[0]["contents"][-1]["parts"][0]["text"].startswith("[Runtime context]\nTime:")
+        assert "cache_control" not in json.dumps(requests)
+    assert requests[0]["tools"] == requests[1]["tools"]
+    assert "cache_control" not in json.dumps(history)

@@ -54,6 +54,7 @@ MEMBER_SANDBOXED_TOOLS = frozenset({
 })
 # Reviewed builtins only. New plugins/MCP/tools need an explicit service boundary.
 RESTRICTED_TOOLS = frozenset({
+    "search_tools",
     "bash", "runpy", "read_file", "write_file", "str_replace", "patch",
     "list_dir", "search_files", "delete_file", "process", "delegate",
     "start_swarm", "swarm_board", "todo", "clarify", "render_ui", "schedule",

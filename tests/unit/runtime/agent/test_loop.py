@@ -55,6 +55,80 @@ class ContextCapturingLLM(ScriptedLLM):
         return await super().complete(messages, tools)
 
 
+async def test_search_loads_schema_next_round_and_retains_it_on_followup():
+    import json
+
+    class ToolCapturingLLM(ScriptedLLM):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.schemas = []
+
+        async def complete(self, messages, tools=None):
+            self.schemas.append({t["function"]["name"] for t in tools or []})
+            return await super().complete(messages, tools)
+
+    llm = ToolCapturingLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall(id="discover", name="search_tools",
+                                         arguments={"query": "list_artifacts", "limit": 1})]),
+        LLMResponse(content=None, tool_calls=[ToolCall(id="list", name="list_artifacts", arguments={})]),
+        text_reply("Listed artifacts."),
+    ])
+    sid = owned_host_session(["main"])
+    events = await _collect("Find my artifacts", llm=llm, agent_id="main", session_id=sid,
+                            system_prompt="Instructions")
+    assert _final(events)["content"] == "Listed artifacts."
+    assert "search_tools" in llm.schemas[0]
+    assert "list_artifacts" not in llm.schemas[0]
+    assert "list_artifacts" in llm.schemas[1]
+    assert llm.schemas[1] == llm.schemas[2]
+    assert not next(e for e in events if e.get("kind") == "tool_result"
+                    and e.get("tool") == "list_artifacts")["error"]
+    result = next(e["result"] for e in events if e.get("kind") == "tool_result"
+                  and e.get("tool") == "search_tools")
+    assert json.loads(result)["loaded_tools"] == ["list_artifacts"]
+    # Exercise the real durable history representation used by chat follow-ups.
+    for entry in [
+        {"type": "user", "content": "Find my artifacts"},
+        {"type": "tool_call", "function": "search_tools", "params": {"query": "list_artifacts", "limit": 1}},
+        {"type": "tool_output", "content": result},
+        {"type": "final", "content": "Listed artifacts."},
+    ]:
+        store.append_session_history(sid, dict(entry, agent_id="main"))
+    followup = ToolCapturingLLM([text_reply("Ready.")])
+    await _collect("Continue", llm=followup, agent_id="main", session_id=sid,
+                   history=store.get_session_history(sid), system_prompt="Instructions")
+    assert "list_artifacts" in followup.schemas[0]
+
+
+async def test_explicit_tool_set_is_not_pruned_or_widened():
+    class ExactLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            assert {t["function"]["name"] for t in tools} == {"list_artifacts"}
+            return await super().complete(messages, tools)
+
+    schemas = [{"type": "function", "function": {"name": "list_artifacts"}}]
+    events = await _collect("List", llm=ExactLLM([text_reply("Done")]), agent_id="main",
+                            tools=schemas, system_prompt="Instructions")
+    assert _final(events)["content"] == "Done"
+
+
+async def test_disabling_discovery_restores_eager_schemas():
+    class EagerLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            names = {t["function"]["name"] for t in tools}
+            assert "search_tools" not in names
+            assert "list_artifacts" in names
+            assert "process" in names
+            return await super().complete(messages, tools)
+
+    sid = owned_host_session(["main"])
+    enabled = store.get_enabled_tool_ids("main") - {"search_tools"}
+    store.set_agent_tools("main", {name: True for name in enabled})
+    events = await _collect("Continue", llm=EagerLLM([text_reply("Done")]),
+                            agent_id="main", session_id=sid, system_prompt="Instructions")
+    assert _final(events)["content"] == "Done"
+
+
 async def test_500k_history_compacts_before_first_request():
     llm = ContextCapturingLLM()
     history = [{"type": "user", "content": "X" * 2_000_000},
