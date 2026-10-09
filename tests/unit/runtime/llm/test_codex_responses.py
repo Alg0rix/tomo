@@ -24,6 +24,67 @@ _TOKEN = "at-test"
 _MODEL = "gpt-5-codex"
 
 
+@pytest.mark.parametrize("base_url,model,native", [
+    ("https://api.openai.com/v1", "gpt-5.4", True),
+    (_BASE, "gpt-5.4-codex", True),
+    ("https://api.openai.com/v1", "gpt-6-astra", True),
+    ("https://api.openai.com/v1", "gpt-5.3-codex", False),
+    ("https://gateway.test/v1", "gpt-5.4", False),
+])
+async def test_discovery_appends_tools_and_preserves_prefix(base_url, model, native):
+    from app.runtime.tools.discovery import ToolDiscovery, bind, reset
+
+    schemas = [{"type": "function", "function": {
+        "name": name, "description": name,
+        "parameters": {"type": "object", "properties": {}},
+    }} for name in ("search_tools", "lookup")]
+    messages = [{"role": "system", "content": "Stable instructions"},
+                {"role": "user", "content": "Look up the record"}]
+    searched = [*messages,
+                {"role": "assistant", "tool_calls": [{"id": "search", "function": {
+                    "name": "search_tools", "arguments": '{"query":"lookup"}',
+                }}]},
+                {"role": "tool", "tool_call_id": "search",
+                 "content": json.dumps({"loaded_tools": ["lookup", "unassigned_secret"]})}]
+    client = CodexResponsesClient(base_url=base_url, access_token=_TOKEN, model=model,
+                                  transport=httpx2.MockTransport(lambda _: httpx2.Response(200)))
+    token = bind(ToolDiscovery(schemas))
+    try:
+        first = client._payload(messages, schemas[:1])
+        second = client._payload(searched, schemas)
+        third = client._payload([*searched, {"role": "assistant", "content": "Found"}], schemas)
+        assert first["input"] == second["input"][:len(first["input"])]
+        additions = [item for item in second["input"] if item.get("type") == "additional_tools"]
+        if native:
+            assert first["tools"] == second["tools"] == third["tools"]
+            assert additions == [{"type": "additional_tools", "role": "developer", "tools": [
+                {"type": "function", "name": "lookup", "description": "lookup",
+                 "parameters": {"type": "object", "properties": {}}},
+            ]}]
+            assert second["input"][-2]["type"] == "function_call_output"
+            assert second["input"] == third["input"][:-1]
+            # Current permission filtering removes the historical definition.
+            revoked = client._payload(searched, schemas[:1])
+            assert not any(i.get("type") == "additional_tools" for i in revoked["input"])
+        else:
+            assert not additions
+            assert {t["name"] for t in second["tools"]} == {"search_tools", "lookup"}
+        # Reset/recreate the discovery scope just as a chat follow-up does.
+        reset(token)
+        token = bind(ToolDiscovery(schemas))
+        assert client._payload(searched, schemas) == second
+    finally:
+        reset(token)
+        await client.aclose()
+    # Explicit caller tool sets keep the existing eager representation.
+    fresh = CodexResponsesClient(base_url=base_url, access_token=_TOKEN, model=model,
+                                 transport=httpx2.MockTransport(lambda _: httpx2.Response(200)))
+    try:
+        assert {t["name"] for t in fresh._payload(messages, schemas)["tools"]} == {"search_tools", "lookup"}
+    finally:
+        await fresh.aclose()
+
+
 def _client(transport: httpx2.MockTransport, **kw) -> CodexResponsesClient:
     return CodexResponsesClient(base_url=_BASE, access_token=_TOKEN, model=_MODEL, transport=transport, **kw)
 

@@ -6,9 +6,11 @@ The agent keeps its existing OpenAI-shaped history and tool schemas.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlparse
 
 import httpx2
 
@@ -48,23 +50,34 @@ def _blocks(content: Any) -> list[dict]:
 
 
 def _message_payload(
-    model: str, messages: list[dict], tools: list[dict] | None
+    model: str, messages: list[dict], tools: list[dict] | None, *, inline_tools: bool = False
 ) -> dict:
     history = []
     system = []
     for message in messages:
+        if inline_tools and message.get("type") == "additional_tools":
+            history.append({"role": "system", "content": [
+                {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {
+                    "name": t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "input_schema": t["function"].get("parameters") or {"type": "object", "properties": {}},
+                }}} for t in stable_tools(message["tools"])
+            ]})
+            continue
         role = message.get("role", "user")
         blocks = _blocks(message.get("content"))
         if role in ("system", "developer") and not history:
             system.extend(blocks)
             continue
-        if role in ("system", "developer"):
+        if role in ("system", "developer") and not inline_tools:
             # Portable native endpoints do not all support mid-conversation
             # system roles. Keep runtime context in place, after cached history,
             # as a clearly attributed user block instead of hoisting it.
             blocks = [{"type": "text", "text": "[Runtime context]\n" + b["text"]}
                       for b in blocks if b["type"] == "text"]
             role = "user"
+        elif role == "developer":
+            role = "system"
         if role == "tool":
             blocks = [
                 {
@@ -240,14 +253,34 @@ class NativeMessagesClient:
     async def stream_complete(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> AsyncIterator[dict[str, Any]]:
-        payload = _message_payload(self._model, messages, tools)
+        # Inline definitions are a first-party beta, not a generic Messages
+        # feature. Gate to the documented models; never send it to gateways.
+        inline_tools = (
+            self._protocol == "messages" and urlparse(self._base_url).hostname == "api.anthropic.com"
+            and re.fullmatch(
+                r"claude-(?:(?:fable|mythos)-5(?:-1)?|opus-(?:4-8|5(?:-5)?)|(?:sonnet|haiku)-5-5)(?:-\d{8})?",
+                self._model,
+            ) is not None
+        )
+        wire_messages = messages
+        if inline_tools:
+            from app.runtime.tools.discovery import native_tool_layout
+
+            wire_messages, tools = native_tool_layout(messages, tools)
+        payload = _message_payload(self._model, wire_messages, tools, inline_tools=inline_tools)
+        headers = session_headers(self._base_url, self._model, messages) or {}
+        if any(m.get("type") == "additional_tools" for m in wire_messages):
+            headers["anthropic-beta"] = "inline-tools-2026-09-15"
         if self._protocol == "messages":
             # Explicit breakpoints: stable instructions plus the growing trail.
             # Provider minimum lengths/TTL still determine actual cache hits.
             if payload.get("system"):
                 payload["system"][-1]["cache_control"] = {"type": "ephemeral"}
-            if payload["messages"]:
-                payload["messages"][-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+            last_cacheable = next((block for message in reversed(payload["messages"])
+                                   for block in reversed(message["content"])
+                                   if block["type"] in {"text", "image", "tool_use", "tool_result"}), None)
+            if last_cacheable is not None:
+                last_cacheable["cache_control"] = {"type": "ephemeral"}
         if limit := getattr(self, "max_output_tokens", None):
             payload["max_tokens"] = limit
         if window := getattr(self, "context_window", None):
@@ -269,7 +302,7 @@ class NativeMessagesClient:
                 self._client,
                 endpoint,
                 payload,
-                headers=session_headers(self._base_url, self._model, messages),
+                headers=headers,
             ) as stream:
                 async for raw in stream:
                     event = json.loads(json.dumps(raw, default=vars))

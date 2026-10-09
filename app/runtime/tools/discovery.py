@@ -17,14 +17,16 @@ CORE_TOOLS = frozenset({
     "clarify", "list_skills", "use_skill", "delegate", "start_swarm", "todo",
     "memory", "search_tools",
 })
-DEFERRED_TOKEN_BUDGET = 6000
+DEFAULT_TARGET_PERCENT = 5.0
 GUIDANCE = (
     "\n\n## Tool discovery\n"
     "Only core tools and previously discovered tools are loaded. Other enabled "
     "capabilities are available through search_tools. Before concluding a capability "
     "is unavailable, search by task, plugin name, or tool name. Search loads matching "
     "schemas for your next response; wait for its result before calling them. "
-    "Use query='*' with offset to browse. Use specific queries to keep context small."
+    "Use query='*' with offset to browse. Use specific queries to keep context small. "
+    "Search reports total schema tokens against a soft context target. Exceeding "
+    "the target does not block required tools; keep further searches focused."
 )
 
 
@@ -38,10 +40,22 @@ def _terms(text: str) -> set[str]:
 
 
 class ToolDiscovery:
-    def __init__(self, schemas: list[dict], *, token_budget: int = DEFERRED_TOKEN_BUDGET):
+    def __init__(self, schemas: list[dict], *, context_window: int | None = None,
+                 target_percent: float = DEFAULT_TARGET_PERCENT):
         self.catalog = {_name(s): s for s in schemas if _name(s)}
         self.loaded = set(self.catalog) & CORE_TOOLS
-        self.token_budget = token_budget
+        self.context_window = context_window
+        self.target_percent = target_percent
+
+    def budget_status(self) -> dict[str, int | bool | None]:
+        """Estimate all loaded schemas, including core; never deny loading."""
+        size = len(json.dumps([self.catalog[n] for n in sorted(self.loaded)],
+                              ensure_ascii=False).encode("utf-8"))
+        tokens = (size + 3) // 4
+        target = (max(1, int(self.context_window * self.target_percent / 100))
+                  if self.context_window else None)
+        return {"schema_tokens": tokens, "schema_target_tokens": target,
+                "over_target": target is not None and tokens > target}
 
     def _available(self, names: set[str] | None = None) -> dict[str, dict]:
         from app.runtime.access import current_execution
@@ -53,17 +67,8 @@ class ToolDiscovery:
         ceiling = [self.catalog[name] for name in candidates if name in context.tool_ids]
         return {_name(s): s for s in filter_schemas(context, ceiling)}
 
-    def _load(self, name: str) -> bool:
-        if name in self.loaded:
-            return True
-        deferred = (self.loaded | {name}) - CORE_TOOLS
-        # Approximate wire-size estimate, including schema keys/descriptions.
-        size = sum(len(json.dumps(self.catalog[n], ensure_ascii=False).encode("utf-8"))
-                   for n in deferred)
-        if size > self.token_budget * 4:
-            return False
+    def _load(self, name: str) -> None:
         self.loaded.add(name)
-        return True
 
     def restore(self, messages: list[dict]) -> None:
         """Restore only paired discovery results/calls from this agent's history.
@@ -93,9 +98,9 @@ class ToolDiscovery:
             for name in names:
                 if isinstance(name, str) and name in self.catalog:
                     retained.append(name)
-        # Prefer recent work when an old conversation exceeds the budget.
-        # During a running turn, only additions and permission removals change it.
-        for name in reversed(retained):
+        # Retain loading history for cache reuse. A soft target never evicts a
+        # tool needed by the task; compaction and permission changes remove it.
+        for name in retained:
             self._load(name)
 
     def schemas(self) -> list[dict]:
@@ -126,21 +131,68 @@ class ToolDiscovery:
             if query.strip() == "*" or score:
                 ranked.append((-score, name, description))
         ranked.sort()
-        results, loaded, budget_limited = [], [], False
+        results, loaded = [], []
         for _, name, description in ranked[offset:offset + limit]:
-            is_loaded = self._load(name)
-            budget_limited |= not is_loaded
-            if is_loaded:
-                loaded.append(name)
-            results.append({"name": name, "description": description[:400], "loaded": is_loaded})
+            self._load(name)
+            loaded.append(name)
+            results.append({"name": name, "description": description[:400], "loaded": True})
         return json.dumps({
             "results": results, "loaded_tools": loaded, "total_matches": len(ranked),
             "next_offset": offset + limit if offset + limit < len(ranked) else None,
-            "budget_limited": budget_limited,
+            **self.budget_status(),
         }, ensure_ascii=False)
 
 
 _current: ContextVar[ToolDiscovery | None] = ContextVar("tool_discovery", default=None)
+
+
+def native_tool_layout(messages: list[dict], schemas: list[dict] | None) -> tuple[list[dict], list[dict] | None]:
+    """Append definitions at their discovery position on supporting providers.
+
+    Only schemas admitted by the caller may be injected. Historical tool text
+    supplies positions/names, never definitions or permission. Rebuilding from
+    the trail keeps positions stable across client recreation and follow-ups.
+    """
+    if _current.get() is None or not schemas:
+        return messages, schemas
+    catalog = {_name(s): s for s in schemas}
+    offered = set(catalog) & CORE_TOOLS
+    if not offered:
+        # Inline Claude definitions require at least one initial non-deferred
+        # tool. If all core tools were revoked, use the portable representation.
+        return messages, schemas
+    initial = [catalog[n] for n in sorted(offered)]
+    laid_out: list[dict] = []
+    calls: dict[str, str] = {}
+
+    def append_tools(names: list[str]) -> None:
+        additions = sorted({n for n in names if n in catalog and n not in offered})
+        if additions:
+            laid_out.append({"type": "additional_tools", "role": "developer",
+                             "tools": [catalog[n] for n in additions]})
+            offered.update(additions)
+
+    for message in messages:
+        requested = []
+        for call in message.get("tool_calls") or []:
+            name = call.get("function", {}).get("name", "")
+            calls[call.get("id", "")] = name
+            requested.append(name)
+        # A historical direct call can precede a discovery record (older chats).
+        append_tools(requested)
+        laid_out.append(message)
+        if (message.get("role") == "tool"
+                and calls.get(message.get("tool_call_id")) == "search_tools"):
+            try:
+                result = json.loads(message.get("content") or "")
+            except (ValueError, TypeError):
+                continue
+            names = result.get("loaded_tools") if isinstance(result, dict) else None
+            if isinstance(names, list):
+                append_tools([n for n in names if isinstance(n, str)])
+    # Working-memory compaction can remove discovery records mid-turn.
+    append_tools(list(catalog))
+    return laid_out, initial
 
 
 def bind(discovery: ToolDiscovery | None) -> Token[ToolDiscovery | None]:

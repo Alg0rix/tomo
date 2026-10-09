@@ -59,6 +59,7 @@ async def test_search_loads_schema_next_round_and_retains_it_on_followup():
     import json
 
     class ToolCapturingLLM(ScriptedLLM):
+        context_window = 128_000
         def __init__(self, responses):
             super().__init__(responses)
             self.schemas = []
@@ -86,6 +87,7 @@ async def test_search_loads_schema_next_round_and_retains_it_on_followup():
     result = next(e["result"] for e in events if e.get("kind") == "tool_result"
                   and e.get("tool") == "search_tools")
     assert json.loads(result)["loaded_tools"] == ["list_artifacts"]
+    assert json.loads(result)["schema_target_tokens"] == 6400
     # Exercise the real durable history representation used by chat follow-ups.
     for entry in [
         {"type": "user", "content": "Find my artifacts"},

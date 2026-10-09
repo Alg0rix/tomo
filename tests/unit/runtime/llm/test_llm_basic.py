@@ -37,6 +37,21 @@ def test_get_llm_builds_client_from_default_profile(tmp_path) -> None:
     assert client.endpoint == "https://example.test/v1/chat/completions"
 
 
+async def test_first_party_anthropic_profile_uses_native_messages(tmp_path):
+    from app.runtime.llm.native import NativeMessagesClient
+
+    _rebind(tmp_path)
+    store.create_llm_profile(_profile("anthropic", "https://api.anthropic.com/v1", "claude-opus-5-5"))
+    store.set_default_llm_profile("anthropic")
+    client = get_llm()
+    try:
+        assert isinstance(client, NativeMessagesClient)
+        assert client._protocol == "messages"
+        assert client.context_profile["model"] == "claude-opus-5-5"
+    finally:
+        await client.aclose()
+
+
 def test_get_llm_maps_requested_effort_to_profile_value(tmp_path) -> None:
     _rebind(tmp_path)
     store.create_llm_profile(

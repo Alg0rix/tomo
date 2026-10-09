@@ -656,6 +656,8 @@
     }
     presented = Tomo.presentToolArgs(tool, args);
     var running = !!opts.running;
+    var discovery = tool === 'search_tools';
+    var displayName = discovery ? (running ? 'Finding relevant tools…' : 'Tool discovery') : tool;
     var expanded = !!presented.autoExpand;
     var card = document.createElement('div');
     card.className = 'tool' +
@@ -666,12 +668,12 @@
       (toolOrData && toolOrData.call_id) || (toolOrData && toolOrData.callId) || '').toString();
     if (callId) card.dataset.callId = callId;
     card.dataset.toolName = tool;
-    var summary = presented.summary || '';
+    var summary = discovery ? '' : (presented.summary || '');
     card.innerHTML =
       '<button type="button" class="tool-head" aria-expanded="' + (expanded ? 'true' : 'false') + '"' +
         (summary ? ' title="' + Tomo.escapeHtml(tool + ' ' + summary) + '"' : '') + '>' +
         '<span class="tstatus" aria-hidden="true"></span>' +
-        '<span class="tname">' + Tomo.escapeHtml(tool) + '</span>' +
+        '<span class="tname"' + (discovery ? ' role="status" aria-live="polite"' : '') + '>' + Tomo.escapeHtml(displayName) + '</span>' +
         '<span class="targs">' + Tomo.escapeHtml(Tomo.truncate(summary, 160)) + '</span>' +
         '<span class="tchip"></span>' +
         '<span class="chevron" aria-hidden="true"></span>' +
@@ -689,6 +691,50 @@
     Tomo.wireToolCard(card);
     return card;
   };
+
+  /** Friendly discovery status; schema accounting stays inside the fold. */
+  function finishDiscoveryCard(card, resultText, isError) {
+    var name = card.querySelector('.tname');
+    var previous = card.querySelector('.tool-discovery-details');
+    if (previous) previous.remove();
+    var data = null;
+    if (!isError) {
+      try { data = JSON.parse(resultText); } catch (_) {}
+    }
+    var loaded = data && Array.isArray(data.loaded_tools)
+      ? Array.from(new Set(data.loaded_tools.filter(function (n) { return typeof n === 'string' && n; })))
+      : null;
+    var label = isError ? 'Tool discovery failed' : 'Tool discovery completed';
+    if (loaded) {
+      label = loaded.length
+        ? 'Loaded ' + loaded.length + (loaded.length === 1 ? ' tool' : ' tools')
+        : (data.total_matches > 0 ? 'No tools loaded' : 'No matching tools');
+    }
+    if (name) name.textContent = label;
+    if (card._head) card._head.title = label;
+    if (!loaded) return;
+    var detail = document.createElement('div');
+    detail.className = 'tdetail tool-discovery-details';
+    var toolsLabel = document.createElement('span');
+    toolsLabel.className = 'tool-sec-label';
+    toolsLabel.textContent = 'Loaded tools';
+    var tools = document.createElement('div');
+    tools.textContent = loaded.length ? loaded.join(', ') : 'None';
+    detail.append(toolsLabel, tools);
+    if (Number.isFinite(data.schema_tokens) && data.schema_tokens >= 0) {
+      var usageLabel = document.createElement('span');
+      usageLabel.className = 'tool-sec-label';
+      usageLabel.textContent = 'Schema context';
+      var usage = document.createElement('div');
+      var targetKnown = Number.isFinite(data.schema_target_tokens) && data.schema_target_tokens > 0;
+      usage.textContent = 'About ' + data.schema_tokens.toLocaleString() + ' tokens' +
+        (targetKnown ? ' · ' + data.schema_target_tokens.toLocaleString() + '-token soft target' : ' · Target unavailable');
+      if (targetKnown && data.over_target === true) usage.textContent += '. Above target; tools remain available.';
+      detail.append(usageLabel, usage);
+    }
+    var body = card.querySelector('.tool-body');
+    if (body) body.insertBefore(detail, body.querySelector('.tres-wrap'));
+  }
 
   Tomo.wireToolCard = function (card) {
     if (!card || card.dataset.toolWired === '1') return card;
@@ -922,7 +968,7 @@
     card.classList.toggle('ok', !isError);
     card.classList.add('has-output');
     if (card._chip) {
-      var quiet = isError || card.dataset.toolName === 'todo';
+      var quiet = isError || card.dataset.toolName === 'todo' || card.dataset.toolName === 'search_tools';
       card._chip.textContent = quiet ? '' : Tomo.toolResultPreview(resultText);
       card._chip.classList.toggle('err', !!isError);
     }
@@ -941,6 +987,7 @@
       card.classList.add('expanded');
       if (card._head) card._head.setAttribute('aria-expanded', 'true');
     }
+    if (card.dataset.toolName === 'search_tools') finishDiscoveryCard(card, resultText, !!isError);
   };
 
   /** Return (or create) the timeline container inside an inspector body. */

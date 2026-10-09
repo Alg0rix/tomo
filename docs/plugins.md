@@ -45,19 +45,45 @@ does not enable tools, connect MCP servers, or widen an agent's permissions.
 Disabling `search_tools` in the agent Tools panel restores eager schema loading.
 Explicit worker tool lists retain their existing behavior.
 
+In chat, discovery appears as **Finding relevant tools…**, followed by
+**Loaded N tools** or **No matching tools**. Expand its work-detail chip to see
+the loaded names, approximate schema tokens, soft target, and raw result.
+Going above the soft target stays informational inside those details; it does
+not interrupt the conversation. History and subagent inspectors use the same
+presentation.
+
 Discovered tools remain loaded during a turn and are restored from that agent's
-chat history on follow-ups. Deferred schemas have an approximate 6,000-token
-budget; recent discoveries take priority when restoring a long chat. Search
-reports `budget_limited` and marks matches it cannot load. Compacting the chat
-starts a fresh discovery set. Core tools are outside this deferred budget.
+chat history on follow-ups. All loaded schemas, including core tools, are
+estimated against a soft target of **5% of the active model's context window**.
+Configure **Tool schema target** in System settings, or set
+`tool_schema_target_percent` through the administrator `PUT /api/settings`
+endpoint (greater than 0, at most 100). This is a starting point for tuning,
+not a provider requirement or a benchmark-established optimum. Search reports
+`schema_tokens`, `schema_target_tokens`, and `over_target`; exceeding the target
+never denies required tools or evicts discoveries. When the model window is
+unknown, the target is `null` rather than a guessed limit. Compacting the chat
+starts a fresh discovery set.
 
 Stable schema ordering and instructions improve prompt-cache reuse. Loading a
-new schema can still invalidate a provider's tool-prefix cache, so already
-loaded tools are kept through the task. Current time and live context follow
+new schema can still invalidate a compatibility provider's tool-prefix cache,
+so already loaded tools are kept through the task. Supported first-party
+OpenAI Responses routes (GPT-5.4 and later, including Codex subscription routes)
+use developer-role `additional_tools` items at the original discovery position.
+Supported first-party Claude Messages models use inline `tool_addition`
+definitions with the `inline-tools-2026-09-15` beta. Unknown gateways and older
+models use portable schema loading. Inline definitions are rebuilt only from
+currently authorized schemas; history supplies names and positions, never
+permissions. Revoking a tool intentionally removes its definition.
+Current time and live context follow
 history on the wire, including native Claude/Gemini endpoints. The Claude
 Messages adapter sets ephemeral cache breakpoints on instructions and the
 latest message; actual cache hits depend on provider/model support, minimum
 prompt length, and expiry. Gemini uses its provider's implicit caching.
+
+References: [Claude Code's configurable deferral thresholds](https://code.claude.com/docs/en/mcp#configure-tool-search),
+[OpenAI tool-loading history](https://developers.openai.com/api/docs/guides/tools-tool-search),
+and [Claude inline tool changes](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages).
+The deferral thresholds in those references are distinct from Tomo's soft target.
 
 CLI commands contact the running server, using `TOMO_API_KEY` from the environment
 (an administrator API key) and `TOMO_URL` (default `http://127.0.0.1:8787`):

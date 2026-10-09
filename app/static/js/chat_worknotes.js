@@ -187,12 +187,18 @@
       var notes = group.querySelectorAll('.si-think');
       var lastNote = notes.length ? noteText(notes[notes.length - 1]) : '';
       var runningTool = group.querySelector('.tool.loading .tname, .tool.running .tname');
+      var findingTools = runningTool && runningTool.closest('.tool').dataset.toolName === 'search_tools';
+      var allTools = group.querySelectorAll('.tool');
+      var lastTool = allTools.length ? allTools[allTools.length - 1] : null;
+      var discoveredTools = !runningTool && lastTool && lastTool.dataset.toolName === 'search_tools' &&
+        lastTool.classList.contains('has-output') ? lastTool.querySelector('.tname') : null;
       var status = freshStatus(group);
       // Open block already shows the notes; the title only adds what isn't
       // on screen yet (a heartbeat or the tool in flight). Folded by the
       // user, it falls back to the latest note.
       var folded = !group.classList.contains('is-open');
-      var what = status || (runningTool ? 'Running ' + runningTool.textContent : (folded ? firstLine(lastNote, 90) : ''));
+      var what = findingTools ? runningTool.textContent : discoveredTools ? discoveredTools.textContent :
+        (status || (runningTool ? 'Running ' + runningTool.textContent : (folded ? firstLine(lastNote, 90) : '')));
       html = '<span class="work-live" aria-hidden="true"></span><span>Working</span>' +
         (what ? '<span class="work-what"> · ' + escapeHtml(what) + '</span>' : '');
     } else {

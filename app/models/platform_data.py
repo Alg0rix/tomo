@@ -104,6 +104,8 @@ def seed_settings() -> dict[str, Any]:
         # model's window (0.5–0.99). /compact stays available regardless.
         "auto_compact_enabled": True,
         "auto_compact_threshold": 0.9,
+        # Soft target for core + discovered schemas; necessary tools still load.
+        "tool_schema_target_percent": 5.0,
         "public_history": False,
         "setup_complete": True,
         "eval_parallel_workers": 2,

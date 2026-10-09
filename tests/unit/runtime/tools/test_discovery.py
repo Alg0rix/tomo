@@ -61,11 +61,12 @@ def test_discovery_never_widens_supplied_catalog(owned_catalog):
 
 def test_discovery_budget_and_pagination(owned_catalog):
     _, catalog = owned_catalog
-    discovery = ToolDiscovery(catalog, token_budget=0)
+    discovery = ToolDiscovery(catalog, context_window=100, target_percent=1)
     result = json.loads(discovery.search({"query": "list_artifacts", "limit": 1}))
-    assert result["budget_limited"] is True
-    assert result["loaded_tools"] == []
-    assert result["results"][0]["loaded"] is False
+    assert result["over_target"] is True
+    assert result["schema_target_tokens"] == 1
+    assert result["loaded_tools"] == ["list_artifacts"]
+    assert result["results"][0]["loaded"] is True
     first = json.loads(discovery.search({"query": "*", "limit": 5}))
     second = json.loads(discovery.search({"query": "*", "limit": 5, "offset": first["next_offset"]}))
     assert {r["name"] for r in first["results"]}.isdisjoint(r["name"] for r in second["results"])
@@ -108,16 +109,41 @@ def test_nested_scope_does_not_inherit_another_catalog(owned_catalog):
         reset(token)
 
 
-def test_restore_prioritizes_recent_tools_within_budget(owned_catalog):
+def test_restore_retains_required_tools_above_soft_target(owned_catalog):
     _, catalog = owned_catalog
-    selected = [s for s in catalog if s["function"]["name"] in {"delete_file", "list_artifacts"}]
-    sizes = [len(json.dumps(s, ensure_ascii=False).encode("utf-8")) for s in selected]
-    budget = (max(sizes) + 3) // 4
-    assert sum(sizes) > budget * 4
-    discovery = ToolDiscovery(catalog, token_budget=budget)
+    discovery = ToolDiscovery(catalog, context_window=100)
     discovery.restore([
         {"role": "assistant", "tool_calls": [{"id": "old", "function": {"name": "delete_file"}}]},
         {"role": "assistant", "tool_calls": [{"id": "new", "function": {"name": "list_artifacts"}}]},
     ])
     assert "list_artifacts" in names(discovery.schemas())
-    assert "delete_file" not in names(discovery.schemas())
+    assert "delete_file" in names(discovery.schemas())
+    assert discovery.budget_status()["over_target"] is True
+
+
+@pytest.mark.parametrize("window,target", [(32_000, 1600), (128_000, 6400), (200_000, 10_000)])
+def test_target_scales_with_model_context(owned_catalog, window, target):
+    discovery = ToolDiscovery(owned_catalog[1], context_window=window)
+    assert discovery.budget_status()["schema_target_tokens"] == target
+
+
+def test_core_counts_toward_target_and_unknown_window_is_not_guessed(owned_catalog):
+    discovery = ToolDiscovery(owned_catalog[1], context_window=100)
+    assert discovery.budget_status()["over_target"] is True  # Core alone exceeds 5 tokens.
+    discovery.context_window = None
+    assert discovery.budget_status()["schema_target_tokens"] is None
+    assert discovery.budget_status()["over_target"] is False
+
+
+@pytest.mark.parametrize("value", [0, -1, 101, True, "5", None, float("nan"), float("inf")])
+def test_invalid_percentage_setting_is_rejected(owned_catalog, value):
+    with pytest.raises(ValueError, match="Tool schema target"):
+        store.update_settings({"tool_schema_target_percent": value})
+    assert store.get_settings()["tool_schema_target_percent"] == 5.0
+
+
+def test_percentage_setting_is_configurable(owned_catalog):
+    store.update_settings({"tool_schema_target_percent": 10.5})
+    discovery = ToolDiscovery(owned_catalog[1], context_window=200_000,
+                              target_percent=store.get_settings()["tool_schema_target_percent"])
+    assert discovery.budget_status()["schema_target_tokens"] == 21_000

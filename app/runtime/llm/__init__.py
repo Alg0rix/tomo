@@ -103,6 +103,8 @@ def get_llm(
 
     provider = provider_for_url(base_url)
     protocol = model_protocol(provider, model) if provider else "chat"
+    if urlparse(base_url).hostname == "api.anthropic.com":
+        protocol = "messages"
     if protocol in ("messages", "google"):
         from app.runtime.llm.native import NativeMessagesClient
 

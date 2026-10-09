@@ -7,7 +7,7 @@
     "type": "function",
     "function": {
       "name": "search_tools",
-      "description": "Search authorized tools and load matching schemas for the next model response. Use this before concluding a capability is unavailable. Search by task keywords, plugin name, or exact tool name. Use '*' and offset to browse. Wait for the result before calling a discovered tool. Results marked loaded=false exceed the task's schema budget.",
+      "description": "Search authorized tools and load matching schemas for the next model response. Use this before concluding a capability is unavailable. Search by task keywords, plugin name, or exact tool name. Use '*' and offset to browse. Wait for the result before calling a discovered tool. Reports total schema tokens and a soft context target; over_target never blocks necessary tools.",
       "parameters": {
         "type": "object",
         "properties": {

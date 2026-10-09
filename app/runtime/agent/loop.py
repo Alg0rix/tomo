@@ -1033,12 +1033,27 @@ async def _run_turn_owned(
                 for schema in tool_schemas
                 if schema.get("function", {}).get("name") != excluded_tool
             ]
+            from app.runtime.llm.context_window import resolve_context_window
+            from app.services import store
+
+            context_window = getattr(client, "context_window", None)
+            if context_window is None:
+                client_profile = getattr(client, "context_profile", None)
+                context_window = (await resolve_context_window(agent_id, session_id=session_id, profile=client_profile)
+                                  if client_profile is not None else None)
+            try:
+                client.context_window = context_window
+            except AttributeError:
+                pass
             # Explicit worker/caller tool sets remain exact. Normal turns keep
             # their enabled catalog discoverable without sending every schema.
             if tools is None and any(
                 s.get("function", {}).get("name") == "search_tools" for s in tool_schemas
             ):
-                discovery = discovery_mod.ToolDiscovery(tool_schemas)
+                discovery = discovery_mod.ToolDiscovery(
+                    tool_schemas, context_window=context_window,
+                    target_percent=store.get_settings()["tool_schema_target_percent"],
+                )
                 discovery_mod.bind(discovery)
                 tool_schemas = discovery.schemas()
             limit = (
@@ -1136,17 +1151,6 @@ async def _run_turn_owned(
             if discovery is not None:
                 discovery.restore(messages)
                 tool_schemas = discovery.schemas()
-            from app.runtime.llm.context_window import resolve_context_window
-
-            context_window = getattr(client, "context_window", None)
-            if context_window is None:
-                client_profile = getattr(client, "context_profile", None)
-                context_window = (await resolve_context_window(agent_id, session_id=session_id, profile=client_profile)
-                                  if client_profile is not None else None)
-            try:
-                client.context_window = context_window
-            except AttributeError:
-                pass
         except Exception as exc:
             metrics.ended_kind = "error"
             metrics.log_summary()
@@ -1201,6 +1205,7 @@ async def _run_turn_owned(
         while iteration < limit:
             iteration += 1
             if discovery is not None:
+                discovery.context_window = getattr(client, "context_window", None) or context_window
                 tool_schemas = discovery.schemas()
             # Mid-turn steers (composer queue → Enter / ctrl+s).
             async for steer_ev in _emit_drained_steers(messages, session_id):

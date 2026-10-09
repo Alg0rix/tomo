@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 
 from app.core.observability import observe
 from typing import Any, AsyncIterator
@@ -110,6 +111,10 @@ def _messages_to_responses_input(
 
     for msg in messages:
         if not isinstance(msg, dict):
+            continue
+        if msg.get("type") == "additional_tools":
+            items.append({"type": "additional_tools", "role": "developer",
+                          "tools": stable_tools(_responses_tools(msg["tools"]))})
             continue
         role = msg.get("role")
 
@@ -287,6 +292,17 @@ class CodexResponsesClient:
         )
 
     def _payload(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> dict[str, Any]:
+        endpoint = urlparse(self._base_url)
+        version = re.match(r"gpt-(\d+)(?:\.(\d+))?(?:-|$)", self._model)
+        native_loading = (
+            version is not None and (int(version[1]), int(version[2] or 0)) >= (5, 4)
+            and (endpoint.hostname == "api.openai.com"
+                 or (endpoint.hostname == "chatgpt.com" and endpoint.path.startswith("/backend-api/codex")))
+        )
+        if native_loading:
+            from app.runtime.tools.discovery import native_tool_layout
+
+            messages, tools = native_tool_layout(messages, tools)
         instructions, input_items = _messages_to_responses_input(messages)
         payload: dict[str, Any] = {
             "model": self._model,
@@ -299,7 +315,6 @@ class CodexResponsesClient:
                 f"{self._model}\0{instructions}".encode("utf-8")
             ).hexdigest(),
         }
-        endpoint = urlparse(self._base_url)
         if endpoint.hostname == "chatgpt.com" and endpoint.path.startswith("/backend-api/codex"):
             # ChatGPT derives cache affinity from this header (Codex client.rs).
             payload["extra_headers"] = {"session-id": payload["prompt_cache_key"]}

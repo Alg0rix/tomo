@@ -9,6 +9,64 @@ from app.runtime.llm.native import NativeMessagesClient
 from app.runtime.llm.openai_compat import LLMRequestError
 
 
+@pytest.mark.parametrize("base_url,model,native", [
+    ("https://api.anthropic.com/v1", "claude-opus-5-5", True),
+    ("https://api.anthropic.com/v1", "claude-opus-4-8", True),
+    ("https://api.anthropic.com/v1", "claude-opus-4-6", False),
+    ("https://api.anthropic.com/v1", "claude-sonnet-5", False),
+    ("https://opencode.ai/zen/v1", "claude-opus-5-5", False),
+])
+async def test_claude_inline_discovery_is_gated_and_preserves_tool_prefix(base_url, model, native):
+    from app.runtime.tools.discovery import ToolDiscovery, bind, reset
+
+    requests, headers = [], []
+
+    def wire(request):
+        requests.append(json.loads(request.content))
+        headers.append(dict(request.headers))
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                               text='data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n'
+                                    'data: {"type":"message_stop"}\n\n')
+
+    client = NativeMessagesClient(base_url=base_url, api_key="token", model=model,
+                                  protocol="messages", timeout=30, transport=httpx2.MockTransport(wire))
+    schemas = [{"type": "function", "function": {
+        "name": name, "description": name,
+        "parameters": {"type": "object", "properties": {}},
+    }} for name in ("search_tools", "lookup")]
+    history = [{"role": "system", "content": "Stable instructions"},
+               {"role": "user", "content": "Look up the record"}]
+    searched = [*history,
+                {"role": "assistant", "tool_calls": [{"id": "search", "function": {
+                    "name": "search_tools", "arguments": '{"query":"lookup"}',
+                }}]},
+                {"role": "tool", "tool_call_id": "search",
+                 "content": json.dumps({"loaded_tools": ["lookup", "unassigned_secret"]})}]
+    token = bind(ToolDiscovery(schemas))
+    try:
+        await client.complete(history, schemas[:1])
+        await client.complete(searched, schemas)
+        await client.complete(searched, schemas[:1])
+    finally:
+        reset(token)
+        await client.aclose()
+    additions = [b for m in requests[1]["messages"] for b in m["content"] if b["type"] == "tool_addition"]
+    assert requests[0]["system"] == requests[1]["system"]
+    if native:
+        assert requests[0]["tools"] == requests[1]["tools"]
+        assert additions == [{"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {
+            "name": "lookup", "description": "lookup", "input_schema": {"type": "object", "properties": {}},
+        }}}]
+        assert headers[1]["anthropic-beta"] == "inline-tools-2026-09-15"
+        assert requests[1]["messages"][-1]["role"] == "system"
+        assert requests[1]["messages"][-2]["content"][0]["type"] == "tool_result"
+        assert not any(b["type"] == "tool_addition" for m in requests[2]["messages"] for b in m["content"])
+    else:
+        assert not additions
+        assert "anthropic-beta" not in headers[1]
+        assert {t["name"] for t in requests[1]["tools"]} == {"search_tools", "lookup"}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["messages", "google"])
 async def test_native_tool_roundtrip_and_truncated_stream(protocol):

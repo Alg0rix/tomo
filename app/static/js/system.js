@@ -137,6 +137,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(Object.assign(auxiliary, {
             max_tool_iterations: parseInt(document.getElementById('setMaxIter').value, 10),
+            tool_schema_target_percent: parseFloat(document.getElementById('setToolSchemaTarget').value),
             learning_enabled: document.getElementById('setLearning').checked,
             memory_vault_enabled: document.getElementById('setMemoryVault').checked,
             image_input_mode: document.getElementById('setImageInputMode').value,

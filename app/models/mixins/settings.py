@@ -14,6 +14,7 @@ HTTP/HTML. A blank PUT keeps the existing ciphertext.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from typing import Any
@@ -148,6 +149,12 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
         from app.runtime.net_policy import validate_egress_value
 
         payload["network_egress"] = validate_egress_value(payload["network_egress"])
+
+    if "tool_schema_target_percent" in payload:
+        value = payload["tool_schema_target_percent"]
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or not 0 < value <= 100):
+            raise ValueError("Tool schema target must be greater than 0 and at most 100 percent")
 
     for key, value in payload.items():
         if value is None:
