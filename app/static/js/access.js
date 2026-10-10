@@ -20,7 +20,7 @@
     }
     return (w.permission === 'read_write' ? 'Read-write' : 'Read-only') + ' · ' +
       (w.destination_id || 'local') + ' · ' +
-      (w.storage_kind === 'external' ? 'restricted execution unavailable; import into managed storage or use an explicit unrestricted grant' : (w.status || 'ready'));
+      (w.storage_kind === 'external' ? 'restricted execution unavailable; select Personal space for restricted execution, or use authorized unrestricted execution' : (w.status || 'ready'));
   }
   function label(w) { return (w.name || 'Working location') + ' · ' + metadata(w); }
   function fill(select, resources, selected) {

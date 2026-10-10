@@ -131,6 +131,13 @@ uv run python -m app.main   # http://127.0.0.1:8787
 
 Do not edit the managed install tree for day-to-day development — use a normal clone. `tomo update` always targets `~/.local/share/tomo/app`.
 
+### Interactive answers
+
+Tomo can answer with interactive calculators, diagrams, simulations, and custom
+charts directly in chat, using an isolated OpenIntelligentUI sandbox. Enable
+**Render UI** for the agent and ask for an interactive answer. See
+[Intelligent UI](docs/intelligent-ui.md) for the tool contract and limitations.
+
 ### Chat workspace & local terminals
 
 Open **Workspace** in a chat to browse files/artifact previews or use **Terminal → New terminal**. Each chat owns up to eight independent shells. They run directly on the **Tomo host**, never through a tunnel/connector; a remote browser does not run commands on its own device. The starting directory is the chat's local workplace, or `$TOMO_HOME/sessions/<id>/workspace` when no local workplace is selected.

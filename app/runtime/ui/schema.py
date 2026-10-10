@@ -1,8 +1,7 @@
 """Small, strict interface between model output and the browser UI.
 
-The model can describe a UI tree, but it cannot submit HTML, CSS, or JavaScript
-to the main document.  The browser owns the renderer and only accepts the
-allow-listed node types and values below.
+Native nodes are rendered by the browser. Custom HTML, CSS, and JavaScript
+are accepted only for an isolated, opaque-origin sandbox node.
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ NODE_TYPES = frozenset(
         "input",
         "select",
         "button",
+        "sandbox",
     }
 )
 CONTAINER_TYPES = frozenset({"card", "stack", "grid"})
@@ -66,7 +66,6 @@ def _safe_id(value: Any, *, field: str) -> str:
     return result
 
 
-
 def _infer_node_type(value: dict[str, Any]) -> str | None:
     """Best-effort type when the model omits ``type`` (common LLM slip).
 
@@ -95,7 +94,9 @@ def _infer_node_type(value: dict[str, Any]) -> str | None:
         ):
             return "input"
         return "button"
-    if "placeholder" in value or ("id" in value and "value" in value and "action" in value):
+    if "placeholder" in value or (
+        "id" in value and "value" in value and "action" in value
+    ):
         return "input"
     if "value" in value and isinstance(value.get("value"), str):
         raw = value["value"]
@@ -105,7 +106,9 @@ def _infer_node_type(value: dict[str, Any]) -> str | None:
     return None
 
 
-def _node(value: Any, *, depth: int, count: list[int], path: str = "/tree") -> dict[str, Any]:
+def _node(
+    value: Any, *, depth: int, count: list[int], path: str = "/tree"
+) -> dict[str, Any]:
     if depth > MAX_DEPTH:
         raise UIValidationError(f"UI tree exceeds depth {MAX_DEPTH}")
     if not isinstance(value, dict):
@@ -130,6 +133,20 @@ def _node(value: Any, *, depth: int, count: list[int], path: str = "/tree") -> d
             f"{path}: unsupported UI node type: {kind or '(empty)'}"
         )
     out: dict[str, Any] = {"type": kind}
+    if kind == "sandbox":
+        out["html"] = _string(value.get("html"), field="sandbox.html")
+        for field in ("css", "jsFunctions", "jsExpressions"):
+            out[field] = _string(value.get(field, ""), field=f"sandbox.{field}")
+        height = value.get("initialHeight", 400)
+        if (
+            isinstance(height, bool)
+            or not isinstance(height, int)
+            or not 120 <= height <= 1200
+        ):
+            raise UIValidationError(
+                "sandbox.initialHeight must be an integer from 120 to 1200"
+            )
+        out["initialHeight"] = height
     if "id" in value:
         out["id"] = _safe_id(value["id"], field="node.id")
 
@@ -191,9 +208,7 @@ def _node(value: Any, *, depth: int, count: list[int], path: str = "/tree") -> d
             if not isinstance(option, dict):
                 raise UIValidationError("select options must be objects")
             label = _string(option.get("label"), field="option.label", limit=500)
-            option_value = _string(
-                option.get("value"), field="option.value", limit=500
-            )
+            option_value = _string(option.get("value"), field="option.value", limit=500)
             clean_options.append({"label": label, "value": option_value})
         out["options"] = clean_options
 
@@ -267,8 +282,15 @@ def validate_ui_payload(arguments: dict[str, Any]) -> dict[str, Any]:
                 raise UIValidationError("patch operations must be objects")
             op = _string(operation.get("op"), field="patch.op", limit=16).lower()
             path = _string(operation.get("path"), field="patch.path", limit=200)
-            if op not in {"add", "replace", "remove"} or not _PATCH_PATH_RE.fullmatch(path):
+            if op not in {"add", "replace", "remove"} or not _PATCH_PATH_RE.fullmatch(
+                path
+            ):
                 raise UIValidationError("patch operation or path is invalid")
+            if any(
+                part in {"__proto__", "prototype", "constructor"}
+                for part in path.split("/")
+            ):
+                raise UIValidationError("patch path contains a reserved key")
             clean: dict[str, Any] = {"op": op, "path": path}
             if op != "remove":
                 if "value" not in operation:
@@ -300,6 +322,10 @@ def validate_ui_payload(arguments: dict[str, Any]) -> dict[str, Any]:
         if len(encoded_state) > MAX_STRING:
             raise UIValidationError("state is too large")
         result["state"] = state
+    # The agent loop retains up to 64k characters for a render_ui result.
+    # Reject oversized compositions rather than emitting truncated JSON.
+    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":"))) > 60_000:
+        raise UIValidationError("UI payload exceeds 60000 characters")
     return result
 
 

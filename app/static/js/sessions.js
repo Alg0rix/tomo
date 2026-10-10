@@ -1027,10 +1027,7 @@
         body.textContent = text;
       }
       turn.appendChild(row);
-      // Keep Interactive hero after assistant text.
-      turn.querySelectorAll('.gen-ui-block').forEach(function (block) {
-        turn.appendChild(block);
-      });
+      if (window.TomoGenerativeUI) TomoGenerativeUI.placeBlocks(turn);
     }
 
     function appendReasoningCard(text) {
@@ -1068,7 +1065,7 @@
           ? (mounted.closest('.gen-ui-block') || mounted)
           : mounted;
         block.classList.add('is-hero');
-        turn.appendChild(block);
+        TomoGenerativeUI.placeBlocks(turn);
       }
     }
 

@@ -98,8 +98,16 @@ def require_attachments(session_id: str, attachment_ids: list[str]) -> None:
             path.resolve().relative_to(root)
         except ValueError:
             raise HTTPException(404, "Attachment not found") from None
-        if _looks_image_attachment(row) or not (_looks_text_attachment(row) or _looks_office_doc_attachment(row)):
-            raise HTTPException(503, "Isolated image/binary preprocessing unavailable; import into the working folder for CLI processing")
+        if _looks_image_attachment(row):
+            context = store.access.resolve_context(user["id"], session_id)
+            active = next((r for r in context.resources if r.workplace_id == context.active_workplace_id), None)
+            if context.role == "admin" and context.execution_mode == "unrestricted" and active and active.kind == "local":
+                # The existing vision path reads owned bytes; no document or
+                # arbitrary binary converter is enabled by this exception.
+                continue
+            raise HTTPException(503, "Image preprocessing unavailable in this execution mode; remove the image to send text")
+        if not (_looks_text_attachment(row) or _looks_office_doc_attachment(row)):
+            raise HTTPException(503, "Binary preprocessing unavailable; remove the attachment to send text")
         if _looks_office_doc_attachment(row):
             context = store.access.resolve_context(user["id"], session_id)
             if context.execution_mode != "restricted":

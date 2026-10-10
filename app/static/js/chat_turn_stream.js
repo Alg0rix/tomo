@@ -339,20 +339,7 @@
     }
 
     function placeGenUiAsHero() {
-      // Order: … tools … assistant text … Interactive hero.
-      var blocks = ctx.turn.querySelectorAll('.gen-ui-block');
-      if (!blocks.length) return;
-      var msgs = ctx.turn.querySelectorAll('.msg.assistant');
-      var lastAsst = msgs.length ? msgs[msgs.length - 1] : null;
-      var anchor = lastAsst ? lastAsst.nextSibling : null;
-      // Skip over other gen-ui-blocks when computing insert point.
-      while (anchor && anchor.classList && anchor.classList.contains('gen-ui-block')) {
-        anchor = anchor.nextSibling;
-      }
-      Array.prototype.forEach.call(blocks, function (block) {
-        if (anchor) ctx.turn.insertBefore(block, anchor);
-        else ctx.turn.appendChild(block);
-      });
+      if (window.TomoGenerativeUI) TomoGenerativeUI.placeBlocks(ctx.turn);
     }
 
     function appendGenerativeUI(spec) {
@@ -379,7 +366,6 @@
           ? (mounted.closest('.gen-ui-block') || mounted)
           : mounted;
         block.classList.add('is-hero');
-        ctx.turn.appendChild(block);
         placeGenUiAsHero();
       }
       return mounted;

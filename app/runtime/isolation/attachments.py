@@ -1,13 +1,14 @@
 """Owned uploads enter containers as bytes, never as server-home mounts.
 
 Document parsers run only inside the restricted OS boundary. Unrestricted
-execution is not an excuse to launch server-side converters. Images may be
-imported for CLI processing; auxiliary vision remains unavailable.
+execution is not an excuse to launch server-side converters. Admin local
+unrestricted imports write owned bytes to the authorized active folder.
 """
 from __future__ import annotations
 
 import base64
 import os
+import uuid
 from pathlib import Path
 
 from app.runtime.access import AccessDenied, AccessUnavailable, current_execution
@@ -57,29 +58,98 @@ def read_owned_upload(attachment: dict) -> bytes:
     return data
 
 
+def _import_local(root: str, filename: str, data: bytes) -> str:
+    """Anchor every component with directory FDs; never follow host aliases."""
+    path = Path(root)
+    if not path.is_absolute() or ".." in path.parts:
+        raise AccessDenied("Active folder path is unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.open(path.anchor, flags)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        try:
+            os.mkdir(".tomo-uploads", mode=0o700, dir_fd=parent)
+        except FileExistsError:
+            pass
+        folder = os.open(".tomo-uploads", flags, dir_fd=parent)
+        try:
+            tmp = ".import-" + uuid.uuid4().hex
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=folder)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                # Atomic publication without overwriting files or aliases.
+                os.link(tmp, filename, src_dir_fd=folder, dst_dir_fd=folder,
+                        follow_symlinks=False)
+            finally:
+                os.unlink(tmp, dir_fd=folder)
+        finally:
+            os.close(folder)
+    finally:
+        os.close(parent)
+    return str(path / ".tomo-uploads" / filename)
+
+
 def import_upload(attachment: dict) -> str:
     context = backend.access.revalidate(current_execution())
-    if context.execution_mode != "restricted":
-        raise AccessUnavailable("Attachment import requires a restricted local container")
+    active = next((r for r in context.resources if r.workplace_id == context.active_workplace_id), None)
+    if not active or active.kind != "local" or active.transfer_only or not active.writable:
+        raise AccessDenied("Attachment import requires a writable local active folder")
+    host = context.role == "admin" and context.execution_mode == "unrestricted"
+    if not host and context.execution_mode != "restricted":
+        raise AccessUnavailable("Attachment import requires a restricted local container or Admin local unrestricted execution")
     data = read_owned_upload(attachment)
-    # Server-generated filename, not original user-provided names. The actual
-    # write happens in the container namespace and honors read-only mounts.
-    filename = attachment["filename"]
-    script = (
-        "import os,sys,base64,uuid; os.makedirs('.tomo-uploads',exist_ok=True); "
-        "p='.tomo-uploads/'+sys.argv[1]; tmp=p+'.import-'+uuid.uuid4().hex; "
-        "fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600); "
-        "f=os.fdopen(fd,'wb'); f.write(base64.b64decode(sys.stdin.read(),validate=True)); "
-        "f.close(); os.replace(tmp,p)"
-    )
-    result = backend.execute(context, ["python", "-c", script, filename],
-                             stdin=base64.b64encode(data).decode(), timeout=60)
-    if result.returncode:
-        raise AccessUnavailable("Attachment import failed or the active folder is read-only")
+    filename = attachment["filename"]  # validated owned server-generated name
+    try:
+        if host:
+            # Host writes finish under the same mutation fence as file tools,
+            # so a concurrent revocation cannot race revalidation + publication.
+            with backend.access.execution_guard(context) as checked:
+                if checked.role != "admin":
+                    raise AccessDenied("Admin permission is required for host import")
+                path = _import_local(active.root_path, filename, data)
+        else:
+            # Remains inside the container and respects read-only mounts.
+            script = """import os,sys,base64,uuid
+try:
+    os.mkdir('.tomo-uploads',0o700)
+except FileExistsError:
+    pass
+folder=os.open('.tomo-uploads',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+tmp='.import-'+uuid.uuid4().hex
+try:
+    fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=folder)
+    try:
+        with os.fdopen(fd,'wb') as f:
+            f.write(base64.b64decode(sys.stdin.read(),validate=True))
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(tmp,sys.argv[1],src_dir_fd=folder,dst_dir_fd=folder,follow_symlinks=False)
+    finally:
+        os.unlink(tmp,dir_fd=folder)
+finally:
+    os.close(folder)
+"""
+            result = backend.execute(context, ["python", "-c", script, filename],
+                                     stdin=base64.b64encode(data).decode(), timeout=60)
+            if result.returncode:
+                raise AccessUnavailable("Attachment import failed; check folder permissions, aliases and existing imported files")
+            path = active.mount_path + "/.tomo-uploads/" + filename
+    except FileExistsError as exc:
+        raise AccessDenied("Imported file already exists; existing files are never overwritten") from exc
+    except AccessDenied:
+        raise
+    except OSError as exc:
+        raise AccessDenied("Attachment import failed; check active folder permissions and symlinks") from exc
     backend.access.audit(context.user_id, "attachment.import", session_id=context.session_id,
                          agent_id=context.agent_id, destination_id=context.destination_id)
-    active = next(r for r in context.resources if r.workplace_id == context.active_workplace_id)
-    return active.mount_path + "/.tomo-uploads/" + filename
+    return path
 
 
 def convert_document(attachment: dict) -> str:

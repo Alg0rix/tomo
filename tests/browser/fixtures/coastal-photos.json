@@ -1,0 +1,52 @@
+[
+  {
+    "status": "available",
+    "place": "Golden Gate Bridge",
+    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/Golden_Gate_Bridge_as_seen_from_Battery_East.jpg/330px-Golden_Gate_Bridge_as_seen_from_Battery_East.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "artist": "Frank Schulenburg",
+    "license": "CC BY-SA 4.0",
+    "credit_url": "https://commons.wikimedia.org/wiki/File:Golden_Gate_Bridge_as_seen_from_Battery_East.jpg",
+    "article_url": "https://en.wikipedia.org/wiki/Golden%20Gate%20Bridge",
+    "note": "Photo from this Wikipedia article; confirm the pictured subject fits the destination. It is not a live camera view."
+  },
+  {
+    "status": "available",
+    "place": "Cannery Row",
+    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/Cannery_Row_2_%2815398349067%29.jpg/330px-Cannery_Row_2_%2815398349067%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "artist": "Tony Hisgett from Birmingham, UK",
+    "license": "CC BY 2.0",
+    "credit_url": "https://commons.wikimedia.org/wiki/File:Cannery_Row_2_%2815398349067%29.jpg",
+    "article_url": "https://en.wikipedia.org/wiki/Cannery%20Row",
+    "note": "Photo from this Wikipedia article; confirm the pictured subject fits the destination. It is not a live camera view."
+  },
+  {
+    "status": "available",
+    "place": "Big Sur",
+    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/09/Central_Californian_Coastline%2C_Big_Sur_-_May_2013.jpg/330px-Central_Californian_Coastline%2C_Big_Sur_-_May_2013.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "artist": "Diliff",
+    "license": "CC BY-SA 3.0",
+    "credit_url": "https://commons.wikimedia.org/wiki/File:Central_Californian_Coastline%2C_Big_Sur_-_May_2013.jpg",
+    "article_url": "https://en.wikipedia.org/wiki/Big%20Sur",
+    "note": "Photo from this Wikipedia article; confirm the pictured subject fits the destination. It is not a live camera view."
+  },
+  {
+    "status": "available",
+    "place": "Mission Santa Barbara",
+    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e0/Mission_Santa_Barbara_2025.jpg/330px-Mission_Santa_Barbara_2025.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "artist": "Hayden Soloviev",
+    "license": "CC BY 4.0",
+    "credit_url": "https://commons.wikimedia.org/wiki/File:Mission_Santa_Barbara_2025.jpg",
+    "article_url": "https://en.wikipedia.org/wiki/Mission%20Santa%20Barbara",
+    "note": "Photo from this Wikipedia article; confirm the pictured subject fits the destination. It is not a live camera view."
+  },
+  {
+    "status": "available",
+    "place": "Hollywood Sign",
+    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Hollywood_sign_%288485145044%29.jpg/330px-Hollywood_sign_%288485145044%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+    "artist": "Gnaphron",
+    "license": "CC BY-SA 2.0",
+    "credit_url": "https://commons.wikimedia.org/wiki/File:Hollywood_sign_%288485145044%29.jpg",
+    "article_url": "https://en.wikipedia.org/wiki/Hollywood%20Sign",
+    "note": "Photo from this Wikipedia article; confirm the pictured subject fits the destination. It is not a live camera view."
+  }
+]

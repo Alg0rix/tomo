@@ -84,6 +84,7 @@
     var parts = pointerParts(operation.path);
     var op = String(operation.op || "").toLowerCase();
     if (!parts || !parts.length || (parts[0] !== "tree" && parts[0] !== "state")) return false;
+    if (parts.some(function (part) { return ["__proto__", "prototype", "constructor"].indexOf(part) >= 0; })) return false;
     if (["add", "replace", "remove"].indexOf(op) < 0) return false;
     var base = parts.shift();
     if (!parts.length) {
@@ -211,6 +212,12 @@
     var type = String(node.type || "").toLowerCase();
     var el;
 
+    if (type === "sandbox" && global.TomoIntelligentUI) {
+      return global.TomoIntelligentUI.mount(node, function (text) {
+        sendAction(ctx.root, ctx, "sendPrompt", { text: text });
+      });
+    }
+
     if (type === "text") return textNode(node.value, "gen-ui-text");
     if (type === "markdown") {
       el = document.createElement("div");
@@ -334,10 +341,6 @@
     block.className = "gen-ui-block";
     block.setAttribute("data-ui-id", uiId);
     block.setAttribute("aria-label", "Interactive UI");
-    var hd = document.createElement("div");
-    hd.className = "gen-ui-block-hd";
-    hd.innerHTML = '<span class="gen-ui-block-kicker">Interactive</span>';
-    block.appendChild(hd);
     if (root.parentNode === parent) parent.insertBefore(block, root);
     else parent.appendChild(block);
     block.appendChild(root);
@@ -357,8 +360,10 @@
       parent.appendChild(root);
     }
     if (opts.asBlock) ensureBlock(parent, root, uiId);
+    var previousSignature = root._genContext ? JSON.stringify(root._genSpec) : null;
     if (!materialize(parent, spec, root, opts, uiId)) return null;
-    root.replaceChildren();
+    // Duplicate SSE/tool-result/history delivery must not reset local controls.
+    var signature = JSON.stringify(root._genSpec);
     var onAction = opts.onAction;
     var dispatcher = opts.dispatch || opts.send;
     if (!onAction && typeof dispatcher === "function") {
@@ -366,18 +371,54 @@
         return dispatcher({ ui_id: id || uiId, action: action, payload: payload });
       };
     }
+    if (previousSignature === signature) {
+      // Existing handlers close over this context. Refresh it along with the
+      // materialized state, including when local edits changed the signature.
+      root._genContext.state = root._genState;
+      root._genContext.onAction = onAction;
+      persist(root);
+      return root;
+    }
+    root.replaceChildren();
     var eventCount = Number(root.dataset.uiEvents || 0) + 1;
     root.dataset.uiEvents = String(eventCount);
-    var rendered = renderNode(root._genSpec.tree, {
+    root._genContext = {
+      root: root,
       onAction: onAction,
       state: root._genState,
       persist: function () { persist(root); },
-    });
+    };
+    var rendered = renderNode(root._genSpec.tree, root._genContext);
     if (rendered) root.appendChild(rendered);
     else root.appendChild(textNode("UI tree could not be rendered", "gen-ui-error"));
+    root.querySelectorAll('.gen-ui-sandbox').forEach(function (sandbox) {
+      sandbox._registerSandbox();
+    });
     persist(root);
     return root;
   }
 
-  global.TomoGenerativeUI = { mount: mount, renderNode: renderNode };
+  function placeBlocks(parent) {
+    // Keep iframe nodes connected: even a same-parent append reloads srcdoc.
+    // Compute the desired order, then move only the surrounding chat nodes.
+    var children = Array.from(parent.children);
+    var blocks = children.filter(function (el) { return el.classList.contains('gen-ui-block'); });
+    if (!blocks.length) return;
+    var others = children.filter(function (el) { return !el.classList.contains('gen-ui-block'); });
+    var index = others.length;
+    for (var i = others.length - 1; i >= 0; i--) {
+      if (others[i].matches('.msg.assistant')) { index = i + 1; break; }
+    }
+    var ordered = others.slice(0, index).concat(blocks, others.slice(index));
+    var anchor = null;
+    for (var j = ordered.length - 1; j >= 0; j--) {
+      var child = ordered[j];
+      if (!child.classList.contains('gen-ui-block') && child.nextSibling !== anchor) {
+        parent.insertBefore(child, anchor);
+      }
+      anchor = child;
+    }
+  }
+
+  global.TomoGenerativeUI = { mount: mount, renderNode: renderNode, placeBlocks: placeBlocks };
 })(typeof window !== "undefined" ? window : this);

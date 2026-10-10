@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,10 @@ def _attachments(monkeypatch):
     monkeypatch.setattr(
         store, "get_attachment", lambda aid: _ATTACHMENTS.get(aid)
     )
+    # These orchestration tests use synthetic rows. Real upload ownership,
+    # no-follow reads and runtime contexts are exercised by HTTP regressions.
+    monkeypatch.setattr("app.runtime.isolation.attachments.read_owned_upload",
+                        lambda att: Path(att["file_path"]).read_bytes())
 
 
 def _attach(tmp_path, att_id: str, raw: bytes = _PNG, name: str = "img.png") -> dict:

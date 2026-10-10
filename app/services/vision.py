@@ -95,12 +95,12 @@ async def _describe_attachment(
     try:
         from app.runtime.llm.vision import analyze_image_data_url
         from app.runtime.llm.vision_image import (
-            attachment_bytes,
             encode_image_data_url,
             guess_image_mime,
         )
+        from app.runtime.isolation.attachments import read_owned_upload
 
-        raw = attachment_bytes(att)
+        raw = read_owned_upload(att)
         if not raw:
             return aid, ""
         key = hashlib.sha256(raw).hexdigest()

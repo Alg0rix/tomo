@@ -30,7 +30,9 @@ def test_render_ui_returns_normalized_json():
 
 def test_render_ui_rejects_unsafe_or_unknown_nodes():
     with pytest.raises(UIValidationError):
-        validate_ui_payload({"ui_id": "x", "tree": {"type": "html", "value": "<script>"}})
+        validate_ui_payload(
+            {"ui_id": "x", "tree": {"type": "html", "value": "<script>"}}
+        )
 
 
 def test_render_ui_rejects_deep_trees():
@@ -152,3 +154,71 @@ def test_render_ui_infers_type_for_containers_missing_type():
 def test_render_ui_still_rejects_empty_uninferable_node():
     with pytest.raises(UIValidationError, match="node.type must be a string"):
         validate_ui_payload({"ui_id": "x", "tree": {"title": "Nope"}})
+
+
+def test_sandbox_survives_tool_and_history_transport():
+    tree = {
+        "type": "sandbox",
+        "title": "Bill splitter",
+        "html": '<input id="total">',
+        "css": "input { width: 100%; }",
+        "jsFunctions": "function update() {}",
+        "jsExpressions": "update();",
+        "initialHeight": 320,
+    }
+    payload = json.loads(run({"ui_id": "splitter", "tree": tree}))
+    assert payload["tree"] == tree
+    chunks, entries, _ = map_loop_event(
+        {"kind": "ui", **payload}, "agent", "Tomo", 0, "turn_sandbox"
+    )
+    assert "event: ui" in chunks[0]
+    assert entries[0]["params"]["tree"] == tree
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("html", None),
+        ("html", "x" * 20_001),
+        ("css", {}),
+        ("jsFunctions", []),
+        ("jsExpressions", 1),
+        ("initialHeight", True),
+        ("initialHeight", 119),
+        ("initialHeight", 1201),
+    ],
+)
+def test_sandbox_rejects_invalid_content(field, value):
+    with pytest.raises(UIValidationError):
+        validate_ui_payload(
+            {
+                "ui_id": "sandbox",
+                "tree": {
+                    "type": "sandbox",
+                    "html": "<p>Hello</p>",
+                    field: value,
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("key", ["__proto__", "constructor", "prototype"])
+def test_ui_patch_rejects_prototype_paths(key):
+    with pytest.raises(UIValidationError, match="reserved key"):
+        validate_ui_payload(
+            {
+                "ui_id": "sandbox",
+                "mode": "patch",
+                "patch": [
+                    {"op": "add", "path": f"/state/{key}/polluted", "value": True},
+                ],
+            }
+        )
+
+
+def test_ui_rejects_compositions_that_would_be_truncated_by_agent_loop():
+    with pytest.raises(UIValidationError, match="60000"):
+        validate_ui_payload({"ui_id": "large", "tree": {
+            "type": "sandbox", "html": "h" * 20_000,
+            "css": "c" * 20_000, "jsFunctions": "j" * 20_000,
+        }})

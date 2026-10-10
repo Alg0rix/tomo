@@ -497,3 +497,49 @@ async def test_plain_turn_can_delegate_to_enabled_agent(
     assert finals and finals[-1]["agent_id"] == "main"
     assert store.get_agent("main")["busy"] is False
     assert store.get_agent("ops")["busy"] is False
+
+
+async def test_render_ui_table_followup_keeps_data_and_persists_chart(tmp_path, monkeypatch):
+    """The real agent loop transports UI and carries source data into a follow-up."""
+    store.rebind(tmp_path / "interactive_followup.db")
+    sid = owned_host_session()
+    table = {"ui_id": "plans", "tree": {
+        "type": "stack", "children": [
+            {"type": "table", "columns": ["Plan", "Monthly USD", "Seats"],
+             "rows": [["Starter", "12", "2"], ["Pro", "25", "5"], ["Team", "40", "10"]]},
+            {"type": "button", "label": "Chart cost per seat", "action": "show_cost_per_seat"},
+        ],
+    }}
+    chart = {"ui_id": "cost-per-seat", "tree": {
+        "type": "chart", "data": [
+            {"label": "Starter", "value": 6}, {"label": "Pro", "value": 5},
+            {"label": "Team", "value": 4},
+        ],
+    }}
+    prompts = []
+
+    class CapturingLLM(ScriptedLLM):
+        async def complete(self, messages, tools=None):
+            prompts.append(messages)
+            return await super().complete(messages, tools)
+
+    llm = CapturingLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall("table", "render_ui", table)]),
+        text_reply("Illustrative monthly prices."),
+        LLMResponse(content=None, tool_calls=[ToolCall("chart", "render_ui", chart)]),
+        text_reply("The chart uses the same monthly prices divided by seats."),
+    ])
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda agent_id=None, **kwargs: llm)
+    first = await _collect(sid, "Compare these sample plans")
+    assert _data(first, "ui")[0]["tree"] == table["tree"]
+    action = {"ui_id": "plans", "action": "show_cost_per_seat", "payload": {}}
+    second = await _collect(sid, "[UI action]\n" + json.dumps(action))
+    assert _data(second, "ui")[0]["tree"] == chart["tree"]
+    history = store.get_session_history(sid)
+    assert [entry["params"]["ui_id"] for entry in history if entry["type"] == "ui"] == [
+        "plans", "cost-per-seat",
+    ]
+    followup = json.dumps(prompts[2])
+    assert "show_cost_per_seat" in followup
+    assert "Starter" in followup and "Seats" in followup
+    assert llm.remaining == 0

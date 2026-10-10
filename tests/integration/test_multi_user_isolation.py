@@ -638,3 +638,39 @@ def test_startup_recovers_orphan_before_rejecting_unavailable_image(real):
     finally:
         subprocess.run(['docker', 'rm', '-f', orphan], capture_output=True)
         recovery.close()
+
+
+def test_restricted_import_rejects_collision_and_directory_alias(real, monkeypatch):
+    from app.core.config import TOMO_HOME
+    from app.runtime.isolation import attachments
+    from dataclasses import replace
+
+    broker, (db, alice, bob, sid, bob_sid) = real
+    monkeypatch.setattr(attachments, 'backend', broker)
+    directory = Path(TOMO_HOME) / 'attachments' / sid
+    directory.mkdir(parents=True, exist_ok=True)
+    source = directory / 'att_safe.txt'
+    source.write_bytes(b'container-owned')
+    att = db.create_attachment(attachment_id='att_safe', session_id=sid, filename=source.name,
+                              original_name='safe.txt', mime_type='text/plain', size_bytes=15, file_path=str(source))
+    context = db.access.resolve_context(alice, sid)
+    with execution_scope(context):
+        path = attachments.import_upload(att)
+        check = broker.execute(context, ['python', '-c',
+            "import os,sys; p=sys.argv[1]; assert open(p,'rb').read()==b'container-owned'; assert os.stat(p).st_mode&0o777==0o600", path])
+        assert check.returncode == 0, check.stderr
+        with pytest.raises(AccessUnavailable, match='existing imported files'):
+            attachments.import_upload(att)
+        alias = broker.execute(context, ['python', '-c',
+            "import os; os.rename('.tomo-uploads','.saved-uploads'); os.mkdir('.alias-target'); os.symlink('.alias-target','.tomo-uploads')"])
+        assert alias.returncode == 0, alias.stderr
+        with pytest.raises(AccessUnavailable):
+            attachments.import_upload(att)
+        check = broker.execute(context, ['python', '-c',
+            "import os; assert not os.listdir('.alias-target'); assert open('.saved-uploads/att_safe.txt','rb').read()==b'container-owned'"])
+        assert check.returncode == 0, check.stderr
+    readonly = replace(context, resources=tuple(replace(r, permission='read') for r in context.resources))
+    with execution_scope(readonly), pytest.raises(AccessDenied, match='writable local'):
+        attachments.import_upload(att)
+    events = [row for row in db.access.list_audit('usr_admin') if row['action'] == 'attachment.import']
+    assert len(events) == 1 and events[0]['session_id'] == sid

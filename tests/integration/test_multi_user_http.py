@@ -460,3 +460,201 @@ def test_idor_pending_requests_and_received_project_grants(http, credential):
         secret_store.revoke_capability(capability)
         if caller is not c:
             caller.close()
+
+
+def _admin_attachment_chat(admin, tmp_path):
+    sid = store.create_home_session(admin['id'])['session_id']
+    root = tmp_path / 'active'
+    root.mkdir()
+    wp = store.create_workplace({'name': 'Attachment destination', 'kind': 'local', 'root_path': str(root)})
+    store.access.set_chat_access(admin['id'], sid, wp['id'], execution_mode='unrestricted')
+    return sid, root
+
+
+@pytest.mark.parametrize("vision_mode", ["native", "text"])
+def test_admin_image_send_reaches_runtime_vision_and_import(http, tmp_path, vision_mode):
+    """Real HTTP upload/send + runtime + owned bytes; only provider is local."""
+    import base64
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+
+    app, admin, alice, bob, profile, ac, c, bc = http
+    requests = []
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            requests.append(body)
+            self.send_response(200)
+            if body.get('stream'):
+                self.send_header('Content-Type', 'text/event-stream')
+                self.end_headers()
+                payload = {'choices': [{'index': 0, 'delta': {'content': 'Image received'}, 'finish_reason': 'stop'}]}
+                self.wfile.write(('data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n\n').encode())
+            else:
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'choices': [{'message': {'role': 'assistant', 'content': 'Image received'}, 'finish_reason': 'stop'}]}).encode())
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        model = store.create_llm_profile({'name': 'Native test vision', 'model': 'gpt-4o',
+            'api_key': 'local-test', 'base_url': f'http://127.0.0.1:{server.server_port}/v1'})
+        store.set_default_llm_profile(model['id'])
+        store.update_settings({'image_input_mode': vision_mode, 'vision_profile_id': model['id'] if vision_mode == 'text' else ''})
+        sid, root = _admin_attachment_chat(admin, tmp_path)
+        png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+        att = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('pasted.png', png, 'image/png')}).json()
+        sent = ac.post(f'/api/sessions/{sid}/chat/stream', json={'message': 'Describe', 'attachment_ids': [att['id']]})
+        assert sent.status_code == 200, sent.text
+        assert 'Image received' in sent.text, sent.text
+        parts = [part for body in requests for msg in body.get('messages', [])
+                 if isinstance(msg.get('content'), list) for part in msg['content']]
+        image = next(p for p in parts if p.get('type') == 'image_url')
+        from io import BytesIO
+        from PIL import Image
+        actual = Image.open(BytesIO(base64.b64decode(image['image_url']['url'].split(',', 1)[1])))
+        original = Image.open(BytesIO(png))
+        assert actual.size == original.size and actual.convert('RGBA').tobytes() == original.convert('RGBA').tobytes()
+        imported = ac.post(f"/api/attachments/{att['id']}/import")
+        assert imported.status_code == 200, imported.text
+        path = Path(imported.json()['path'])
+        assert path.parent == root / '.tomo-uploads'
+        assert path.read_bytes() == png
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert path.parent.stat().st_mode & 0o777 == 0o700
+        assert ac.post(f"/api/attachments/{att['id']}/import").status_code == 403
+        assert path.read_bytes() == png
+        audit = [r for r in store.access.list_audit(admin['id']) if r['action'] == 'attachment.import']
+        assert len(audit) == 1 and audit[0]['session_id'] == sid and audit[0]['actor_id'] == admin['id']
+        other_sid = store.create_home_session(admin['id'])['session_id']
+        assert ac.post(f'/api/sessions/{other_sid}/chat/stream', json={'message': 'Read', 'attachment_ids': [att['id']]}).status_code == 404
+        assert c.post(f"/api/attachments/{att['id']}/import").status_code == 404
+        binary = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('payload.bin', b'raw', 'application/octet-stream')}).json()
+        assert ac.post(f'/api/sessions/{sid}/chat/stream', json={'message': 'Read', 'attachment_ids': [binary['id']]}).status_code == 503
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(2)
+
+
+@pytest.mark.parametrize('alias', ['folder', 'file', 'root', 'hardlink'])
+def test_admin_import_refuses_destination_aliases(http, tmp_path, alias):
+    from pathlib import Path
+    app, admin, alice, bob, profile, ac, c, bc = http
+    sid, root = _admin_attachment_chat(admin, tmp_path)
+    att = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('note.txt', b'owned', 'text/plain')}).json()
+    row = store.get_attachment(att['id'])
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    target = outside / 'sentinel'
+    target.write_bytes(b'preserve')
+    folder = root / '.tomo-uploads'
+    if alias == 'folder':
+        folder.symlink_to(outside, target_is_directory=True)
+    elif alias == 'root':
+        root.rmdir()
+        root.symlink_to(outside, target_is_directory=True)
+    else:
+        folder.mkdir()
+        dest = folder / row['filename']
+        if alias == 'file':
+            dest.symlink_to(target)
+        else:
+            dest.hardlink_to(target)
+    response = ac.post(f"/api/attachments/{att['id']}/import")
+    assert response.status_code == 403, response.text
+    assert target.read_bytes() == b'preserve'
+    assert sorted(p.name for p in outside.iterdir()) == ['sentinel']
+    assert not any(r['action'] == 'attachment.import' for r in store.access.list_audit(admin['id']))
+    assert not list(Path(folder).glob('.import-*'))
+
+
+def test_import_permissions_and_member_unrestricted_remain_denied(http, tmp_path):
+    from dataclasses import replace
+    from app.runtime.access import AccessDenied, execution_scope
+    from app.runtime.isolation.attachments import import_upload
+
+    app, admin, alice, bob, profile, ac, c, bc = http
+    sid, root = _admin_attachment_chat(admin, tmp_path)
+    att = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('note.txt', b'owned', 'text/plain')}).json()
+    row = store.get_attachment(att['id'])
+    context = store.access.resolve_context(admin['id'], sid)
+    # A delegated read-only ceiling cannot be widened by the Admin role.
+    readonly = replace(context, resources=tuple(replace(r, permission='read') for r in context.resources))
+    with execution_scope(readonly), pytest.raises(AccessDenied, match='writable local'):
+        import_upload(row)
+    member_sid = store.create_home_session(alice['id'])['session_id']
+    wid = store.get_session(member_sid)['workplace_id']
+    store.access.assign(admin['id'], alice['id'], 'unrestricted', wid)
+    store.access.set_chat_access(alice['id'], member_sid, wid, execution_mode='unrestricted', unrestricted_acknowledged=True)
+    member_att = c.post(f'/api/sessions/{member_sid}/attachments', files={'file': ('note.txt', b'owned', 'text/plain')}).json()
+    denied = c.post(f"/api/attachments/{member_att['id']}/import")
+    assert denied.status_code == 503, denied.text
+    image = c.post(f'/api/sessions/{member_sid}/attachments', files={'file': ('shot.png', b'fake-image', 'image/png')}).json()
+    assert c.post(f'/api/sessions/{member_sid}/chat/stream', json={'message': 'Read', 'attachment_ids': [image['id']]}).status_code == 503
+    # Even a valid local grant must have real OS write access.
+    root.chmod(0o500)
+    try:
+        response = ac.post(f"/api/attachments/{att['id']}/import")
+        assert response.status_code == 403, response.text
+    finally:
+        root.chmod(0o700)
+    assert not (root / '.tomo-uploads').exists()
+
+
+def test_auxiliary_vision_refuses_foreign_rows_and_upload_symlinks(http, tmp_path, monkeypatch):
+    from app.runtime.access import execution_scope
+    from app.services.vision import _describe_attachment
+
+    app, admin, alice, bob, profile, ac, c, bc = http
+    sid, root = _admin_attachment_chat(admin, tmp_path)
+    other_sid = store.create_home_session(admin['id'])['session_id']
+    other = ac.post(f'/api/sessions/{other_sid}/attachments', files={'file': ('secret.png', b'private', 'image/png')}).json()
+    own = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('shot.png', b'owned', 'image/png')}).json()
+    from pathlib import Path
+    row = store.get_attachment(own['id'])
+    path = Path(row['file_path'])
+    path.unlink()
+    path.symlink_to(store.get_attachment(other['id'])['file_path'])
+    async def forbidden(*args, **kwargs):
+        pytest.fail('Unauthorized bytes must never reach the provider')
+    monkeypatch.setattr('app.runtime.llm.vision.analyze_image_data_url', forbidden)
+    async def check():
+        with execution_scope(store.access.resolve_context(admin['id'], sid)):
+            for attachment in (row, store.get_attachment(other['id'])):
+                assert await _describe_attachment(attachment, 'main', asyncio.Semaphore(1)) == (attachment['id'], '')
+    asyncio.run(check())
+    response = ac.post(f'/api/sessions/{sid}/chat/stream', json={'message': 'Read', 'attachment_ids': [own['id']]})
+    assert response.status_code == 404
+    assert ac.post(f"/api/attachments/{own['id']}/import").status_code == 403
+
+
+def test_admin_restricted_image_and_nonlocal_import_are_not_enabled(http, tmp_path):
+    app, admin, alice, bob, profile, ac, c, bc = http
+    sid = store.create_home_session(admin['id'])['session_id']
+    wp = store.access.ensure_personal_space(admin['id'])
+    store.access.set_chat_access(admin['id'], sid, wp['id'], execution_mode='restricted')
+    image = ac.post(f'/api/sessions/{sid}/attachments', files={'file': ('shot.png', b'image', 'image/png')}).json()
+    response = ac.post(f'/api/sessions/{sid}/chat/stream', json={'message': 'Read', 'attachment_ids': [image['id']]})
+    assert response.status_code == 503 and 'remove the image' in response.text
+    # No remote connector is provisioned here; fail closed on the unavailable
+    # destination rather than writing locally or falling back to host import.
+    remote = store.create_workplace({'name': 'Remote attachment destination', 'kind': 'tunnel', 'root_path': '/remote/work'})
+    store.access.set_chat_access(admin['id'], sid, remote['id'], execution_mode='unrestricted')
+    assert ac.post(f"/api/attachments/{image['id']}/import").status_code == 503
+
+
+@pytest.mark.parametrize('invalid_root', ['relative', 'parent', 'missing'])
+def test_host_import_requires_an_existing_confined_absolute_root(tmp_path, invalid_root):
+    from app.runtime.isolation.attachments import _import_local
+    from app.runtime.access import AccessDenied
+    root = {'relative': 'relative/work', 'parent': str(tmp_path / '..' / 'work'),
+            'missing': str(tmp_path / 'missing')}[invalid_root]
+    with pytest.raises((AccessDenied, OSError)):
+        _import_local(root, 'att_safe.txt', b'owned')
+    assert not (tmp_path / 'missing').exists()

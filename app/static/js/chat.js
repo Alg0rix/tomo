@@ -1240,7 +1240,7 @@
       attachPreview.classList.remove('hidden');
       attachPreview.innerHTML = attachmentChipsHtml(uploadedAttachments, true) +
         '<button type="button" class="btn ghost sm" data-import-uploads' + (uploading ? ' disabled' : '') + '>Import into working folder</button>' +
-        '<span class="access-note">Images/binary files: import for isolated CLI processing. Requires a writable active folder.</span>';
+        '<span class="access-note">Import requires a writable local folder and restricted execution or Admin local unrestricted execution. Admin local unrestricted chats can send images directly.</span>';
       on(attachPreview.querySelector('[data-import-uploads]'), 'click', async function (event) {
         event.preventDefault(); if (uploading) return;
         if (!await prepareAttachments() || destroyed) return;
@@ -1252,8 +1252,8 @@
             input.value += (input.value ? '\n' : '') + 'Imported file ' + att.name + ' into the working folder: ' + result.path;
             uploadedAttachments = uploadedAttachments.filter(function (item) { return item.id !== att.id; });
           }
-          Tomo.toast('Files imported into the selected restricted container storage', 'ok');
-        } catch (e) { if (!destroyed) Tomo.toast(e.message || 'Import failed; no host fallback', 'err'); }
+          Tomo.toast('Files imported into the working folder', 'ok');
+        } catch (e) { if (!destroyed) Tomo.toast(e.message || 'Import failed; check the working location and execution mode', 'err'); }
         finally { uploading = false; if (!destroyed) { renderAttachmentPreview(); refreshSendBtn(); } }
       });
       Array.prototype.forEach.call(attachPreview.querySelectorAll('.attachment-chip .remove'), function (btn) {
@@ -1700,8 +1700,18 @@
             body: JSON.stringify(action),
           }
         );
+        if (destroyed || currentSessionId() !== sid) return result;
         if (result && (result.mode === 'started' || result.mode === 'steer') && !sending && !es) {
-          resumeActiveTurn();
+          if (result.mode === 'started') {
+            // This is a new answer, not replay of the previous answer. Starting
+            // on its existing DOM would skip the first UI event as history.
+            var turn = document.createElement('div');
+            turn.className = 'turn';
+            scroll.appendChild(turn);
+            reconnectStream(turn);
+          } else {
+            resumeActiveTurn();
+          }
         }
         return result;
       } catch (e) {
