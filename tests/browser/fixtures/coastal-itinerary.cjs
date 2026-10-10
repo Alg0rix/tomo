@@ -16,10 +16,7 @@ module.exports = {
 async function setup(){
  const status=document.getElementById('map-status');
  try {
-  const response=await fetch('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css');
-  if(!response.ok)throw new Error('Map styles unavailable');
-  const style=document.createElement('style');style.textContent=await response.text();document.head.appendChild(style);
-  await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';script.onload=resolve;script.onerror=()=>reject(new Error('Map library unavailable'));document.head.appendChild(script);});
+  const L=await window.loadLeaflet();
   const map=L.map('map',{scrollWheelZoom:false,attributionControl:true}).fitBounds(stops.map(s=>[s.lat,s.lng]),{padding:[28,28]});
   window.tripMap=map;
   let loaded=0,failed=0;

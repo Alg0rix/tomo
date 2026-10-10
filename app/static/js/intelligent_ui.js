@@ -6,7 +6,8 @@
     three: 'https://esm.sh/three', 'three/': 'https://esm.sh/three/',
     d3: 'https://esm.sh/d3', 'd3/': 'https://esm.sh/d3/',
     gsap: 'https://esm.sh/gsap', 'gsap/': 'https://esm.sh/gsap/',
-    'chart.js': 'https://esm.sh/chart.js', 'chart.js/': 'https://esm.sh/chart.js/'
+    'chart.js': 'https://esm.sh/chart.js', 'chart.js/': 'https://esm.sh/chart.js/',
+    leaflet: 'https://esm.sh/leaflet@1.9.4'
   };
 
   // This runs inside the opaque-origin iframe, never in the Tomo document.
@@ -22,6 +23,31 @@
     window.Websandbox = { connection: { remote: {
       sendPrompt: window.sendPrompt, openLink: window.openLink
     } } };
+    // Leaflet's dist/leaflet.js is UMD: importing it as a module yields an
+    // empty namespace, so load it as a classic script and return window.L.
+    var leaflet;
+    window.loadLeaflet = function () {
+      if (leaflet) return leaflet;
+      var base = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/';
+      leaflet = Promise.all([
+        fetch(base + 'leaflet.css').then(function (r) {
+          if (!r.ok) throw new Error('Map styles unavailable');
+          return r.text();
+        }).then(function (css) {
+          var style = document.createElement('style');
+          style.textContent = css;
+          document.head.appendChild(style);
+        }),
+        window.L && window.L.map ? null : new Promise(function (resolve, reject) {
+          var script = document.createElement('script');
+          script.src = base + 'leaflet.js';
+          script.onload = resolve;
+          script.onerror = function () { reject(new Error('Map library unavailable')); };
+          document.head.appendChild(script);
+        })
+      ]).then(function () { return window.L; }, function (error) { leaflet = null; throw error; });
+      return leaflet;
+    };
     document.addEventListener('click', function (event) {
       var link = event.target.closest && event.target.closest('a[href]');
       if (link) { event.preventDefault(); window.openLink(link.href); }

@@ -12,9 +12,11 @@ const root = path.resolve(__dirname, '../..');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tomo-intelligent-ui-'));
   const node = require('./fixtures/coastal-itinerary.cjs');
   // Go through the real tool validator before sending saved history to the page.
-  const spec = JSON.parse(execFileSync(path.join(root, '.venv/bin/python'), ['-c',
+  const validate = (uiId, tree) => JSON.parse(execFileSync(path.join(root, '.venv/bin/python'), ['-c',
     'import json,sys; from app.runtime.tools.render_ui import run; print(run(json.load(sys.stdin)))'
-  ], { cwd: root, input: JSON.stringify({ ui_id: 'coastal-trip', tree: node }) }).toString());
+  ], { cwd: root, input: JSON.stringify({ ui_id: uiId, tree }) }).toString());
+  const spec = validate('coastal-trip', node);
+  const bandungSpec = validate('bandung-food', require('./fixtures/bandung-food.cjs'));
   const html = execFileSync(path.join(root, '.venv/bin/python'), ['-c', `
 from fastapi.testclient import TestClient
 from app.main import app
@@ -30,6 +32,9 @@ print(response.text)
     { message_id: 1, type: 'user', content: 'Show a four-day California coastal itinerary with a real map, photos, and playable stops.', agent_id: 'main' },
     { message_id: 2, type: 'final', content: 'Explore the stops on the map, pause the sequence, or select a destination.', agent_id: 'main' },
     { message_id: 3, type: 'ui', params: spec, agent_id: 'main' },
+    { message_id: 4, type: 'user', content: 'Show food near Bandung on a map.', agent_id: 'main' },
+    { message_id: 5, type: 'final', content: 'Here are a few places to eat in Bandung.', agent_id: 'main' },
+    { message_id: 6, type: 'ui', params: bandungSpec, agent_id: 'main' },
   ];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
@@ -54,9 +59,16 @@ print(response.text)
     page.on('requestfailed', request => console.log('Network failure:', request.url(), request.failure().errorText));
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/sessions?s=intelligent-ui`);
-    const widget = page.frameLocator('.gen-ui-sandbox iframe');
+    const widget = page.frameLocator('.gen-ui-sandbox iframe').first();
     await widget.locator('.leaflet-container').waitFor({ timeout: 30000 });
     const frame = page.frames().find(frame => frame.url() === 'about:srcdoc');
+    const bandung = page.frameLocator('.gen-ui-sandbox iframe').nth(1);
+    await bandung.locator('#bandung-status', { hasText: /Map loaded|unavailable/ }).waitFor({ timeout: 30000 });
+    assert.equal(await bandung.locator('#bandung-status').textContent(), 'Map loaded');
+    assert.match(await bandung.locator('.leaflet-control-attribution').innerText(), /OpenStreetMap contributors © CARTO/);
+    assert.equal(await bandung.locator('path.leaflet-interactive').count(), 3);
+    const bandungFrame = page.frames().filter(f => f.url() === 'about:srcdoc')[1];
+    await bandungFrame.waitForFunction(() => Array.from(document.querySelectorAll('.leaflet-tile')).some(img => img.complete && img.naturalWidth > 0), null, { timeout: 30000 });
     await frame.waitForFunction(() => Number(document.getElementById('map-status').dataset.loaded) >= 2, { timeout: 30000 });
     await frame.waitForFunction(() => Array.from(document.querySelectorAll('.stop img')).every(img => img.complete && img.naturalWidth > 0), { timeout: 30000 });
     assert.equal(await widget.locator('.pin-dot').count(), 5);
@@ -83,7 +95,7 @@ print(response.text)
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: path.join(root, 'tmp/intelligent-ui-coastal-map-mobile-v1.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    console.log('PASS: live USGS tiles, sourced photos, five map pins, attribution, pause, replay, stop selection, zoom, mobile layout');
+    console.log('PASS: Bandung CARTO tiles via import("leaflet"), live USGS tiles, sourced photos, five map pins, attribution, pause, replay, stop selection, zoom, mobile layout');
   } finally {
     await browser.close(); server.close(); fs.rmSync(home, { recursive: true, force: true });
   }

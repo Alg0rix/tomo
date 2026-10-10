@@ -71,9 +71,10 @@ Upstream revision and MIT attribution are recorded in
 
 ## Maps and animated itineraries
 
-The sandbox supports Leaflet 1.9.4, real USGS tile images, and sourced destination
-photos. Load Leaflet's script from jsDelivr and fetch its CSS into an inline style
-(the upstream map setup contract). Arbitrary API calls remain blocked; geographic
+The sandbox supports Leaflet 1.9.4, real USGS tile images for US maps, CARTO
+Voyager tiles (OpenStreetMap data) elsewhere, and sourced destination photos. Call `const L = await window.loadLeaflet()`, which loads Leaflet's script
+from jsDelivr and its CSS into an inline style. Do not `import()` `leaflet.js`: it
+is a UMD script and its module namespace is empty. Arbitrary API calls remain blocked; geographic
 tiles are image requests. Show visible USGS attribution, load/error feedback, and
 photo creator/license/source links. Connections illustrate a proposed itinerary;
 they do not establish driving directions or current road conditions.
