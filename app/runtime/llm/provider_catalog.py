@@ -14,6 +14,8 @@ PRESETS = {
     "opencode-go": {"name": "OpenCode Go", "base_url": "https://opencode.ai/zen/go/v1"},
     "opencode-zen": {"name": "OpenCode Zen", "base_url": "https://opencode.ai/zen/v1"},
 }
+# Catalog provider IDs; catalog ``api`` URLs may drift from the preset routes.
+CATALOG_IDS = {"opencode-go": "opencode-go", "opencode-zen": "opencode"}
 
 _METADATA_URL = "https://models.opencode.ai/api.json"
 _METADATA_TTL = 4 * 3600

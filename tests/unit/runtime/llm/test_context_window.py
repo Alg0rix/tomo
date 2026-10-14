@@ -536,3 +536,28 @@ def test_provider_model_prefixes_and_ambiguous_aliases_are_not_context_matches()
         {"id": "one/model", "context_window": 32000},
         {"id": "two/model", "context_window": 64000},
     ], "model") is None
+
+
+async def test_opencode_preset_matches_catalog_after_api_url_drift(monkeypatch):
+    import app.runtime.llm.context_window as mod
+
+    # The catalog advertises a different route than Tomo's OpenCode preset.
+    payload = {
+        "opencode-go": {"api": "https://opencode.ai/inference/go/v1", "models": {
+            "deepseek-v4.1-flash": {"limit": {"context": 1_000_000}},
+        }},
+        "opencode": {"api": "https://opencode.ai/inference/v1", "models": {
+            "deepseek-v4.1-flash": {"limit": {"context": 200_000}},
+        }},
+        "other": {"api": "https://other.test/v1", "models": {
+            "deepseek-v4.1-flash": {"limit": {"context": 64_000}},
+        }},
+    }
+    real_client = httpx2.AsyncClient
+    monkeypatch.setattr(mod.httpx2, "AsyncClient", lambda **kw: real_client(
+        transport=httpx2.MockTransport(lambda _r: httpx2.Response(200, json=payload)), **kw))
+    monkeypatch.setattr(OpenAICompatClient, "fetch_model_context_window", lambda self: _return_none())
+    profile = {"base_url": "https://opencode.ai/zen/go/v1", "model": "deepseek-v4.1-flash", "api_key": _KEY}
+    assert await resolve_context_window(profile=profile) == 1_000_000
+    zen = {**profile, "base_url": "https://opencode.ai/zen/v1"}
+    assert await resolve_context_window(profile=zen) == 200_000

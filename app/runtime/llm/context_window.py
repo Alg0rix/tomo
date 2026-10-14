@@ -160,7 +160,11 @@ def _catalog_provider(base_url: str) -> str | None:
         if (selected.scheme == route.scheme and selected.netloc == route.netloc
                 and (selected.path.rstrip("/") == path or selected.path.startswith(path + "/"))):
             matches.append((len(path), provider))
-    return max(matches)[1] if matches else None
+    if matches:
+        return max(matches)[1]
+    from app.runtime.llm.provider_catalog import CATALOG_IDS, provider_for_url
+
+    return CATALOG_IDS.get(provider_for_url(base_url))
 
 
 async def _fetch_public_catalog_context(model_id: str, *, base_url: str = "") -> int | None:
