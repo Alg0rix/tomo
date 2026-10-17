@@ -408,6 +408,8 @@ async def _run_review_llm(
                     "tool_calls": tool_calls_payload,
                 }
             )
+            if resp.reasoning_content is not None:
+                messages[-1]["reasoning_content"] = resp.reasoning_content
             for i, call in enumerate(resp.tool_calls):
                 cid = tool_calls_payload[i]["id"]
                 args = dict(call.arguments or {})

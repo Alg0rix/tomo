@@ -96,3 +96,11 @@ def test_repeated_compaction_is_bounded():
     result = maybe_compress_messages(result, context_window=4096)
     assert estimate_prompt_tokens(result) <= prompt_budget(4096)
     assert result[-1] == messages[-1]
+
+
+def test_prompt_estimate_includes_replayed_provider_reasoning():
+    from app.runtime.agent.compress import estimate_prompt_tokens
+
+    plain = {"role": "assistant", "content": "done"}
+    with_reasoning = {**plain, "reasoning_content": "r" * 4000}
+    assert estimate_prompt_tokens([with_reasoning]) >= estimate_prompt_tokens([plain]) + 1000

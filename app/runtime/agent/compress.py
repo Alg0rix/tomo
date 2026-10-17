@@ -45,6 +45,8 @@ def _msg_tokens(msg: dict[str, Any]) -> int:
                 parts.append(str(part))
     elif content is not None:
         parts.append(str(content))
+    if isinstance(msg.get("reasoning_content"), str):
+        parts.append(msg["reasoning_content"])
     if msg.get("tool_calls"):
         parts.append(str(msg["tool_calls"]))
     return _estimate_tokens("\n".join(parts)) + image_tokens + 8

@@ -766,10 +766,15 @@ class OpenAICompatClient:
                 len(content or ""),
             )
 
+        raw_reasoning = (message.get("reasoning_content") if isinstance(message, dict)
+                         else getattr(message, "reasoning_content", None))
+        raw_reasoning = raw_reasoning if isinstance(raw_reasoning, str) else None
         prompt_tok, completion_tok = parse_usage(usage)
         return LLMResponse(
             content=content,
             tool_calls=_parse_tool_calls(tool_calls or []),
+            reasoning=raw_reasoning,
+            reasoning_content=raw_reasoning,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
             **parse_usage_details(usage),
@@ -810,6 +815,7 @@ class OpenAICompatClient:
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
+        raw_reasoning_parts: list[str] = []
         tool_acc: dict[int, dict[str, str]] = {}
         next_auto_idx = 0
         seen_ids: set[str] = set()
@@ -832,6 +838,11 @@ class OpenAICompatClient:
                         continue
                     delta = chunk.choices[0].delta
                     extra = getattr(delta, "model_extra", None) or {}
+                    raw_reasoning = getattr(delta, "reasoning_content", None)
+                    if raw_reasoning is None:
+                        raw_reasoning = extra.get("reasoning_content")
+                    if isinstance(raw_reasoning, str):
+                        raw_reasoning_parts.append(raw_reasoning)
                     reasoning = (
                         getattr(delta, "reasoning_content", None)
                         or getattr(delta, "reasoning", None)
@@ -923,6 +934,7 @@ class OpenAICompatClient:
                 prompt_tokens=prompt_tok,
                 completion_tokens=completion_tok,
                 reasoning="".join(reasoning_parts) or None,
+                reasoning_content="".join(raw_reasoning_parts) if raw_reasoning_parts else None,
                 **usage_details,
             ),
         }

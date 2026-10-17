@@ -17,7 +17,9 @@ mistaking them for its own tool runs. Handoff ``[Swarm]…`` notes are
 shown to non-target agents only — the specialist being handed *to* must
 not see them (models echo them as a fake answer).
 
-``thinking`` / ``intermediate`` / ``error`` stay internal (skipped).
+``thinking`` stays internal; exact provider reasoning metadata is attached to
+its following assistant message for API replay. ``intermediate`` / ``error``
+are skipped.
 ``delegate`` is surfaced when ``for_agent_id`` is set (except for the
 handoff target).
 
@@ -959,17 +961,27 @@ def history_to_messages(
         return messages
 
     call_counter = 0
+    pending_reasoning: dict[tuple, str] = {}
     i = 0
     n = len(history)
     while i < n:
         entry = history[i]
         etype = entry.get("type")
+        reasoning_key = (entry.get("agent_id"), entry.get("delegate_call_id"))
+        if etype == "thinking":
+            params = entry.get("params")
+            raw = params.get("reasoning_content") if isinstance(params, dict) else None
+            if isinstance(raw, str):
+                pending_reasoning[reasoning_key] = raw
+            i += 1
+            continue
 
         if etype == "compact":
             # /compact marker — replace everything before it with the stored
             # summary so the next turn starts from a short context. The raw
             # entries stay in session history for the transcript UI.
             messages.clear()
+            pending_reasoning.clear()
             summary = (entry.get("content") or "").strip()
             if summary:
                 messages.append(
@@ -987,6 +999,7 @@ def history_to_messages(
             continue
 
         if etype == "user":
+            pending_reasoning.clear()
             # Attachment expansion is fail-safe per file: owned text inlines
             # through session-scoped reads, while office/vision parts without
             # an execution boundary degrade to notes instead of breaking the
@@ -1029,7 +1042,10 @@ def history_to_messages(
         if etype == "final":
             content = entry.get("content") or ""
             if _is_self_entry(entry, for_agent_id):
-                messages.append({"role": "assistant", "content": content})
+                message = {"role": "assistant", "content": content}
+                if reasoning_key in pending_reasoning:
+                    message["reasoning_content"] = pending_reasoning.pop(reasoning_key)
+                messages.append(message)
             else:
                 label = _history_agent_label(entry.get("agent_id"))
                 aid = (entry.get("agent_id") or "").strip()
@@ -1109,6 +1125,8 @@ def history_to_messages(
                 messages.append(
                     {"role": "assistant", "content": None, "tool_calls": calls}
                 )
+                if reasoning_key in pending_reasoning:
+                    messages[-1]["reasoning_content"] = pending_reasoning.pop(reasoning_key)
                 out_idx = 0
                 for e in out_entries:
                     if out_idx < len(calls):

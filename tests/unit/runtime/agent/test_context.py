@@ -526,3 +526,31 @@ def test_surplus_tool_outputs_are_dropped_not_reused(tmp_path: Path) -> None:
     # One assistant call, one paired tool result; the stray output is dropped.
     assert [m["role"] for m in msgs] == ["assistant", "tool"]
     assert msgs[1] == {"role": "tool", "tool_call_id": "hist_call_0", "content": "4"}
+
+
+def test_provider_reasoning_survives_history_persistence(tmp_path):
+    from app.channels.sse_map import map_loop_event
+
+    events = [
+        {"kind": "thinking", "content": "original", "reasoning_content": "  original\n"},
+        {"kind": "tool", "tool": "list_workplaces", "args": {}, "call_id": "call_1"},
+        {"kind": "tool_result", "tool": "list_workplaces", "result": "locations", "error": False, "call_id": "call_1"},
+        {"kind": "thinking", "content": "done reasoning", "reasoning_content": "done reasoning"},
+        {"kind": "final", "content": "done"},
+    ]
+    entries = []
+    for event in events:
+        _, mapped, _ = map_loop_event(event, "main", "Main", 0, "turn_1")
+        entries.extend(mapped)
+    history = _hist(tmp_path, *entries)
+    messages = history_to_messages(history, for_agent_id="main")
+    assert messages[0].get("reasoning_content") == "  original\n"
+    assert messages[-1].get("reasoning_content") == "done reasoning"
+
+
+def test_display_thinking_is_not_replayed_as_provider_reasoning():
+    messages = history_to_messages([
+        {"type": "thinking", "content": "display summary", "agent_id": "main"},
+        {"type": "final", "content": "done", "agent_id": "main"},
+    ], for_agent_id="main")
+    assert "reasoning_content" not in messages[0]

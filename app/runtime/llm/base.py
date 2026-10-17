@@ -37,8 +37,10 @@ class LLMResponse:
 
     ``reasoning`` is a human-readable reasoning summary when the backend
     exposes one (e.g. Codex/Responses-API ``reasoning.summary``); ``None``
-    for backends that don't surface reasoning text (chat/completions has no
-    such field). The agent loop shows it as a "thinking" bubble.
+    for backends that don't surface reasoning text. The agent loop shows it
+    as a "thinking" bubble. ``reasoning_content`` separately preserves the
+    exact Chat Completions field required by thinking-mode tool providers;
+    display summaries must never be substituted for that wire value.
     """
 
     content: str | None
@@ -48,6 +50,8 @@ class LLMResponse:
     reasoning: str | None = None
     cached_tokens: int | None = None
     reasoning_tokens: int | None = None
+    # Exact Chat Completions wire field; distinct from display-only summaries.
+    reasoning_content: str | None = None
 
     @property
     def has_tool_calls(self) -> bool:

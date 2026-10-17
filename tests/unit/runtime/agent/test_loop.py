@@ -1321,3 +1321,15 @@ async def test_unknown_context_learns_limit_from_overflow_and_retries():
     assert llm.context_window == 8192
     assert len(llm.prompts) == 2
     assert estimate_prompt_tokens(llm.prompts[1]) <= prompt_budget(8192)
+
+
+async def test_retained_conversation_preserves_final_provider_reasoning():
+    llm = ScriptedLLM([LLMResponse(content="done", reasoning="display summary",
+                                   reasoning_content="  exact reasoning\n")])
+    sid = owned_host_session()
+    conversation = []
+    events = [ev async for ev in run_turn("hi", llm=llm, tools=[], enable_atg=False,
+                                         session_id=sid, agent_id="main", conversation=conversation)]
+    assert events[-1]["kind"] == "final"
+    assert conversation[-1]["reasoning_content"] == "  exact reasoning\n"
+    assert conversation[-1]["content"] == "done"

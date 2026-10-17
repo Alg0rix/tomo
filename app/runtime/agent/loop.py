@@ -700,13 +700,19 @@ def _with_ids(
     return out
 
 
+def _assistant_response_message(resp: LLMResponse) -> dict[str, Any]:
+    message = {"role": "assistant", "content": resp.content}
+    if resp.reasoning_content is not None:
+        message["reasoning_content"] = resp.reasoning_content
+    return message
+
+
 def _assistant_tool_calls_message(
     resp: LLMResponse, paired: list[tuple[str, ToolCall]]
 ) -> dict[str, Any]:
     """Build the OpenAI assistant message carrying this round's tool calls."""
     return {
-        "role": "assistant",
-        "content": resp.content,
+        **_assistant_response_message(resp),
         "tool_calls": [
             {
                 "id": cid,
@@ -1263,11 +1269,13 @@ async def _run_turn_owned(
 
             _record_response_usage(metrics, messages, resp)
 
-            if resp.reasoning:
+            if resp.reasoning or resp.reasoning_content is not None:
                 # Provider-native reasoning summary (e.g. Codex/Responses
                 # API reasoning.summary) — takes precedence over the
                 # pre-tool-call-commentary heuristic below when present.
-                thinking = {"kind": "thinking", "content": resp.reasoning}
+                thinking = {"kind": "thinking", "content": resp.reasoning or ""}
+                if resp.reasoning_content is not None:
+                    thinking["reasoning_content"] = resp.reasoning_content
                 if reasoning_streamed:
                     thinking["replace_streamed"] = True
                 yield thinking
@@ -1283,7 +1291,7 @@ async def _run_turn_owned(
                     final_content = resp.content or ""
                     if final_content:
                         messages.append(
-                            {"role": "assistant", "content": final_content}
+                            _assistant_response_message(resp)
                         )
                         yield {
                             "kind": "final",
@@ -1304,7 +1312,7 @@ async def _run_turn_owned(
                 metrics.log_summary()
                 final_content = resp.content or ""
                 if conversation is not None:
-                    messages.append({"role": "assistant", "content": final_content})
+                    messages.append(_assistant_response_message(resp))
                 from app.runtime.memory.vault.write import record_turn
 
                 if conversation is None:

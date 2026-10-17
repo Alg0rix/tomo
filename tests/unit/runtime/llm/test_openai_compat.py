@@ -835,3 +835,64 @@ async def test_fetch_model_context_window_slash_suffix_match() -> None:
         assert ctx == 8192
     finally:
         await client.aclose()
+
+
+async def test_reasoning_content_is_replayed_after_tool_call():
+    from app.runtime.agent.loop import run_turn
+    from tests.fakes.access import owned_host_session
+
+    requests = []
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            chunks = [
+                {"choices": [{"delta": {"reasoning_content": "  inspect "}}]},
+                {"choices": [{"delta": {"reasoning_content": "locations\n", "tool_calls": [
+                    {"index": 0, "id": "call_locations", "type": "function", "function": {
+                        "name": "list_workplaces", "arguments": "{}"}}
+                ]}}]},
+            ]
+            body = ''.join(f'data: {json.dumps(chunk)}\n\n' for chunk in chunks) + 'data: [DONE]\n\n'
+            return httpx2.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+        assistant = next(m for m in payload["messages"] if m.get("tool_calls"))
+        assert assistant.get("reasoning_content") == "  inspect locations\n"
+        return _completion_response(request, _completion_body(content="done"))
+
+    sid = owned_host_session()
+    client = _client(httpx2.MockTransport(handler))
+    try:
+        events = [ev async for ev in run_turn("list locations", llm=client, enable_atg=False,
+                                             agent_id="main", session_id=sid)]
+        assert events[-1]["kind"] == "final", events[-1]
+        assert len(requests) == 2
+    finally:
+        await client.aclose()
+
+
+async def test_nonstream_response_preserves_exact_reasoning_content():
+    body = _completion_body(content="done")
+    body["choices"][0]["message"]["reasoning_content"] = "  original reasoning\n"
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(200, json=body)))
+    try:
+        response = await client.complete([{"role": "user", "content": "hi"}])
+        assert getattr(response, "reasoning_content", None) == "  original reasoning\n"
+        assert response.reasoning == "  original reasoning\n"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("field,value,expected", [
+    ("reasoning_content", "", ""),
+    ("reasoning", "display-only summary", None),
+])
+async def test_stream_keeps_wire_reasoning_separate_from_display(field, value, expected):
+    chunk = {"choices": [{"delta": {field: value, "content": "done"}}]}
+    body = f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode()
+    client = _client(httpx2.MockTransport(lambda request: httpx2.Response(
+        200, content=body, headers={"content-type": "text/event-stream"})))
+    try:
+        events = [event async for event in client.stream_complete([{"role": "user", "content": "hi"}])]
+        assert events[-1]["response"].reasoning_content == expected
+    finally:
+        await client.aclose()

@@ -419,3 +419,29 @@ def test_review_unavailable_profile_keeps_fallback():
     store.update_settings({'learning_review_profile_id': 'missing'})
     fallback = ScriptedLLM([text_reply('fallback')])
     assert _resolve_review_client(fallback) == (fallback, False)
+
+
+async def test_learning_review_replays_provider_reasoning(_admin_scope):
+    class ReasoningLLM:
+        calls = 0
+
+        async def complete(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(content=None, reasoning_content="  review skills\n", tool_calls=[
+                    ToolCall(id="review_list", name="list_skills", arguments={})])
+            assistant = next(m for m in reversed(messages) if m.get("tool_calls"))
+            assert assistant.get("reasoning_content") == "  review skills\n"
+            return LLMResponse(content="Nothing to save.")
+
+    llm = ReasoningLLM()
+    observe_turn(agent_id="reasoning-review", tool_calls=0, ended_kind="final")
+    plan = observe_turn(agent_id="reasoning-review", tool_calls=0, ended_kind="final")
+    result = await run_learning_review(
+        client=llm, messages=[{"role": "user", "content": "hi"}],
+        metrics=TurnMetrics(agent_id="reasoning-review", session_id=_admin_scope,
+                            ended_kind="final", tool_calls=0),
+        user_message="hi", final_content="hello", plan=plan)
+    assert result is not None
+    assert llm.calls == 2
+    assert result.get("note") == "Nothing to save."

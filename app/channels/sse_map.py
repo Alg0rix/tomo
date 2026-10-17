@@ -229,6 +229,8 @@ def map_loop_event(
                 ev,
             )
         )
+        if isinstance(ev.get("reasoning_content"), str):
+            entries[-1]["params"] = {"reasoning_content": ev["reasoning_content"]}
     elif kind == "delta":
         seq += 1
         chunks.append(
