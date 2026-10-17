@@ -289,12 +289,6 @@ async def _drain_agent_turn(
         history = store.get_session_history(session_id)
 
     from app.runtime.tools import start_swarm
-    from app.runtime.tools.registry import get_openai_tools
-
-    chat_tools = [schema for schema in store.get_agent_openai_tools(agent_id)
-                  if schema.get("function", {}).get("name") != "start_swarm"]
-    if origin is None:
-        chat_tools += get_openai_tools(["start_swarm"])
 
     async def chat_events():
         current_request = user_message or _last_user_content(history)
@@ -307,7 +301,7 @@ async def _drain_agent_turn(
                 import json
                 message += "\nPrevious proposed plan: " + json.dumps(swarm_plan, ensure_ascii=False)
         source = _agent_run_turn(message, history=history, agent_id=agent_id,
-                                 session_id=session_id, origin=origin, tools=chat_tools)
+                                 session_id=session_id, origin=origin)
         try:
             async for event in source:
                 yield event

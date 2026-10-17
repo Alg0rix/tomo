@@ -103,15 +103,70 @@ async def test_search_loads_schema_next_round_and_retains_it_on_followup():
 
 
 async def test_explicit_tool_set_is_not_pruned_or_widened():
+    import json
+    from app.runtime.tools import registry
+
     class ExactLLM(ScriptedLLM):
+        def __init__(self, responses, expected):
+            super().__init__(responses)
+            self.expected = expected
+
         async def complete(self, messages, tools=None):
-            assert {t["function"]["name"] for t in tools} == {"list_artifacts"}
+            assert {t["function"]["name"] for t in tools} == self.expected
             return await super().complete(messages, tools)
 
     schemas = [{"type": "function", "function": {"name": "list_artifacts"}}]
-    events = await _collect("List", llm=ExactLLM([text_reply("Done")]), agent_id="main",
-                            tools=schemas, system_prompt="Instructions")
+    events = await _collect("List", llm=ExactLLM([text_reply("Done")], {"list_artifacts"}),
+                            agent_id="main", tools=schemas, system_prompt="Instructions")
     assert _final(events)["content"] == "Done"
+
+    # When an explicit tool set includes search_tools (e.g. a worker catalog),
+    # all explicit schemas stay loaded and search_tools still binds discovery.
+    sid = owned_host_session(["main"])
+    explicit_with_search = registry.get_openai_tools(["list_artifacts", "search_tools"])
+    worker_llm = ExactLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="discover", name="search_tools", arguments={"query": "list_artifacts", "limit": 1},
+        )]),
+        text_reply("Searched."),
+    ], {"list_artifacts", "search_tools"})
+    events = await _collect("Search", llm=worker_llm, agent_id="main", session_id=sid,
+                            tools=explicit_with_search, system_prompt="Instructions")
+    result = next(e for e in events if e.get("kind") == "tool_result" and e.get("tool") == "search_tools")
+    assert not result["error"]
+    assert json.loads(result["result"])["loaded_tools"] == ["list_artifacts"]
+
+
+async def test_web_channel_turn_binds_tool_discovery(monkeypatch):
+    import json
+    from app.channels.web import stream_turn_sse
+
+    class WebDiscoveryLLM(ScriptedLLM):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.schemas = []
+
+        async def complete(self, messages, tools=None):
+            self.schemas.append({t["function"]["name"] for t in tools or []})
+            return await super().complete(messages, tools)
+
+    sid = owned_host_session(["main"])
+    llm = WebDiscoveryLLM([
+        LLMResponse(content=None, tool_calls=[ToolCall(
+            id="discover", name="search_tools", arguments={"query": "list_artifacts", "limit": 1},
+        )]),
+        text_reply("Discovered."),
+    ])
+    monkeypatch.setattr("app.runtime.agent.loop.get_llm", lambda *args, **kwargs: llm)
+    chunks = [c async for c in stream_turn_sse(sid, "main", "Check tools", 0)]
+    assert any("event: done\n" in c for c in chunks)
+    assert "search_tools" in llm.schemas[0]
+    assert "start_swarm" in llm.schemas[0]
+    assert "list_artifacts" not in llm.schemas[0]
+    assert "list_artifacts" in llm.schemas[1]
+    outputs = [e for e in store.get_session_history(sid) if e.get("type") == "tool_output"]
+    assert len(outputs) == 1 and not outputs[0].get("error")
+    assert json.loads(outputs[0]["content"])["loaded_tools"] == ["list_artifacts"]
 
 
 async def test_disabling_discovery_restores_eager_schemas():

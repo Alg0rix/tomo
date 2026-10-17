@@ -1023,15 +1023,14 @@ async def _run_turn_owned(
             tool_schemas = filter_schemas(execution, tool_schemas)
             from app.channels.telegram_context import current_turn as telegram_turn
 
-            excluded_tool = (
-                "render_ui"
-                if session_id and telegram_turn(session_id) is not None
-                else "telegram_send_file"
-            )
+            is_telegram = bool(session_id and telegram_turn(session_id) is not None)
+            excluded_tools = {"render_ui" if is_telegram else "telegram_send_file"}
+            if origin is not None or current_depth() > 0:
+                excluded_tools.add("start_swarm")
             tool_schemas = [
                 schema
                 for schema in tool_schemas
-                if schema.get("function", {}).get("name") != excluded_tool
+                if schema.get("function", {}).get("name") not in excluded_tools
             ]
             from app.runtime.llm.context_window import resolve_context_window
             from app.services import store
@@ -1047,13 +1046,19 @@ async def _run_turn_owned(
                 pass
             # Explicit worker/caller tool sets remain exact. Normal turns keep
             # their enabled catalog discoverable without sending every schema.
-            if tools is None and any(
+            if any(
                 s.get("function", {}).get("name") == "search_tools" for s in tool_schemas
             ):
                 discovery = discovery_mod.ToolDiscovery(
                     tool_schemas, context_window=context_window,
                     target_percent=store.get_settings()["tool_schema_target_percent"],
                 )
+                if tools is not None:
+                    discovery.loaded = set(discovery.catalog)
+                elif is_telegram:
+                    for name in ("save_artifact", "telegram_send_file"):
+                        if name in discovery.catalog:
+                            discovery._load(name)
                 discovery_mod.bind(discovery)
                 tool_schemas = discovery.schemas()
             limit = (
@@ -1073,7 +1078,7 @@ async def _run_turn_owned(
                     agent_id, session_id=session_id, include_live_context=False
                 )
                 live_context = build_live_context(agent_id, session_id=session_id)
-            if discovery is not None:
+            if discovery is not None and tools is None:
                 prompt += discovery_mod.GUIDANCE
             if any(s.get("function", {}).get("name") == "delegate" for s in tool_schemas):
                 prompt += (
