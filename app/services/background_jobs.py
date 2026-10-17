@@ -199,9 +199,11 @@ class BackgroundJobManager:
     def start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
         from app.runtime.policy import authorize_tool
         context = authorize_tool('bash', {'workplace': workplace_hint})
-        with store.access.execution_guard(context):
+        from app.runtime.access import execution_scope
+        with store.access.execution_guard(context), execution_scope(context):
+            store.access.record_execution_destination(context)
             with self._lock:
-                return self._start(command, workplace_hint)
+                return self._start(command, context.active_workplace_id if workplace_hint else None)
 
     def _start(self, command: str, workplace_hint: str | None = None) -> dict[str, Any]:
         from app.runtime.tools.progress import current_call_id

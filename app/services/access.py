@@ -485,16 +485,28 @@ class AccessService:
         active = session["workplace_id"]
         if not active:
             raise AccessDenied("Select an authorized working location")
+        admin_routing = user["role"] == "admin" and mode == "unrestricted"
+        if admin_routing and parent:
+            active = parent.active_workplace_id
+            if aid != parent.agent_id and agent.get("workplace_id"):
+                active = agent["workplace_id"]
         destination = active
         if mode == "unrestricted":
             self.require_use(user_id, "unrestricted", active)
         resources = []
         destination_machine = None
-        for wid in dict.fromkeys([active, *session["additional_workplace_ids"]]):
+        enabled_ids = [active, session["workplace_id"], *session["additional_workplace_ids"]]
+        if admin_routing:
+            # The picker supplies a default; current grants authorize routing.
+            enabled_ids.extend(w["id"] for w in self.list_visible_workplaces(user_id)
+                               if self.can_use(user_id, "unrestricted", w["id"]))
+        for wid in dict.fromkeys(enabled_ids):
             if not wid:
                 continue
             permission = self.workplace_permission(user_id, wid)
             wp = self.store.get_workplace(wid)
+            if admin_routing and wid != active and wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
+                continue
             if wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
                 raise AccessUnavailable("Execution destination is offline")
             if not self._agent_allows(agent, wp):
@@ -528,7 +540,7 @@ class AccessService:
         if parent:
             if parent.user_id != user_id or parent.session_id != session_id or parent.access_generation != context.access_generation:
                 raise AccessDenied("Execution ceiling is no longer valid")
-            if context.execution_mode != parent.execution_mode or context.destination_id != parent.destination_id:
+            if context.execution_mode != parent.execution_mode or (context.destination_id != parent.destination_id and not admin_routing):
                 raise AccessDenied("Delegation cannot change execution destination or mode")
             ceiling = {r.workplace_id: r for r in parent.resources}
             narrowed = []
@@ -541,6 +553,39 @@ class AccessService:
                 raise AccessDenied("Active working location is outside the execution ceiling")
             context = replace(context, resources=tuple(narrowed), tool_ids=context.tool_ids & parent.tool_ids)
         return context
+
+    def route_context(self, context: ExecutionContext, hint: str) -> ExecutionContext:
+        """Resolve a per-action destination without changing the chat default."""
+        from app.runtime.tools.workplace_ctx import match_workplace
+
+        current = self.revalidate(context)
+        enabled = {r.workplace_id for r in current.resources}
+        selected = match_workplace(
+            [w for w in self.list_visible_workplaces(current.user_id) if w["id"] in enabled], str(hint))
+        if not selected:
+            raise AccessDenied("Requested working location is unavailable")
+        wid = selected["id"]
+        if wid == current.destination_id:
+            return current
+        if current.role != "admin" or current.execution_mode != "unrestricted":
+            raise AccessDenied("Workplace override is outside the selected execution destination")
+        self.require_use(current.user_id, "unrestricted", wid)
+        return self.revalidate(replace(current, active_workplace_id=wid, destination_id=wid))
+
+    @_serialized
+    def record_execution_destination(self, context: ExecutionContext) -> None:
+        """Keep routed destinations in the existing durable teardown inventory."""
+        current = self.revalidate(context)
+        session = self.require_session(current.user_id, current.session_id)
+        wid = current.destination_id
+        if wid == session["workplace_id"] or wid in session["additional_workplace_ids"]:
+            return
+        additional = [*session["additional_workplace_ids"], wid]
+        def update(c):
+            c.execute("UPDATE sessions SET additional_workplace_ids_json=? WHERE id=? AND user_id=?",
+                      (json.dumps(additional), current.session_id, current.user_id))
+            c.commit()
+        self.store.with_db(update)
 
     def _explicit_member_external_scope(self, agent_id: str, tools: frozenset) -> frozenset:
         """Keep Member external tools only with explicit per-agent assignment.

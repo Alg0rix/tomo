@@ -211,3 +211,186 @@ def test_ssh_routes_to_ssh_exec_with_grant_and_ack(tmp_path: Path) -> None:
     assert seen["method"] == "exec_bash"
     # Quota duration caps the SSH timeout (default test quota: 300s).
     assert seen["timeout"] and seen["timeout"] <= 300
+
+
+@pytest.mark.parametrize("via_registry", [False, True])
+def test_admin_personal_chat_routes_to_tunnel_without_switch(tmp_path, via_registry):
+    from app.runtime.access import current_execution
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        original = store.get_session(sid)["workplace_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(context):
+            if via_registry:
+                out = get_registry().execute("bash", {"command": "echo routed-ok", "workplace": "ops-host"})
+            else:
+                out = try_remote("exec_bash", {"script": "echo routed-ok"}, workplace_hint="ops-host")
+            assert "routed-ok" in out
+            assert current_execution() == context
+        session = store.get_session(sid)
+        assert session["workplace_id"] == original
+        assert "wp_ops" in session["additional_workplace_ids"]
+        # Stop/revoke must include a destination used without a UI switch.
+        from app.workplaces.remote_contract import stop_session
+        stop_session(sid)
+        assert not dest._admitted
+    finally:
+        dest.unregister()
+
+
+def test_admin_delegation_uses_agent_workplace_from_personal_chat(tmp_path):
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    try:
+        store.update_agent("ops", {"workplace_id": "wp_ops", "workplace_scope": "single"})
+        sid = store.create_home_session("usr_admin")["session_id"]
+        parent = store.access.resolve_context("usr_admin", sid)
+        child = store.access.resolve_context("usr_admin", sid, "ops", parent=parent)
+        assert child.active_workplace_id == "wp_ops"
+        with execution_scope(child):
+            assert "delegated-ok" in try_remote("exec_bash", {"script": "echo delegated-ok"})
+        assert store.get_session(sid)["workplace_id"] == parent.active_workplace_id
+    finally:
+        dest.unregister()
+
+
+def test_admin_routing_rechecks_revoked_destination(tmp_path):
+    from app.runtime.access import AccessDenied
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        store.access.revoke("usr_admin", "usr_admin", "unrestricted", "wp_ops")
+        with execution_scope(context), pytest.raises(AccessDenied):
+            try_remote("exec_bash", {"script": "echo forbidden"}, workplace_hint="ops-host")
+        assert not dest._admitted
+    finally:
+        dest.unregister()
+
+
+def test_admin_personal_chat_routes_to_local_workplace(tmp_path):
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    target = tmp_path / "local-target"
+    target.mkdir()
+    store.create_workplace({"id": "wp_local", "name": "local-target", "kind": "local", "root_path": str(target)})
+    sid = store.create_home_session("usr_admin")["session_id"]
+    original = store.get_session(sid)["workplace_id"]
+    with execution_scope(store.access.resolve_context("usr_admin", sid)):
+        out = get_registry().execute("bash", {"command": "pwd", "workplace": "local-target"})
+    assert out.strip() == str(target)
+    assert store.get_session(sid)["workplace_id"] == original
+
+
+def test_admin_personal_chat_routes_to_ssh_workplace(tmp_path):
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    store.create_workplace({"id": "wp_ssh", "name": "ssh-target", "kind": "ssh",
+                            "ssh_host": "h", "ssh_user": "u", "ssh_password": "p"})
+    store.with_db(lambda c: (c.execute("UPDATE workplaces SET status='connected' WHERE id='wp_ssh'"), c.commit()))
+    sid = store.create_home_session("usr_admin")["session_id"]
+    original = store.get_session(sid)["workplace_id"]
+    with execution_scope(store.access.resolve_context("usr_admin", sid)):
+        with patch("app.workplaces.ssh_exec.call", return_value={"ok": True, "result": {"stdout": "ssh-routed"}}) as call:
+            out = get_registry().execute("bash", {"command": "hostname", "workplace": "ssh-target"})
+        assert "ssh-routed" in out
+        assert call.call_args.args[0]["id"] == "wp_ssh"
+    assert store.get_session(sid)["workplace_id"] == original
+
+
+def test_delegated_workplace_overrides_inherited_chat_default(tmp_path):
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    try:
+        store.update_agent("ops", {"workplace_id": "wp_ops"})
+        sid = store.create_home_session("usr_admin")["session_id"]
+        parent = store.access.resolve_context("usr_admin", sid)
+        child = store.access.resolve_context("usr_admin", sid, "ops", parent=parent)
+        tokens = bind_workplace(workplace_id=parent.active_workplace_id)
+        try:
+            with execution_scope(child):
+                out = try_remote("exec_bash", {"script": "echo agent-target"})
+            assert out is not None and "agent-target" in out
+        finally:
+            reset_workplace(tokens)
+    finally:
+        dest.unregister()
+
+
+def test_background_job_keeps_routed_destination(tmp_path):
+    from app.services.background_jobs import BackgroundJobManager
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    manager = BackgroundJobManager()
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        original = store.get_session(sid)["workplace_id"]
+        with execution_scope(store.access.resolve_context("usr_admin", sid)):
+            job = manager.start("echo bg-routed", workplace_hint="ops-host")
+        assert job["workplace_id"] == "wp_ops"
+        assert job["execution_context"]["destination_id"] == "wp_ops"
+        assert store.get_session(sid)["workplace_id"] == original
+    finally:
+        manager.stop_session(sid)
+        dest.unregister()
+
+
+@pytest.mark.parametrize("role", ["admin", "member"])
+def test_restricted_chat_does_not_gain_implicit_workplace_access(tmp_path, role):
+    from app.runtime.access import AccessDenied
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_ops", "ops-host")
+    try:
+        uid = "usr_admin"
+        if role == "member":
+            uid = store.create_user({"username": "member_route", "password": "password123"})["id"]
+            profile = store.create_llm_profile({"name": "Member", "model": "m"})
+            store.access.assign("usr_admin", uid, "model", profile["id"])
+            store.access.assign("usr_admin", uid, "workplace", "wp_ops", permission="read_write")
+        sid = store.create_home_session(uid)["session_id"]
+        active = store.get_session(sid)["workplace_id"]
+        store.access.set_chat_access(uid, sid, active, execution_mode="restricted")
+        with execution_scope(store.access.resolve_context(uid, sid)), pytest.raises(AccessDenied):
+            try_remote("exec_bash", {"script": "echo denied"}, workplace_hint="ops-host")
+        assert not dest._admitted
+    finally:
+        dest.unregister()
+
+
+def test_admin_routing_respects_specialist_workplace_scope(tmp_path):
+    from app.runtime.access import AccessDenied
+
+    _rebind(tmp_path)
+    allowed = _online_tunnel(tmp_path, "wp_allowed", "allowed-host")
+    other = _online_tunnel(tmp_path, "wp_other", "other-host")
+    try:
+        store.update_agent("ops", {"workplace_id": "wp_allowed", "workplace_scope": "single"})
+        sid = store.create_home_session("usr_admin")["session_id"]
+        parent = store.access.resolve_context("usr_admin", sid)
+        child = store.access.resolve_context("usr_admin", sid, "ops", parent=parent)
+        with execution_scope(child), pytest.raises(AccessDenied):
+            try_remote("exec_bash", {"script": "echo denied"}, workplace_hint="other-host")
+        assert not other._admitted
+    finally:
+        allowed.unregister()
+        other.unregister()
+
+
+def test_unused_offline_workplace_does_not_break_admin_personal_chat(tmp_path):
+    _rebind(tmp_path)
+    store.create_workplace({"id": "wp_offline", "name": "offline", "kind": "tunnel"})
+    sid = store.create_home_session("usr_admin")["session_id"]
+    context = store.access.resolve_context("usr_admin", sid)
+    assert context.active_workplace_id == store.get_session(sid)["workplace_id"]

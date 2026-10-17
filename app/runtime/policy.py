@@ -205,15 +205,7 @@ def _authorize_tool(name: str, arguments: dict | None = None):
         store.access.resolve_context(context.user_id, context.session_id, args["agent_id"], parent=context)
     hint = args.get("workplace") or (args.get("workplace_id") if name not in ADMIN_TOOLS else None)
     if hint:
-        from app.runtime.tools.workplace_ctx import match_workplace
-        enabled = {r.workplace_id for r in context.resources}
-        candidates = [w for w in store.access.list_visible_workplaces(context.user_id) if w['id'] in enabled]
-        selected = match_workplace(candidates, str(hint))
-        if not selected:
-            raise AccessDenied("Requested working location is unavailable")
-        store.access.authorize_resource(context, selected['id'])
-        if context.execution_mode == 'unrestricted' and selected['id'] != context.destination_id:
-            raise AccessDenied("Unrestricted execution is not activated for this destination")
+        context = store.access.route_context(context, str(hint))
     if name == "agent_info" and context.role != "admin":
         # The legacy inspector includes shared agent state and host credential
         # metadata. Its account-safe replacement is the live authorized roster.

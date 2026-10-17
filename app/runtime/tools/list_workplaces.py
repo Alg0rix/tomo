@@ -117,10 +117,17 @@ def run(arguments: dict[str, Any] | None = None) -> str:
     for w in wps:
         lines.append("- " + _line(w))
     lines.append("")
-    lines.append(
-        "Only enabled chat resources can be used. Ask the user to enable an existing grant; "
-        "tools and approvals cannot activate additional resources."
-    )
+    if execution.role == "admin" and execution.execution_mode == "unrestricted":
+        lines.append(
+            "Use workplace=<id|name> for an enabled local, SSH or tunnel workplace; "
+            "no chat location switch is needed. Delegated agents use their configured workplace. "
+            "Current destination grants and agent scope still apply."
+        )
+    else:
+        lines.append(
+            "Only enabled chat resources can be used. Ask the user to enable an existing grant; "
+            "tools and approvals cannot activate additional resources."
+        )
     return "\n".join(lines)
 
 

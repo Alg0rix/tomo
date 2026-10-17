@@ -163,7 +163,7 @@ def test_main_without_project_can_reference_other_folder(tmp_path):
         assert outside.read_text() == "reference"
 
 
-def test_main_selected_project_requires_grant_for_other_folder(tmp_path):
+def test_restricted_chat_requires_activation_for_other_folder(tmp_path):
     from app.runtime.permissions.assess import assess
 
     root = tmp_path / "project"
@@ -174,12 +174,12 @@ def test_main_selected_project_requires_grant_for_other_folder(tmp_path):
     # Pure approval assessment (no bound execution) still flags the escape.
     assert any(f.kind == "escape" for f in
                assess("read_file", {"path": str(outside)}, root).findings)
-    # The enforced boundary is now chat activation + grants, not cwd jail:
-    # an owned Admin chat without the other folder enabled cannot authorize it.
-    with owned_admin_scope(["main"]) as (ctx, _root):
-        try:
-            store.access.authorize_resource(ctx, "project")
-        except AccessDenied:
-            pass
-        else:
-            raise AssertionError("un-enabled workplace must not authorize")
+    # Restricted chats retain explicit resource activation even for Admins.
+    from tests.fakes.access import ensure_stoppers
+    ensure_stoppers()
+    sid = store.create_home_session("usr_admin")["session_id"]
+    active = store.get_session(sid)["workplace_id"]
+    store.access.set_chat_access("usr_admin", sid, active, execution_mode="restricted")
+    context = store.access.resolve_context("usr_admin", sid)
+    with pytest.raises(AccessDenied):
+        store.access.authorize_resource(context, "project")

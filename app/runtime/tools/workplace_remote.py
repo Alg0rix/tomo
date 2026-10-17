@@ -70,6 +70,11 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
             raise AccessDenied("Requested working location is unavailable")
         chosen = hit["id"]
     elif override:
+        # Web ingress binds the chat default. A routed/delegated execution
+        # context has a more specific destination for this action.
+        session_default = store.get_session(context.session_id)["workplace_id"]
+        if override == session_default and context.active_workplace_id != session_default:
+            override = context.active_workplace_id
         if override not in resource_ids:
             raise AccessDenied("Requested working location is unavailable")
         chosen = override
@@ -77,8 +82,7 @@ def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | Non
         chosen = context.active_workplace_id
     if chosen:
         store.access.authorize_resource(context, chosen)
-        if context.execution_mode == "unrestricted" and chosen != context.destination_id:
-            raise AccessDenied("Unrestricted execution is not activated for this destination")
+        context = store.access.route_context(context, chosen)
         wp = store.get_workplace(chosen)
         if not wp:
             raise AccessUnavailable("Execution destination is unavailable")
@@ -257,6 +261,8 @@ def _authorize_remote(wp: dict[str, Any], *, transfer_io: bool = False):
     context = store.access.revalidate(current_execution())
     wid = str(wp.get("id") or "")
     resource = store.access.authorize_resource(context, wid)
+    if context.role == "admin" and context.execution_mode == "unrestricted" and not transfer_io:
+        context = store.access.route_context(context, wid)
     if wid == context.destination_id:
         pass
     elif transfer_io and resource.transfer_only:
@@ -271,6 +277,7 @@ def _authorize_remote(wp: dict[str, Any], *, transfer_io: bool = False):
         if not (transfer_io and resource.transfer_only):
             raise AccessDenied("Unrestricted execution is not activated for this destination")
     _require_remote_capability(wp, context.execution_mode)
+    store.access.record_execution_destination(context)
     return context
 
 

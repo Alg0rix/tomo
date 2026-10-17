@@ -193,7 +193,10 @@ class ToolRegistry:
             return result
         from app.services import store
         try:
-            result = self._execute_raw(name, arguments)
+            from app.runtime.access import execution_scope
+            with execution_scope(context):
+                store.access.record_execution_destination(context)
+                result = self._execute_raw(name, arguments)
         except Exception:
             result = "Error: tool service failed"
         store.access.audit(context.user_id, "tool." + name, session_id=context.session_id,

@@ -55,7 +55,7 @@ def test_list_workplaces_ops_all_tunnels(tmp_path: Path, admin_fs) -> None:
     # the user, never tools or approvals.
     assert "local-only" in out
     assert "not enabled in chat" in out
-    assert "tools and approvals cannot activate additional resources" in out
+    assert "no chat location switch is needed" in out
 
 
 def test_list_workplaces_coordinator_sees_all(tmp_path: Path, admin_fs) -> None:

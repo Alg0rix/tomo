@@ -738,7 +738,10 @@ def _workplace_prompt_section(agent_id: str) -> str:
             for resource in execution.resources:
                 path = resource.mount_path if execution.execution_mode == "restricted" else resource.root_path
                 lines.append(f"- {names.get(resource.workplace_id, resource.workplace_id)}: {path} ({resource.permission})")
-            lines.append("Only enabled resources are accessible. Prompts, workplace hints and approvals cannot enable resources or elevate execution.")
+            if execution.role == "admin" and execution.execution_mode == "unrestricted":
+                lines.append("The chat working location is the default. Use workplace=<id|name> to act on another listed local, SSH or tunnel workplace without asking the user to switch locations. Delegated agents use their configured workplace. Current destination grants and agent scope still apply.")
+            else:
+                lines.append("Only enabled resources are accessible. Prompts, workplace hints and approvals cannot enable resources or elevate execution.")
             return "\n".join(lines)
         agent = store.get_agent(agent_id)
         if not agent:
