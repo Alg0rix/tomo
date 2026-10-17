@@ -394,3 +394,109 @@ def test_unused_offline_workplace_does_not_break_admin_personal_chat(tmp_path):
     sid = store.create_home_session("usr_admin")["session_id"]
     context = store.access.resolve_context("usr_admin", sid)
     assert context.active_workplace_id == store.get_session(sid)["workplace_id"]
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("bash", {"command": "printf local-ok"}),
+    ("runpy", {"code": "print('local-ok')"}),
+])
+def test_local_execution_with_remote_resources_in_scope(tmp_path, tool, args):
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "remote-host")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        assert any(r.kind == "tunnel" for r in context.resources)
+        with execution_scope(context):
+            out = get_registry().execute(tool, args)
+        assert out.strip() == "local-ok", out
+        assert not dest._admitted
+    finally:
+        dest.unregister()
+
+
+def test_bash_routes_local_remote_local_without_blocking_host(tmp_path):
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "remote-host")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(context):
+            registry = get_registry()
+            assert registry.execute("bash", {"command": "printf first-local"}) == "first-local"
+            assert registry.execute("bash", {"command": "echo on-remote", "workplace": "remote-host"}) == "on-remote"
+            assert registry.execute("bash", {"command": "printf back-local"}) == "back-local"
+        assert store.get_session(sid)["workplace_id"] == context.active_workplace_id
+    finally:
+        dest.unregister()
+
+
+@pytest.mark.parametrize("mode,destination", [("unrestricted", "remote"), ("restricted", "local")])
+def test_host_backend_rejects_nonlocal_or_restricted_destination(tmp_path, mode, destination):
+    from app.runtime.access import AccessDenied
+    from app.runtime.isolation import host
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "remote-host")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        active = "wp_remote" if destination == "remote" else store.get_session(sid)["workplace_id"]
+        store.access.set_chat_access("usr_admin", sid, active, execution_mode=mode)
+        context = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(context), patch("app.runtime.isolation.host.subprocess.Popen") as spawn:
+            with pytest.raises(AccessDenied, match="unrestricted local destination"):
+                host.popen(["echo", "must-not-spawn"])
+            spawn.assert_not_called()
+    finally:
+        dest.unregister()
+
+
+async def test_local_terminal_with_remote_resources_in_scope(tmp_path):
+    import asyncio
+    from app.services.terminals import TerminalManager
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "remote-host")
+    manager = TerminalManager()
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        active = next(r for r in context.resources if r.workplace_id == context.active_workplace_id)
+        terminal = manager.create_unrestricted(context, Path(active.root_path), 80, 24)
+        await terminal.write("printf '__%s__\\n' terminal-ok\n")
+        async with asyncio.timeout(5):
+            while b"__terminal-ok__" not in b"".join(terminal.output):
+                await asyncio.sleep(0.01)
+        assert terminal.process.poll() is None
+        assert not dest._admitted
+    finally:
+        await manager.close_all()
+        dest.unregister()
+
+
+async def test_local_background_command_with_remote_resources_in_scope(tmp_path):
+    import asyncio
+    from app.services.background_jobs import BackgroundJobManager
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "remote-host")
+    manager = BackgroundJobManager()
+    sid = store.create_home_session("usr_admin")["session_id"]
+    try:
+        context = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(context):
+            job = manager.start("printf background-local-ok")
+        async with asyncio.timeout(5):
+            while job["status"] not in {"succeeded", "failed", "stopped"}:
+                await asyncio.sleep(0.01)
+                job = store.get_background_job(job["id"])
+        assert job["status"] == "succeeded", job.get("stderr")
+        assert "background-local-ok" in job["stdout"]
+        assert not dest._admitted
+    finally:
+        manager.stop_session(sid)
+        dest.unregister()

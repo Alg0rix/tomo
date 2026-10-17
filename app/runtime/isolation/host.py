@@ -70,7 +70,13 @@ def popen(argv, **kwargs):
 
     context = current_execution()
     with access.execution_guard(context) as current:
-        if current.execution_mode != "unrestricted" or any(r.kind != "local" for r in current.resources):
+        active = next((r for r in current.resources
+                       if r.workplace_id == current.active_workplace_id), None)
+        # Other authorized machines are available for routing/transfers; they
+        # do not change the backend of this action's active destination.
+        if (current.execution_mode != "unrestricted" or active is None
+                or active.kind != "local" or active.transfer_only
+                or current.destination_id != active.workplace_id):
             raise AccessDenied("Host execution requires an explicitly unrestricted local destination")
         with _lock:
             kwargs["start_new_session"] = True

@@ -43,7 +43,10 @@ class LocalTerminal:
         # a host PTY at the granted destination.
         if self.execution.execution_mode != "unrestricted":
             raise PermissionError("Interactive sandbox terminal backend is unavailable; host PTY is forbidden")
-        if any(r.kind != "local" for r in self.execution.resources):
+        active = next((r for r in self.execution.resources
+                       if r.workplace_id == self.execution.active_workplace_id), None)
+        if (active is None or active.kind != "local" or active.transfer_only
+                or self.execution.destination_id != active.workplace_id):
             raise PermissionError("Remote terminal cannot execute on the local host")
         self.id = uuid.uuid4().hex
         self.session_id = session_id
@@ -456,7 +459,10 @@ class TerminalManager:
         current = store.access.revalidate(context)
         if current.execution_mode != "unrestricted":
             raise AccessDenied("Host terminals require an explicitly activated unrestricted destination")
-        if any(r.kind != "local" for r in current.resources):
+        active = next((r for r in current.resources
+                       if r.workplace_id == current.active_workplace_id), None)
+        if (active is None or active.kind != "local" or active.transfer_only
+                or current.destination_id != active.workplace_id):
             raise AccessUnavailable("Remote interactive terminal backend unavailable")
         with store.access.execution_guard(current) as guarded:
             return self._create(guarded, cwd, cols, rows)
