@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 from typing import Any
 
+from app.runtime.access import ExecutionContext
+
 _workplace_hint: ContextVar[str | None] = ContextVar(
     "tool_workplace_hint", default=None
 )
@@ -64,6 +66,23 @@ def current_workplace_hint() -> str | None:
 def force_work_dir() -> bool:
     """True when this turn should use $TOMO_WORK/<agent>, not agent local WP."""
     return bool(_force_work_dir.get())
+
+
+def resolve_workplace_context(context: ExecutionContext, hint: str | None = None) -> ExecutionContext:
+    """Choose one destination: explicit tool target, routed agent, turn, default."""
+    from app.services import store
+
+    current = store.access.revalidate(context)
+    if hint:
+        return store.access.route_context(current, hint)
+    session = store.get_session(current.session_id)
+    agent = store.get_agent(current.agent_id)
+    # Delegation and durable work already selected their own destination.
+    if (current.active_workplace_id != session["workplace_id"]
+            or (current.agent_id != session["coordinator_id"] and agent.get("workplace_id"))):
+        return current
+    bound = current_workplace_hint() or current_workplace_id()
+    return store.access.route_context(current, bound) if bound else current
 
 
 def match_workplace(
@@ -146,5 +165,6 @@ __all__ = [
     "current_workplace_hint",
     "force_work_dir",
     "match_workplace",
+    "resolve_workplace_context",
     "strip_workplace_hint",
 ]

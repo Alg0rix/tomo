@@ -417,13 +417,11 @@ async def stream_turn_sse(
     """Supervise the whole ingress, including compaction/title/auxiliary I/O."""
     from contextlib import aclosing
     from app.runtime.access import AccessDenied, execution_scope
-    from app.runtime.policy import resolve_turn, durable_context, intersect_context
+    from app.runtime.policy import resolve_continuation_context
     from app.runtime.supervision import admitted_turn
 
     try:
-        context = resolve_turn(session_id, coordinator_id)
-        for job in background_jobs or []:
-            context = intersect_context(context, durable_context(job))
+        context = resolve_continuation_context(session_id, coordinator_id, background_jobs or [])
         with execution_scope(context):
             async with admitted_turn(context):
                 async with aclosing(_stream_turn_sse_owned(
@@ -494,12 +492,9 @@ async def _stream_turn_sse_owned(
         len(message or ""),
     )
     try:
-        from app.runtime.policy import resolve_turn, authorized_agents, durable_context, intersect_context
+        from app.runtime.policy import authorized_agents, resolve_continuation_context
         from app.runtime.access import bind_execution, reset_execution
-        execution = resolve_turn(session_id, coordinator_id)
-        for job in background_jobs or []:
-            inherited = durable_context(job)
-            execution = intersect_context(execution, inherited)
+        execution = resolve_continuation_context(session_id, coordinator_id, background_jobs or [])
         access_token = bind_execution(execution)
         from app.runtime.permissions.slash import handle_approval_slash
 

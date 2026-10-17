@@ -247,7 +247,8 @@ def stop_session(session_id: str) -> None:
         return
     owner = session.get("user_id") or ""
     destinations = [w for w in dict.fromkeys(
-        [session.get("workplace_id"), *(session.get("additional_workplace_ids") or [])]
+        [session.get("workplace_id"), *(session.get("additional_workplace_ids") or []),
+         *store.access.execution_destinations(session_id)]
     ) if w]
     if not owner or not destinations:
         return
@@ -258,7 +259,7 @@ def stop_session(session_id: str) -> None:
     failures: list[str] = []
     for wid in destinations:
         wp = store.get_workplace(wid)
-        if not wp or (wp.get("kind") or "") != "tunnel":
+        if not wp or not wp.get("enabled") or (wp.get("kind") or "") != "tunnel":
             continue
         status = connection_status(wid)
         if not status["online"]:
@@ -284,6 +285,7 @@ def stop_session(session_id: str) -> None:
         if not isinstance(result, dict) or not result.get("torn_down"):
             failures.append(f"{wid}: unconfirmed")
             continue
+        store.access.forget_execution_destination(session_id, wid)
         with _lock:
             for key in [k for k in _admissions if k[0] == wid and k[1] == session_id]:
                 _admissions.pop(key, None)

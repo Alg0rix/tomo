@@ -962,6 +962,7 @@ def history_to_messages(
 
     call_counter = 0
     pending_reasoning: dict[tuple, str] = {}
+    reasoning_used_by_tools: set[tuple] = set()
     i = 0
     n = len(history)
     while i < n:
@@ -969,10 +970,13 @@ def history_to_messages(
         etype = entry.get("type")
         reasoning_key = (entry.get("agent_id"), entry.get("delegate_call_id"))
         if etype == "thinking":
+            reasoning_used_by_tools.discard(reasoning_key)
             params = entry.get("params")
             raw = params.get("reasoning_content") if isinstance(params, dict) else None
             if isinstance(raw, str):
                 pending_reasoning[reasoning_key] = raw
+            else:
+                pending_reasoning.pop(reasoning_key, None)
             i += 1
             continue
 
@@ -982,6 +986,7 @@ def history_to_messages(
             # entries stay in session history for the transcript UI.
             messages.clear()
             pending_reasoning.clear()
+            reasoning_used_by_tools.clear()
             summary = (entry.get("content") or "").strip()
             if summary:
                 messages.append(
@@ -1000,6 +1005,7 @@ def history_to_messages(
 
         if etype == "user":
             pending_reasoning.clear()
+            reasoning_used_by_tools.clear()
             # Attachment expansion is fail-safe per file: owned text inlines
             # through session-scoped reads, while office/vision parts without
             # an execution boundary degrade to notes instead of breaking the
@@ -1041,10 +1047,13 @@ def history_to_messages(
 
         if etype == "final":
             content = entry.get("content") or ""
+            raw = pending_reasoning.pop(reasoning_key, None)
+            fresh_reasoning = reasoning_key not in reasoning_used_by_tools
+            reasoning_used_by_tools.discard(reasoning_key)
             if _is_self_entry(entry, for_agent_id):
                 message = {"role": "assistant", "content": content}
-                if reasoning_key in pending_reasoning:
-                    message["reasoning_content"] = pending_reasoning.pop(reasoning_key)
+                if isinstance(raw, str) and fresh_reasoning:
+                    message["reasoning_content"] = raw
                 messages.append(message)
             else:
                 label = _history_agent_label(entry.get("agent_id"))
@@ -1126,7 +1135,11 @@ def history_to_messages(
                     {"role": "assistant", "content": None, "tool_calls": calls}
                 )
                 if reasoning_key in pending_reasoning:
-                    messages[-1]["reasoning_content"] = pending_reasoning.pop(reasoning_key)
+                    # A serial tool round is persisted as call/result fragments.
+                    # Each reconstructed assistant fragment needs the same exact
+                    # round reasoning, until the next response replaces it.
+                    messages[-1]["reasoning_content"] = pending_reasoning[reasoning_key]
+                    reasoning_used_by_tools.add(reasoning_key)
                 out_idx = 0
                 for e in out_entries:
                     if out_idx < len(calls):

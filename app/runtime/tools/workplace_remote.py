@@ -10,11 +10,6 @@ import json
 from typing import Any, Callable
 
 from app.runtime.tools import progress
-from app.runtime.tools.workplace_ctx import (
-    current_workplace_hint,
-    current_workplace_id,
-    match_workplace,
-)
 from app.workplaces.hub import hub
 
 _DEFAULT_TIMEOUT = 60.0
@@ -52,34 +47,16 @@ def _agent_allowed_workplaces(agent: dict[str, Any]) -> list[dict[str, Any]]:
     return [by_id[i] for i in ids if i in by_id]
 
 
-def resolve_agent_workplace(agent_id: str | None = None) -> dict[str, Any] | None:
+def resolve_agent_workplace(agent_id: str | None = None, *, workplace_hint: str | None = None) -> dict[str, Any] | None:
     """Pick the workplace for this agent + turn (hint / override / default)."""
     from app.runtime.access import current_execution, AccessDenied, AccessUnavailable
     from app.services import store
     context = store.access.revalidate(current_execution())
     if agent_id and agent_id != context.agent_id:
         context = store.access.resolve_context(context.user_id, context.session_id, agent_id, parent=context)
-    resource_ids = {r.workplace_id for r in context.resources}
-    visible = [w for w in store.access.list_visible_workplaces(context.user_id) if w["id"] in resource_ids]
-    hint = current_workplace_hint()
-    override = current_workplace_id()
-    chosen = None
-    if hint:
-        hit = match_workplace(visible, hint)
-        if not hit:
-            raise AccessDenied("Requested working location is unavailable")
-        chosen = hit["id"]
-    elif override:
-        # Web ingress binds the chat default. A routed/delegated execution
-        # context has a more specific destination for this action.
-        session_default = store.get_session(context.session_id)["workplace_id"]
-        if override == session_default and context.active_workplace_id != session_default:
-            override = context.active_workplace_id
-        if override not in resource_ids:
-            raise AccessDenied("Requested working location is unavailable")
-        chosen = override
-    else:
-        chosen = context.active_workplace_id
+    from app.runtime.tools.workplace_ctx import resolve_workplace_context
+    context = resolve_workplace_context(context, workplace_hint)
+    chosen = context.active_workplace_id
     if chosen:
         store.access.authorize_resource(context, chosen)
         context = store.access.route_context(context, chosen)
@@ -390,7 +367,7 @@ def try_remote(
 
         hint_token = wctx._workplace_hint.set(workplace_hint)  # noqa: SLF001
     try:
-        wp = resolve_agent_workplace()
+        wp = resolve_agent_workplace(workplace_hint=workplace_hint)
         if not wp:
             return None
         kind = (wp.get("kind") or "").strip().lower()

@@ -114,13 +114,15 @@ async def _drain(sid: str) -> None:
                 return
             from app.runtime.policy import durable_context
             try:
-                for job in pending:
-                    durable_context(job)
+                contexts = {job["id"]: durable_context(job) for job in pending}
             except PermissionError:
                 _block(pending, "Originating execution identity or current access is unavailable")
                 return
             target = pending[0].get("delivery")
-            batch = [j for j in pending if j.get("delivery") == target]
+            first = contexts[pending[0]["id"]]
+            identity = ("user_id", "session_id", "execution_mode", "destination_id", "access_generation")
+            batch = [j for j in pending if j.get("delivery") == target
+                     and all(getattr(contexts[j["id"]], key) == getattr(first, key) for key in identity)]
             if target:
                 from app.channels.delivery import DeliveryBlocked
                 from app.channels.telegram_delivery import _check_target

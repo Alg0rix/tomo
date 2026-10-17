@@ -33,6 +33,11 @@ def migrate_access(conn: sqlite3.Connection) -> None:
     # Existing recognized Admin accounts stay Admin. Unknown roles never elevate.
     conn.execute("UPDATE users SET role='member' WHERE role NOT IN ('admin','member') OR role IS NULL")
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS session_execution_destinations (
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            workplace_id TEXT NOT NULL,
+            PRIMARY KEY(session_id, workplace_id)
+        );
         CREATE TABLE IF NOT EXISTS resource_grants (
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             resource_type TEXT NOT NULL CHECK(resource_type IN ('workplace','agent','model','unrestricted')),

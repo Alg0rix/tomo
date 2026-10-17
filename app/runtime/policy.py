@@ -85,13 +85,17 @@ def resolve_turn(session_id: str | None, agent_id: str | None = None):
     if parent:
         if parent.session_id != session_id:
             raise AccessDenied("Execution cannot switch sessions")
-        return store.access.resolve_context(parent.user_id, session_id, agent_id, parent=parent)
+        context = store.access.resolve_context(parent.user_id, session_id, agent_id, parent=parent)
+        from app.runtime.tools.workplace_ctx import resolve_workplace_context
+        return resolve_workplace_context(context)
     session = store.get_session(session_id)
     if not session or not session.get("user_id"):
         raise AccessDenied("Session execution identity is unavailable")
     # Non-login channels must explicitly bind a trusted current Admin context at
     # their ingress. In particular, neither web nor tg_* is a privileged default.
-    return store.access.resolve_context(session["user_id"], session_id, agent_id)
+    context = store.access.resolve_context(session["user_id"], session_id, agent_id)
+    from app.runtime.tools.workplace_ctx import resolve_workplace_context
+    return resolve_workplace_context(context)
 
 
 def authorize_tool(name: str, arguments: dict | None = None):
@@ -204,8 +208,9 @@ def _authorize_tool(name: str, arguments: dict | None = None):
     if args.get("agent_id") and name not in ADMIN_TOOLS | {"delegate"}:
         store.access.resolve_context(context.user_id, context.session_id, args["agent_id"], parent=context)
     hint = args.get("workplace") or (args.get("workplace_id") if name not in ADMIN_TOOLS else None)
-    if hint:
-        context = store.access.route_context(context, str(hint))
+    if name not in ADMIN_TOOLS:
+        from app.runtime.tools.workplace_ctx import resolve_workplace_context
+        context = resolve_workplace_context(context, str(hint) if hint else None)
     if name == "agent_info" and context.role != "admin":
         # The legacy inspector includes shared agent state and host credential
         # metadata. Its account-safe replacement is the live authorized roster.
@@ -361,6 +366,23 @@ def intersect_context(left, right):
         if old and (resource.root_path, resource.destination_id) == (old.root_path, old.destination_id):
             resources.append(replace(resource, permission='read_write' if resource.writable and old.writable else 'read'))
     return store.access.revalidate(replace(left, resources=tuple(resources), tool_ids=left.tool_ids & right.tool_ids))
+
+
+def resolve_continuation_context(session_id: str, agent_id: str, jobs: list[dict]):
+    """Resume at the captured destination while intersecting current authority."""
+    from app.services import store
+
+    current = resolve_turn(session_id, agent_id)
+    for index, job in enumerate(jobs):
+        inherited = durable_context(job)
+        # Routing only selects an already-authorized resource. Identity,
+        # generation, mode, grants and tool ceilings remain enforced below.
+        if inherited.user_id != current.user_id or inherited.session_id != current.session_id:
+            raise AccessDenied("Queued execution owner is unavailable")
+        if index == 0 and current.destination_id != inherited.destination_id:
+            current = store.access.route_context(current, inherited.destination_id)
+        current = intersect_context(current, inherited)
+    return current
 
 
 def durable_context(item: dict):

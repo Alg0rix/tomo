@@ -277,6 +277,10 @@ class AccessService:
                         raise RuntimeError("Teardown must confirm completion by returning None")
         except Exception as exc:
             raise AccessUnavailable("Execution teardown failed; access remains blocked") from exc
+        def clear(c):
+            c.executemany("DELETE FROM session_execution_destinations WHERE session_id=?", [(sid,) for sid in session_ids])
+            c.commit()
+        self.store.with_db(clear)
 
     def _clear_pending(self, session_ids: list[str]) -> None:
         def clear(c):
@@ -290,7 +294,7 @@ class AccessService:
     def _affected_sessions(self, user_id: str, kind: str, rid: str) -> list[str]:
         sessions = self._principal_sessions(user_id)
         if kind in ("workplace", "unrestricted"):
-            return [s["id"] for s in sessions if rid in [s["workplace_id"], *s["additional_workplace_ids"]]]
+            return [s["id"] for s in sessions if rid in [s["workplace_id"], *s["additional_workplace_ids"], *self.execution_destinations(s["id"])]]
         return [s["id"] for s in sessions]
 
     @_serialized
@@ -352,7 +356,7 @@ class AccessService:
     @_serialized
     def change_workplace(self, workplace_id: str, operation):
         sessions = [s["id"] for s in self.store.list_sessions()
-                    if workplace_id in [s["workplace_id"], *s["additional_workplace_ids"]]]
+                    if workplace_id in [s["workplace_id"], *s["additional_workplace_ids"], *self.execution_destinations(s["id"])]]
         def pending(c):
             c.execute("UPDATE workplaces SET access_pending=1 WHERE id=?", (workplace_id,))
             c.commit()
@@ -503,7 +507,15 @@ class AccessService:
         for wid in dict.fromkeys(enabled_ids):
             if not wid:
                 continue
-            permission = self.workplace_permission(user_id, wid)
+            try:
+                permission = self.workplace_permission(user_id, wid)
+            except AccessDenied:
+                # Older releases recorded routed destinations as extra grants.
+                # An unavailable optional destination cannot brick an Admin's
+                # otherwise authorized chat. Active/restricted scopes still deny.
+                if admin_routing and wid != active:
+                    continue
+                raise
             wp = self.store.get_workplace(wid)
             if admin_routing and wid != active and wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
                 continue
@@ -572,20 +584,27 @@ class AccessService:
         self.require_use(current.user_id, "unrestricted", wid)
         return self.revalidate(replace(current, active_workplace_id=wid, destination_id=wid))
 
+    def execution_destinations(self, session_id: str) -> list[str]:
+        """Retained execution handles; these are teardown inventory, not grants."""
+        return self.store.with_db(lambda c: [row[0] for row in c.execute(
+            "SELECT workplace_id FROM session_execution_destinations WHERE session_id=? ORDER BY workplace_id",
+            (session_id,))])
+
+    def forget_execution_destination(self, session_id: str, workplace_id: str) -> None:
+        """Trusted backend acknowledgement that this destination was torn down."""
+        self.store.with_db(lambda c: (c.execute(
+            "DELETE FROM session_execution_destinations WHERE session_id=? AND workplace_id=?",
+            (session_id, workplace_id)), c.commit()))
+
     @_serialized
     def record_execution_destination(self, context: ExecutionContext) -> None:
-        """Keep routed destinations in the existing durable teardown inventory."""
         current = self.revalidate(context)
         session = self.require_session(current.user_id, current.session_id)
-        wid = current.destination_id
-        if wid == session["workplace_id"] or wid in session["additional_workplace_ids"]:
+        if current.destination_id == session["workplace_id"]:
             return
-        additional = [*session["additional_workplace_ids"], wid]
-        def update(c):
-            c.execute("UPDATE sessions SET additional_workplace_ids_json=? WHERE id=? AND user_id=?",
-                      (json.dumps(additional), current.session_id, current.user_id))
-            c.commit()
-        self.store.with_db(update)
+        self.store.with_db(lambda c: (c.execute(
+            "INSERT OR IGNORE INTO session_execution_destinations(session_id,workplace_id) VALUES (?,?)",
+            (current.session_id, current.destination_id)), c.commit()))
 
     def _explicit_member_external_scope(self, agent_id: str, tools: frozenset) -> frozenset:
         """Keep Member external tools only with explicit per-agent assignment.

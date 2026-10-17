@@ -484,11 +484,12 @@ async def _authorize_tool(
     except AccessDenied as exc:
         yield Decision(allowed=False, message=f"Error: {exc}", allow_permanent=False)
         return
-    if execution.execution_mode == "restricted":
-        from pathlib import Path
-        work_root = Path(next(r.mount_path for r in execution.resources if r.workplace_id == execution.active_workplace_id))
-    else:
-        work_root = sandbox.resolve_work_root()
+    from pathlib import Path
+    active = next(r for r in execution.resources if r.workplace_id == execution.active_workplace_id)
+    # Approval assessment uses the selected destination's logical root.
+    # Remote tools must not resolve (or acquire authority over) a host path.
+    work_root = Path(active.root_path if execution.execution_mode == "unrestricted" and active.kind == "local"
+                     else active.mount_path)
     is_scheduler = origin == "scheduler"
     decision = evaluate(
         call.name,

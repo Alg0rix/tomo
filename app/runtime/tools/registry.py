@@ -194,9 +194,14 @@ class ToolRegistry:
         from app.services import store
         try:
             from app.runtime.access import execution_scope
+            from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
             with execution_scope(context):
-                store.access.record_execution_destination(context)
-                result = self._execute_raw(name, arguments)
+                token = bind_workplace(workplace_id=context.active_workplace_id)
+                try:
+                    store.access.record_execution_destination(context)
+                    result = self._execute_raw(name, arguments)
+                finally:
+                    reset_workplace(token)
         except Exception:
             result = "Error: tool service failed"
         store.access.audit(context.user_id, "tool." + name, session_id=context.session_id,

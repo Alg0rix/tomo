@@ -554,3 +554,32 @@ def test_display_thinking_is_not_replayed_as_provider_reasoning():
         {"type": "final", "content": "done", "agent_id": "main"},
     ], for_agent_id="main")
     assert "reasoning_content" not in messages[0]
+
+
+def test_serial_tool_fragments_keep_original_round_reasoning(tmp_path):
+    history = _hist(tmp_path,
+        {"type": "thinking", "agent_id": "main", "content": "display", "params": {"reasoning_content": "exact-round-one"}},
+        {"type": "tool_call", "agent_id": "main", "function": "bash", "params": {"command": "printf one"}},
+        {"type": "tool_output", "agent_id": "main", "content": "one"},
+        {"type": "tool_call", "agent_id": "main", "function": "bash", "params": {"command": "printf two"}},
+        {"type": "tool_output", "agent_id": "main", "content": "two"},
+        {"type": "thinking", "agent_id": "main", "content": "display", "params": {"reasoning_content": "exact-round-two"}},
+        {"type": "tool_call", "agent_id": "main", "function": "bash", "params": {"command": "printf three"}},
+        {"type": "tool_output", "agent_id": "main", "content": "three"},
+        {"type": "thinking", "agent_id": "main", "content": "summary only"},
+        {"type": "final", "agent_id": "main", "content": "done"})
+    messages = history_to_messages(history, for_agent_id="main")
+    calls = [m for m in messages if m.get("tool_calls")]
+    assert [m.get("reasoning_content") for m in calls] == ["exact-round-one", "exact-round-one", "exact-round-two"]
+    assert "reasoning_content" not in messages[-1]
+
+
+def test_tool_round_reasoning_is_not_invented_for_later_plain_final():
+    messages = history_to_messages([
+        {"type": "thinking", "agent_id": "main", "params": {"reasoning_content": "tool-only-reasoning"}},
+        {"type": "tool_call", "agent_id": "main", "function": "list_workplaces", "params": {}},
+        {"type": "tool_output", "agent_id": "main", "content": "locations"},
+        {"type": "final", "agent_id": "main", "content": "done without provider reasoning"},
+    ], for_agent_id="main")
+    assert messages[0]["reasoning_content"] == "tool-only-reasoning"
+    assert "reasoning_content" not in messages[-1]

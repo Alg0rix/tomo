@@ -233,7 +233,8 @@ def test_admin_personal_chat_routes_to_tunnel_without_switch(tmp_path, via_regis
             assert current_execution() == context
         session = store.get_session(sid)
         assert session["workplace_id"] == original
-        assert "wp_ops" in session["additional_workplace_ids"]
+        assert "wp_ops" in store.access.execution_destinations(sid)
+        assert session["additional_workplace_ids"] == []
         # Stop/revoke must include a destination used without a UI switch.
         from app.workplaces.remote_contract import stop_session
         stop_session(sid)
@@ -500,3 +501,145 @@ async def test_local_background_command_with_remote_resources_in_scope(tmp_path)
     finally:
         manager.stop_session(sid)
         dest.unregister()
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("bash", {"command": "pwd"}),
+    ("runpy", {"code": "import os; print(os.getcwd())"}),
+    ("read_file", {"path": "marker.txt"}),
+])
+def test_turn_local_hint_routes_every_tool_to_same_destination(tmp_path, tool, args):
+    from app.runtime.tools.registry import get_registry
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    _rebind(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "marker.txt").write_text("target-marker")
+    store.create_workplace({"id": "wp_target", "name": "Target", "kind": "local", "root_path": str(target)})
+    sid = store.create_home_session("usr_admin")["session_id"]
+    context = store.access.resolve_context("usr_admin", sid)
+    tokens = bind_workplace(hint="Target")
+    try:
+        with execution_scope(context):
+            out = get_registry().execute(tool, args)
+        assert ("target-marker" if tool == "read_file" else str(target)) in out, out
+        assert store.get_session(sid)["workplace_id"] == context.active_workplace_id
+    finally:
+        reset_workplace(tokens)
+
+
+@pytest.mark.parametrize("scope", ["single", "list"])
+def test_specialist_destination_supersedes_inherited_hint(tmp_path, scope):
+    from app.runtime.tools.registry import get_registry
+    from app.runtime.tools.workplace_ctx import bind_workplace, reset_workplace
+
+    _rebind(tmp_path)
+    first = _online_tunnel(tmp_path, "wp_first", "First")
+    second = _online_tunnel(tmp_path, "wp_second", "Second")
+    try:
+        store.update_agent("ops", {"workplace_id": "wp_second", "workplace_scope": scope,
+                                   "workplace_ids": ["wp_second", "wp_first"] if scope == "list" else []})
+        sid = store.create_home_session("usr_admin")["session_id"]
+        parent = store.access.resolve_context("usr_admin", sid)
+        child = store.access.resolve_context("usr_admin", sid, "ops", parent=parent)
+        tokens = bind_workplace(hint="First")
+        try:
+            with execution_scope(child):
+                out = get_registry().execute("bash", {"command": "echo specialist-ok"})
+            assert out == "specialist-ok", out
+            assert second._admitted
+            assert not first._admitted
+            if scope == "list":
+                with execution_scope(child):
+                    assert get_registry().execute("bash", {"command": "echo explicit-ok", "workplace": "First"}) == "explicit-ok"
+                assert first._admitted
+        finally:
+            reset_workplace(tokens)
+    finally:
+        first.unregister()
+        second.unregister()
+
+
+@pytest.mark.parametrize("operation", ["disable", "delete"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_unavailable_previous_destination_does_not_break_personal_chat(tmp_path, operation, legacy):
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_old", "Old")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        context = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(context):
+            assert get_registry().execute("bash", {"command": "echo remote-ok", "workplace": "Old"}) == "remote-ok"
+        assert dest._admitted
+        if legacy:
+            store.with_db(lambda c: (c.execute(
+                "UPDATE sessions SET additional_workplace_ids_json=? WHERE id=?",
+                ('["wp_old"]', sid)), c.commit()))
+        if operation == "disable":
+            store.set_workplace_enabled("wp_old", False)
+        else:
+            store.delete_workplace("wp_old")
+        assert not dest._admitted
+        fresh = store.access.resolve_context("usr_admin", sid)
+        with execution_scope(fresh):
+            assert get_registry().execute("bash", {"command": "printf still-local"}) == "still-local"
+        assert store.get_session(sid)["workplace_id"] == context.active_workplace_id
+    finally:
+        dest.unregister()
+
+
+def test_mixed_destination_batch_cannot_change_ceiling_mid_continuation(tmp_path):
+    from app.runtime.access import AccessDenied
+    from app.runtime.policy import resolve_continuation_context
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "Remote")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        base = store.access.resolve_context("usr_admin", sid)
+        remote = store.access.route_context(base, "wp_remote")
+        jobs = [{"session_id": sid, "user_id": base.user_id, "execution_context": c.to_dict()}
+                for c in [base, remote]]
+        with pytest.raises(AccessDenied, match="ceilings do not match"):
+            resolve_continuation_context(sid, "main", jobs)
+    finally:
+        dest.unregister()
+
+
+def test_execution_inventory_survives_migration_without_becoming_grants(tmp_path):
+    from app.models.schema import migrate
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "Remote")
+    try:
+        sid = store.create_home_session("usr_admin")["session_id"]
+        base = store.access.resolve_context("usr_admin", sid)
+        store.access.record_execution_destination(store.access.route_context(base, "Remote"))
+        store.with_db(migrate)
+        assert store.access.execution_destinations(sid) == ["wp_remote"]
+        assert store.get_session(sid)["additional_workplace_ids"] == []
+        store.with_db(migrate)
+        assert store.access.execution_destinations(sid) == ["wp_remote"]
+    finally:
+        dest.unregister()
+
+
+def test_unconfirmed_teardown_retains_inventory_and_pending_barrier(tmp_path):
+    from app.runtime.access import AccessUnavailable
+    from app.runtime.tools.registry import get_registry
+
+    _rebind(tmp_path)
+    dest = _online_tunnel(tmp_path, "wp_remote", "Remote")
+    sid = store.create_home_session("usr_admin")["session_id"]
+    with execution_scope(store.access.resolve_context("usr_admin", sid)):
+        assert get_registry().execute("bash", {"command": "echo admitted", "workplace": "Remote"}) == "admitted"
+    dest.unregister()
+    with pytest.raises(AccessUnavailable, match="teardown failed"):
+        store.set_workplace_enabled("wp_remote", False)
+    assert store.access.execution_destinations(sid) == ["wp_remote"]
+    assert store.get_session(sid)["access_pending"]
+    with pytest.raises(AccessUnavailable):
+        store.access.resolve_context("usr_admin", sid)

@@ -532,3 +532,51 @@ async def test_job_deleted_during_flood_wait_blocks_http_retry(setup, telegram):
     finally:
         await api.aclose()
         await normal_api.aclose()
+
+
+async def test_routed_background_completion_resumes_in_job_destination(setup, monkeypatch, tmp_path):
+    from tests.unit.runtime.tools.test_workplace_remote import _online_tunnel
+
+    dest = _online_tunnel(tmp_path, "wp_resume", "ResumeHost")
+    try:
+        sid = owned_host_session()
+        original = store.get_session(sid)["workplace_id"]
+        response = background("sleep .1; printf routed-build > build-result.txt")
+        response.tool_calls[0].arguments["workplace"] = "ResumeHost"
+        llm = install(monkeypatch, [response, text_reply("Build started."), text_reply("Remote build passed.")])
+        await run(sid, "Build on ResumeHost")
+        await until(lambda: any(j["continuation_status"] == "consumed" for j in store.list_background_jobs(sid)))
+        job = store.list_background_jobs(sid)[0]
+        assert job["status"] == "succeeded"
+        assert (dest.root / "wp_resume" / "build-result.txt").read_text() == "routed-build"
+        assert job["result_text"] == "Remote build passed."
+        assert job["execution_context"]["destination_id"] == "wp_resume"
+        assert len(llm.calls) == 3
+        assert store.get_session(sid)["workplace_id"] == original
+    finally:
+        dest.unregister()
+
+
+async def test_background_results_from_different_workplaces_resume_separately(setup, monkeypatch, tmp_path):
+    from tests.unit.runtime.tools.test_workplace_remote import _online_tunnel
+
+    first = _online_tunnel(tmp_path, "wp_first", "FirstHost")
+    second = _online_tunnel(tmp_path, "wp_second", "SecondHost")
+    try:
+        sid = owned_host_session()
+        uid = store.get_session(sid)["user_id"]
+        base = store.access.resolve_context(uid, sid)
+        jobs = []
+        for wid in [base.destination_id, "wp_first", "wp_second"]:
+            context = store.access.route_context(base, wid)
+            job = owned_job(sid, uid, command=f"build {wid}", execution_context=context.to_dict())
+            jobs.append(store.update_background_job(job["id"], {"status": "succeeded", "returncode": 0}))
+        llm = install(monkeypatch, [text_reply("Build passed.") for _ in jobs])
+        continuation.request_drain(sid)
+        await until(lambda: all(store.get_background_job(j["id"])["continuation_status"] in {"consumed", "failed", "blocked"} for j in jobs))
+        assert [store.get_background_job(j["id"])["continuation_status"] for j in jobs] == ["consumed"] * 3
+        assert len(llm.calls) == 3
+        assert store.get_session(sid)["workplace_id"] == base.active_workplace_id
+    finally:
+        first.unregister()
+        second.unregister()
