@@ -28,6 +28,25 @@ MAX_TOTAL = 64
 IDLE_TIMEOUT = 30 * 60
 
 
+def _host_shell_env(shell: str) -> dict[str, str]:
+    """Environment of the OS account the server runs as, not of the server.
+
+    Unrestricted terminals are OS-account shells, so HOME/USER point at that
+    account and its rc files load. Server secrets (API keys, TOMO_*) are not
+    inherited: only identity, locale and terminal variables are passed."""
+    import pwd
+
+    account = pwd.getpwuid(os.getuid())
+    env = {
+        "HOME": account.pw_dir, "USER": account.pw_name, "LOGNAME": account.pw_name,
+        "SHELL": shell, "PATH": os.environ.get("PATH") or os.defpath,
+        "TERM": "xterm-256color", "COLORTERM": "truecolor",
+        "LANG": os.environ.get("LANG") or "C.UTF-8",
+    }
+    env.update({k: v for k, v in os.environ.items() if k.startswith("LC_")})
+    return env
+
+
 class LocalTerminal:
     backend = "host"
 
@@ -100,7 +119,8 @@ class LocalTerminal:
         self.cleanup: asyncio.Task | None = None
 
     def _spawn(self, slave: int) -> None:
-        # Acquire a controlling tty *in the child*, without preexec_fn in a
+        # Login + interactive shell of the OS account: its own profile/rc
+        # files set PATH, prompt and aliases. Acquire a controlling tty *in the child*, without preexec_fn in a
         # threaded server. The helper execs the shell and retains its PID.
         from app.runtime.access import execution_scope
         from app.runtime.isolation import host
@@ -111,14 +131,14 @@ class LocalTerminal:
                 "-c",
                 "import os,fcntl,termios,sys; "
                 "fcntl.ioctl(0,termios.TIOCSCTTY,0); "
-                "os.execv(sys.argv[1],[sys.argv[1],'-i'])",
+                "os.execv(sys.argv[1],[sys.argv[1],'-l','-i'])",
                 self.shell,
             ],
             stdin=slave,
             stdout=slave,
             stderr=slave,
             cwd=Path(self.cwd),
-            env={"PATH": os.defpath, "HOME": str(self.cwd), "TERM": "xterm-256color", "COLORTERM": "truecolor"},
+            env=_host_shell_env(self.shell),
             start_new_session=True,
             close_fds=True,
         )

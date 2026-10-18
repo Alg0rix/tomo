@@ -315,3 +315,19 @@ def test_admin_routing_destinations_do_not_block_local_terminal(tmp_path):
         assert created.status_code == 201, created.text
         assert created.json()["cwd"] == str(folder)
         assert client.delete(f"{base}/{created.json()['id']}").status_code == 200
+
+
+def test_host_shell_env_is_os_account_without_server_secrets(monkeypatch):
+    import pwd
+
+    from app.services.terminals import _host_shell_env
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    monkeypatch.setenv("TOMO_SESSION_SECRET", "secret")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    env = _host_shell_env("/bin/bash")
+    account = pwd.getpwuid(os.getuid())
+    # The account's own rc/profile files load from its real HOME.
+    assert env["HOME"] == account.pw_dir and env["USER"] == account.pw_name
+    assert env["SHELL"] == "/bin/bash" and env["LC_ALL"] == "C.UTF-8"
+    assert "OPENAI_API_KEY" not in env and "TOMO_SESSION_SECRET" not in env
