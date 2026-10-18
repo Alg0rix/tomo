@@ -127,3 +127,60 @@ def test_explicit_tunnel_execution_preserves_result_and_never_falls_back(sdk):
     )
     with pytest.raises(ValueError):
         api.exec_workplace(local["id"], "uptime", user_id=admin)
+
+
+def test_contract_connectors_get_an_admitted_plugin_envelope(sdk):
+    from app.workplaces import remote_contract
+
+    api, store, admin, _, wid = sdk
+    other = store.create_user(
+        {"username": "otheradmin", "password": "password123", "role": "admin"}
+    )["id"]
+    remote_contract.reset()
+    calls = []
+    admitted = set()
+
+    # Mirrors the connector: exec_bash needs a live (owner, session) admission.
+    def call(method, params, **kwargs):
+        env = params["exec_context"]
+        key = (env["owner_user_id"], env["session_id"])
+        calls.append((method, key))
+        if method == "exec_admit":
+            admitted.add(key)
+            return {"ok": True, "result": {"contract": 2, "destination": wid}}
+        assert method == "exec_bash" and key in admitted
+        assert params["command"] == "uptime"
+        assert env["execution_mode"] == "unrestricted"
+        assert env["destination_id"] == env["active_workplace_id"] == wid
+        assert env["resources"][0]["workplace_id"] == wid
+        assert env["quota"] == {"duration_seconds": 3}
+        return {"ok": True, "result": {"stdout": "up", "stderr": "", "exit_code": 0}}
+
+    def connect():
+        admitted.clear()
+        hub.register(SimpleNamespace(
+            workplace_id=wid, call=call, fail_all=lambda reason: None,
+            exec_capable=True, sandbox_capable=False,
+        ))
+
+    connect()
+    for uid in (admin, admin, other):
+        assert api.exec_workplace(wid, "uptime", timeout=2.5, user_id=uid)["stdout"] == "up"
+    mine, theirs = (admin, f"plugin:monitor:{admin}"), (other, f"plugin:monitor:{other}")
+    assert calls == [("exec_admit", mine), ("exec_bash", mine), ("exec_bash", mine),
+                     ("exec_admit", theirs), ("exec_bash", theirs)]
+
+    # A reconnected connector lost its admissions; the plugin re-admits.
+    connect()
+    calls.clear()
+    api.exec_workplace(wid, "uptime", timeout=2.5, user_id=admin)
+    assert calls == [("exec_admit", mine), ("exec_bash", mine)]
+
+    hub.register(SimpleNamespace(
+        workplace_id=wid, fail_all=lambda reason: None,
+        exec_capable=True, sandbox_capable=False,
+        call=lambda *a, **k: {"ok": False, "error": "destination is shutting down"},
+    ))
+    with pytest.raises(ConnectionError, match="Destination refused execution"):
+        api.exec_workplace(wid, "uptime", user_id=admin)
+    remote_contract.reset()

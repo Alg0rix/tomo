@@ -158,9 +158,25 @@ def ensure_admitted(
         r.workplace_id == wid for r in current.resources
     ):
         raise AccessDenied("Remote destination is outside activated execution scope")
-    session = require_tunnel_destination(workplace, mode=current.execution_mode)
-    envelope = build_envelope(current, wid)
-    key = (wid, current.session_id, current.access_generation)
+    return admit_envelope(workplace, build_envelope(current, wid), timeout=timeout)
+
+
+def admit_envelope(
+    workplace: dict[str, Any],
+    envelope: dict[str, Any],
+    *,
+    timeout: float = _ADMIT_TIMEOUT,
+) -> dict[str, Any]:
+    """Admit an already authorized envelope, reusing the live admission.
+
+    Callers own authorization; this only negotiates with the destination.
+    Admissions are cached per (destination, session, generation) and are
+    dropped implicitly when the connector reconnects.
+    """
+    wid = str(workplace.get("id") or "")
+    mode = str(envelope.get("execution_mode") or "")
+    session = require_tunnel_destination(workplace, mode=mode)
+    key = (wid, str(envelope.get("session_id") or ""), int(envelope.get("access_generation") or 0))
     with _lock:
         cached = _admissions.get(key)
         if cached is not None and cached[0] is session:
@@ -175,7 +191,7 @@ def ensure_admitted(
         )
     if str(attestation.get("destination") or "") != wid:
         raise AccessUnavailable("Destination attestation is for another workplace")
-    if current.execution_mode == "restricted" and not attestation.get("sandbox"):
+    if mode == "restricted" and not attestation.get("sandbox"):
         raise AccessUnavailable("Destination has no verified restricted boundary")
     with _lock:
         _admissions[key] = (session, attestation)
@@ -302,6 +318,7 @@ def stop_session(session_id: str) -> None:
 
 __all__ = [
     "REMOTE_EXEC_CONTRACT",
+    "admit_envelope",
     "build_envelope",
     "connection_status",
     "drop_admission",

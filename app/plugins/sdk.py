@@ -179,7 +179,7 @@ class PluginAPI:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _workplace_user(self, user_id: str | None) -> None:
+    def _workplace_user(self, user_id: str | None) -> str:
         self._require_live()
         from app.runtime.tools.user_ctx import current_user_id
         from app.services import store
@@ -188,6 +188,7 @@ class PluginAPI:
         # Workplaces are global today; do not imply a per-user ACL exists.
         if not user or not user.get("enabled") or user.get("role") != "admin":
             raise PermissionError("Workplace SDK access requires an active administrator")
+        return user["id"]
 
     def list_workplaces(self, *, user_id: str | None = None) -> list[dict]:
         """List enabled tunnel workplaces, without credentials or pairing codes.
@@ -234,13 +235,18 @@ class PluginAPI:
         Offline/transport failures raise ConnectionError, never run locally.
         Nonzero command exits are returned normally. This does not use agent
         tool approvals or inject secret capabilities; plugins must enforce
-        their own command policy.
+        their own command policy. Contract-enforcing connectors run it as an
+        unrestricted plugin session owned by the administrator, with the
+        workplace's scope directory as working directory.
         """
         import math
 
+        from app.runtime.access import AccessDenied, AccessUnavailable
+        from app.workplaces import remote_contract
         from app.workplaces.hub import hub
 
-        wp = self.workplace_status(workplace_id, user_id=user_id)
+        owner = self._workplace_user(user_id)
+        wp = self.workplace_status(workplace_id, user_id=owner)
         if not isinstance(command, str) or not command.strip():
             raise ValueError("Command must be a nonempty string")
         if (
@@ -252,10 +258,16 @@ class PluginAPI:
             raise ValueError("Timeout must be finite and between 0 and 60 seconds")
         if not wp["online"]:
             raise ConnectionError("Tunnel workplace is offline")
-        payload = hub.call(
-            workplace_id, "exec_bash", {"command": command, "timeout": timeout},
-            timeout=timeout + 5,
-        )
+        params: dict = {"command": command, "timeout": timeout}
+        session = hub.get(workplace_id)
+        if getattr(session, "exec_capable", False):
+            envelope = self._exec_envelope(owner, workplace_id, timeout)
+            try:
+                remote_contract.admit_envelope(wp, envelope)
+            except (AccessDenied, AccessUnavailable) as exc:
+                raise ConnectionError(str(exc)) from exc
+            params["exec_context"] = envelope
+        payload = hub.call(workplace_id, "exec_bash", params, timeout=timeout + 5)
         if not payload.get("ok"):
             raise ConnectionError(str(payload.get("error") or "Tunnel execution failed"))
         result = payload.get("result")
@@ -263,13 +275,37 @@ class PluginAPI:
             raise ConnectionError("Invalid tunnel execution response")
         return result
 
+    def _exec_envelope(self, owner: str, workplace_id: str, timeout: float) -> dict:
+        """Execution envelope for one plugin command on a tunnel destination."""
+        import math
+
+        return {
+            "v": 1,
+            "owner_user_id": owner,
+            # One connector admission per plugin and administrator.
+            "session_id": f"plugin:{self.id}:{owner}",
+            "agent_id": "",
+            "execution_mode": "unrestricted",
+            "destination_id": workplace_id,
+            "active_workplace_id": workplace_id,
+            "access_generation": 0,
+            "resources": [{
+                "workplace_id": workplace_id,
+                "permission": "read_write",
+                "destination_id": workplace_id,
+                "kind": "tunnel",
+                "transfer_only": False,
+            }],
+            "quota": {"duration_seconds": math.ceil(timeout)},
+        }
+
     def read_workplace_file(
         self, workplace_id: str, path: str, *, max_bytes: int = 65536,
         timeout: float = 10, user_id: str | None = None,
     ) -> dict:
         """Read bounded UTF-8 text via tunnel bash (requires POSIX head).
 
-        Relative paths use the connector work root; binary files are not
+        Relative paths use the workplace's working directory; binary files are not
         supported. This shares exec_workplace's admin and availability checks.
         """
         import shlex
