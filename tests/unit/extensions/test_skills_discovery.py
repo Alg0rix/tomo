@@ -37,6 +37,28 @@ def test_discover_and_sync_library(tmp_path, monkeypatch) -> None:
     assert "Demo Pack" in skill["name"]
 
 
+def test_bundled_godmode_expands_through_existing_slash_flow(tmp_path) -> None:
+    from app.services.chat import expand_slash_skill, resolve_slash_skill
+    from app.runtime.agent.skills_prompt import build_skills_system_prompt
+    from tests.fakes.access import owned_admin_scope
+
+    store.rebind(tmp_path / "godmode-skill.db")
+    with owned_admin_scope() as (ctx, _):
+        resolved = resolve_slash_skill("/godmode explain this code")
+        assert resolved is not None
+        assert resolved[0]["id"] == "godmode"
+        assert resolved[0]["source"] == "internal"
+        assert resolved[1] == "explain this code"
+        expanded = expand_slash_skill("/godmode explain this code")
+        assert "BEGIN SKILL" in expanded
+        assert "Godmode aktif" in expanded
+        assert "User request:\nexplain this code" in expanded
+        assert "/godmode off" in expand_slash_skill("/godmode off")
+        prompt = build_skills_system_prompt(ctx.agent_id)
+        assert "latest explicit on/off instruction wins" in prompt
+        assert "godmode" in prompt
+
+
 def test_install_from_path(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOMO_SKILLS_EXTERNAL_DIRS", "")
     store.rebind(tmp_path / "install.db")

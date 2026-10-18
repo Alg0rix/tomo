@@ -211,6 +211,26 @@ async def test_id_and_help_do_not_call_model(tmp_path, monkeypatch):
     assert store.find_session("main", "tg_4242") == fresh["session_id"]
 
 
+async def test_godmode_uses_existing_skill_turn_path(tmp_path, monkeypatch):
+    _rebind(tmp_path)
+    received = []
+
+    async def skill_turn(session_id, text, **kwargs):
+        from app.services.chat import expand_slash_skill
+
+        received.append(expand_slash_skill(text))
+        return "Godmode aktif. Langsung kirim tugasnya."
+
+    monkeypatch.setattr("app.channels.telegram.run_channel_turn", skill_turn)
+    result = await handle_inbound_text(4242, "/godmode", send_reply=False)
+    assert "Godmode aktif" in result["reply"]
+    assert "BEGIN SKILL" in received[0]
+    assert "# Godmode" in received[0]
+    unknown = await handle_inbound_text(4242, "/unknown-skill-command", send_reply=False)
+    assert "Unknown command" in unknown["reply"]
+    assert len(received) == 1
+
+
 
 
 # --- from test_telegram_format.py ---

@@ -90,6 +90,13 @@ def build_skills_system_prompt(agent_id: str | None, user_id: str | None = None)
         "Before non-trivial work, scan available skills. If one matches or is "
         "partially relevant, call use_skill(skill_id=...) and follow its "
         "instructions.",
+        "A user-activated skill is an instruction for the requested workflow or "
+        "response style, not merely reference material. Honor it without asking "
+        "the user to justify its name. For conversational modes such as /godmode, "
+        "reload the skill when that mode is active in the visible conversation; "
+        "the latest explicit on/off instruction wins. A status request only "
+        "reports the mode. Skills do not grant tool permissions or override "
+        "access boundaries or model/provider constraints.",
     ]
 
     if ordered:

@@ -747,6 +747,8 @@ async def handle_inbound_text(
         resolved,
         len(text or ""),
     )
+    from app.services.chat import resolve_slash_skill
+
     if command == "/new":
         from app.runtime.permissions.modes import mode_payload
 
@@ -759,6 +761,7 @@ async def handle_inbound_text(
             "Welcome to Tomo. Send a message to talk with your coordinator.\n"
             "/new — start a fresh conversation\n/stop — stop the current task\n/status — show progress\n"
             "/compact — summarize older messages to free context\n"
+            "/godmode [on|off|status|task] — activate the direct response skill\n"
             "/manual, /smart — set approval mode\n/help — show this guide\n/id — show this chat's ID\n"
             "/link <code> — share memory with your web account (DM only)\n"
             "/steer <text> — guide the current task\n/queue <text> — run another task afterwards\n"
@@ -795,7 +798,7 @@ async def handle_inbound_text(
         from app.runtime.permissions.slash import handle_approval_slash
 
         reply = handle_approval_slash(command, session_id) or "Approval mode unchanged."
-    elif command.startswith("/"):
+    elif command.startswith("/") and resolve_slash_skill(text) is None:
         reply = "Unknown command. Use /help to see available commands."
     else:
         typing = (

@@ -21,6 +21,12 @@ empty to disable external discovery.
 
 Bundled packages:
 
+- [Godmode](internal/godmode/SKILL.md): adapted from
+  [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent/tree/main/optional-skills/security/godmode);
+  explicitly activate a direct response style
+  with `/godmode`, pass a task with `/godmode <task>`, or use `on`, `off`, and
+  `status`. Mode follows visible chat context without a database flag. Model
+  and provider constraints still apply.
 - [Tomo](internal/tomo/SKILL.md): operate and configure Tomo.
 - [Tomo CLI](internal/tomo-cli/SKILL.md): logs, runtime diagnosis, CLI configuration and service control.
 - [Plugin development](internal/plugin-development/SKILL.md): build pages, tools, and usage skills.
