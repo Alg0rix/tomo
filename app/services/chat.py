@@ -67,6 +67,9 @@ class _ActiveTurn:
     # Mid-turn user steers (kimi-web ctrl+s / Enter-with-queue).
     steer_inbox: list[dict[str, Any]] = field(default_factory=list)
     _steer_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set once the loop committed to its final answer: later steers would
+    # never be drained, so they are refused and the client queues them.
+    steer_closed: bool = False
 
     def subscribe(self, after_seq: int = 0) -> asyncio.Queue:
         """Subscribe to live events.
@@ -1008,6 +1011,8 @@ def push_session_steer(
     steer_id = uuid4().hex[:16]
     item = {"content": clean, "attachment_ids": ids, "steer_id": steer_id}
     with turn._steer_lock:
+        if turn.steer_closed:
+            return {"ok": False, "accepted": False, "reason": "no_active_turn", "session_id": sid}
         if len(turn.steer_inbox) >= 20:
             return {"ok": False, "accepted": False, "reason": "inbox_full", "session_id": sid}
         turn.steer_inbox.append(item)
@@ -1039,6 +1044,22 @@ def drain_session_steers(session_id: str | None) -> list[dict[str, Any]]:
         items = list(turn.steer_inbox)
         turn.steer_inbox.clear()
     return items
+
+
+def close_session_steers(session_id: str | None) -> bool:
+    """Atomically refuse further steers unless some are already pending.
+
+    Returns True when steers are pending (the caller must keep going and
+    drain them); False once the inbox is closed for this turn."""
+    sid = (session_id or "").strip()
+    turn = get_active_session_turn(sid) if sid else None
+    if turn is None:
+        return False
+    with turn._steer_lock:
+        if turn.steer_inbox:
+            return True
+        turn.steer_closed = True
+    return False
 
 
 __all__ = [

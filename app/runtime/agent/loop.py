@@ -338,17 +338,16 @@ async def _llm_round_with_retry(
 
 
 
-def _peek_has_steers(session_id: str | None) -> bool:
+def _close_or_has_steers(session_id: str | None) -> bool:
+    """Before ending a top-level turn: True if steers are pending, else close
+    the inbox so a steer landing after this point is refused (and queued
+    client-side) instead of being accepted and silently dropped."""
     if not session_id or current_depth() > 0:
         return False
     try:
-        from app.services.chat import get_active_session_turn
+        from app.services.chat import close_session_steers
 
-        turn = get_active_session_turn(session_id)
-        if turn is None:
-            return False
-        with turn._steer_lock:
-            return bool(turn.steer_inbox)
+        return close_session_steers(session_id)
     except Exception:
         return False
 
@@ -1291,7 +1290,7 @@ async def _run_turn_owned(
 
             if not resp.has_tool_calls:
                 # Late steer during the LLM round — keep going instead of ending.
-                if _peek_has_steers(session_id) or swarm_board.pending():
+                if swarm_board.pending() or _close_or_has_steers(session_id):
                     final_content = resp.content or ""
                     if final_content:
                         messages.append(

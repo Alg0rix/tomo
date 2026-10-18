@@ -1333,3 +1333,32 @@ async def test_retained_conversation_preserves_final_provider_reasoning():
     assert events[-1]["kind"] == "final"
     assert conversation[-1]["reasoning_content"] == "  exact reasoning\n"
     assert conversation[-1]["content"] == "done"
+
+
+async def test_final_answer_closes_steer_inbox_so_late_steers_are_refused(monkeypatch) -> None:
+    from app.services import chat
+
+    active = chat._ActiveTurn(session_id="s-late")
+    monkeypatch.setattr(chat, "get_active_session_turn", lambda sid: active)
+    sid = owned_host_session()
+
+    events = await _collect(
+        "hi", session_id=sid, agent_id="main",
+        llm=ScriptedLLM([text_reply("done")]), tools=[],
+    )
+    assert _final(events)["content"] == "done"
+    # A steer arriving after the loop committed to its final answer would
+    # never be drained: refuse it so the client queues it as a new turn.
+    late = chat.push_session_steer(sid, "one more thing")
+    assert late["accepted"] is False and late["reason"] == "no_active_turn"
+    assert active.steer_inbox == []
+
+
+def test_pending_steer_keeps_inbox_open(monkeypatch) -> None:
+    from app.services import chat
+
+    active = chat._ActiveTurn(session_id="s-open")
+    active.steer_inbox.append({"content": "x"})
+    monkeypatch.setattr(chat, "get_active_session_turn", lambda sid: active)
+    assert chat.close_session_steers("s-open") is True
+    assert active.steer_closed is False

@@ -1488,6 +1488,7 @@
       if (!sid) {
         Tomo.toast('No session to steer into', 'err');
         enqueueMessage(merged, attachIds, attachMeta);
+        if (!sending) finishTurn();
         return false;
       }
       var el = appendUserBubble(merged, false, attachMeta, { steering: true });
@@ -1526,6 +1527,9 @@
         if (window.Tomo && Tomo.toast) {
           Tomo.toast((e && e.message) || 'Could not steer — queued instead', 'err');
         }
+        // The turn may have finished during the steer round trip (409
+        // no_active_turn): nothing else will drain the queue then.
+        if (!sending) finishTurn();
         return false;
       }
     }
@@ -1594,6 +1598,8 @@
         // Bubble was already shown when enqueued (or on the failed concurrent try).
         startTurn(next.text, {
           alreadyBubbled: true,
+          fromQueue: true,
+          retries: next.retries || 0,
           bubbleEl: next.el,
           attachmentIds: next.attachmentIds || [],
           attachments: next.attachments || [],
@@ -1925,6 +1931,17 @@
         refreshSendBtn();
         setStatus('ok', 'online');
         Tomo.toast((e && e.message) || 'Could not start chat', 'err');
+        if (opts.fromQueue) {
+          // Keep the dequeued message at the head of the queue; retry a few
+          // times instead of dropping it while its bubble looks sent.
+          var retries = (opts.retries || 0) + 1;
+          if (opts.bubbleEl) opts.bubbleEl.classList.add('msg-queued');
+          messageQueue.unshift({ text: value, el: opts.bubbleEl || null, attachmentIds: attachIds,
+            attachments: attachMeta, retries: retries });
+          if (retries < 3) scheduleQueueDrain(1500 * retries);
+          else setStatus('amber', 'queued · send again to retry');
+          return;
+        }
         if (messageQueue.length) finishTurn();
         return;
       }
@@ -1941,6 +1958,14 @@
       var turnEl = userBubble && userBubble.closest ? userBubble.closest('.turn') : null;
       streamTurn(value || (attachMeta.length ? 'Please review the attached file(s).' : ''), turnEl, attachIds);
     }
+
+    // Queued follow-ups live only in this page: warn before a reload/close
+    // would silently discard them.
+    on(window, 'beforeunload', function (event) {
+      if (!messageQueue.length) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
 
     function enqueueMessage(value, attachmentIds, attachments) {
       if (messageQueue.length >= MAX_QUEUE) {
@@ -1970,8 +1995,9 @@
       });
       const attachIds = attachMeta.map(function (a) { return a.id; });
       var hasQueue = messageQueue.length > 0;
-      // Empty Enter is allowed when steering an existing queue into the turn.
-      if (!value && !attachIds.length && !(sending && hasQueue)) return;
+      // Empty Enter is allowed when steering an existing queue into the turn
+      // or retrying a queue left behind by a failed start.
+      if (!value && !attachIds.length && !hasQueue) return;
       hidePopups();
       closeMoreMenu();
       input.value = '';
@@ -1985,6 +2011,13 @@
       }
       if (sending) {
         enqueueMessage(value, attachIds, attachMeta);
+        return;
+      }
+      if (hasQueue) {
+        // Idle with a stranded queue: keep send order, drain from the head.
+        if (value || attachIds.length) enqueueMessage(value, attachIds, attachMeta);
+        messageQueue.forEach(function (q) { q.retries = 0; });
+        finishTurn();
         return;
       }
       await startTurn(value, { attachmentIds: attachIds, attachments: attachMeta });
@@ -2249,7 +2282,7 @@
     if (clearBtn) {
       on(clearBtn, 'click', async function () {
         if (!confirm('Clear this conversation?')) return;
-        messageQueue = [];
+        messageQueue.length = 0;
         closeStream();
         sending = false;
         syncGeneratingUi();
@@ -2311,7 +2344,7 @@
         if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();
         delete scroll._tomoFollowPaused;
         followBtn.remove();
-        messageQueue = [];
+        messageQueue.length = 0;
         closeStream();
         if (window.TomoContextUsage && TomoContextUsage.destroy) {
           TomoContextUsage.destroy(wrap);

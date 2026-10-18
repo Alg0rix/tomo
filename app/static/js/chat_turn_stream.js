@@ -218,8 +218,9 @@
           ctx.reconnectStream(ctx.turn);
         } catch (err) {
           console.error('[tomo] reconnect failed', err);
-          ctx.setSending(false);
           delete ctx.wrap.dataset.liveStream;
+          if (ctx.messageQueue.length) { ctx.finishTurn(); return; }
+          ctx.setSending(false);
           ctx.setStatus('ok', 'online');
           ctx.refreshSendBtn();
         }
@@ -419,6 +420,9 @@
       closed = true;
       ctx.closeStream();
       delete ctx.wrap.dataset.liveStream;
+      // The turn ended while we were detached (missed turn.end): queued
+      // follow-ups must still go out instead of sitting behind "online".
+      if (ctx.messageQueue.length) { ctx.finishTurn(); return; }
       ctx.setSending(false);
       ctx.setStatus('ok', 'online');
       ctx.refreshSendBtn();
