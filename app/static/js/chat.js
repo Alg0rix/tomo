@@ -1959,13 +1959,61 @@
       streamTurn(value || (attachMeta.length ? 'Please review the attached file(s).' : ''), turnEl, attachIds);
     }
 
-    // Queued follow-ups live only in this page: warn before a reload/close
-    // would silently discard them.
+    // Queued follow-ups are parked per chat in sessionStorage when this chat
+    // is switched away from or the page reloads, and resume when it reopens.
+    // Closing the tab still loses them, so warn first.
     on(window, 'beforeunload', function (event) {
       if (!messageQueue.length) return;
       event.preventDefault();
       event.returnValue = '';
     });
+    on(window, 'pagehide', parkQueue);
+    on(window, 'pageshow', function (event) {
+      // Back/forward cache kept the live queue: drop the parked copy.
+      if (event.persisted) clearParkedQueue();
+    });
+
+    function parkedQueueKey(sid) { return 'tomo:chat-queue:' + sid; }
+
+    function parkQueue() {
+      var sid = currentSessionId();
+      if (!sid || !messageQueue.length) return;
+      try {
+        sessionStorage.setItem(parkedQueueKey(sid), JSON.stringify(messageQueue.map(function (q) {
+          return { text: q.text || '', attachmentIds: q.attachmentIds || [], attachments: q.attachments || [] };
+        })));
+      } catch (_) {}
+    }
+
+    function clearParkedQueue() {
+      var sid = currentSessionId();
+      try { if (sid) sessionStorage.removeItem(parkedQueueKey(sid)); } catch (_) {}
+    }
+
+    function restoreParkedQueue() {
+      var sid = currentSessionId();
+      if (!sid) return;
+      var items = [];
+      try {
+        items = JSON.parse(sessionStorage.getItem(parkedQueueKey(sid)) || '[]');
+        sessionStorage.removeItem(parkedQueueKey(sid));
+      } catch (_) { items = []; }
+      if (!Array.isArray(items)) return;
+      items.slice(0, MAX_QUEUE).forEach(function (q) {
+        if (!q || (!q.text && !(q.attachmentIds || []).length)) return;
+        var attachments = Array.isArray(q.attachments) ? q.attachments : [];
+        messageQueue.push({
+          text: String(q.text || ''),
+          el: appendUserBubble(String(q.text || ''), true, attachments),
+          attachmentIds: Array.isArray(q.attachmentIds) ? q.attachmentIds : [],
+          attachments: attachments,
+        });
+      });
+      if (!messageQueue.length) return;
+      setStatus('amber', busyStatusLabel());
+      // Give a mid-turn resume time to attach; a live turn drains on its end.
+      scheduleQueueDrain(800);
+    }
 
     function enqueueMessage(value, attachmentIds, attachments) {
       if (messageQueue.length >= MAX_QUEUE) {
@@ -2344,6 +2392,7 @@
         if (scroll._tomoStickCleanup) scroll._tomoStickCleanup();
         delete scroll._tomoFollowPaused;
         followBtn.remove();
+        parkQueue();
         messageQueue.length = 0;
         closeStream();
         if (window.TomoContextUsage && TomoContextUsage.destroy) {
@@ -2374,6 +2423,7 @@
     if (window.TomoProcesses) TomoProcesses.attach(wrap);
     setStatus('ok', 'online');
     refreshSendBtn();
+    restoreParkedQueue();
     return handle;
   }
 
