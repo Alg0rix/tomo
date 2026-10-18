@@ -121,7 +121,7 @@
       <span class="app-rail-avatar" aria-hidden="true">{{ (current_username or 'T')[:1]|upper }}</span>
       <div class="app-rail-user">
         <span class="app-rail-user-name">{{ current_username or 'Guest' }}</span>
-        <span class="app-rail-user-meta">{% if current_role %}{{ current_role }} · {% endif %}<a class="app-rail-logout" href="/logout">Log out</a></span>
+        <span class="app-rail-user-meta">{% if current_role %}{{ current_role }} · {% endif %}<form class="app-rail-logout-form" method="post" action="/logout"><button type="submit" class="app-rail-logout">Log out</button></form></span>
       </div>
       <button type="button" class="icon-btn" id="themeBtn" aria-label="Toggle theme" title="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>

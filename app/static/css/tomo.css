@@ -399,9 +399,15 @@ html.is-rail-collapsed .app-rail-more-menu .app-rail-item {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.app-rail-logout-form { display: inline; }
 .app-rail-logout {
+  font: inherit;
   font-size: 11px;
   color: var(--text-faint);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 .app-rail-logout:hover { color: var(--accent); }
 

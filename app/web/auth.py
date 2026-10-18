@@ -9,13 +9,16 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.config import BRAND
-from app.core.deps import authenticate, templates
+from app.core.deps import authenticate, client_ip, templates
 from app.workplaces.pairing import PairingRateLimiter
 
 router = APIRouter()
 
-# Brute-force guard for password login (per client IP).
+# Brute-force guards for password login: per (client, account) so one
+# client cannot lock a victim out globally, plus a looser per-client cap
+# against username spraying.
 _login_limiter = PairingRateLimiter(max_attempts=20, window_seconds=300)
+_login_ip_limiter = PairingRateLimiter(max_attempts=100, window_seconds=300)
 
 
 def safe_next_path(target: str) -> str:
@@ -41,13 +44,6 @@ def safe_next_path(target: str) -> str:
     return f"{path}{query}{frag}"
 
 
-def _login_client_ip(request: Request) -> str:
-    # Do not trust X-Forwarded-For here (spoofable); peer address only.
-    if request.client:
-        return request.client.host or "unknown"
-    return "unknown"
-
-
 @router.post("/login")
 async def login_submit(
     request: Request,
@@ -56,8 +52,9 @@ async def login_submit(
     next: Annotated[str, Form()] = "/",
 ):
     ctx = {"page": "login", "brand": BRAND, "error": None}
-    ip = _login_client_ip(request)
-    if not _login_limiter.allow(f"login:{ip}"):
+    ip = client_ip(request) or "unknown"
+    account = username.strip().lower()[:128]
+    if not _login_ip_limiter.allow(f"login:{ip}") or not _login_limiter.allow(f"login:{ip}:{account}"):
         ctx["error"] = "Too many login attempts. Try again later."
         return templates.TemplateResponse(request, "login.html", ctx, status_code=429)
     user = authenticate(username.strip(), password)
@@ -67,7 +64,7 @@ async def login_submit(
         request.session["user"] = user["username"]
         # CodeQL py/url-redirection: sanitize with urlparse at the redirect site.
         # See https://codeql.github.com/codeql-query-help/python/py-url-redirection/
-        target = (next or "/").replace("\\", "")
+        target = safe_next_path(next)
         parsed = urlparse(target)
         if (
             not parsed.netloc

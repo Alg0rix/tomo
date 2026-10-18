@@ -6,12 +6,14 @@ an execution sandbox. Runtime admission must enforce the bound context too.
 """
 from __future__ import annotations
 
+import time
+
 from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Match
 from starlette.staticfiles import StaticFiles
 
-from app.core.deps import authenticated_user, require_owned_session
+from app.core.deps import authenticated_user, cross_origin_cookie_write, require_owned_session
 from app.runtime.access import AccessDenied, AccessUnavailable, execution_scope
 from app.services import store
 
@@ -25,6 +27,8 @@ def access_error_response(exc: AccessDenied) -> JSONResponse:
     detail = " ".join(str(exc).split())[:300] or (
         "Execution access unavailable" if unavailable else "Access denied")
     return JSONResponse({"detail": detail}, status_code=503 if unavailable else 403)
+
+_STREAM_RECHECK_SECONDS = 2.0
 
 # Use actual matched endpoint identities, not URL prefixes (plugins can mount
 # arbitrary URLs). Anonymous exemptions retain their own capability validation.
@@ -178,6 +182,11 @@ class AccessPolicyMiddleware:
         if route_scope is None:
             # Authentication also covers unknown paths and unsupported methods.
             route_scope = {}
+        if scope["type"] == "http" and cross_origin_cookie_write(Request(scope)):
+            # Shared CSRF guard for every cookie-authenticated write, public
+            # login/logout included (SameSite=Lax still admits same-site).
+            response = JSONResponse({"detail": "Cross-origin request blocked"}, status_code=403)
+            return await response(scope, receive, send)
         endpoint = route_scope.get("endpoint")
         module = getattr(endpoint, "__module__", "")
         name = getattr(endpoint, "__name__", "")
@@ -223,12 +232,21 @@ class AccessPolicyMiddleware:
                 response = access_error_response(exc)
             return await response(scope, receive, send)
 
+        checked_at = 0.0
+
         async def checked_send(message):
-            # Long-lived SSE does not keep a disabled account authenticated.
+            # Long-lived SSE does not keep a disabled account, or a revoked
+            # execution context, authenticated. Throttled: streams are chatty.
+            nonlocal checked_at
             if message["type"] == "http.response.body" and message.get("more_body"):
-                current = store.get_user(user["id"])
-                if not current or not current["enabled"] or current["role"] != user["role"]:
-                    raise AccessDenied("Account is unavailable")
+                now = time.monotonic()
+                if now - checked_at >= _STREAM_RECHECK_SECONDS:
+                    checked_at = now
+                    current = store.get_user(user["id"])
+                    if not current or not current["enabled"] or current["role"] != user["role"]:
+                        raise AccessDenied("Account is unavailable")
+                    if context is not None:
+                        store.access.revalidate(context)
             await send(message)
 
         if context is not None:

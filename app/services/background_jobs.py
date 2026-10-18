@@ -174,9 +174,11 @@ class BackgroundJobManager:
                         from app.runtime.policy import durable_context
                         durable_context(item)
                     except PermissionError:
+                        # Access changed while the app was down: the remote
+                        # process must not outlive its revoked identity. The
+                        # supervisor keeps retrying the stop until confirmed.
                         self._publish(item['id'], {'status': 'unknown', 'reason': 'Stored execution identity is unavailable', 'continuation_status': 'blocked'})
-                    else:
-                        self._watch_remote(item['id'])
+                    self._watch_remote(item['id'])
 
     def _origin(self, sid: str, command: str, agent_id: str | None) -> int | None:
         from app.runtime.tools.progress import current_call_id
@@ -397,10 +399,21 @@ class BackgroundJobManager:
                 if not handle:
                     self._publish(job_id, {'status': 'unknown', 'reason': 'Remote handle was not confirmed'})
                     return
+                from app.runtime.policy import durable_context
                 try:
-                    from app.runtime.policy import durable_context
+                    context = durable_context(item)
+                except PermissionError:
+                    try:
+                        backends.stop_remote_job(item)
+                    except Exception as exc:
+                        self._publish(job_id, {'status': 'unknown', 'reason': f'Access revoked; remote stop pending: {type(exc).__name__}'})
+                        delay = min(delay * 2, 15)
+                        continue
+                    self._publish(job_id, {'status': 'stopped', 'reason': 'Execution access was revoked'})
+                    return
+                try:
                     from app.runtime.access import execution_scope
-                    with execution_scope(durable_context(item)):
+                    with execution_scope(context):
                         # Server-side duration bound: the destination enforces
                         # its own timeout too, but a hung or lying destination
                         # must not run managed work past the owner's quota.

@@ -614,3 +614,49 @@ def test_mcp_tables_have_runtime_columns(tmp_path):
     assert conn.execute("SELECT command, supports_parallel_tool_calls FROM mcp_servers WHERE id='old'").fetchone() == ("echo", 0)
 
 
+
+
+def test_logout_is_post_only_and_cross_origin_writes_are_blocked(tmp_path) -> None:
+    store.rebind(tmp_path / "users-logout.db")
+    store.create_user({"username": "logoutuser", "password": "password1", "role": "admin"})
+    client = TestClient(app)
+    assert client.post("/login", data={"username": "logoutuser", "password": "password1"},
+                       follow_redirects=False).status_code == 303
+    # A navigation (link/img) can no longer end the session.
+    assert client.get("/logout", follow_redirects=False).status_code != 303
+    assert client.get("/api/sessions").status_code == 200
+    for origin in ("https://evil.example", "null"):
+        res = client.post("/logout", headers={"origin": origin}, follow_redirects=False)
+        assert res.status_code == 403, origin
+    assert client.get("/api/sessions").status_code == 200
+    res = client.post("/logout", headers={"origin": "http://testserver"}, follow_redirects=False)
+    assert res.status_code == 303
+    assert client.get("/api/sessions", follow_redirects=False).status_code == 401
+
+
+def test_login_limiter_is_per_account_with_client_cap(tmp_path) -> None:
+    from app.web import auth
+
+    store.rebind(tmp_path / "users-limit.db")
+    store.create_user({"username": "victim", "password": "password1", "role": "member"})
+    auth._login_limiter.reset()
+    auth._login_ip_limiter.reset()
+    client = TestClient(app)
+    try:
+        for _ in range(20):
+            client.post("/login", data={"username": "other", "password": "x"})
+        assert client.post("/login", data={"username": "other", "password": "x"}).status_code == 429
+        # Exhausting one account does not lock out a different account.
+        res = client.post("/login", data={"username": "victim", "password": "password1"},
+                          follow_redirects=False)
+        assert res.status_code == 303
+    finally:
+        auth._login_limiter.reset()
+        auth._login_ip_limiter.reset()
+
+
+def test_login_redirect_quotes_next_path(tmp_path) -> None:
+    store.rebind(tmp_path / "users-next.db")
+    res = TestClient(app).get("/sessions/a b?x=1", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/login?next=/sessions/a%20b"

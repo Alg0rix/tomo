@@ -368,7 +368,7 @@ async def login_page(request: Request):
     return templates.TemplateResponse(request, "login.html", page_ctx(request, "login", error=None))
 
 
-@router.get("/logout")
+@router.post("/logout")
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)

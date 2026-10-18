@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from app.core.config import TRUST_PROXY
+from app.core.deps import client_ip
 from app.services import store
 from app.workplaces.hub import (
     ConnectorSession,
@@ -44,21 +44,10 @@ def _err(message: str) -> dict[str, Any]:
     return {"v": _PROTOCOL_V, "type": "error", "message": message}
 
 
-def _client_ip(request: Request | WebSocket) -> str:
-    """Peer IP for rate limits. X-Forwarded-For only when TOMO_TRUST_PROXY=1."""
-    if TRUST_PROXY:
-        forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host or ""
-    return ""
-
-
 @router.post("/api/connector/pair")
 async def connector_pair_http(request: Request) -> JSONResponse:
     """Pair with a short-lived code (called by tomo-connector; no admin session)."""
-    ip = _client_ip(request) or "unknown"
+    ip = client_ip(request) or "unknown"
     if not rate_limiter.allow(f"pair:{ip}"):
         return JSONResponse({"ok": False, "error": "too many pairing attempts"}, 429)
     try:
@@ -105,7 +94,7 @@ async def connector_pair_http(request: Request) -> JSONResponse:
 
 @router.websocket("/api/connector/ws")
 async def connector_ws(websocket: WebSocket) -> None:
-    client_host = _client_ip(websocket)
+    client_host = client_ip(websocket)
     # Prefer Bearer auth at handshake.
     auth = websocket.headers.get("authorization") or ""
     token_hdr = ""

@@ -150,6 +150,33 @@ def test_tunnel_background_process_start(tmp_path: Path) -> None:
         dest.unregister()
 
 
+def test_supervisor_stops_remote_job_after_access_revoked(tmp_path: Path, monkeypatch) -> None:
+    import time
+    from app.runtime import policy
+    from app.runtime.access import AccessDenied
+    sid, dest = _admitted_tunnel(tmp_path)
+    try:
+        from app.services.background_jobs import manager
+        with execution_scope(store.access.resolve_context("usr_admin", sid)):
+            bash.run({"command": "sleep 60", "background": True})
+        job = store.list_background_jobs(sid)[0]
+
+        def revoked(item):
+            raise AccessDenied("Stored execution identity is unavailable")
+
+        monkeypatch.setattr(policy, "durable_context", revoked)
+        manager._watch_remote(job["id"])
+        proc = dest._jobs[job["backend_handle"]].proc
+        deadline = time.time() + 10
+        while (proc.poll() is None or store.get_background_job(job["id"])["status"] != "stopped") \
+                and time.time() < deadline:
+            time.sleep(0.05)
+        assert proc.poll() is not None
+        assert store.get_background_job(job["id"])["status"] == "stopped"
+    finally:
+        dest.unregister()
+
+
 def test_local_workplace_unchanged(tmp_path: Path) -> None:
     # The chat's active workplace selects the shell cwd, not legacy agent
     # bindings: an explicitly activated local folder is the execution root.

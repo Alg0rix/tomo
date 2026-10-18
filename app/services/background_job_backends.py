@@ -225,6 +225,8 @@ def stop_remote_job(item: dict[str, Any]) -> dict[str, Any]:
         "owner_user_id": item.get("user_id") or stored.get("user_id") or "",
         "session_id": item.get("session_id") or stored.get("session_id") or "",
         "agent_id": item.get("agent_id") or stored.get("agent_id") or "",
+        # Kill is scoped by owner/session only; legacy jobs without a stored
+        # mode still need a valid envelope so they are never stranded.
         "execution_mode": stored.get("execution_mode") or "unrestricted",
         "destination_id": workplace_id,
         "active_workplace_id": stored.get("active_workplace_id") or workplace_id,

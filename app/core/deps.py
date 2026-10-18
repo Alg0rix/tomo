@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from urllib.parse import quote, urlsplit
 
 from fastapi import Depends, Form, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
 
-from .config import EVAL_UI_ENABLED, TEMPLATE_DIR
+from .config import EVAL_UI_ENABLED, TEMPLATE_DIR, TRUST_PROXY
 
 
 from app.plugins.icons import ICONS
@@ -92,6 +93,39 @@ class _StaticVersion:
 
 
 templates.env.globals["static_ver"] = _StaticVersion()
+
+
+def client_ip(request) -> str:
+    """Peer IP for rate limits. X-Forwarded-For only when TOMO_TRUST_PROXY=1."""
+    if TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host or ""
+    return ""
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def cross_origin_cookie_write(request: Request) -> bool:
+    """True for a browser-originated unsafe request from another origin.
+
+    Header-credentialed API clients (Bearer / X-API-Key) are not ambient
+    credentials and are exempt; non-browser clients send no Origin."""
+    if request.method in _SAFE_METHODS or _extract_bearer_or_api_key(request):
+        return False
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        return True
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return True
+    return parts.scheme not in {"http", "https"} or parts.netloc != request.headers.get("host")
 
 
 def _extract_bearer_or_api_key(request: Request) -> str | None:
@@ -203,7 +237,7 @@ def require_auth(request: Request) -> None:
         )
     raise HTTPException(
         status_code=status.HTTP_303_SEE_OTHER,
-        headers={"Location": f"/login?next={request.url.path}"},
+        headers={"Location": f"/login?next={quote(request.url.path, safe='/')}"},
     )
 
 
