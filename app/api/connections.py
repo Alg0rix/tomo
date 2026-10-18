@@ -93,7 +93,8 @@ def _broker_execution(scope: dict, *, bundle_name: str | None = None, write: boo
             raise HTTPException(503, str(exc)) from None
         return context
     if (context.role != "admin" or context.execution_mode != "unrestricted"
-            or any(r.kind != "local" for r in context.resources)):
+            or any(r.kind != "local" for r in context.mounted_resources)
+            or not context.active_resource or context.active_resource.kind != "local"):
         raise HTTPException(503, "Credential consumer requires explicitly unrestricted local Admin execution")
     return context
 

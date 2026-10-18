@@ -1720,7 +1720,8 @@
         var wpData = await Tomo.api('/api/access/resources');
         workplaces = (wpData && wpData.workplaces) || [];
       } catch (e2) {
-        workplaces = [];
+        // Keep the last known list: a transient failure must not relabel
+        // every chat as "Unavailable resource".
       }
       fillWorkplaceSelect(
         document.getElementById('newChatWorkplace'),

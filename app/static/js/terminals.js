@@ -197,7 +197,7 @@
     updateStatus();
   }
   async function create() {
-    if (!view || view.creating || view.loading) return;
+    if (!view || view.creating || view.loading || !view.ready) return;
     var current = view;
     current.creating = true;
     current.host.querySelectorAll('[data-terminal-create]').forEach(function (button) { button.disabled = true; });
@@ -225,7 +225,7 @@
       return;
     }
     var current = view = { host: host, sid: sid, creating: false, loading: true };
-    host.innerHTML = '<div class="terminal-toolbar"><span class="terminal-local" data-terminal-backend>Restricted container</span>' +
+    host.innerHTML = '<div class="terminal-toolbar"><span class="terminal-local" data-terminal-backend>Checking access…</span>' +
       '<button type="button" class="btn sm" data-terminal-create disabled>+ New terminal</button></div>' +
       '<div class="terminal-tabs" data-terminal-tabs aria-label="Terminal instances"></div>' +
       '<div class="terminal-location" data-terminal-cwd title="Terminal starting directory"></div>' +
@@ -256,12 +256,17 @@
       view.backend = data.backend;
       var backendLabel = host.querySelector('[data-terminal-backend]');
       if (backendLabel) backendLabel.textContent = data.backend === 'host' ? 'Granted host · unrestricted' : 'Restricted container';
+      current.ready = true;
       draw();
     } catch (error) {
-      if (view === current) host.querySelector('[data-terminal-stage]').textContent = 'Could not load terminals: ' + error.message;
+      if (view === current) {
+        host.querySelector('[data-terminal-backend]').textContent = 'Terminal unavailable';
+        host.querySelector('[data-terminal-stage]').textContent = 'Could not load terminals: ' + error.message;
+      }
     } finally {
       current.loading = false;
-      if (view === current) host.querySelectorAll('[data-terminal-create]').forEach(function (button) { button.disabled = false; });
+      // A failed load means creation would fail the same way; keep it off.
+      if (view === current) host.querySelectorAll('[data-terminal-create]').forEach(function (button) { button.disabled = !current.ready; });
     }
   }
   setInterval(updateStatus, 1000);
@@ -276,5 +281,9 @@
     var wrap = host && host.closest('.chat-wrap');
     if (wrap && wrap.querySelector('.chat-agent-panel[data-cap-open="1"]')) mount(host, wrap.dataset.sessionId);
   });
+  // Mode/location changes swap the backend (host PTY vs container): reload.
+  document.addEventListener('tomo:access-changed', function (event) {
+    if (view && view.host.isConnected && event.target.dataset && event.target.dataset.sessionId === view.sid) mount(view.host, view.sid);
+  }, true);
   global.TomoTerminals = { mount: mount, detach: detach };
 })(window);

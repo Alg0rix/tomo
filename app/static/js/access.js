@@ -43,15 +43,15 @@
     var button = document.getElementById('chatAccessButton'), mode = document.getElementById('chatExecutionMode');
     if (!button) return;
     var resource = resources.find(function (w) { return w.id === session.workplace_id; });
-    var legacy = document.body.dataset.role === 'admin' && !session.workplace_id && session.access_generation === 0;
-    var unrestricted = legacy || session.execution_mode === 'unrestricted';
-    button.textContent = 'Working location: ' + (resource ? resource.name : session.workplace_id ? 'Unavailable resource' : legacy ? 'Legacy host' : 'Personal space');
-    button.title = resource ? metadata(resource) : legacy ? 'Legacy OS-account access; cross-user confidentiality is not guaranteed' : 'Persistent private files';
+    // Mirrors resolve_context: nothing runs without an available working location.
+    var blocked = !session.workplace_id ? 'Select a working location' : !resource ? 'Working location unavailable' : '';
+    var unrestricted = session.execution_mode === 'unrestricted';
+    button.textContent = 'Working location: ' + (resource ? resource.name : session.workplace_id ? 'Unavailable resource' : 'Not selected');
+    button.title = resource ? metadata(resource) : blocked + '; choose an authorized folder to run tools';
     button.disabled = !!session.access_pending;
-    mode.textContent = (session.access_pending ? 'Teardown pending' :
-      unrestricted ? 'Unrestricted · OS account access' : 'Restricted') +
-      ' · ' + (resource ? (resource.destination_id || 'local') + ' / ' + resource.name : legacy ? 'local / legacy host' : 'local');
-    mode.className = 'badge sm ' + (unrestricted || session.access_pending ? 'danger' : 'ok');
+    mode.textContent = session.access_pending ? 'Teardown pending' : blocked ? blocked :
+      (unrestricted ? 'Unrestricted · OS account access' : 'Restricted') + ' · ' + (resource.destination_id || 'local') + ' / ' + resource.name;
+    mode.className = 'badge sm ' + (unrestricted || session.access_pending || blocked ? 'danger' : 'ok');
   }
   async function editChat(wrap) {
     var sid = wrap.dataset.sessionId;
@@ -64,6 +64,7 @@
       '<form><label class="field">Active folder<select class="input" name="active" required></select></label>' +
       '<button type="button" class="btn ghost sm" data-create>+ Create project</button><h3>Additional access</h3><div data-resources></div>' +
       '<label class="field">Execution mode<select class="input" name="mode"><option value="restricted">Restricted container</option><option value="unrestricted">Unrestricted at this destination</option></select></label>' +
+      '<p class="access-note" data-mode-note hidden>This chat is Unrestricted, but you have no unrestricted grant for the selected folder. Saving switches it to Restricted.</p>' +
       '<div class="access-warning" data-warning hidden><strong>OS-account confidentiality warning</strong><p>Unrestricted execution can access everything the server OS account can reach, including other users’ data and credentials. Folder grants are not a filesystem boundary in this mode. Tomo cannot guarantee cross-user confidentiality, rollback, or termination of escaped processes.</p><label><input type="checkbox" name="ack"> I understand and explicitly activate unrestricted execution at this destination.</label></div>' +
       '<p class="access-note">Admin chats use host execution by default. Restricted execution requires a non-root sandbox broker and bounded storage; it never falls back to the host.</p>' +
       '<p class="access-status" role="alert"></p><div class="access-actions"><button type="button" class="btn ghost" data-cancel>Cancel</button><button type="submit" class="btn primary">Save access</button></div></form>';
@@ -72,12 +73,20 @@
     var status = dialog.querySelector('.access-status');
     dialog.querySelector('[data-warning] label').hidden = admin;
     function render() {
+      // Keep unsaved additional selections across re-renders (e.g. after creating a project).
+      var checked = dialog.querySelector('[data-resources] input') ?
+        Array.from(form.querySelectorAll('[name="additional"]:checked')).map(function (cb) { return cb.value; }) :
+        (state.additional_workplace_ids || []);
       fill(active, state.workplaces, state.active_workplace_id);
-      // The default is an actual resource in a persisted chat, never empty.
-      active.querySelector('option[value=""]').remove();
+      // A persisted chat always has a real resource. If its folder is no longer
+      // available, say so and require an explicit choice instead of letting the
+      // browser silently select the first listed folder.
+      var placeholder = active.querySelector('option[value=""]');
+      if (active.value) placeholder.remove();
+      else { placeholder.textContent = 'Current folder unavailable — choose a folder'; placeholder.disabled = true; }
       dialog.querySelector('[data-resources]').innerHTML = state.workplaces.map(function (w) {
         return '<label class="access-resource"><input type="checkbox" name="additional" value="' + esc(w.id) + '"' +
-          ((state.additional_workplace_ids || []).indexOf(w.id) >= 0 ? ' checked' : '') + '><span>' + esc(w.name) + '<small>' + esc(metadata(w)) + '</small></span></label>';
+          (checked.indexOf(w.id) >= 0 ? ' checked' : '') + '><span>' + esc(w.name) + '<small>' + esc(metadata(w)) + '</small></span></label>';
       }).join('');
       sync();
     }
@@ -88,9 +97,12 @@
       });
       var allowed = (state.unrestricted_workplace_ids || []).indexOf(active.value) >= 0;
       mode.querySelector('option[value="unrestricted"]').disabled = !allowed;
+      var clamped = !allowed && mode.value === 'unrestricted';
       if (!allowed) mode.value = 'restricted';
+      dialog.querySelector('[data-mode-note]').hidden = !(clamped || (!allowed && state.execution_mode === 'unrestricted'));
       dialog.querySelector('[data-warning]').hidden = mode.value !== 'unrestricted';
       form.elements.ack.required = mode.value === 'unrestricted' && !admin;
+      form.querySelector('[type="submit"]').disabled = !active.value;
     }
     mode.value = state.execution_mode;
     render();
@@ -113,7 +125,7 @@
         updateBar(result, state.workplaces); dialog.close();
         wrap.dispatchEvent(new CustomEvent('tomo:access-changed'));
       } catch (e) { status.textContent = e.message || 'Access change failed; affected execution may remain unavailable until teardown is confirmed.'; }
-      finally { save.disabled = false; }
+      finally { save.disabled = !active.value; }
     });
     dialog.showModal();
   }

@@ -12,8 +12,19 @@ from starlette.routing import Match
 from starlette.staticfiles import StaticFiles
 
 from app.core.deps import authenticated_user, require_owned_session
-from app.runtime.access import AccessChangePending, AccessDenied, AccessUnavailable, execution_scope
+from app.runtime.access import AccessDenied, AccessUnavailable, execution_scope
 from app.services import store
+
+
+def access_error_response(exc: AccessDenied) -> JSONResponse:
+    """Single HTTP mapping for policy errors. AccessDenied messages are
+    owner-safe by contract (no private resource metadata), and the caller
+    has already been authenticated, so pass the reason through instead of a
+    generic string that hides why execution is blocked."""
+    unavailable = isinstance(exc, AccessUnavailable)
+    detail = " ".join(str(exc).split())[:300] or (
+        "Execution access unavailable" if unavailable else "Access denied")
+    return JSONResponse({"detail": detail}, status_code=503 if unavailable else 403)
 
 # Use actual matched endpoint identities, not URL prefixes (plugins can mount
 # arbitrary URLs). Anonymous exemptions retain their own capability validation.
@@ -209,8 +220,7 @@ class AccessPolicyMiddleware:
                 else:
                     response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
             else:
-                response = JSONResponse({"detail": str(exc) if isinstance(exc, AccessChangePending) else "Execution access unavailable"},
-                                        status_code=503 if isinstance(exc, AccessUnavailable) else 403)
+                response = access_error_response(exc)
             return await response(scope, receive, send)
 
         async def checked_send(message):

@@ -22,7 +22,11 @@ is involved at all.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
 
 _MAX_HTML_BYTES = 512 * 1024
 _RENDER_TIMEOUT = 60.0
@@ -115,18 +119,18 @@ def render_offline_html(context: Any, html: str, *, timeout: float = _RENDER_TIM
     except Exception as exc:
         raise AccessUnavailable(f"Container browser backend is unavailable: {type(exc).__name__}") from exc
     if result.returncode != 0:
-        raise AccessUnavailable(
-            f"Container browser backend failed: {(result.stderr or '').strip()[:200]}"
-        )
+        _log.warning("container browser failed: %s", (result.stderr or "").strip()[:2000])
+        raise AccessUnavailable("Container browser backend failed; see server logs")
     try:
         payload = json.loads((result.stdout or "").strip() or "{}")
     except Exception as exc:
         raise AccessUnavailable("Container browser returned an unreadable result") from exc
     if not isinstance(payload, dict) or not payload.get("ok"):
         err = str((payload or {}).get("error") or "render failed")
+        _log.info("container browser refused: %s", err[:2000])
         if "unavailable" in err.lower():
-            raise AccessUnavailable(f"Container browser is unavailable: {err[:200]}")
-        raise AccessDenied(err[:300])
+            raise AccessUnavailable("Container browser is unavailable")
+        raise AccessDenied("Container browser refused the page")
     return {"title": str(payload.get("title") or ""), "text": str(payload.get("text") or "")}
 
 

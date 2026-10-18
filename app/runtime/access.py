@@ -74,6 +74,16 @@ class ExecutionContext:
     def workplace_id(self) -> str:
         return self.active_workplace_id
 
+    @property
+    def active_resource(self) -> ResourceAccess | None:
+        return next((r for r in self.resources if r.workplace_id == self.active_workplace_id), None)
+
+    @property
+    def mounted_resources(self) -> tuple[ResourceAccess, ...]:
+        """Resources at the execution destination. Transfer-only endpoints
+        (Admin routing targets, other machines) are never execution mounts."""
+        return tuple(r for r in self.resources if not r.transfer_only)
+
     def to_dict(self) -> dict:
         out = asdict(self)
         out["resources"] = [asdict(resource) for resource in self.resources]

@@ -113,7 +113,7 @@ def private_write(extra_bytes: int, *, home_root=None):
     with _lock:
         mutex = _locks.setdefault(context.user_id, threading.RLock())
     roots = set(_user_roots(context.user_id, home_root=home_root))
-    roots.update(Path(r.root_path) for r in context.resources if r.kind == 'local')
+    roots.update(Path(r.root_path) for r in context.mounted_resources if r.kind == 'local')
     with mutex:
         used = sum(_size(root) for root in roots)
         pending = reserved_bytes(context.user_id)

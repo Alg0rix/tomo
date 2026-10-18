@@ -485,7 +485,10 @@ async def _authorize_tool(
         yield Decision(allowed=False, message=f"Error: {exc}", allow_permanent=False)
         return
     from pathlib import Path
-    active = next(r for r in execution.resources if r.workplace_id == execution.active_workplace_id)
+    active = execution.active_resource
+    if active is None:
+        yield Decision(allowed=False, message="Error: Active working location is unavailable", allow_permanent=False)
+        return
     # Approval assessment uses the selected destination's logical root.
     # Remote tools must not resolve (or acquire authority over) a host path.
     work_root = Path(active.root_path if execution.execution_mode == "unrestricted" and active.kind == "local"

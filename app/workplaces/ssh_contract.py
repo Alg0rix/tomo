@@ -32,6 +32,7 @@ does not need the agent — but restricted work never uses that path.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 import threading
@@ -43,6 +44,9 @@ from app.runtime.access import AccessDenied, AccessUnavailable, ExecutionContext
 #: Agent contract version the coordinator accepts. Anything else is
 #: unsupported (old agent / unexpected program on the remote end).
 SSH_AGENT_CONTRACT = 2
+
+_log = logging.getLogger(__name__)
+
 
 _ADMIT_TIMEOUT = 15.0
 
@@ -292,10 +296,12 @@ def ensure_admitted(
             "admit", {"exec_context": envelope, "destination_id": wid}, timeout=timeout
         )
     except AgentTransportError as exc:
-        raise AccessUnavailable(f"SSH destination is offline or unprepared: {exc}") from exc
+        _log.warning("ssh admit transport failed for %s: %s", wid, exc)
+        raise AccessUnavailable("SSH destination is offline or unprepared") from exc
     if not isinstance(payload, dict) or not payload.get("ok"):
         err = str((payload or {}).get("error") or "destination refused admission")
-        raise AccessDenied(f"SSH destination refused execution: {err[:200]}")
+        _log.warning("ssh destination %s refused admission: %s", wid, err[:2000])
+        raise AccessDenied("SSH destination refused execution; see server logs")
     result = payload.get("result") or {}
     if int(result.get("contract", 0) or 0) != SSH_AGENT_CONTRACT:
         raise AccessUnavailable("SSH destination agent is unsupported; update the destination agent")

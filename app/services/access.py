@@ -363,10 +363,14 @@ class AccessService:
         self.store.with_db(pending)
         self._mark_pending(sessions)
         self._stop(sessions)
-        result = operation()
-        self.store.with_db(lambda c: (c.execute("UPDATE workplaces SET access_pending=0 WHERE id=?", (workplace_id,)), c.commit()))
-        self._clear_pending(sessions)
-        return result
+        # Teardown is confirmed and generations are bumped, so a rejected
+        # operation (validation error, DB failure) must not leave every chat
+        # on this workplace blocked. Only teardown failures stay pending.
+        try:
+            return operation()
+        finally:
+            self.store.with_db(lambda c: (c.execute("UPDATE workplaces SET access_pending=0 WHERE id=?", (workplace_id,)), c.commit()))
+            self._clear_pending(sessions)
 
     @_serialized
     def stop_user_execution(self, user_id: str) -> list[str]:
@@ -398,7 +402,7 @@ class AccessService:
         ids = list(dict.fromkeys([active_workplace_id, *additional_workplace_ids]))
         if not active_workplace_id:
             raise ValueError("An active workplace is required")
-        self.workplace_permission(user_id, active_workplace_id)
+        active_permission = self.workplace_permission(user_id, active_workplace_id)
         for wid in ids:
             if wid == active_workplace_id:
                 continue
@@ -413,6 +417,9 @@ class AccessService:
                 raise AccessDenied("Resource is unavailable")
         if execution_mode == "unrestricted":
             self.require_use(user_id, "unrestricted", active_workplace_id)
+            if active_permission != "read_write":
+                # Host execution cannot enforce a read-only grant.
+                raise AccessDenied("Unrestricted execution requires read/write access to the working location")
             if user["role"] != "admin" and not unrestricted_acknowledged:
                 raise AccessDenied("Explicit unrestricted execution acknowledgement is required")
         additional = [wid for wid in ids if wid != active_workplace_id]
@@ -517,7 +524,10 @@ class AccessService:
                     continue
                 raise
             wp = self.store.get_workplace(wid)
-            if admin_routing and wid != active and wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
+            if wid != active and wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
+                # An offline optional resource cannot brick the chat; it
+                # simply is not in this turn's ceiling. The active one still
+                # fails below.
                 continue
             if wp["kind"] in ("ssh", "tunnel") and not wp.get("online"):
                 raise AccessUnavailable("Execution destination is offline")
@@ -543,6 +553,10 @@ class AccessService:
                 if any(root == private or root in private.parents or private in root.parents for private in protected):
                     raise AccessDenied("Resource overlaps protected server storage")
             resources.append(ResourceAccess(wid, wp["root_path"], permission, wp["destination_id"], wp["kind"], wp["storage_kind"], f"/workplaces/{wid}", transfer_only))
+        if mode == "unrestricted" and not any(r.workplace_id == active and r.writable for r in resources):
+            # Host execution cannot enforce a read-only grant; a downgraded
+            # grant must not keep host write access through an old chat.
+            raise AccessDenied("Unrestricted execution requires read/write access to the working location")
         tools = frozenset(t["id"] for t in self.store.get_agent_tools(aid) if t.get("enabled"))
         if user["role"] == "member":
             tools -= _MEMBER_ADMIN_TOOLS

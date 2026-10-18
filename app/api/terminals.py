@@ -67,12 +67,16 @@ def _context(uid: str, session_id: str) -> ExecutionContext:
     # Capability mapping only; the managers enforce admission. Restricted
     # chats get held container terminals, granted+activated unrestricted
     # chats get host PTYs. Remote destinations have no terminal backend, and
-    # there is never a host fallback for restricted execution.
+    # there is never a host fallback for restricted execution. Only the
+    # active destination's machine matters: Admin routing targets and other
+    # machines' resources are transfer-only and never back a terminal.
+    active = context.active_resource
+    mounted = context.mounted_resources
     if context.execution_mode == "restricted":
-        if any(r.kind != "local" or r.destination_id != "local" for r in context.resources):
+        if not active or any(r.kind != "local" or r.destination_id != "local" for r in [active, *mounted]):
             raise AccessUnavailable("Remote interactive terminal backend unavailable")
     elif context.execution_mode == "unrestricted":
-        if any(r.kind != "local" for r in context.resources):
+        if not active or any(r.kind != "local" for r in [active, *mounted]):
             raise AccessUnavailable("Remote interactive terminal backend unavailable")
     else:
         raise AccessDenied("Terminal execution identity unavailable")

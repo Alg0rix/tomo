@@ -345,3 +345,69 @@ def test_transfer_size_bound_enforced(world):
                 break
             time.sleep(0.05)
         assert "status: done" in status
+
+
+def test_offline_additional_resource_does_not_brick_chat(world):
+    alice = world["alice"]
+    wid_a, _ = world["dest"]["wp_a"]
+    wid_b, dest_b = world["dest"]["wp_b"]
+    grant_all(world, alice["id"], wid_a)
+    grant_all(world, alice["id"], wid_b)
+    sid = chat(world, alice["id"], wid_a, additional=(wid_b,))
+    dest_b.unregister()
+    # The optional endpoint drops out of the ceiling; the active one still works.
+    assert [r.workplace_id for r in ctx_for(alice["id"], sid).resources] == [wid_a]
+    world["dest"]["wp_a"][1].unregister()
+    with pytest.raises(AccessUnavailable, match="(?i)offline"):
+        ctx_for(alice["id"], sid)
+
+
+def test_read_only_transfer_endpoint_rejects_writes(world, tmp_path, monkeypatch):
+    from app.core import config
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setenv("TOMO_WORK", str(work))
+    monkeypatch.setattr(config, "TOMO_WORK", work)
+    alice = world["alice"]
+    wid_a, _ = world["dest"]["wp_a"]
+    wid_b, _ = world["dest"]["wp_b"]
+    grant_all(world, alice["id"], wid_a, unrestricted=True)
+    grant_all(world, alice["id"], wid_b, permission="read")
+    sid = chat(world, alice["id"], wid_a, additional=(wid_b,), mode="unrestricted", ack=True)
+    from app.runtime.tools import portal as portal_tool
+    from app.runtime.tools import workplace_remote as wr
+    with execution_scope(ctx_for(alice["id"], sid)):
+        wr.try_remote("exec_bash", {"script": "echo seed > payload.txt"})
+        out = portal_tool.run({"action": "copy", "src": f"{wid_a}:payload.txt", "dst": f"{wid_b}:in.txt"})
+        assert out.startswith("Error:")
+
+
+def test_unrestricted_requires_read_write_active_grant(world):
+    alice = world["alice"]
+    wid, _ = world["dest"]["wp_a"]
+    grant_all(world, alice["id"], wid, permission="read", unrestricted=True)
+    sid = store.create_swarm_session(["main"], user_id=alice["id"])
+    with pytest.raises(AccessDenied, match="read/write"):
+        store.access.set_chat_access(alice["id"], sid, wid, execution_mode="unrestricted",
+                                     unrestricted_acknowledged=True)
+    # A downgrade after activation also stops host execution for the old chat.
+    grant_all(world, alice["id"], wid, permission="read_write", unrestricted=True)
+    sid = chat(world, alice["id"], wid, mode="unrestricted", ack=True)
+    ctx_for(alice["id"], sid)
+    grant_all(world, alice["id"], wid, permission="read", unrestricted=True)
+    with pytest.raises(AccessDenied, match="read/write"):
+        ctx_for(alice["id"], sid)
+
+
+def test_failed_workplace_change_does_not_leave_chats_pending(world):
+    alice = world["alice"]
+    wid, _ = world["dest"]["wp_a"]
+    grant_all(world, alice["id"], wid)
+    sid = chat(world, alice["id"], wid)
+
+    def rejected():
+        raise ValueError("invalid workplace update")
+
+    with pytest.raises(ValueError):
+        store.access.change_workplace(wid, rejected)
+    assert ctx_for(alice["id"], sid).active_workplace_id == wid

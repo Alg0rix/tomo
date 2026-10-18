@@ -224,18 +224,15 @@ def create_app() -> FastAPI:
     app.include_router(web_router)
     app.include_router(api_router)
     from app.api.access_routes import router as access_router
-    from app.runtime.access import AccessChangePending, AccessDenied, AccessUnavailable
-    from fastapi.responses import JSONResponse
+    from app.runtime.access import AccessDenied
 
     app.include_router(access_router)
 
     @app.exception_handler(AccessDenied)
     async def access_denied(request: Request, exc: AccessDenied):
-        return JSONResponse(
-            {"detail": str(exc) if isinstance(exc, AccessChangePending) else (
-                "Execution access unavailable" if isinstance(exc, AccessUnavailable) else "Access denied")},
-            status_code=503 if isinstance(exc, AccessUnavailable) else 403,
-        )
+        from app.api.access_policy import access_error_response
+
+        return access_error_response(exc)
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc: Exception):

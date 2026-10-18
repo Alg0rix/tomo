@@ -298,7 +298,7 @@ class ContainerTerminal(LocalTerminal):
         if self.execution.execution_mode != "restricted":
             raise PermissionError("Container terminals require restricted execution")
         if any(r.kind != "local" or r.destination_id != "local"
-               for r in self.execution.resources):
+               for r in self.execution.mounted_resources):
             raise PermissionError("Remote terminal cannot execute on the local host")
         if not mount_cwd.startswith("/workplaces/") or "\x00" in mount_cwd:
             raise PermissionError("Terminal working location is unavailable")
@@ -415,7 +415,7 @@ class TerminalManager:
             raise AccessDenied("Terminal execution identity unavailable")
         if current.execution_mode != "restricted":
             raise AccessDenied("Container terminals require restricted execution")
-        if any(r.kind != "local" or r.destination_id != "local" for r in current.resources):
+        if any(r.kind != "local" or r.destination_id != "local" for r in current.mounted_resources):
             raise AccessUnavailable("Remote interactive terminal backend unavailable")
         active = next((r for r in current.resources if r.workplace_id == current.active_workplace_id), None)
         if active is None:

@@ -27,6 +27,7 @@ teardown is confirmed via ``exec_teardown``.
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any
 
@@ -41,6 +42,9 @@ from app.workplaces.hub import (
 #: Supervised remote execution contract version. Destinations attest it in
 #: every ``exec_admit`` response; anything else is unsupported.
 REMOTE_EXEC_CONTRACT = 2
+
+_log = logging.getLogger(__name__)
+
 
 _ADMIT_TIMEOUT = 10.0
 
@@ -225,7 +229,8 @@ def _raise_destination_refusal(message: str) -> None:
         for word in ("stale", "generation", "revoked", "owner", "denied", "forbidden", "permission")
     ):
         raise AccessDenied("Destination refused execution: access is no longer valid")
-    raise AccessUnavailable(f"Destination refused execution ({text[:160]})")
+    _log.warning("destination refused execution: %s", text[:2000])
+    raise AccessUnavailable("Destination refused execution; see server logs")
 
 
 def stop_session(session_id: str) -> None:

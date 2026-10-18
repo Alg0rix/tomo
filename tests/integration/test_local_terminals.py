@@ -99,9 +99,10 @@ def test_local_terminal_sessions_reattach_and_cleanup(tmp_path):
         # A tunnel-active chat must never route a terminal through its
         # connector: remote interactive backends are unavailable, so creation
         # is refused instead of silently falling back to a local shell.
-        assert client.post(
-            f"/api/sessions/{remote_sid}/terminals", json={}
-        ).status_code == 503
+        refused = client.post(f"/api/sessions/{remote_sid}/terminals", json={})
+        assert refused.status_code == 503
+        # The owner sees why, not a generic "Execution access unavailable".
+        assert "offline" in refused.json()["detail"].lower()
         url = base + "/" + first["id"] + "/ws"
         with (
             pytest.raises(WebSocketDisconnect),
@@ -286,3 +287,31 @@ def test_terminal_limits_validation_shell_exit_and_draft_pruning(tmp_path, monke
         )
         with pytest.raises(ProcessLookupError):
             os.kill(second["pid"], 0)
+
+
+def test_admin_routing_destinations_do_not_block_local_terminal(tmp_path):
+    from tests.fakes.access import ensure_stoppers
+    store.rebind(tmp_path / "routing.db")
+    ensure_stoppers()
+    admin = store.create_user({"username": "terminal_router", "password": "password1", "role": "admin"})
+    folder = tmp_path / "project"
+    folder.mkdir()
+    local = store.create_workplace({"name": "Routing local", "kind": "local", "root_path": str(folder)})
+    ssh = store.create_workplace({"name": "Routing SSH", "kind": "ssh",
+                                  "ssh_host": "h", "ssh_user": "u", "ssh_password": "p"})
+    store.access.assign("usr_admin", admin["id"], "unrestricted", ssh["id"])
+    store.with_db(lambda c: (c.execute("UPDATE workplaces SET status='connected' WHERE id=?", (ssh["id"],)), c.commit()))
+    sid = _admin_local_session(admin["id"], local["id"])
+    # An online remote host the Admin may route to is a routing target, not
+    # this chat's terminal backend; it must not disable the local shell.
+    assert ssh["id"] in {r.workplace_id for r in store.access.resolve_context(admin["id"], sid).resources}
+    base = f"/api/sessions/{sid}/terminals"
+    with TestClient(app) as client:
+        login(client, "terminal_router")
+        listed = client.get(base)
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["backend"] == "host"
+        created = client.post(base, json={})
+        assert created.status_code == 201, created.text
+        assert created.json()["cwd"] == str(folder)
+        assert client.delete(f"{base}/{created.json()['id']}").status_code == 200

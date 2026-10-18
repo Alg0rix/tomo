@@ -232,12 +232,14 @@ def _require_remote_capability(wp: dict[str, Any], mode: str) -> None:
 _TRANSFER_IO_METHODS = frozenset({"read_file_b64", "write_file_b64"})
 
 
-def _authorize_remote(wp: dict[str, Any], *, transfer_io: bool = False):
+def _authorize_remote(wp: dict[str, Any], *, transfer_io: bool = False, write: bool = False):
     from app.runtime.access import current_execution, AccessDenied
     from app.services import store
     context = store.access.revalidate(current_execution())
     wid = str(wp.get("id") or "")
-    resource = store.access.authorize_resource(context, wid)
+    # Chunked writes need a read_write grant on the target, even when it is a
+    # transfer-only endpoint; a read grant never authorizes moving bytes in.
+    resource = store.access.authorize_resource(context, wid, write=write)
     if context.role == "admin" and context.execution_mode == "unrestricted" and not transfer_io:
         context = store.access.route_context(context, wid)
     if wid == context.destination_id:
@@ -266,7 +268,8 @@ def _call_tunnel(
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     from app.workplaces import remote_contract
-    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS)
+    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS,
+                                write=method == "write_file_b64")
     wid = str(wp.get("id") or "")
     if not wid:
         return {"ok": False, "error": "missing workplace id"}
@@ -310,7 +313,8 @@ def _call_tunnel(
 def _call_ssh(
     wp: dict[str, Any], method: str, params: dict[str, Any]
 ) -> dict[str, Any]:
-    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS)
+    context = _authorize_remote(wp, transfer_io=method in _TRANSFER_IO_METHODS,
+                                write=method == "write_file_b64")
     wid = wp.get("id")
     try:
         from app.services import store

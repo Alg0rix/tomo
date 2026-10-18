@@ -72,7 +72,10 @@ async def my_grants(request: Request, _: AuthDep):
 
 @router.post("/projects", status_code=201)
 async def create_project(body: ProjectIn, request: Request, _: AuthDep):
-    return {"workplace": store.access.create_project(session_user_id(request), body.name)}
+    try:
+        return {"workplace": store.access.create_project(session_user_id(request), body.name)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 @router.post("/projects/{workplace_id}/shares")
@@ -85,8 +88,11 @@ async def share_project(workplace_id: str, body: ShareIn, request: Request, _: A
     recipient = store.get_user(body.user_id) if body.user_id else store.get_user_by_username(body.username)
     if not recipient or not recipient["enabled"]:
         raise HTTPException(404, "Recipient unavailable")
-    return await asyncio.to_thread(store.access.share_project, session_user_id(request), workplace_id,
-                                   recipient["id"], body.permission)
+    try:
+        return await asyncio.to_thread(store.access.share_project, session_user_id(request), workplace_id,
+                                       recipient["id"], body.permission)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 def _owned_project(actor_id: str, workplace_id: str):

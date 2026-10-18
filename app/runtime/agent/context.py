@@ -738,6 +738,9 @@ def _workplace_prompt_section(agent_id: str) -> str:
             names = {w['id']: w['name'] for w in store.access.list_visible_workplaces(execution.user_id)}
             lines = ["## Enabled working locations", f"Execution mode: {execution.execution_mode}; destination: {execution.destination_id}"]
             for resource in execution.resources:
+                if resource.transfer_only and execution.execution_mode == "restricted":
+                    lines.append(f"- {names.get(resource.workplace_id, resource.workplace_id)}: transfer endpoint, not mounted ({resource.permission})")
+                    continue
                 path = resource.mount_path if execution.execution_mode == "restricted" else resource.root_path
                 lines.append(f"- {names.get(resource.workplace_id, resource.workplace_id)}: {path} ({resource.permission})")
             if execution.role == "admin" and execution.execution_mode == "unrestricted":
