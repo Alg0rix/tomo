@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     model                  TEXT NOT NULL DEFAULT '',
     reasoning_efforts_json TEXT NOT NULL DEFAULT '[]',
     available_models_json  TEXT NOT NULL DEFAULT '[]',
+    default_reasoning_effort TEXT NOT NULL DEFAULT '',
     auth_mode              TEXT NOT NULL DEFAULT 'api_key',
     subscription_provider  TEXT NOT NULL DEFAULT '',
     access_token           TEXT NOT NULL DEFAULT '',
@@ -341,6 +342,15 @@ CREATE TABLE IF NOT EXISTS user_skill_activations (
     active     INTEGER NOT NULL DEFAULT 1,
     updated_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, skill_id)
+);
+
+-- Per-user "last chosen" chat model/effort; new chats start from it.
+CREATE TABLE IF NOT EXISTS user_chat_preferences (
+    user_id          TEXT PRIMARY KEY,
+    model_profile_id TEXT NOT NULL DEFAULT '',
+    model_name       TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT '',
+    updated_at       REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS learning_events (
@@ -709,6 +719,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "access_token": "ALTER TABLE llm_profiles ADD COLUMN access_token TEXT NOT NULL DEFAULT ''",
         "refresh_token": "ALTER TABLE llm_profiles ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''",
         "token_expires_at": "ALTER TABLE llm_profiles ADD COLUMN token_expires_at REAL NOT NULL DEFAULT 0",
+        "default_reasoning_effort": "ALTER TABLE llm_profiles ADD COLUMN default_reasoning_effort TEXT NOT NULL DEFAULT ''",
     }
     for _col, _sql in _profile_alters.items():
         if _col not in profile_cols:

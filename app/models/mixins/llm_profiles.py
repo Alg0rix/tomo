@@ -70,6 +70,13 @@ def _reasoning_efforts_from_row(row: sqlite3.Row) -> list[str]:
     return normalize_reasoning_efforts(value)
 
 
+def _row_default_effort(row: sqlite3.Row) -> str:
+    try:
+        return str(row["default_reasoning_effort"] or "")
+    except (IndexError, KeyError):
+        return ""
+
+
 def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -79,6 +86,7 @@ def _row_to_profile(row: sqlite3.Row) -> dict[str, Any]:
         "model": row["model"],
         "reasoning_efforts": _reasoning_efforts_from_row(row),
         "available_models": json.loads(row["available_models_json"] or "[]"),
+        "default_reasoning_effort": _row_default_effort(row),
         "auth_mode": row["auth_mode"],
         "subscription_provider": row["subscription_provider"],
         "access_token": row["access_token"],  # ciphertext at rest
@@ -99,6 +107,9 @@ def public_profile(row: dict[str, Any]) -> dict[str, Any]:
     out["refresh_token_set"] = bool(decrypt_secret(str(out.get("refresh_token") or "")))
     out.pop("access_token", None)
     out.pop("refresh_token", None)
+    from app.runtime.llm.provider_catalog import profile_efforts
+
+    out["effort_options"] = profile_efforts(out)
     return out
 
 
@@ -162,7 +173,14 @@ def create_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, 
             _now(),
         ),
     )
-    conn.execute("UPDATE llm_profiles SET available_models_json=? WHERE id=?", (json.dumps(data.get("available_models") or []), pid))
+    conn.execute(
+        "UPDATE llm_profiles SET available_models_json=?, default_reasoning_effort=? WHERE id=?",
+        (
+            json.dumps(data.get("available_models") or []),
+            str(data.get("default_reasoning_effort") or "").strip(),
+            pid,
+        ),
+    )
     conn.commit()
     return get_public_profile(conn, pid)
 
@@ -182,6 +200,9 @@ def update_profile(
     if "reasoning_efforts" in data:
         sets.append("reasoning_efforts_json=?")
         params.append(json.dumps(normalize_reasoning_efforts(data["reasoning_efforts"])))
+    if data.get("default_reasoning_effort") is not None:
+        sets.append("default_reasoning_effort=?")
+        params.append(str(data["default_reasoning_effort"]).strip())
     if "available_models" in data:
         sets.append("available_models_json=?")
         params.append(json.dumps(data["available_models"] or []))
@@ -299,14 +320,28 @@ def get_default_model_id(conn: sqlite3.Connection) -> str:
 def effective_reasoning_effort(
     profile: dict[str, Any] | None, selected: str | None
 ) -> str | None:
-    """Use a supported session value or the profile's highest configured value."""
+    """Use a supported session value, else the profile default, else the highest."""
     from app.runtime.llm.provider_catalog import profile_efforts
 
     efforts = profile_efforts(profile)
     requested = (selected or "").strip()
     if requested and requested in efforts:
         return requested
-    return efforts[-1] if efforts else None
+    return default_reasoning_effort(profile, efforts)
+
+
+def default_reasoning_effort(
+    profile: dict[str, Any] | None, efforts: list[str] | None = None
+) -> str | None:
+    """The profile's admin-chosen default effort if still supported, else the highest."""
+    if efforts is None:
+        from app.runtime.llm.provider_catalog import profile_efforts
+
+        efforts = profile_efforts(profile)
+    if not efforts:
+        return None
+    configured = str((profile or {}).get("default_reasoning_effort") or "").strip()
+    return configured if configured in efforts else efforts[-1]
 
 
 _SUBSCRIPTION_REFRESH_SKEW_SECONDS = 60

@@ -178,6 +178,7 @@ class LLMProfileCreate(BaseModel):
     api_key: str = ""
     model: str = ""
     reasoning_efforts: list[str] = Field(default_factory=list, max_length=24)
+    default_reasoning_effort: str = Field(default="", max_length=64)
     enabled: bool = True
 
 
@@ -189,6 +190,7 @@ class LLMProfileUpdate(BaseModel):
     api_key: str | None = None
     model: str | None = None
     reasoning_efforts: list[str] | None = Field(default=None, max_length=24)
+    default_reasoning_effort: str | None = Field(default=None, max_length=64)
     enabled: bool | None = None
 
 

@@ -798,7 +798,61 @@ def test_chat_model_selection_is_isolated_and_does_not_rerank(tmp_path) -> None:
     assert store.get_session_reasoning_effort(a)["reasoning_effort"] == "high"
     assert store.get_session_reasoning_effort(b)["reasoning_effort"] == "max"
     assert store.get_session(b)["model_name"] == ""
+    # A new chat starts from the user's last choice; existing chats keep theirs.
     fresh = store.create_swarm_session(["main"], user_id="web")
-    assert store.get_session(fresh)["model_name"] == ""
-    assert store.get_session(fresh)["reasoning_effort"] == ""
+    assert store.get_session(fresh)["model_name"] == "model-b"
+    assert store.get_session(fresh)["reasoning_effort"] == "high"
+    assert store.get_session_reasoning_effort(b)["reasoning_effort"] == "max"
+    assert store.get_chat_model_settings("main", "web")["reasoning_effort"] == "high"
     assert store.get_llm_profile("default")["model"] == "model-a"
+    other = store.create_swarm_session(["main"], user_id="someone-else")
+    assert store.get_session(other)["reasoning_effort"] == ""
+
+
+def test_new_chat_ignores_unusable_preference(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {"id": "default", "name": "D", "api_key": "sk-d", "model": "model-a",
+         "reasoning_efforts": ["low", "high"]}
+    )
+    store.create_llm_profile(
+        {"id": "alt", "name": "A", "api_key": "sk-a", "model": "alt-1",
+         "available_models": ["alt-1"], "reasoning_efforts": ["min", "turbo"]}
+    )
+    store.set_default_llm_profile("default")
+    a = store.create_swarm_session(["main"], user_id="web")
+    store.set_session_model(a, "alt", "alt-1")
+    store.set_session_reasoning_effort(a, "turbo")
+    store.update_llm_profile("alt", {"enabled": False})
+
+    fresh = store.create_swarm_session(["main"], user_id="web")
+    session = store.get_session(fresh)
+    # Disabled profile dropped; "turbo" isn't a main-model effort either.
+    assert (session["model_profile_id"], session["reasoning_effort"]) == ("", "")
+    assert store.get_session_reasoning_effort(fresh)["reasoning_effort"] == "high"
+
+
+def test_profile_default_reasoning_effort(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {"id": "default", "name": "D", "api_key": "sk-d", "model": "model-a",
+         "reasoning_efforts": ["low", "high", "max"], "default_reasoning_effort": "high"}
+    )
+    store.set_default_llm_profile("default")
+    profile = store.get_llm_profile("default")
+    assert profile["default_reasoning_effort"] == "high"
+    assert profile["effort_options"] == ["low", "high", "max"]
+    sid = store.create_swarm_session(["main"], user_id="web")
+    payload = store.get_session_reasoning_effort(sid)
+    assert payload["default_reasoning_effort"] == "high"
+    assert payload["reasoning_effort"] == "high"
+    assert store.resolve_session_reasoning_effort(sid) == "high"
+    store.set_session_reasoning_effort(sid, "max")
+    assert store.resolve_session_reasoning_effort(sid) == "max"
+
+    # A default no longer in the effort list falls back to the highest.
+    store.update_llm_profile("default", {"reasoning_efforts": ["low", "max"]})
+    other = store.create_swarm_session(["main"], user_id="someone-else")
+    assert store.get_session_reasoning_effort(other)["reasoning_effort"] == "max"
+    store.update_llm_profile("default", {"default_reasoning_effort": ""})
+    assert store.get_llm_profile("default")["default_reasoning_effort"] == ""

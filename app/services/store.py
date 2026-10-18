@@ -195,6 +195,7 @@ class Store:
             )
             if account:
                 self.access.initialize_chat(user_id, session_id, wid)
+            self._seed_chat_preference_locked(session_id, user_id, coord["id"])
             return {
                 "session_id": session_id,
                 "coordinator_id": coord["id"],
@@ -343,6 +344,9 @@ class Store:
             )
             if account:
                 self.access.initialize_chat(user_id, sid, wid)
+            self._seed_chat_preference_locked(
+                sid, user_id, coordinator_id or (agent_ids[0] if agent_ids else None)
+            )
             return sid
 
     def set_session_workplace(
@@ -356,6 +360,75 @@ class Store:
             return sessions_store.set_session_workplace(
                 self._conn, session_id, workplace_id
             )
+
+    def _preferred_chat_fields_locked(
+        self, user_id: str, coordinator_id: str | None
+    ) -> dict[str, str]:
+        """The user's last chat model/effort, kept only while still usable."""
+        from app.runtime.llm.provider_catalog import profile_efforts
+
+        empty = {"model_profile_id": "", "model_name": "", "reasoning_effort": ""}
+        row = self._conn.execute(
+            "SELECT model_profile_id, model_name, reasoning_effort "
+            "FROM user_chat_preferences WHERE user_id=?",
+            (user_id or "web",),
+        ).fetchone()
+        if not row:
+            return empty
+        fields = dict(empty)
+        account = self.get_user(user_id)
+        profile_id = row["model_profile_id"] or ""
+        if profile_id:
+            profile = llm_profiles_store.get_public_profile(self._conn, profile_id)
+            usable = (
+                profile
+                and profile["enabled"]
+                and row["model_name"] in (profile["available_models"] or [profile["model"]])
+                and (not account or self.access.can_use(account["id"], "model", profile_id))
+            )
+            if usable:
+                fields.update(model_profile_id=profile_id, model_name=row["model_name"])
+        effort = row["reasoning_effort"] or ""
+        if effort:
+            try:
+                profile = self._session_llm_profile_locked(
+                    {"id": "", "user_id": user_id, "coordinator_id": coordinator_id, **fields}
+                )
+            except PermissionError:  # pending/revoked grant: drop the effort
+                profile = None
+            if effort in profile_efforts(profile):
+                fields["reasoning_effort"] = effort
+        return fields
+
+    def _seed_chat_preference_locked(
+        self, session_id: str, user_id: str, coordinator_id: str | None
+    ) -> None:
+        fields = self._preferred_chat_fields_locked(user_id, coordinator_id)
+        if not any(fields.values()):
+            return
+        self._conn.execute(
+            "UPDATE sessions SET model_profile_id=?, model_name=?, reasoning_effort=? WHERE id=?",
+            (fields["model_profile_id"], fields["model_name"], fields["reasoning_effort"], session_id),
+        )
+        self._conn.commit()
+
+    def _record_chat_preference_locked(self, session: dict[str, Any]) -> None:
+        """Remember a chat's explicit selection so the next new chat starts from it."""
+        self._conn.execute(
+            "INSERT INTO user_chat_preferences "
+            "(user_id, model_profile_id, model_name, reasoning_effort, updated_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+            "model_profile_id=excluded.model_profile_id, model_name=excluded.model_name, "
+            "reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at",
+            (
+                session.get("user_id") or "web",
+                session.get("model_profile_id") or "",
+                session.get("model_name") or "",
+                session.get("reasoning_effort") or "",
+                time.time(),
+            ),
+        )
+        self._conn.commit()
 
     def _session_llm_profile_locked(self, session: dict[str, Any], agent_id: str | None = None) -> dict[str, Any] | None:
         coordinator = session.get("coordinator_id") or session.get("agent_id")
@@ -425,6 +498,7 @@ class Store:
             )
             self._conn.commit()
             session.update(model_profile_id=profile_id, model_name=model, reasoning_effort="")
+            self._record_chat_preference_locked(session)
             return self._session_reasoning_effort_payload_locked(session)
 
     def _session_reasoning_effort_payload_locked(
@@ -452,14 +526,20 @@ class Store:
                 and (not account or self.access.can_use(account["id"], "model", p["id"]))
             ],
             "reasoning_efforts": efforts,
-            "default_reasoning_effort": efforts[-1] if efforts else None,
+            "default_reasoning_effort": llm_profiles_store.default_reasoning_effort(profile, efforts),
             "selected_reasoning_effort": selected or None,
             "reasoning_effort": effective,
         }
 
-    def get_chat_model_settings(self, agent_id: str | None = None) -> dict[str, Any]:
+    def get_chat_model_settings(
+        self, agent_id: str | None = None, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Draft (not yet created) chat: what a new chat for *user_id* would start with."""
         with self._lock:
-            return self._session_reasoning_effort_payload_locked({"id": "", "coordinator_id": agent_id})
+            draft: dict[str, Any] = {"id": "", "coordinator_id": agent_id}
+            if user_id:
+                draft.update(user_id=user_id, **self._preferred_chat_fields_locked(user_id, agent_id))
+            return self._session_reasoning_effort_payload_locked(draft)
 
     def get_session_reasoning_effort(
         self, session_id: str
@@ -489,6 +569,7 @@ class Store:
             )
             if not updated:
                 return None
+            self._record_chat_preference_locked(updated)
             return self._session_reasoning_effort_payload_locked(updated)
 
     def resolve_session_reasoning_effort(

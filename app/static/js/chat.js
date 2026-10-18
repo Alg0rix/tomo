@@ -457,7 +457,7 @@
       if (effortSelect) {
         effortSelect.innerHTML = '';
         var auto = document.createElement('option'); auto.value = '';
-        auto.textContent = efforts.length ? 'Auto (' + efforts[efforts.length - 1] + ')' : 'Provider default';
+        auto.textContent = efforts.length ? 'Auto (' + (payload.default_reasoning_effort || efforts[efforts.length - 1]) + ')' : 'Provider default';
         effortSelect.appendChild(auto);
         efforts.forEach(function (effort) { var option = document.createElement('option'); option.value = effort; option.textContent = effort; effortSelect.appendChild(option); });
         effortSelect.value = payload.selected_reasoning_effort || '';

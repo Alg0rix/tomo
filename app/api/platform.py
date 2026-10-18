@@ -607,6 +607,10 @@ async def get_chat_model_options(request: Request, _: AuthDep, agent_id: str | N
         require_agent(request, agent_id)
     user = authenticated_user(request)
     if user["role"] != "admin":
+        try:
+            return store.get_chat_model_settings(agent_id, user["id"])
+        except PermissionError:
+            pass
         profiles = store.access.list_visible_models(user["id"])
         default_id = store.get_default_llm_profile_id()
         selected_id = (store.get_agent(agent_id) or {}).get("model_id") if agent_id else default_id
@@ -617,7 +621,7 @@ async def get_chat_model_options(request: Request, _: AuthDep, agent_id: str | N
                 "model_profiles": [{"id": p["id"], "name": p["name"], "models": p["available_models"] or [p["model"]]} for p in profiles],
                 "reasoning_efforts": [], "reasoning_effort": None, "selected_reasoning_effort": None,
                 "default_reasoning_effort": None}
-    return store.get_chat_model_settings(agent_id)
+    return store.get_chat_model_settings(agent_id, user["id"])
 
 
 @router.get("/llm-profiles/codex-models")

@@ -215,7 +215,22 @@
   var fModel = document.getElementById('profModel');
   var fReasoning = document.getElementById('profReasoningEfforts');
   var fEnabled = document.getElementById('profEnabled');
+  var fDefaultEffort = document.getElementById('profDefaultEffort');
   var defaultId = '';
+  var savedEffortOptions = [];
+
+  // Presets offer the saved model's catalog efforts; custom profiles the textarea's.
+  function fillDefaultEffort(selected) {
+    if (!fDefaultEffort) return;
+    var efforts = fProvider.value === 'custom' ? parseReasoningEfforts(fReasoning.value) : savedEffortOptions.slice();
+    if (selected && efforts.indexOf(selected) === -1) efforts.push(selected);
+    fDefaultEffort.innerHTML = '';
+    var auto = document.createElement('option'); auto.value = '';
+    auto.textContent = 'Auto (highest)';
+    fDefaultEffort.appendChild(auto);
+    efforts.forEach(function (effort) { var o = document.createElement('option'); o.value = effort; o.textContent = effort; fDefaultEffort.appendChild(o); });
+    fDefaultEffort.value = selected || '';
+  }
 
   // Presets only need a token: endpoint, catalog and efforts come from the provider.
   function syncProviderFields() {
@@ -334,10 +349,14 @@
     fillModelSelect((p && p.available_models) || []);
     if (catalogStatus) catalogStatus.textContent = fProvider.value === 'custom' ? 'Pick a default model, or type a model ID.' : 'Every catalog model is available in chat; thinking effort follows the model.';
     syncProviderFields();
+    savedEffortOptions = (p && Array.isArray(p.effort_options)) ? p.effort_options : [];
+    fillDefaultEffort((p && p.default_reasoning_effort) || '');
     formCard.classList.remove('hidden');
     if (fProvider.value !== 'custom') fKey.focus();
     else if (fName) fName.focus();
   }
+
+  if (fReasoning) fReasoning.addEventListener('input', function () { fillDefaultEffort(fDefaultEffort ? fDefaultEffort.value : ''); });
 
   var addBtn = document.getElementById('addProfileBtn');
   if (addBtn) addBtn.addEventListener('click', function () { openForm('add'); });
@@ -368,7 +387,7 @@
   if (saveProf) {
     saveProf.addEventListener('click', async function () {
       var preset = fProvider.value !== 'custom';
-      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: preset ? [] : parseReasoningEfforts(fReasoning.value), enabled: fEnabled.checked };
+      var body = { name: fName.value.trim(), base_url: fBase.value.trim(), model: fModel.value.trim(), reasoning_efforts: preset ? [] : parseReasoningEfforts(fReasoning.value), default_reasoning_effort: fDefaultEffort ? fDefaultEffort.value : '', enabled: fEnabled.checked };
       var key = fKey.value;
       if (key && key.indexOf('•') === -1) body.api_key = key;
       saveProf.disabled = true;
@@ -447,6 +466,8 @@
     fBase.value = preset ? preset.base_url : '';
     fModel.value = ''; resetModelSelect();
     syncProviderFields();
+    savedEffortOptions = [];
+    fillDefaultEffort('');
     if (preset) { fName.value = preset.name; fKey.focus(); }
     if (catalogStatus) catalogStatus.textContent = preset ? 'Paste your token, then save. The model catalog loads automatically.' : 'Enter your custom endpoint and model ID.';
     if (preset && fKey.value.trim()) fetchProfileModels();
