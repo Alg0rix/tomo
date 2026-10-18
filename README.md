@@ -249,6 +249,10 @@ uv run pytest -n0                     # serial (pdb / debugging)
 uv run ruff check app cli tests       # same rules as CI lint
 ```
 
+Browser flows in `tests/browser/wok/` drive the real static JS with [wok](https://github.com/Alg0rix/wok):
+`tests/browser/wok/run.sh [flow ...]`. Set `WOK_BROWSER=/usr/bin/google-chrome` where the bundled
+Chromium has no usable sandbox. The remaining `tests/browser/*.cjs` still use Playwright.
+
 CI workflows:
 
 | Workflow | When | What |

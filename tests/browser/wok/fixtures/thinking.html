@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<script src="harness.js"></script>
+<div class="chat-wrap"><div class="composer is-generating"></div><div class="chat-scroll"><div class="turn" id="main"></div></div><div class="si-timeline" id="inspector"></div></div>
+<script src="/app/static/js/tomo.js"></script>
+<script src="/app/static/js/chat_worknotes.js"></script>
+<script src="/app/static/js/chat_turn_stream.js"></script>
+<script>
+  // Flow helpers: the same steps run against the chat turn and the inspector.
+  window.groups = function (id) { return document.querySelectorAll('#' + id + ' > .work'); };
+  window.startThinking = function (id) {
+    document.getElementById(id).appendChild(Tomo.buildReasoningCard('Thinking through the next step.'));
+    return true;
+  };
+  window.moreThinking = function (id) {
+    var parent = document.getElementById(id);
+    Tomo.updateReasoningCard(parent.querySelector('.si-think'), 'Updated streaming reasoning');
+    var answer = document.createElement('div');
+    answer.className = 'msg assistant';
+    answer.textContent = 'Intermediate response';
+    parent.appendChild(answer);
+    parent.appendChild(Tomo.buildReasoningCard('Another thinking round'));
+    var tool = document.createElement('div');
+    tool.className = 'tool loading';
+    parent.appendChild(tool);
+    return true;
+  };
+  window.markLastHead = function (id) {
+    var all = groups(id);
+    all[all.length - 1].querySelector('.work-head').dataset.flow = id + '-last';
+    return true;
+  };
+  window.thinkAgain = function (id) {
+    var parent = document.getElementById(id);
+    parent.querySelector('.tool').className = 'tool ok';
+    var answer = document.createElement('div');
+    answer.className = 'msg assistant';
+    parent.appendChild(answer);
+    parent.appendChild(Tomo.buildReasoningCard('Thinking after reopening'));
+    return true;
+  };
+</script>

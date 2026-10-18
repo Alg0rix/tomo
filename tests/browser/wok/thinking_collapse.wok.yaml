@@ -1,0 +1,110 @@
+# Thinking groups: a collapse the user chose sticks for new thinking in the
+# same turn (chat and inspector), a new turn opens again, and a resumed
+# stream keeps the historical/active thinking and tool order.
+version: 1
+steps:
+  - open: "${BASE_URL}/thinking.html"
+
+  # ---- main ----
+  - name: "main: first thinking opens"
+    eval: startThinking('main')
+  - expect: {selector: "#main > .work.is-open"}
+  - name: "main: user collapses it"
+    click: "#main > .work .work-head"
+  - eval: moreThinking('main')
+  - name: "main: second thinking group appears"
+    expect: {js: "groups('main').length === 2"}
+  - name: "main: new thinking respects the collapse"
+    eval: |
+      check.equal([...groups('main')].map(n => n.classList.contains('is-open')), [false, false], 'open')
+        && check.equal([...groups('main')].map(n => n.querySelector('.work-head').getAttribute('aria-expanded')), ['false', 'false'], 'aria-expanded')
+  - eval: markLastHead('main')
+  - name: "main: user reopens the latest group"
+    click: "[data-flow=main-last]"
+  - eval: thinkAgain('main')
+  - expect: {js: "groups('main').length === 3"}
+  - name: "main: reopening changes the preference"
+    eval: |
+      check.equal([...groups('main')].pop().querySelector('.work-head').getAttribute('aria-expanded'), 'true', 'latest aria-expanded')
+
+  # ---- inspector ----
+  - name: "inspector: first thinking opens"
+    eval: startThinking('inspector')
+  - expect: {selector: "#inspector > .work.is-open"}
+  - name: "inspector: user collapses it"
+    click: "#inspector > .work .work-head"
+  - eval: moreThinking('inspector')
+  - name: "inspector: second thinking group appears"
+    expect: {js: "groups('inspector').length === 2"}
+  - name: "inspector: new thinking respects the collapse"
+    eval: |
+      check.equal([...groups('inspector')].map(n => n.classList.contains('is-open')), [false, false], 'open')
+        && check.equal([...groups('inspector')].map(n => n.querySelector('.work-head').getAttribute('aria-expanded')), ['false', 'false'], 'aria-expanded')
+  - eval: markLastHead('inspector')
+  - name: "inspector: user reopens the latest group"
+    click: "[data-flow=inspector-last]"
+  - eval: thinkAgain('inspector')
+  - expect: {js: "groups('inspector').length === 3"}
+  - name: "inspector: reopening changes the preference"
+    eval: |
+      check.equal([...groups('inspector')].pop().querySelector('.work-head').getAttribute('aria-expanded'), 'true', 'latest aria-expanded')
+
+  # ---- new turn ----
+  - name: a new turn starts open again
+    eval: |
+      (() => {
+        const turn = document.createElement('div');
+        turn.className = 'turn';
+        turn.id = 'next';
+        document.querySelector('.chat-scroll').appendChild(turn);
+        turn.appendChild(Tomo.buildReasoningCard('New turn'));
+        return true;
+      })()
+  - expect: {selector: "#next > .work.is-open"}
+
+  # ---- resumed stream ----
+  - name: replay history then live thinking
+    eval: |
+      (async () => {
+        const turn = document.createElement('div');
+        turn.className = 'turn';
+        document.querySelector('.chat-scroll').appendChild(turn);
+        turn.appendChild(Tomo.buildReasoningCard('Historical thinking'));
+        turn.appendChild(Tomo.buildToolCard({ tool: 'read_file', call_id: 'old', args: {} }));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const es = new EventTarget();
+        const noop = () => {};
+        const attachment = TomoTurnStream.attach(es, {
+          mode: 'resume', wrap: document.querySelector('.chat-wrap'), turn,
+          defaultAgentName: 'Tomo', agentId: 'main', esc: Tomo.escapeHtml,
+          agentColor: () => '', setSending: noop, setStatus: noop,
+          busyStatusLabel: () => 'Working', refreshSendBtn: noop, atBottom: noop,
+        });
+        const emit = (type, data) => es.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
+        try {
+          emit('thinking_delta', { content: 'Historical thinking' });
+          emit('thinking', { content: 'Historical thinking' });
+          emit('tool', { tool: 'read_file', call_id: 'old', args: {} });
+          emit('thinking_delta', { content: 'Active thinking' });
+          emit('caught_up', {});
+          emit('thinking_delta', { content: ' continued' });
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const notes = Array.from(turn.querySelectorAll('.si-think'), el => el.textContent);
+          emit('thinking', { content: 'Active thinking continued' });
+          emit('tool', { tool: 'read_file', call_id: 'new', args: {} });
+          await new Promise(resolve => setTimeout(resolve, 0));
+          emit('thinking_delta', { content: 'Newest thinking' });
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const timeline = Array.from(turn.querySelectorAll('.si-think, .tool'), el =>
+            el.classList.contains('tool') ? el.dataset.callId : el.textContent);
+          window.__r = { notes, timeline };
+          return window.__r;
+        } finally { attachment.dispose(); }
+      })()
+  - name: catch-up does not duplicate thinking notes
+    eval: check.equal(__r.notes, ['Historical thinking', 'Active thinking continued'], 'notes')
+  - name: thinking and tools keep stream order
+    eval: |
+      check.equal(__r.timeline, ['Historical thinking', 'old', 'Active thinking continued', 'new', 'Newest thinking'], 'timeline')
+  - name: no page errors
+    eval: check.noErrors()

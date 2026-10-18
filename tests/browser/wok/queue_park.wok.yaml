@@ -1,0 +1,53 @@
+# Queued follow-ups survive a chat switch: parked on destroy, restored as
+# queued bubbles when the chat reopens, then drained in order.
+version: 1
+steps:
+  - open: "${BASE_URL}/chat.html"
+  - name: reopen a chat with a parked queue
+    eval: |
+      (() => {
+        const wrap = document.querySelector('.chat-wrap');
+        wrap._tomoChatHandle.destroy();
+        sessionStorage.setItem('tomo:chat-queue:s1', JSON.stringify([
+          { text: 'first follow-up', attachmentIds: [], attachments: [] },
+          { text: 'second', attachmentIds: [], attachments: [] },
+        ]));
+        TomoChat.init(wrap);
+        const bubbles = [...wrap.querySelectorAll('.msg.user')].map(el => el.textContent);
+        return check.equal(bubbles.length, 2, 'restored bubbles')
+          && check.match(bubbles[0], /first follow-up/, 'first bubble')
+          && check.match(bubbles[1], /second/, 'second bubble')
+          && check.equal(sessionStorage.getItem('tomo:chat-queue:s1'), null, 'parked copy consumed');
+      })()
+  - name: switching away parks the queue again
+    eval: |
+      (() => {
+        const wrap = document.querySelector('.chat-wrap');
+        wrap._tomoChatHandle.destroy();
+        wrap.dataset.sessionId = 's2';
+        wrap.querySelector('.chat-scroll').innerHTML = '';
+        TomoChat.init(wrap);
+        const parked = JSON.parse(sessionStorage.getItem('tomo:chat-queue:s1') || '[]').map(q => q.text);
+        return check.equal(parked, ['first follow-up', 'second'], 'parked')
+          && check.equal(wrap.querySelectorAll('.msg.user').length, 0, 'other chat bubbles')
+          && check.equal(__posts, [], 'nothing sent yet');
+      })()
+  - name: reopen the chat while idle
+    eval: |
+      (() => {
+        const wrap = document.querySelector('.chat-wrap');
+        wrap._tomoChatHandle.destroy();
+        wrap.dataset.sessionId = 's1';
+        wrap.querySelector('.chat-scroll').innerHTML = '';
+        TomoChat.init(wrap);
+        return true;
+      })()
+  - name: parked queue drains in order
+    timeout: 5s
+    expect: {js: "window.__posts.length === 2"}
+  - name: drain order and cleanup
+    eval: |
+      check.equal(__posts, ['first follow-up', 'second'], 'posts')
+        && check.equal(sessionStorage.getItem('tomo:chat-queue:s1'), null, 'parked copy')
+  - name: no page errors
+    eval: check.noErrors()

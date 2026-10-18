@@ -1,0 +1,37 @@
+# A reconnected listen that only sees heartbeats (turn.end was missed)
+# must still drain queued follow-ups.
+version: 1
+steps:
+  - open: "${BASE_URL}/turn_stream.html"
+  - name: resume over heartbeats with and without a queue
+    eval: |
+      (() => {
+        const noop = () => {};
+        const run = (queue) => {
+          const listeners = {};
+          const calls = { finishTurn: 0, sending: null };
+          const attachment = TomoTurnStream.attach({ addEventListener: (type, fn) => (listeners[type] ||= []).push(fn) }, {
+            mode: 'resume', wrap: document.getElementById('wrap'), scroll: document.getElementById('scroll'),
+            turn: document.getElementById('original'), defaultAgentName: 'Tomo', agentId: 'main',
+            esc: Tomo.escapeHtml, agentColor: () => '',
+            bubbleHtml: () => '<div class="msg assistant"><div class="bubble-body"></div></div>',
+            appendUserBubble: noop, setMarkdown: noop, atBottom: noop, setStatus: noop, refreshSendBtn: noop,
+            onBindHitl: noop, currentSessionId: () => 'test', closeStream: noop, closeTransport: noop,
+            busyStatusLabel: () => 'busy', messageQueue: queue,
+            finishTurn: () => { calls.finishTurn += 1; },
+            setSending: (v) => { calls.sending = v; },
+          });
+          (listeners.heartbeat || []).forEach(fn => fn({ data: '{}' }));
+          attachment.dispose && attachment.dispose();
+          return calls;
+        };
+        window.__r = { queued: run([{ text: 'follow-up' }]), empty: run([]) };
+        return window.__r;
+      })()
+  - name: queued follow-up drains
+    eval: check.equal(__r.queued.finishTurn, 1, 'queued finishTurn')
+  - name: empty queue just goes idle
+    eval: |
+      check.equal(__r.empty.finishTurn, 0, 'empty finishTurn') && check.equal(__r.empty.sending, false, 'empty sending')
+  - name: no page errors
+    eval: check.noErrors()

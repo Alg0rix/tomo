@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<script src="harness.js"></script>
+<div id="chat" data-session-id="one"><button class="ctx-usage-trigger"><span class="ctx-usage-ring"></span><span class="ctx-usage-pct"></span></button></div>
+<script>
+  // Each api() call parks its resolver so the flow can answer out of order.
+  window.requests = [];
+  window.Tomo = {
+    escapeHtml: function (value) { return String(value); },
+    api: function (url) { return new Promise(function (resolve) { window.requests.push({ url: url, resolve: resolve }); }); },
+  };
+</script>
+<script src="/app/static/js/context_usage.js"></script>

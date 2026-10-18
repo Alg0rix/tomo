@@ -1,0 +1,73 @@
+# Steered user messages split the live answer in order: local, rapid,
+# remote, and tool results that land after a steer.
+version: 1
+steps:
+  - open: "${BASE_URL}/turn_stream.html"
+  - name: replay a steered turn
+    eval: |
+      (() => {
+        const noop = () => {};
+        const listeners = {};
+        const emit = (type, data) => (listeners[type] || []).forEach(fn => fn({ data: JSON.stringify(data) }));
+        const scroll = document.getElementById('scroll');
+        const addUser = (text, queued, attachments, pending = false) => {
+          const turn = document.createElement('div');
+          turn.className = 'turn';
+          turn.innerHTML = '<div class="msg user"><div class="bubble-body"></div></div>';
+          const bubble = turn.firstElementChild;
+          const body = bubble.firstElementChild;
+          body.dataset.raw = text;
+          body.textContent = text;
+          if (pending) bubble.classList.add('msg-steering');
+          scroll.appendChild(turn);
+          return bubble;
+        };
+        const attachment = TomoTurnStream.attach({ addEventListener: (type, fn) => (listeners[type] ||= []).push(fn) }, {
+          mode: 'live', wrap: document.getElementById('wrap'), scroll, turn: document.getElementById('original'),
+          defaultAgentName: 'Tomo', agentId: 'main', esc: Tomo.escapeHtml, agentColor: () => '',
+          bubbleHtml: () => '<div class="msg assistant"><div class="bubble-body"></div></div>',
+          appendUserBubble: addUser, setMarkdown: (el, text) => { el.textContent = text; },
+          atBottom: noop, setStatus: noop, refreshSendBtn: noop, onBindHitl: noop,
+          currentSessionId: () => 'test',
+        });
+        emit('delta', { content: 'Before steer' });
+        emit('tool', { tool: 'bash', call_id: 'old', args: {} });
+        const first = addUser('Change direction', false, [], true);
+        // Consumption arrives before the POST acceptance response.
+        emit('user', { steered: true, steer_id: 'first', content: 'Change direction' });
+        attachment.continueAfterUser(first);
+        emit('delta', { content: 'After first steer' });
+        emit('tool', { tool: 'bash', call_id: 'new', args: {} });
+        emit('tool_result', { tool: 'bash', call_id: 'old', result: 'Old tool finished' });
+        const oldResult = document.querySelector('[data-call-id="old"]')._res.textContent;
+        emit('tool_result', { tool: 'bash', call_id: 'missing', result: 'Unmatched result' });
+        const newRunning = document.querySelector('[data-call-id="new"]').classList.contains('loading');
+        const second = addUser('Also this');
+        second.dataset.steerId = 'second';
+        attachment.continueAfterUser(second);
+        attachment.continueAfterUser(first); // Delayed receipt must not move backwards.
+        emit('user', { steered: true, steer_id: 'second', content: 'Also this' });
+        emit('delta', { content: 'After second steer' });
+        emit('user', { steered: true, steer_id: 'remote', content: 'From another tab' });
+        emit('delta', { content: 'After remote steer' });
+        const turns = Array.from(scroll.children, t => t.textContent);
+        const users = scroll.querySelectorAll('.msg.user').length;
+        attachment.dispose();
+        window.__r = { turns, users, oldResult, newRunning };
+        return window.__r;
+      })()
+  - name: three user bubbles
+    eval: check.equal(__r.users, 3, 'user bubbles')
+  - name: first turn stops at the steer
+    eval: |
+      check.match(__r.turns[0], /Before steer/) && check.noMatch(__r.turns[0], /After first steer/)
+  - name: each steer owns the answer after it
+    eval: |
+      check.match(__r.turns[1], /Change direction.*After first steer/)
+        && check.match(__r.turns[2], /Also this.*After second steer/)
+        && check.match(__r.turns[3], /From another tab.*After remote steer/)
+  - name: late tool result lands on its own card
+    eval: |
+      check.equal(__r.oldResult, 'Old tool finished') && check.equal(__r.newRunning, true)
+  - name: no page errors
+    eval: check.noErrors()

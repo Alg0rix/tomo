@@ -1,0 +1,74 @@
+# Context ring: refreshes, out-of-order responses, smaller windows,
+# session switches, unknown limits and cleanup.
+version: 1
+steps:
+  - open: "${BASE_URL}/context_usage.html"
+  - name: init requests usage once
+    eval: |
+      TomoContextUsage.init(document.querySelector('#chat'));
+      check.equal(requests.length, 1, 'requests after init')
+
+  # A model switch refreshes the same session URL; the slow pre-switch
+  # response must not overwrite the newly resolved limit.
+  - name: answer the refresh first
+    eval: |
+      TomoContextUsage.refresh(document.querySelector('#chat'));
+      requests[1].resolve({ used: 500000, limit: 1000000, percent: 50, prompt_budget: 941808, compressed: true });
+      true
+  - expect: {selector: ".ctx-usage-trigger", js: "document.querySelector('.ctx-usage-trigger').title === '500K / 1M tokens'"}
+  - name: stale response arrives late
+    eval: |
+      requests[0].resolve({ used: 500000, limit: 128000, percent: 100 });
+      new Promise(r => setTimeout(r, 50))
+  - name: newer limit wins
+    eval: |
+      check.equal(document.querySelector('.ctx-usage-trigger').title, '500K / 1M tokens', 'title')
+        && check.equal(document.querySelector('.ctx-usage-pct').textContent, '50%', 'pct')
+        && check.match(document.querySelector('.ctx-pop-budget').textContent, /compacted.*Prompt budget/, 'budget')
+
+  - name: a real smaller window is shown honestly
+    eval: |
+      TomoContextUsage.refresh(document.querySelector('#chat'));
+      requests[2].resolve({ used: 500000, limit: 128000, percent: 100, blocked: true, compaction_error: 'Latest request cannot fit.' });
+      true
+  - expect: {js: "document.querySelector('.ctx-usage-trigger').title === '500K / 128K tokens'"}
+  - name: compaction error replaces the budget line
+    eval: check.equal(document.querySelector('.ctx-pop-budget').textContent, 'Latest request cannot fit.')
+
+  - name: response for a chat no longer shown is ignored
+    eval: |
+      (async () => {
+        const wrap = document.querySelector('#chat');
+        TomoContextUsage.refresh(wrap);
+        wrap.dataset.sessionId = 'two';
+        requests[3].resolve({ used: 10, limit: 1000, percent: 1 });
+        await new Promise(r => setTimeout(r, 50));
+        return check.equal(document.querySelector('.ctx-usage-trigger').title, '500K / 128K tokens', 'title');
+      })()
+
+  - name: missing metadata never masquerades as 128K
+    eval: |
+      TomoContextUsage.refresh(document.querySelector('#chat'));
+      requests[4].resolve({ used: 20000, limit: null, percent: 0, prompt_budget: 24000 });
+      true
+  - expect: {js: "document.querySelector('.ctx-usage-trigger').title === '20K tokens · context limit unknown'"}
+  - name: unknown limit is labelled
+    eval: |
+      check.equal(document.querySelector('.ctx-usage-pct').textContent, '?', 'pct')
+        && check.equal(document.querySelector('.ctx-pop-pct').textContent, 'Context limit unknown', 'popover pct')
+        && check.match(document.querySelector('.ctx-pop-budget').textContent, /metadata unavailable/, 'budget')
+
+  - name: destroy drops in-flight results and stops refreshing
+    eval: |
+      (async () => {
+        const wrap = document.querySelector('#chat');
+        TomoContextUsage.refresh(wrap);
+        TomoContextUsage.destroy(wrap);
+        requests[5].resolve({ used: 10, limit: 1000, percent: 1 });
+        TomoContextUsage.refresh(wrap);
+        await new Promise(r => setTimeout(r, 50));
+        return check.equal(requests.length, 6, 'requests')
+          && check.equal(document.querySelectorAll('.ctx-usage-popover').length, 0, 'popovers');
+      })()
+  - name: no page errors
+    eval: check.noErrors()
