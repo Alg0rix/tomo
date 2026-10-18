@@ -768,3 +768,37 @@ def test_prune_drafts_only_own_user(tmp_path) -> None:
     assert store.get_session(alice_draft) is None
 
 
+
+
+def test_chat_model_selection_is_isolated_and_does_not_rerank(tmp_path) -> None:
+    _rebind(tmp_path)
+    store.create_llm_profile(
+        {
+            "id": "default",
+            "name": "D",
+            "api_key": "sk-d",
+            "model": "model-a",
+            "available_models": ["model-a", "model-b"],
+            "reasoning_efforts": ["low", "high", "max"],
+        }
+    )
+    store.set_default_llm_profile("default")
+    a = store.create_swarm_session(["main"], user_id="web")
+    b = store.create_swarm_session(["main"], user_id="web")
+    store.set_session_reasoning_effort(b, "max")
+    stamp = store.get_session(a)["updated_at"]
+
+    store.set_session_model(a, "default", "model-b")
+    store.set_session_reasoning_effort(a, "max")
+    store.set_session_reasoning_effort(a, "high")
+
+    # Picker changes are chat settings, not activity: no recency bump that
+    # would make this chat the agent's fallback "current" chat.
+    assert store.get_session(a)["updated_at"] == stamp
+    assert store.get_session_reasoning_effort(a)["reasoning_effort"] == "high"
+    assert store.get_session_reasoning_effort(b)["reasoning_effort"] == "max"
+    assert store.get_session(b)["model_name"] == ""
+    fresh = store.create_swarm_session(["main"], user_id="web")
+    assert store.get_session(fresh)["model_name"] == ""
+    assert store.get_session(fresh)["reasoning_effort"] == ""
+    assert store.get_llm_profile("default")["model"] == "model-a"

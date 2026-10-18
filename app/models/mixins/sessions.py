@@ -306,8 +306,8 @@ def set_session_reasoning_effort(
         return None
     value = (reasoning_effort or "").strip()
     conn.execute(
-        "UPDATE sessions SET reasoning_effort=?, updated_at=? WHERE id=?",
-        (value, _now(), session_id),
+        "UPDATE sessions SET reasoning_effort=? WHERE id=?",
+        (value, session_id),
     )
     conn.commit()
     return get_session(conn, session_id)

@@ -493,10 +493,13 @@
         if (pickerStatus) { pickerStatus.textContent = (e && e.message) || 'Could not save. Try again.'; pickerStatus.dataset.state = 'error'; }
       } finally {
         pickerBusy = false;
-        refreshSendBtn();
-        if (!destroyed && sid === currentSessionId()) paintReasoningEffort(reasoningState);
-        if (reasoningReset) reasoningReset.disabled = false;
-        if (reasoningPopover) reasoningPopover.setAttribute('aria-busy', 'false');
+        // A save that outlives this chat must not touch the next chat's composer.
+        if (!destroyed) {
+          refreshSendBtn();
+          if (sid === currentSessionId()) paintReasoningEffort(reasoningState);
+          if (reasoningReset) reasoningReset.disabled = false;
+          if (reasoningPopover) reasoningPopover.setAttribute('aria-busy', 'false');
+        }
       }
     }
 
@@ -624,6 +627,12 @@
       });
     }
     refreshApprovalMode();
+    // The composer DOM is shared across chats: never show the previous
+    // chat's model/effort while this chat's own selection loads.
+    if (reasoningModel) reasoningModel.textContent = '…';
+    if (reasoningTriggerEffort) { reasoningTriggerEffort.textContent = ''; reasoningTriggerEffort.hidden = true; }
+    if (reasoningTrigger) reasoningTrigger.title = '';
+    if (pickerStatus) { pickerStatus.textContent = ''; delete pickerStatus.dataset.state; }
     refreshReasoningEffort();
 
     function pendingAgentIds() {

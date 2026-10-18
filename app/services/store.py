@@ -420,8 +420,8 @@ class Store:
             else:
                 model = ""
             self._conn.execute(
-                "UPDATE sessions SET model_profile_id=?, model_name=?, reasoning_effort='', updated_at=? WHERE id=?",
-                (profile_id, model, time.time(), session_id),
+                "UPDATE sessions SET model_profile_id=?, model_name=?, reasoning_effort='' WHERE id=?",
+                (profile_id, model, session_id),
             )
             self._conn.commit()
             session.update(model_profile_id=profile_id, model_name=model, reasoning_effort="")
