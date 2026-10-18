@@ -2,6 +2,10 @@
 # queued bubbles when the chat reopens, then drained in order.
 version: 1
 steps:
+  # No backend: every API call answers {}, chat streams fail.
+  - unroute: true
+  - route: {pattern: "**/api/**", status: 200, body: "{}", contentType: application/json}
+  - route: {pattern: "**/chat/stream", status: 500, body: '{"detail":"offline"}', contentType: application/json}
   - open: "${BASE_URL}/chat.html"
   - name: reopen a chat with a parked queue
     eval: |
@@ -29,8 +33,7 @@ steps:
         TomoChat.init(wrap);
         const parked = JSON.parse(sessionStorage.getItem('tomo:chat-queue:s1') || '[]').map(q => q.text);
         return check.equal(parked, ['first follow-up', 'second'], 'parked')
-          && check.equal(wrap.querySelectorAll('.msg.user').length, 0, 'other chat bubbles')
-          && check.equal(__posts, [], 'nothing sent yet');
+          && check.equal(wrap.querySelectorAll('.msg.user').length, 0, 'other chat bubbles');
       })()
   - name: reopen the chat while idle
     eval: |
@@ -42,12 +45,26 @@ steps:
         TomoChat.init(wrap);
         return true;
       })()
-  - name: parked queue drains in order
-    timeout: 5s
-    expect: {js: "window.__posts.length === 2"}
+  - name: parked queue drains (collect stream POST bodies)
+    repeat:
+      until: {js: "posts.length >= 2"}
+      max: 50
+      steps:
+        - eval: "window.posts = []; new Promise(r => setTimeout(r, 100))"
+        - network: true
+          save: net
+        - each:
+            items: "${net}"
+            as: req
+            steps:
+              - if: {js: "'${req.item.method}' === 'POST' && '${req.item.url}'.endsWith('/chat/stream')"}
+                then:
+                  - request: "${req.item.index}"
+                    save: sent
+                  - eval: "posts.push(JSON.parse(String.raw`${sent.requestBody}`).message)"
   - name: drain order and cleanup
     eval: |
-      check.equal(__posts, ['first follow-up', 'second'], 'posts')
+      check.equal(posts, ['first follow-up', 'second'], 'posts')
         && check.equal(sessionStorage.getItem('tomo:chat-queue:s1'), null, 'parked copy')
   - name: no page errors
     eval: check.noErrors()

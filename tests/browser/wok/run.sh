@@ -32,7 +32,7 @@ start=(--profile "$profile" start)
 if [ -n "${WOK_BROWSER:-}" ]; then start+=(--browser "$WOK_BROWSER"); fi
 wok "${start[@]}" >/dev/null
 
-# Failed step name + the thrown assertion message, not the raw CDP payload.
+# Failed step name, its error and the failure screenshot.
 summarize='
 import json, sys
 raw = sys.stdin.read()
@@ -41,15 +41,8 @@ try:
 except ValueError:
     print(raw.strip() or "no report"); sys.exit()
 for step in report.get("steps", []):
-    if step.get("ok"):
-        continue
-    error = step.get("error", "")
-    if "{" in error:
-        try:
-            error = json.loads(error[error.index("{"):])["exception"]["description"].splitlines()[0]
-        except (ValueError, KeyError, TypeError):
-            pass
-    print("step %s %s: %s" % (step.get("index"), step.get("name") or step.get("action"), error))
+    if not step.get("ok"):
+        print("step %s %s: %s" % (step.get("index"), step.get("name") or step.get("action"), step.get("error", "")))
 if report.get("screenshot"):
     print("screenshot: " + report["screenshot"])
 '

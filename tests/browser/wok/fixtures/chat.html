@@ -2,18 +2,6 @@
 <meta charset="utf-8">
 <script src="harness.js"></script>
 <script>
-  // No backend: record stream POST bodies, fail them, answer other API calls.
-  window.__posts = [];
-  var realFetch = window.fetch;
-  window.fetch = function (input, init) {
-    var url = String(input && input.url || input);
-    if (url.indexOf('/api/') === -1) return realFetch.apply(this, arguments);
-    if (url.indexOf('/chat/stream') !== -1) {
-      window.__posts.push(JSON.parse((init && init.body) || '{}').message);
-      return Promise.resolve(new Response('{"detail":"offline"}', { status: 500, headers: { 'Content-Type': 'application/json' } }));
-    }
-    return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
-  };
   sessionStorage.clear();
 </script>
 <div class="chat-wrap" data-session-id="s1">
