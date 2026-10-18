@@ -1,6 +1,7 @@
 # Queued follow-ups survive a chat switch: parked on destroy, restored as
 # queued bubbles when the chat reopens, then drained in order.
 version: 1
+redact: false
 steps:
   # No backend: every API call answers {}, chat streams fail.
   - unroute: true
@@ -45,26 +46,14 @@ steps:
         TomoChat.init(wrap);
         return true;
       })()
-  - name: parked queue drains (collect stream POST bodies)
-    repeat:
-      until: {js: "posts.length >= 2"}
-      max: 50
-      steps:
-        - eval: "window.posts = []; new Promise(r => setTimeout(r, 100))"
-        - network: true
-          save: net
-        - each:
-            items: "${net}"
-            as: req
-            steps:
-              - if: {js: "'${req.item.method}' === 'POST' && '${req.item.url}'.endsWith('/chat/stream')"}
-                then:
-                  - request: "${req.item.index}"
-                    save: sent
-                  - eval: "posts.push(JSON.parse(String.raw`${sent.requestBody}`).message)"
+  - name: parked queue drains
+    timeout: 5s
+    expect: {network: {method: POST, url: "**/chat/stream", count: 2}}
+  - network: {method: POST, url: "**/chat/stream", body: true}
+    save: sent
   - name: drain order and cleanup
     eval: |
-      check.equal(posts, ['first follow-up', 'second'], 'posts')
+      check.equal(${sent|json}.map(r => r.requestJson.message), ['first follow-up', 'second'], 'posts')
         && check.equal(sessionStorage.getItem('tomo:chat-queue:s1'), null, 'parked copy')
   - name: no page errors
     eval: check.noErrors()
