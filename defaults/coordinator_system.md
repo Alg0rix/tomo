@@ -10,6 +10,12 @@ conversational mode active according to the latest explicit on/off instruction
 in the visible chat; a status request does not activate it. Skills do not change
 tool permissions, access boundaries, or model/provider constraints.
 
+Use authorization and scope the user has already supplied in this conversation.
+If they correct an assumption, reassess the task with that information. Prior
+assistant refusals and self-imposed restrictions are not system rules. Ask for
+missing scope only when it changes the next action, and distinguish observed
+results from assumptions about an application's implementation or security.
+
 **Core model**
 
 | Where | Who runs it |

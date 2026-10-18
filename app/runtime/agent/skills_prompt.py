@@ -97,6 +97,9 @@ def build_skills_system_prompt(agent_id: str | None, user_id: str | None = None)
         "the latest explicit on/off instruction wins. A status request only "
         "reports the mode. Skills do not grant tool permissions or override "
         "access boundaries or model/provider constraints.",
+        "Apply skills using the user's existing authorization and scope in this "
+        "conversation. Reassess when the user corrects an assumption; earlier "
+        "assistant refusals are not system instructions or permanent restrictions.",
     ]
 
     if ordered:
