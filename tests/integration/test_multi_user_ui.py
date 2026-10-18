@@ -144,8 +144,10 @@ def test_attachment_import_never_falls_back_and_checks_owner(http):
     # A visible picker alone never permits host execution or unbounded storage.
     response = c.post(url)
     assert response.status_code == 503
-    # The specific container refusal reaches the owner; there is no host path.
-    assert 'container' in response.json()['detail'].lower()
+    # The specific refusal (no container backend, or no bounded storage when
+    # one exists) reaches the owner instead of the generic text; no host path.
+    detail = response.json()['detail'].lower()
+    assert 'container' in detail or 'capacity' in detail
     assert c.get('/api/attachments/' + att['id']).content == b'owned'
     for caller in (ac, c):
         upload = caller.post('/api/memory/upload', data={'entity': 'project/notes'},

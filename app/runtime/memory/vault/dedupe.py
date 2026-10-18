@@ -135,10 +135,14 @@ def merge_entity(user_id: str, source: str, target: str, *, home_root: Path | No
         names = [*listed(dst, 'aliases'), source, src_title, src_slug, *listed(src, 'aliases')]
         dst.meta['aliases'] = write._aliases(dst_slug, [n for n in names if n.casefold() not in SELF])
         dst.meta['tags'] = list(dict.fromkeys([*listed(dst, 'tags'), *listed(src, 'tags')]))
-        moved = lambda k: target if k.casefold() == source.casefold() else k
+        def moved(k):
+            return target if k.casefold() == source.casefold() else k
+
         rels = [(r, moved(k)) for r, k in [*relations.parse(dst), *relations.parse(src)]]
         rels = [(r, k) for r, k in dict.fromkeys(rels) if k.casefold() != target.casefold()]
-        strip = lambda page: links._BLOCK.sub('', relations.BLOCK.sub('', page.preamble))
+        def strip(page):
+            return links._BLOCK.sub('', relations.BLOCK.sub('', page.preamble))
+
         extras = [line for line in strip(src).splitlines() if line.strip() and not line.startswith('# ')]
         head = strip(dst).rstrip().splitlines() or [f'# {src_title}']
         head += [line for line in extras if line not in head]
